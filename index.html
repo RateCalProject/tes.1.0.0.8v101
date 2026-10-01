@@ -421,6 +421,15 @@ dialog::backdrop{background:rgba(8,16,20,.5)}
 .swaps{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .swapbtn{border-color:#E0457B;color:#B8235A;font-size:13px;padding:7px 12px}
 .sign .ab.shared small{display:block;color:var(--muted);font-size:12px}
+
+/* 持ち時間 */
+.tb-clock{flex:0 0 auto;font-weight:800;font-size:15px;font-variant-numeric:tabular-nums;white-space:nowrap;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.2);color:inherit;border:1.5px solid currentColor}
+.turnbar.team1 .tb-clock,.turnbar:not([class*=" p"]) .tb-clock{background:rgba(0,0,0,.06)}
+.tb-clock.byo{background:#fff;color:#C8102E;border-color:#C8102E}
+.tb-clock.hurry{animation:blink .8s infinite}
+@media (prefers-reduced-motion:reduce){.tb-clock.hurry{animation:none}}
+@media (max-width:520px){.tb-clock{font-size:13px;padding:3px 8px}}
+.tnote{margin:-6px 0 14px}
 </style>
 </head>
 <body>
@@ -440,6 +449,7 @@ dialog::backdrop{background:rgba(8,16,20,.5)}
       </div>
       <div class="turnbar" id="turnbar" role="status" aria-live="polite" hidden>
         <div class="tb-main"><span class="tb-name" id="tbName"></span><span class="tb-sub" id="tbSub"></span></div>
+        <span class="tb-clock" id="tbClock" hidden></span>
         <span class="tb-side" id="tbSide"></span>
       </div>
       <div class="board">
@@ -490,6 +500,12 @@ dialog::backdrop{background:rgba(8,16,20,.5)}
       <output id="npVal" aria-live="polite">2人</output>
       <button type="button" class="btn" id="npInc" aria-label="人数を増やす">＋</button>
     </div>
+    <p class="grp-t">最初の町の数<span class="grp-v">ひとりあたり</span></p>
+    <div class="seg" style="--n:3">
+      <input type="radio" name="ps" id="ps-1" value="-1"><label for="ps-1">少なめ<small id="psn-1"></small></label>
+      <input type="radio" name="ps" id="ps0" value="0"><label for="ps0">ふつう<small id="psn0"></small></label>
+      <input type="radio" name="ps" id="ps1" value="1"><label for="ps1">多め<small id="psn1"></small></label>
+    </div>
     <p class="grp-t">対戦のかたち</p>
     <div class="seg" style="--n:2">
       <input type="radio" name="tm" id="tm0" value="0"><label for="tm0">個人戦<small>全員がライバル</small></label>
@@ -507,6 +523,23 @@ dialog::backdrop{background:rgba(8,16,20,.5)}
       <button type="button" class="btn" id="mrInc" aria-label="巡数を増やす">＋</button>
     </div>
     <div class="mrmode"><button type="button" class="pbtn" data-mr="auto" aria-pressed="true"><b>おまかせ</b><small>人数で決まる</small></button><button type="button" class="pbtn" data-mr="none" aria-pressed="false"><b>上限なし</b><small>本拠地が落ちるまで</small></button></div>
+    <p class="grp-t">持ち時間<span class="grp-v">ひとりの合計</span></p>
+    <div class="seg" style="--n:5">
+      <input type="radio" name="tbk" id="tb0" value="0"><label for="tb0">なし</label>
+      <input type="radio" name="tbk" id="tb180" value="180"><label for="tb180">3分</label>
+      <input type="radio" name="tbk" id="tb300" value="300"><label for="tb300">5分</label>
+      <input type="radio" name="tbk" id="tb600" value="600"><label for="tb600">10分</label>
+      <input type="radio" name="tbk" id="tb1200" value="1200"><label for="tb1200">20分</label>
+    </div>
+    <p class="grp-t">秒読み<span class="grp-v">持ち時間を使い切ったあと、1手ごと</span></p>
+    <div class="seg" style="--n:5">
+      <input type="radio" name="byo" id="by0" value="0"><label for="by0">なし</label>
+      <input type="radio" name="byo" id="by10" value="10"><label for="by10">10秒</label>
+      <input type="radio" name="byo" id="by20" value="20"><label for="by20">20秒</label>
+      <input type="radio" name="byo" id="by30" value="30"><label for="by30">30秒</label>
+      <input type="radio" name="byo" id="by60" value="60"><label for="by60">60秒</label>
+    </div>
+    <p class="pnote tnote">時間が切れると、CPUがかわりに1手指します。持ち時間を「なし」にして秒読みだけ決めると、1手ごとの制限時間になります。CPUの席に時間はありません。</p>
     <div id="seatsWrap"><p class="grp-t" id="seatsT">だれが遊ぶ？</p>
     <div class="seats" id="seats"></div></div>
     <p class="grp-t">CPUの強さ</p>
@@ -526,7 +559,7 @@ dialog::backdrop{background:rgba(8,16,20,.5)}
       <div class="row"><input id="netCode" class="tin code" maxlength="4" placeholder="ABCD" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="部屋コード"><button class="btn netact" id="netJoin" disabled>入る</button></div>
       <div id="roomsWrap"><p class="grp-t gap">募集中の部屋</p>
       <ul class="rooms" id="netRooms"></ul></div>
-      <p class="net-note">盤・人数・対戦のかたち・順番・巡数・CPUの強さは、部屋をつくる人の設定が使われます。空いた席はCPUが入ります。組わけと順番は、待合室でホストが変えられます。</p>
+      <p class="net-note">盤・人数・最初の町の数・対戦のかたち・順番・巡数・持ち時間・CPUの強さは、部屋をつくる人の設定が使われます。空いた席はCPUが入ります。組わけと順番は、待合室でホストが変えられます。</p>
     </div>
     <div class="row"><button class="btn" id="contBtn" hidden>対局に戻る</button><button class="btn" id="rulesBtn2">ルールを読む</button></div>
   </div>
@@ -564,7 +597,7 @@ dialog::backdrop{background:rgba(8,16,20,.5)}
     <h3>盤</h3>
     <p>「盤」で使う都道府県をえらびます。全国・地方ごとのまとめのほか、「都道府県を1つずつえらぶ」から自由に組み合わせられます。えらばなかった都道府県は地図で灰色になり、今回は使いません。全国には、千島列島・南樺太・北方領土・尖閣諸島・沖縄も入っています。</p>
     <h3>はじまり</h3>
-    <p>えらんだ都道府県の市区町村は、最初からすべて自分の町のマスに駒として置かれています。はじめはどれも無所属（灰色の駒）です。順番にルーレットを回し、止まった町があなたの本拠地になります。本拠地と近くの町をあわせて、2人なら7つ、3人なら6つ、4〜5人なら5つ、6〜8人なら4つ、9〜16人なら3つの町があなたの駒になります。人数は2〜16人です。どこに止まるかで強さはばらばらです。</p>
+    <p>えらんだ都道府県の市区町村は、最初からすべて自分の町のマスに駒として置かれています。はじめはどれも無所属（灰色の駒）です。順番にルーレットを回し、止まった町があなたの本拠地になります。本拠地と近くの町をあわせて、「最初の町の数」がふつうなら、2人で7つ、3人で6つ、4〜5人で5つ、6〜8人で4つ、9〜16人で3つの町があなたの駒になります。少なめ・多めにすると、それぞれおよそ6割・1.6倍になります。人数は2〜16人です。どこに止まるかで強さはばらばらです。</p>
     <h3>順番</h3>
     <p>「サイコロ」なら全員がサイコロをふり、大きい目の人から順番になります（同じ目の人どうしはふり直し）。「自分で決める」なら、席の▲▼で並べた順番になります。オンラインではホストが決めます。ルーレットもこの順番で回します。</p>
     <h3>1手でできること</h3>
@@ -579,6 +612,8 @@ dialog::backdrop{background:rgba(8,16,20,.5)}
     <p>援軍は、ねらわれたマスのとなりにいる味方の数（最大2）。無所属の駒には援軍がつきません。本拠地の駒は防御+1。合併した駒は持ち駒になり、自分の駒のとなりの空きマスか、その駒の地元のマスに置けます。</p>
     <h3>戦力と移動力</h3>
     <p>戦力は、その町の特産品・名物の★の合計です。登録のない町は★1。政令指定都市・都道府県庁所在地・千代田区は★4以上です（特産品の★が4より多ければそちら）。移動力は面積で決まり、基本1、150km²以上で2、500km²以上で3。そこに各町の能力が加わります。</p>
+    <h3>持ち時間</h3>
+    <p>持ち時間を決めると、人が操作する席はひとりずつ時間を持ちます（CPUの席は時間なし）。自分の番のあいだだけ減り、使い切ったら1手ごとの秒読みになります。秒読みも切れると、CPUがかわりに1手指します（記録に「時間切れ」と出ます）。持ち時間を「なし」にして秒読みだけ決めると、毎手その時間内に指すルールになります。この端末で遊ぶときは、メニューやルールを開いているあいだ時計が止まります。オンラインではホストの端末が時間をはかります。</p>
     <h3>姉妹都市</h3>
     <p>国内で姉妹都市・友好都市の関係にある町どうしは、同じ人が両方を持っていて、どちらも盤の上にいると「きずな」が生まれ、駒の右上に♥が付きます。きずなのある駒は、1手を使っておたがいの場所を入れ替えられます（どんなに離れていてもOK。駒を選ぶと相手の町に「入れ替え」が出ます）。また、おたがいの能力を分け合います（攻撃+1・防御+1・移動力・まわりへの効果など。同じ種類の能力は重ならず、だるま・空港のような1回きりの能力は分けません）。町をタップすると、その町の姉妹都市が見られます。</p>
     <h3>紅白戦</h3>
@@ -617,6 +652,9 @@ function maxRounds(np){return np<=9?40:Math.max(24,Math.floor(360/np));}
 // 巡数の設定：0=おまかせ（人数で決まる） / -1=上限なし / 1〜999=その巡数
 function roundLimit(np,rs){return rs===-1?Infinity:rs>0?rs:maxRounds(np);}
 function roundText(mr){return isFinite(mr)?`${mr}巡`:'上限なし';}
+// 最初の町の数：-1=少なめ 0=ふつう 1=多め
+function perCount(np,ps){const b=PER[np]; return ps<0?Math.max(2,Math.round(b*0.6)):ps>0?Math.round(b*1.6):b;}
+const PSNAME={'-1':'少なめ','0':'ふつう','1':'多め'};
 const PNAME=['赤','青','緑','黄','紫','橙','水','桃','茶','紺','黄緑','黒','青緑','赤紫','オリーブ','藤'];
 const TNAME=['紅','白'];
 const DRAW=99, TEAMW=100;   // 勝者：0〜15=プレイヤー、99=引き分け、100/101=紅組/白組
@@ -755,7 +793,8 @@ function startCands(){
   return c;
 }
 /* 本拠地と最初の町を決める。紅白戦では同じ組が近くに集まり、ときどき2人が同じ本拠地になる */
-function planStarts(np,sd,tm){
+function planStarts(np,sd,tm,per){
+  per=per||PER[np];
   ensureDist();
   sd=tm&&sd?sd:[...Array(np).keys()];
   const cand=startCands();
@@ -813,7 +852,7 @@ function planStarts(np,sd,tm){
     }
   };
   const all=[...Array(np).keys()];
-  for(let r=1;r<PER[np];r++) grow(all);
+  for(let r=1;r<per;r++) grow(all);
   grow(all.filter(i=>share[i]>=0)); // 本拠地を分け合う人は町を1つ多く
   return {starts,clusters,share};
 }
@@ -959,7 +998,7 @@ function advance(n,side){
 }
 function apply(s,m){
   const n=clone(s), side=n.turn, p=m.p, from=n.at[p];
-  const info={t:m.t,p,from,to:m.to,side,caps:[],daruma:[],elim:[]};
+  const info={t:m.t,p,from,to:m.to,side,caps:[],daruma:[],elim:[],auto:!!m.auto};
   if(m.t==='d'){
     const h=n.hand[side]; h.splice(h.indexOf(p),1);
     n.at[p]=m.to; n.board[m.to]=p;
@@ -1134,7 +1173,7 @@ function effOrder(list,np){return list.filter(i=>i<np);}
 /* ---------- 画面の状態 ---------- */
 let G=null, phase='setup', HIST=[], sel=null, infoP=null, infoN=null, thinking=false, LOG=[], gameId=0, cpuTimer=0, resTimer=0, animOn=true;
 let rIdx=0, rHi=-1, rCol=0, spinning=false, roulMode='spin', PLAN=null;
-const settings={np:2,seats:['human',...Array(MAXP-1).fill('cpu')],level:1,prefs:PKEYS.slice(),team:false,teams:[...Array(MAXP).keys()].map(i=>i%2),order:'dice',olist:[...Array(MAXP).keys()],rounds:0};
+const settings={np:2,seats:['human',...Array(MAXP-1).fill('cpu')],level:1,prefs:PKEYS.slice(),team:false,teams:[...Array(MAXP).keys()].map(i=>i%2),order:'dice',olist:[...Array(MAXP).keys()],rounds:0,per:0,tbank:0,byo:0};
 let formNp=2, formPrefs=settings.prefs.slice(), formTeams=settings.teams.slice(), formOrder=settings.olist.slice(), formRounds=0;
 const svg=$('#board');
 let gHi,gPieces,gTop,gLbl;
@@ -1143,7 +1182,7 @@ const townEls=[], pieceEls=[], lblEls=[];
 /* ---------- オンライン対戦 ----------
    ホストが盤面を持ち、参加者は自分の手を presence で送る。
    ホストは受け取った手を確かめてから進め、全体の記録（手の列）を presence で全員に配る。 */
-const NETKEY='kb-net3', PVER=4;
+const NETKEY='kb-net3', PVER=5;
 const CODECH='abcdefghjkmnpqrstuvwxyz23456789';
 const NET={on:false,role:null,room:null,code:'',pub:false,nick:'',tok:'',cfg:null,seats:[],plan:null,moves:[],pendingMv:[],
   applied:0,ready:false,phase:'idle',gen:0,planKey:'',mySeat:-1,hostPeer:null,hostAway:false,waiting:false,waitT:0,
@@ -1164,12 +1203,13 @@ function newCode(){let s=''; for(let i=0;i<4;i++) s+=CODECH[Math.floor(Math.rand
 const B64='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_';
 function e2(n){return B64[n>>6]+B64[n&63];}
 function d2(s){const a=B64.indexOf(s[0]), b=B64.indexOf(s[1]); return a<0||b<0?-1:a*64+b;}
-function encMove(m){const t=m.t==='d'?'d':m.t==='air'?'a':m.t==='s'?'s':'m'; return t+e2(m.p)+e2(m.to);}
+function encMove(m){let t=m.t==='d'?'d':m.t==='air'?'a':m.t==='s'?'s':'m'; if(m.auto) t=t.toUpperCase(); return t+e2(m.p)+e2(m.to);}
 function decMove(s,st){
-  if(typeof s!=='string'||!/^[mdas][0-9A-Za-z_-]{4}$/.test(s)) return null;
+  if(typeof s!=='string'||!/^[mdasMDAS][0-9A-Za-z_-]{4}$/.test(s)) return null;
   const p=d2(s.slice(1,3)), to=d2(s.slice(3,5));
   if(!(p>=0&&p<N&&to>=0&&to<N)) return null;
-  const t=s[0]==='d'?'d':s[0]==='a'?'air':s[0]==='s'?'s':'m', m={t,p,to};
+  const k=s[0].toLowerCase(), t=k==='d'?'d':k==='a'?'air':k==='s'?'s':'m', m={t,p,to};
+  if(s[0]!==k) m.auto=true;
   if(t==='m'&&st.board[to]>=0) m.cap=st.board[to];
   return m;
 }
@@ -1222,7 +1262,7 @@ function settle(s,logit){
    PeerJS の無料公開サーバーで端末どうしを直接つなぐ。
    ゲームの通信部分からは claude.ai の room と同じ形（join / presence / peers / onPeers / leave）に見せる。 */
 function makePeerRoom(){
-  const PFX='kbattle4-';
+  const PFX='kbattle5-';
   const OPT={debug:0};
   const lobby={open:null, slot:null, slotId:'', busy:false};
   function mkEmitter(){
@@ -1255,7 +1295,7 @@ function makePeerRoom(){
       conn.on('close',drop); conn.on('error',drop);
     });
     return {
-      name:'kb4-'+code,
+      name:'kb5-'+code,
       presence(patch){ for(const k in patch){ if(patch[k]===null) delete mine[k]; else mine[k]=patch[k]; } const msg={t:'p',p:mine}; conns.forEach(e=>send(e.conn,msg)); em.fire(); return Promise.resolve(); },
       peers(){ return [{peer:peer.id,isMe:true,sameTab:true,presence:mine}, ...[...conns.values()].map(e=>({peer:e.conn.peer,isMe:false,sameTab:false,presence:e.presence}))]; },
       onPeers(h){ return em.on(h); },
@@ -1281,7 +1321,7 @@ function makePeerRoom(){
     peer.on('disconnected',()=>{if(!left) try{peer.reconnect();}catch(e){}});
     connect();
     return {
-      name:'kb4-'+code,
+      name:'kb5-'+code,
       presence(patch){ for(const k in patch){ if(patch[k]===null) delete mine[k]; else mine[k]=patch[k]; } try{ if(conn&&conn.open) conn.send({t:'p',p:mine}); }catch(e){} return Promise.resolve(); },
       peers(){ const a=[{peer:peer.id,isMe:true,sameTab:true,presence:mine}]; if(host) a.push({peer:target,isMe:false,sameTab:false,presence:host}); return a; },
       onPeers(h){ return em.on(h); },
@@ -1391,7 +1431,7 @@ function readNick(){NET.nick=cleanNick($('#nick').value); $('#nick').value=NET.n
 
 /* ---- 部屋に入る・出る ---- */
 async function enterRoom(code,asHost,quiet){
-  try{NET.room=await ROOM.join('kb4-'+code,{host:!!asHost});}
+  try{NET.room=await ROOM.join('kb5-'+code,{host:!!asHost});}
   catch(e){ if(!quiet) banner(e&&e.code==='taken'?'その部屋コードは使われています':'部屋に入れませんでした（通信を確認してください）'); return false;}
   NET.code=code; NET.on=true;
   NET.unsub.push(NET.room.onPeers(onRoomPeers,()=>{banner('部屋との接続が切れました');}));
@@ -1412,6 +1452,7 @@ function seatPublic(s){return s?{k:s.k,n:s.n||'',t:s.t||''}:null;}
 function netPublish(){
   if(NET.role!=='host'||!NET.room) return;
   const pres={v:PVER,role:'host',code:NET.code,nick:NET.nick,pub:NET.pub?1:0,ph:NET.phase,g:NET.gen,cfg:NET.cfg,seats:NET.seats.map(seatPublic),plan:NET.plan,mv:NET.moves.join('')};
+  if(CLK.on&&phase==='play') pres.ck={n:NET.moves.length,p:CLK.p,b:CLK.bank.map(x=>Math.round(x)),e:CLK.p>=0?Date.now()-CLK.t0:0};
   if(new TextEncoder().encode(JSON.stringify(pres)).length>3900) pres.seats=pres.seats.map(s=>s&&{k:s.k,n:[...s.n].slice(0,4).join(''),t:s.t});
   NET.room.presence(pres).catch(()=>{});
   if(ROOM) ROOM.presence({open:NET.phase==='lobby'?{c:NET.code,r:NET.cfg.r,n:NET.cfg.n,f:NET.seats.filter(Boolean).length,h:NET.nick,p:NET.pub?1:0,t:NET.cfg.tm}:null}).catch(()=>{});
@@ -1419,7 +1460,7 @@ function netPublish(){
 }
 function cfgFromSettings(){
   const np=settings.np;
-  return {r:matchKey(settings.prefs),p:encPrefs(settings.prefs),n:np,l:settings.level,tm:settings.team?1:0,mr:settings.rounds,
+  return {r:matchKey(settings.prefs),p:encPrefs(settings.prefs),n:np,l:settings.level,tm:settings.team?1:0,mr:settings.rounds,ps:settings.per,tb:settings.tbank,by:settings.byo,
     tt:settings.teams.slice(0,np).join(''),om:settings.order==='set'?'s':'d',os:encOrder(effOrder(settings.olist,np))};
 }
 
@@ -1486,8 +1527,10 @@ function hostCheckGuestMove(guests){
   hostCommit(real);
 }
 function hostCommit(m){
+  clkStop(G.turn);
   NET.moves.push(encMove(m)); NET.pendingMv=NET.moves;
   netApplyMove(m,false);
+  clkBeginNet();
   netPublish();
   const light=!seatIsLocal(NET.lastMover);
   if(light) animOn=false; netTurn(); animOn=true;
@@ -1498,7 +1541,7 @@ function hostStart(){
   if(c.tm&&!teamsOK(sideArr(c))){ banner('紅白戦は、紅と白の両方に1人以上入れてください'); return; }
   NET.seats=NET.seats.map(s=>s||{k:'cpu',n:'CPU',t:''});
   loadBoardIfNeeded(decPrefs(c.p));
-  const P=planStarts(c.n,sideArr(c),!!c.tm);
+  const P=planStarts(c.n,sideArr(c),!!c.tm,perCount(c.n,c.ps));
   const O=c.om==='d'?diceOrder(c.n):{order:decOrder(c.os,c.n)||[...Array(c.n).keys()],rolls:null};
   NET.plan={s:P.starts,c:P.clusters,o:O.order,d:O.rolls?O.rolls.map(r=>r.join('')):null}; NET.moves=[]; NET.phase='play';
   netPublish();
@@ -1559,18 +1602,19 @@ function validCfg(c){
   if(!['d','s'].includes(c.om)||!decOrder(c.os,c.n)) return false;
   if(typeof c.r!=='string'||c.r.length>20) return false;
   if(!(Number.isInteger(c.mr)&&c.mr>=-1&&c.mr<=999)) return false;
+  if(![-1,0,1].includes(c.ps)||!(Number.isInteger(c.tb)&&c.tb>=0&&c.tb<=7200)||!(Number.isInteger(c.by)&&c.by>=0&&c.by<=600)) return false;
   return true;
 }
 function validHost(h){
   if(!h||h.v!==PVER||!validCfg(h.cfg)) return false;
   const n=h.cfg.n;
   if(!Array.isArray(h.seats)||h.seats.length!==n) return false;
-  if(typeof h.mv!=='string'||h.mv.length>5*1200||!/^([mdas][0-9A-Za-z_-]{4})*$/.test(h.mv)) return false;
+  if(typeof h.mv!=='string'||h.mv.length>5*1200||!/^([mdasMDAS][0-9A-Za-z_-]{4})*$/.test(h.mv)) return false;
   if(h.ph!=='lobby'){
     const P=h.plan; if(!P||!Array.isArray(P.s)||!Array.isArray(P.c)||P.s.length!==n||P.c.length!==n) return false;
     const M=countTowns(decPrefs(h.cfg.p));
     const ok=x=>Number.isInteger(x)&&x>=0&&x<M;
-    if(!P.s.every(ok)||!P.c.every(c=>Array.isArray(c)&&c.length>=1&&c.length<=10&&c.every(ok))) return false;
+    if(!P.s.every(ok)||!P.c.every(c=>Array.isArray(c)&&c.length>=1&&c.length<=16&&c.every(ok))) return false;
     if(!Array.isArray(P.o)||P.o.length!==n||!P.o.every(x=>Number.isInteger(x)&&x>=0&&x<n)||new Set(P.o).size!==n) return false;
     if(P.d!=null&&!(Array.isArray(P.d)&&P.d.length===n&&P.d.every(x=>typeof x==='string'&&/^[1-6]{1,12}$/.test(x)))) return false;
   }
@@ -1583,7 +1627,7 @@ function guestOnPeers(){
   NET.hostPeer=hp.peer; clearTimeout(NET.joinT);
   const h=hp.presence; if(!validHost(h)) return;
   const c=h.cfg;
-  NET.cfg={r:c.r,p:c.p,n:c.n,l:c.l,tm:c.tm,tt:c.tm?c.tt:'',om:c.om,os:c.os,mr:c.mr}; NET.gen=h.g;
+  NET.cfg={r:c.r,p:c.p,n:c.n,l:c.l,tm:c.tm,tt:c.tm?c.tt:'',om:c.om,os:c.os,mr:c.mr,ps:c.ps,tb:c.tb,by:c.by}; NET.gen=h.g;
   NET.seats=h.seats.map(s=>s&&typeof s==='object'?{k:['host','guest','cpu'].includes(s.k)?s.k:'cpu',n:cleanNick(s.n),t:typeof s.t==='string'?s.t:''}:null);
   NET.mySeat=NET.seats.findIndex(s=>s&&s.t===NET.tok);
   if(h.ph==='lobby'){ NET.phase='lobby'; NET.planKey=''; showWait(); return; }
@@ -1593,6 +1637,7 @@ function guestOnPeers(){
   if(key!==NET.planKey){ NET.planKey=key; NET.plan=h.plan; startNetGame(NET.pendingMv.length===0); return; }
   if(NET.ready) netCatchUp();
   else render();
+  clkSync(h.ck);
 }
 
 /* ---- 対局の進行（全員共通） ---- */
@@ -1605,6 +1650,7 @@ function startNetGame(animate){
   ensureDist();
   settings.np=c.n;
   G=makeBase(c.n,{tm:!!c.tm,sd:sideArr(c),ord:NET.plan.o,mr:roundLimit(c.n,c.mr)}); HIST=[]; sel=null; infoP=null; infoN=null; LOG=[];
+  clkReset(c.n);
   PLAN={starts:NET.plan.s.slice(),clusters:NET.plan.c.map(x=>x.slice()),order:NET.plan.o.slice(),rolls:NET.plan.d?NET.plan.d.map(x=>[...x].map(Number)):null};
   NET.applied=0; NET.ready=false; NET.waiting=false; NET.lastSplash=-1;
   resetPieces(); rIdx=0; rHi=-1; rCol=0;
@@ -1645,6 +1691,7 @@ function netTurn(){
   }
   const me=G.turn;
   if(seatIsLocal(me)&&NET.lastSplash!==NET.applied){ NET.lastSplash=NET.applied; focusPlayer(me); turnSplash(me); }
+  if(NET.role==='host'&&clkBeginNet()) netPublish();
   if(NET.role==='host'){
     if(seatIsCPU(me)){
       if(thinking) return;
@@ -1677,7 +1724,7 @@ function showWait(){
   $('#nwLead').textContent=host
     ?(NET.pub?'ランダムマッチで相手を待っています。同じ盤でランダムマッチを押した人が入ってきます。友達にこのコードを伝えても入れます。':'このコードを友達に伝えてください。同じページを開いて「コードで入る」から入れます。')
     :(NET.phase==='joining'?'部屋を探しています…':'ホストが対局をはじめるのを待っています。');
-  $('#nwInfo').textContent=cfg?`${boardName(decPrefs(cfg.p))}・${cfg.n}人・${cfg.tm?'紅白戦':'個人戦'}・順番は${cfg.om==='d'?'サイコロ':'ホストが決める'}・${roundText(roundLimit(cfg.n,cfg.mr))}・CPU ${['よわい','ふつう','つよい'][cfg.l]}`:'';
+  $('#nwInfo').textContent=cfg?`${boardName(decPrefs(cfg.p))}・${cfg.n}人・${cfg.tm?'紅白戦':'個人戦'}・順番は${cfg.om==='d'?'サイコロ':'ホストが決める'}・${roundText(roundLimit(cfg.n,cfg.mr))}・町${perCount(cfg.n,cfg.ps)}か所${cfg.tb||cfg.by?'・'+clockText(cfg.tb,cfg.by):''}・CPU ${['よわい','ふつう','つよい'][cfg.l]}`:'';
   const seats=NET.seats.length?NET.seats:[];
   const ord=cfg&&cfg.om==='s'?(decOrder(cfg.os,cfg.n)||[...Array(seats.length).keys()]):[...Array(seats.length).keys()];
   const tm=cfg&&cfg.tm, tt=tm?cfg.tt:'', setO=cfg&&cfg.om==='s';
@@ -1999,6 +2046,7 @@ function teamSumHTML(){
   if(!G.tm) return '';
   return `<div class="teams">${[0,1].map(t=>{let al=0,n=0; for(let i=0;i<G.np;i++) if(G.sd[i]===t){n++; if(G.alive[i]) al++;} return `<div class="tsum t${t}"><b>${TNAME[t]}組</b><span>★${teamScore(G,t)}</span><small>${al}/${n}人</small></div>`;}).join('')}</div>`;
 }
+function bankText(i){ if(!CLK.on||seatIsCPU(i)) return ''; const b=CLK.bank[i]||0; return b>0?`・持ち時間 ${fmtClock(b)}`:CLK.byo?'・秒読み':'・時間切れ'; }
 function homeText(i){
   if(G.home[i]<0) return 'ルーレット待ち';
   const sh=sharedWith(G,i);
@@ -2014,7 +2062,7 @@ function renderPlayers(){
     for(const i of ord){
       const cur=phase==='play'&&G.turn===i&&G.winner<0, dead=!G.alive[i];
       const hand=G.hand[i].slice().sort((a,b)=>CITY[b].P-CITY[a].P);
-      h+=`<div class="pl${cur?' cur':''}${dead?' dead':''}" style="--pc:var(--c${i});--pt:var(--t${i})"><div class="pl-head">${showO?`<span class="pl-o">${ord.indexOf(i)+1}</span>`:''}<b>${PNAME[i]}</b>${teamChip(i)}<small>${seatLabel(i)}</small><span class="pl-sc">★${score(G,i)}</span></div><div class="pl-home">${dead?'脱落':`盤上${count(G,i)}・${homeText(i)}`}</div>${hand.length?`<div class="chips">${hand.map(chipHTML).join('')}</div>`:''}</div>`;
+      h+=`<div class="pl${cur?' cur':''}${dead?' dead':''}" style="--pc:var(--c${i});--pt:var(--t${i})"><div class="pl-head">${showO?`<span class="pl-o">${ord.indexOf(i)+1}</span>`:''}<b>${PNAME[i]}</b>${teamChip(i)}<small>${seatLabel(i)}</small><span class="pl-sc">★${score(G,i)}</span></div><div class="pl-home">${dead?'脱落':`盤上${count(G,i)}${bankText(i)}・${homeText(i)}`}</div>${hand.length?`<div class="chips">${hand.map(chipHTML).join('')}</div>`:''}</div>`;
     }
     box.innerHTML=h; return;
   }
@@ -2109,6 +2157,7 @@ function setTurnbar(cls,name,sub,side,think,hide){
   b.hidden=!!hide;
   b.className='turnbar'+(cls?' '+cls:'')+(think?' think':'');
   $('#tbName').textContent=name; $('#tbSub').textContent=sub; $('#tbSide').textContent=side;
+  renderClock();
 }
 function winName(w){return w===DRAW?'引き分け':w>=TEAMW?`${TNAME[w-TEAMW]}組の勝ち`:`${PNAME[w]}の勝ち`;}
 function renderStatus(){
@@ -2183,6 +2232,7 @@ function logMove(prev,L,quiet){
   L.daruma.forEach(d=>{const dn=CITY[d.q].disp, an=CITY[d.q].ab.name;
     if(an==='だるま'){msg+=`。${dn}はだるまのように起き上がった`; if(!big) big=`${dn}、七転び八起き`;}
     else{msg+=`。${dn}は${an}で持ちこたえた`; if(!big) big=`${dn}、${an}で持ちこたえた`;}});
+  if(L.auto) msg+='（時間切れ・CPUがかわりに指した）';
   LOG.unshift({side:L.side,msg});
   if(L.elim.length){
     const names=L.elim.map(l=>PNAME[l]).join('と'), two=L.elim.length>1;
@@ -2245,6 +2295,7 @@ function toggleAir(){
 }
 function playerDo(m){if(NET.on){netSendMove(m); return;} HIST.push(G); if(HIST.length>150) HIST.shift(); infoP=m.p; commit(m);}
 function commit(m){
+  clkStop(G.turn);
   const light=!seatIsLocal(G.turn);
   const prev=G; G=apply(G,m); delete G.bad; logMove(prev,G.last);
   if(pieceEls[m.p]) gPieces.appendChild(pieceEls[m.p]);
@@ -2261,7 +2312,7 @@ function turnStart(){
     const n=clone(G); n.last=null; advance(n,me); G=n;
     cpuTimer=setTimeout(()=>{if(id===gameId) turnStart();},400); return;
   }
-  if(settings.seats[me]==='human'){ focusPlayer(me); turnSplash(me); }
+  if(settings.seats[me]==='human'){ focusPlayer(me); turnSplash(me); clkBegin(me,'l'+G.ply); }
   if(settings.seats[me]==='cpu'){
     thinking=true; renderStatus(); renderActions();
     cpuTimer=setTimeout(()=>{
@@ -2279,6 +2330,7 @@ function undo(){
   clearTimeout(cpuTimer); clearTimeout(resTimer); gameId++;
   G=HIST.pop(); phase='play'; sel=null; infoP=null; infoN=null;
   LOG.unshift({side:-1,msg:'待ったをしました'});
+  CLK.p=-1; if(settings.seats[G.turn]==='human') clkBegin(G.turn,'u'+G.ply);
   $('#result').classList.remove('show');
   animOn=false; render(); animOn=true;
 }
@@ -2308,6 +2360,77 @@ function showResult(){
   },900);
 }
 
+/* ---------- 持ち時間 ----------
+   ひとりの持ち時間を使い切ると、1手ごとの秒読みになる。秒読みも切れたら、CPUがかわりに1手指す。
+   時間があるのは人が操作する席だけ。オンラインではホストが時間をはかり、時間切れの手もホストが指す。 */
+const CLK={on:false,bank:[],byo:0,p:-1,key:'',t0:0,paused:0};
+function clockText(tb,by){
+  const a=tb?(tb%60?`${Math.floor(tb/60)}分${tb%60}秒`:`${tb/60}分`):'', b=by?`秒読み${by}秒`:'';
+  return a&&b?`持ち時間${a}＋${b}`:a?`持ち時間${a}`:b?b:'持ち時間なし';
+}
+function clkReset(np){
+  const tb=NET.on?(NET.cfg.tb||0):settings.tbank, by=NET.on?(NET.cfg.by||0):settings.byo;
+  CLK.on=tb>0||by>0; CLK.bank=new Array(np).fill(tb*1000); CLK.byo=by*1000; CLK.p=-1; CLK.key=''; CLK.paused=0; renderClock();
+}
+function clkBegin(p,key){
+  if(!CLK.on||seatIsCPU(p)){ CLK.p=-1; CLK.key=key; renderClock(); return false; }
+  if(CLK.key===key&&CLK.p===p) return false;
+  CLK.p=p; CLK.key=key; CLK.t0=Date.now(); CLK.paused=0; renderClock(); return true;
+}
+function clkLeft(){
+  if(CLK.p<0) return null;
+  const el=(CLK.paused||Date.now())-CLK.t0, b=CLK.bank[CLK.p]||0;
+  return el<b?['bank',b-el]:['byo',Math.max(0,b+CLK.byo-el)];
+}
+function clkStop(p){ // 手が決まったら、使った時間を持ち時間から引く
+  if(CLK.p<0||CLK.p!==p) return;
+  CLK.bank[p]=Math.max(0,(CLK.bank[p]||0)-((CLK.paused||Date.now())-CLK.t0)); CLK.p=-1; renderClock();
+}
+function clkPause(){ if(!NET.on&&CLK.p>=0&&!CLK.paused) CLK.paused=Date.now(); }
+function clkResume(){ if(CLK.paused){ CLK.t0+=Date.now()-CLK.paused; CLK.paused=0; } }
+function fmtClock(ms){const s=Math.ceil(ms/1000); return s>=60?`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`:`${s}秒`;}
+function renderClock(){
+  const el=$('#tbClock'); if(!el) return;
+  const L=phase==='play'&&G&&G.winner<0?clkLeft():null;
+  if(!L){ if(!el.hidden) el.hidden=true; return; }
+  el.hidden=false;
+  const txt=(L[0]==='bank'?'持ち時間 ':'秒読み ')+fmtClock(L[1])+(CLK.paused?'（停止中）':'');
+  if(el.textContent!==txt) el.textContent=txt;
+  el.classList.toggle('byo',L[0]==='byo'||L[1]<10000);
+  el.classList.toggle('hurry',L[1]<5000&&!CLK.paused);
+}
+function clkTick(){
+  if(!CLK.on) return;
+  renderClock();
+  const L=phase==='play'&&G&&G.winner<0?clkLeft():null;
+  if(!L||L[1]>0||CLK.paused) return;
+  if(NET.on){ if(NET.role==='host') hostTimeout(); } else localTimeout();
+}
+function localTimeout(){
+  if(phase!=='play'||G.winner>=0||thinking||G.turn!==CLK.p) return;
+  const p=G.turn; CLK.bank[p]=0; CLK.p=-1;
+  const m=cpuChoose(G,settings.level);
+  banner(`${PNAME[p]}の時間切れ。CPUがかわりに指します`);
+  sel=null; if(!m) return;
+  m.auto=true; HIST.push(G); if(HIST.length>150) HIST.shift(); commit(m);
+}
+function hostTimeout(){
+  if(phase!=='play'||G.winner>=0||thinking||G.turn!==CLK.p||!NET.ready||NET.pendingMv.length!==NET.applied) return;
+  const p=G.turn; CLK.bank[p]=0; CLK.p=-1;
+  const m=cpuChoose(G,NET.cfg.l); if(!m) return;
+  m.auto=true; hostCommit(m);
+}
+// ホスト：いまの手番の時計を始める（同じ手番なら何もしない）
+function clkBeginNet(){ if(!CLK.on||phase!=='play'||G.winner>=0){CLK.p=-1; return false;} return clkBegin(G.turn,'n'+NET.moves.length); }
+// 参加者：ホストから届いた時計に合わせる
+function clkSync(ck){
+  if(!CLK.on||!ck||typeof ck!=='object'||!Array.isArray(ck.b)||ck.b.length!==G.np||ck.n!==NET.applied) return;
+  CLK.bank=ck.b.map(x=>Math.max(0,+x||0));
+  if(Number.isInteger(ck.p)&&ck.p>=0&&ck.p<G.np){ CLK.p=ck.p; CLK.t0=Date.now()-Math.max(0,Math.min(+ck.e||0,3600e3)); CLK.key='g'+ck.n; }
+  else CLK.p=-1;
+  renderClock();
+}
+
 /* ---------- 順番決め・ルーレット ---------- */
 function resetPieces(){gPieces.innerHTML=''; pieceEls.length=0;}
 function applyBoard(prefs){
@@ -2325,7 +2448,7 @@ function teamLog(){
 function checkForm(){
   const np=settings.np;
   if(!settings.prefs.length){banner('使う都道府県を1つ以上えらんでください'); return false;}
-  if(countStarts(settings.prefs)<np*PER[np]+np*2){banner('この人数には盤が小さすぎます。都道府県を増やしてください'); return false;}
+  if(countStarts(settings.prefs)<np*perCount(np,settings.per)+np*2){banner('この人数と町の数には盤が小さすぎます。都道府県を増やすか、町の数を少なめにしてください'); return false;}
   if(settings.team&&!teamsOK(settings.teams.slice(0,np))){banner('紅白戦は、紅と白の両方に1人以上入れてください'); return false;}
   return true;
 }
@@ -2340,7 +2463,8 @@ function beginRoulette(){
   const np=settings.np, tm=settings.team, sd=tm?settings.teams.slice(0,np):null;
   const O=settings.order==='dice'?diceOrder(np):{order:effOrder(settings.olist,np),rolls:null};
   G=makeBase(np,{tm,sd,ord:O.order,mr:roundLimit(np,settings.rounds)}); HIST=[]; sel=null; infoP=null; infoN=null; LOG=[];
-  const P=planStarts(np,G.sd,tm);
+  clkReset(np);
+  const P=planStarts(np,G.sd,tm,perCount(np,settings.per));
   PLAN={starts:P.starts,clusters:P.clusters,order:O.order,rolls:O.rolls};
   rIdx=0; rHi=-1; rCol=0;
   resetPieces();
@@ -2437,6 +2561,9 @@ function loadSettings(){
       if(v.order==='dice'||v.order==='set') settings.order=v.order;
       if(Array.isArray(v.olist)&&v.olist.length===MAXP&&v.olist.slice().sort((a,b)=>a-b).every((x,i)=>x===i)) settings.olist=v.olist.slice();
       if(Number.isInteger(v.rounds)&&v.rounds>=-1&&v.rounds<=999) settings.rounds=v.rounds;
+      if([-1,0,1].includes(v.per)) settings.per=v.per;
+      if([0,180,300,600,1200].includes(v.tbank)) settings.tbank=v.tbank;
+      if([0,10,20,30,60].includes(v.byo)) settings.byo=v.byo;
     }
   }catch(e){}
 }
@@ -2448,7 +2575,7 @@ function buildSeats(){
   $('#presets').innerHTML=PRESETS.map(k=>`<button type="button" class="pbtn" data-preset="${k}" aria-pressed="false"><b>${REGIONS[k].name}</b><small>${countTowns(REGIONS[k].prefs)}</small></button>`).join('');
   $('#prefChips').innerHTML=DATA.regions.map(([rk,rn])=>`<div class="prow"><span class="prow-t">${rn}</span><div class="pchips">${REGIONS[rk].prefs.map(k=>`<button type="button" class="pchip" data-pref="${k}" aria-pressed="false" style="--pf:${PREF[k].c}">${PREF[k].n}</button>`).join('')}</div></div>`).join('');
 }
-function showNp(){$('#npVal').textContent=formNp+'人'; $('#npDec').disabled=formNp<=2; $('#npInc').disabled=formNp>=MAXP; layoutSeats(); showPrefs(); showRounds();}
+function showNp(){$('#npVal').textContent=formNp+'人'; $('#npDec').disabled=formNp<=2; $('#npInc').disabled=formNp>=MAXP; layoutSeats(); showPrefs(); showRounds(); showPer();}
 // 巡数：数字は自由に入力でき、−＋は10巡までは1ずつ、それより上は5ずつ
 function showRounds(){
   const auto=formRounds===0, none=formRounds===-1, v=auto?maxRounds(formNp):none?0:formRounds;
@@ -2491,7 +2618,7 @@ function showPrefs(){
   const set=new Set(formPrefs), pk=presetOf(formPrefs);
   document.querySelectorAll('[data-preset]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.preset===pk)));
   document.querySelectorAll('[data-pref]').forEach(b=>b.setAttribute('aria-pressed',String(set.has(b.dataset.pref))));
-  const n=countTowns(formPrefs), np=formNp, small=formPrefs.length&&countStarts(formPrefs)<np*PER[np]+np*2;
+  const n=countTowns(formPrefs), np=formNp, small=formPrefs.length&&countStarts(formPrefs)<np*perCount(np,formPer())+np*2;
   $('#bdInfo').textContent=formPrefs.length?`${boardName(formPrefs)}・${n}市区町村${small?'（この人数には小さすぎます）':''}`:'1つ以上えらんでください';
   $('#bdInfo').classList.toggle('warn',!formPrefs.length||!!small);
 }
@@ -2511,6 +2638,8 @@ function syncForm(){
   $('#lv'+settings.level).checked=true;
   $(settings.team?'#tm1':'#tm0').checked=true;
   $(settings.order==='set'?'#om-s':'#om-d').checked=true;
+  $('#ps'+settings.per).checked=true;
+  $('#tb'+settings.tbank).checked=true; $('#by'+settings.byo).checked=true;
   showNp();
 }
 function readForm(){
@@ -2523,7 +2652,12 @@ function readForm(){
   settings.order=$('#om-s').checked?'set':'dice';
   settings.olist=formOrder.slice();
   settings.rounds=formRounds;
+  settings.per=formPer();
+  settings.tbank=+document.querySelector('input[name=tbk]:checked').value;
+  settings.byo=+document.querySelector('input[name=byo]:checked').value;
 }
+function formPer(){const i=document.querySelector('input[name=ps]:checked'); return i?+i.value:0;}
+function showPer(){ for(const v of [-1,0,1]){ const el=$('#psn'+v); if(el) el.textContent=`${perCount(formNp,v)}か所`; } }
 function moveOrder(i,d){
   const eff=effOrder(formOrder,formNp), k=eff.indexOf(i), j=k+d; if(k<0||j<0||j>=eff.length) return;
   const a=formOrder.indexOf(eff[k]), b=formOrder.indexOf(eff[j]); [formOrder[a],formOrder[b]]=[formOrder[b],formOrder[a]];
@@ -2537,6 +2671,7 @@ function setMode(m){
   if(m==='net') renderRooms();
 }
 function openTitle(){
+  clkPause();
   syncForm(); renderNetResume();
   $('#contBtn').hidden=!(phase==='play'&&G.winner<0);
   $('#result').classList.remove('show');
@@ -2550,16 +2685,19 @@ function bind(){
   $('#undoBtn').addEventListener('click',undo);
   $('#menuBtn').addEventListener('click',openTitle);
   $('#startBtn').addEventListener('click',beginRoulette);
-  $('#contBtn').addEventListener('click',()=>$('#title').classList.remove('show'));
+  $('#contBtn').addEventListener('click',()=>{$('#title').classList.remove('show'); clkResume();});
   $('#roulBtn').addEventListener('click',()=>{if(roulMode==='start') startPlay(); else if(roulMode==='toRoul') beginSpin(); else if(roulMode==='spin') spin();});
-  const openRules=()=>{const d=$('#rules'); if(d.showModal) d.showModal(); else d.setAttribute('open','');};
+  const openRules=()=>{const d=$('#rules'); if(!$('#title').classList.contains('show')) clkPause(); if(d.showModal) d.showModal(); else d.setAttribute('open','');};
   $('#rulesBtn').addEventListener('click',openRules);
   $('#rulesBtn2').addEventListener('click',openRules);
   $('#rulesClose').addEventListener('click',()=>{const d=$('#rules'); if(d.close) d.close(); else d.removeAttribute('open');});
+  $('#rules').addEventListener('close',()=>{ if(!$('#title').classList.contains('show')) clkResume(); });
+  setInterval(clkTick,250);
   $('#resAgain').addEventListener('click',()=>{ if(NET.on){ if(NET.role==='host') hostRematch(); } else {syncForm(); beginRoulette();} });
   $('#resMenu').addEventListener('click',()=>{ if(NET.on) netLeave().then(openTitle); else openTitle(); });
   document.querySelectorAll('input[name=mode]').forEach(i=>i.addEventListener('change',()=>setMode(i.value)));
   document.querySelectorAll('input[name=tm],input[name=om]').forEach(i=>i.addEventListener('change',layoutSeats));
+  document.querySelectorAll('input[name=ps]').forEach(i=>i.addEventListener('change',showPrefs));
   $('#netCreate').addEventListener('click',()=>netCreate(false));
   $('#netRandom').addEventListener('click',netRandom);
   $('#netJoin').addEventListener('click',()=>netJoin($('#netCode').value));
@@ -2609,7 +2747,7 @@ window.__KB={get CITY(){return CITY},get ADJ(){return ADJ},get DIST(){ensureDist
   get NET(){return NET},encMove,decMove,settle,hasMove,encPrefs,decPrefs,REGIONS,PKEYS,countTowns,
   testState(){let h=0; if(G) for(let i=0;i<N;i++){h=(h*31+G.own[i]+7*G.at[i]+13*G.fl[i])|0;} return {phase,turn:G&&G.turn,ply:G&&G.ply,round:G&&G.round,applied:NET.applied,pending:NET.pendingMv.length,winner:G&&G.winner,mySeat:NET.mySeat,hash:h,my:isHumanTurn(),waiting:NET.waiting,role:NET.role,code:NET.code,ord:G&&G.ord,sd:G&&G.sd,home:G&&G.home,seats:NET.seats.map(x=>x&&x.k+':'+x.n+(x.away?':away':''))};},
   testAutoMove(){ if(!isHumanTurn()) return false; const m=cpuChoose(G,0); if(m) playerDo(m); return !!m; },
-  loadBoard,ensureDist,makeBase,planStarts,claimCluster,genMoves,apply,cpuChoose,evaluate,surrounded,score,teamScore,scoreWinner,diceOrder,PER,maxRounds,roundLimit,bonds,eab,get SIS(){return SIS},kingNode,sharedWith,legal,reach,DRAW,TEAMW};
+  loadBoard,ensureDist,makeBase,planStarts,claimCluster,genMoves,apply,cpuChoose,evaluate,surrounded,score,teamScore,scoreWinner,diceOrder,PER,perCount,maxRounds,roundLimit,get CLK(){return CLK},bonds,eab,get SIS(){return SIS},kingNode,sharedWith,legal,reach,DRAW,TEAMW};
 })();
 
 </script>
