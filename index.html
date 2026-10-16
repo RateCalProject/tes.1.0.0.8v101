@@ -255,7 +255,6 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <h3 style="margin-top:0">今週の競馬億万長者 <span class="muted small" id="infoWeek">（今週の勝ちの合計）</span></h3>
     <ul class="rank" id="infoJack"></ul>
   </div>
-  <div class="card" data-sub="rich"><h3 style="margin-top:0">お金持ちランキング</h3><ul class="rank" id="rank"></ul></div>
   <div class="card" data-sub="tl">
     <textarea class="inp" id="tlBody" rows="3" maxlength="140" placeholder="いまどうしてる？（140文字まで）"></textarea>
     <div class="row"><span class="muted small grow" id="tlCount">0 / 140</span><button class="btn main s" id="tlSend">投稿</button></div>
@@ -517,7 +516,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   <div class="card" data-sub="prof">
     <h3 style="margin-top:0">ニックネーム</h3>
     <div class="row"><input id="nick" maxlength="12" class="grow" style="padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg)"><button class="btn main" id="nickSave">変える</button></div>
-    <p class="muted small" style="margin:6px 0 0">ランキングなどで、みんなに見えます。本名やメールアドレスは入れないでください。</p>
+    <p class="muted small" style="margin:6px 0 0">TLや競馬億万長者などで、みんなに見えます（所持金は自分にしか見えません）。本名やメールアドレスは入れないでください。</p>
   </div>
   <div class="card" data-sub="hist"><h3 style="margin-top:0">自分の記録</h3><ul class="rank" id="hist"></ul></div>
   <div class="card links" data-sub="rule">
@@ -631,7 +630,7 @@ function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch 
 const GAMES = ['vRace', 'vSlot', 'vBj', 'vRou', 'vHilo'];
 // メインメニュー（左から）とサブメニュー
 const MENU = [
-  ['vInfo', '情報', 'i', [['cur', '通貨'], ['tl', 'TL'], ['friend', 'フレンド'], ['jack', '競馬億万長者'], ['rich', 'ランキング']]],
+  ['vInfo', '情報', 'i', [['cur', '通貨'], ['tl', 'TL'], ['friend', 'フレンド'], ['jack', '競馬億万長者']]],
   ['vWork', '仕事', '✎', [['jobs', '仕事をえらぶ'], ['stat', '給料'], ['corp', '企業ページ'], ['mywork', '勤め先']]],
   ['vGame', '賭博', '♠', [['vRace', '🏇 競馬'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
   ['vCorp', '企業', '社', [['search', '会社検索'], ['pin', 'ピン留め'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '株式投資']]],
@@ -1473,7 +1472,6 @@ async function infoLoad() {
       <span class="grow">${esc(j.nickname)}<small class="muted" style="display:block;font-size:11px">的中 ${fmt(j.hits)}本・払戻 ${fmt(j.payout)}・賭け ${fmt(j.bet)}・最高 ${fmt(j.best)}</small></span>
       <span class="v" style="color:var(--win)">+${fmt(j.net)}</span></li>`).join('')
       : '<li class="muted">今週はまだ勝った人がいません</li>';
-    $('#rank').innerHTML = d.rich.map((r, i) => `<li><b>${i + 1}</b><span>${esc(r.nickname)}</span><span class="v">${fmt(r.balance)} X</span></li>`).join('') || '<li class="muted">まだいません</li>';
   } catch (e) { toast(e.message); }
 }
 

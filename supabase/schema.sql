@@ -461,11 +461,9 @@ begin
   return my_profile();
 end $$;
 
+-- 所持金は非公開なので、お金持ちランキングは出さない（昔の画面から呼ばれても空を返す）
 create or replace function public.leaderboard() returns jsonb
-language sql security definer set search_path = public as $$
-  select coalesce(jsonb_agg(jsonb_build_object('nickname', nickname, 'balance', balance) order by balance desc, created_at), '[]'::jsonb)
-  from (select nickname, balance, created_at from profiles order by balance desc, created_at limit 20) t
-$$;
+language sql security definer set search_path = public as $$ select '[]'::jsonb $$;
 
 create or replace function public.my_history() returns jsonb
 language sql security definer set search_path = public as $$
@@ -2099,7 +2097,6 @@ begin
          where t.payout is not null and r.day >= _kb_jday(_now()) - (extract(isodow from _kb_jday(_now()))::int - 1)
          group by p.id, p.nickname having sum(t.payout - t.amount) > 0
          order by net desc limit 20) z),
-    'rich', leaderboard(),
     'balance', _bal(u));
 end $$;
 
