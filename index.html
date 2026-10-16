@@ -335,10 +335,11 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
       <li>所得＝その月の「払い戻し − 賭け金」（マイナスなら0）。はじめての配布と給付金には税金がかかりません。</li>
       <li>税額：所得から基礎控除500を引いた残りに、〜2,000は5%、〜10,000は10%、〜50,000は20%、〜200,000は33%、それより上は45%。</li>
       <li>申告した額は自分で書きます。少なく書くこともできますが、16日に税務調査があります。調査される確率は基本10%で、ごまかしが大きいほど高くなります（最大90%）。見つかると不足分＋重加算税35%を追徴します。</li>
+      <li>悪質なごまかし（本当の所得の半分以上を隠した・隠した所得が10,000以上・前にもごまかしが見つかったことがある、のどれか）は、税を納めたあとの残高の7割を没収します。少しのごまかしなら没収はありません。</li>
       <li>申告しなかった人は、税務署が記録から計算して無申告加算税15%をつけます。</li>
       <li>期限（15日）までに納めなかった分は、延滞金10%をつけて残高から差し押さえます。足りない分は、当たりが出るたびに差し押さえます。</li>
-      <li>給付金500：期限内に申告して期限までに納め、脱税が見つからず、滞納がない人に16日に入ります（その月にまだ登録していなかった人は対象外）。</li>
-      <li>カジノのもうけ・税金・罰金は国庫に入り、給付金は国庫から出ます。足りないときは国債（国の借金）になります。</li>
+      <li>給付金500：期限内に申告して期限までに納め、脱税が見つからず、滞納がなく、16日の時点で所持金（残高＋遊んでいる途中の賭け金）が5,000以下の人に入ります（その月にまだ登録していなかった人は対象外）。</li>
+      <li>カジノのもうけ・税金・罰金・没収したお金は国庫に入り、給付金は国庫から出ます。足りないときは国債（国の借金）になります。</li>
       <li>ゲームの中だけの税金です。実際の税金とは関係ありません。</li>
     </ul>
   </div>
@@ -825,7 +826,7 @@ function taxRender() {
       <p style="margin:10px 0">税額：<b class="num" id="txCalc"></b> AiliNaX</p>
       <button class="btn main big wide" id="txFile">${F.filed ? 'この額で出し直す' : '申告する'}</button>
       ${owe > 0 ? `<button class="btn big wide" id="txPay" style="margin-top:8px">納める（${fmt(owe)}）</button>` : ''}
-      <p class="muted small" style="margin:10px 0 0">少なく書くこともできますが、16日の税務調査で見つかると不足分＋重加算税35%。期限内に申告して期限までに納めた人には、16日に給付金 500 が入ります。</p>`;
+      <p class="muted small" style="margin:10px 0 0">少なく書くこともできますが、16日の税務調査で見つかると不足分＋重加算税35%。悪質なら残高の7割を没収します。期限内に申告して期限までに納めた人には、16日に給付金 500 が入ります（所持金5,000以下の人）。</p>`;
     const upd = () => { $('#txCalc').textContent = fmt(calcTax($('#txIn').value)); };
     upd(); $('#txIn').oninput = upd;
     $('#txRec').onclick = () => { $('#txIn').value = F.recorded; upd(); };
@@ -861,6 +862,7 @@ function taxRender() {
     <div class="kv"><span>${tb >= 0 ? '残高' : '国債（国の借金）'}</span><b style="color:${tb >= 0 ? 'inherit' : 'var(--lose)'}">${fmt(Math.abs(tb))}</b>
     <span class="muted">カジノのもうけ（累計）</span><b>${fmt(T.treasury.casino)}</b>
     <span class="muted">税収（累計）</span><b>${fmt(T.treasury.tax)}</b>
+    <span class="muted">没収（累計）</span><b>${fmt(T.treasury.confiscated)}</b>
     <span class="muted">給付金（累計）</span><b>${fmt(T.treasury.benefit)}</b></div>`;
 
   // 高額納税者番付
@@ -870,12 +872,14 @@ function taxRender() {
 
   // 記録
   const ST = { filed: '', audit_ok: '<span class="tag good">調査：問題なし</span>', evasion: '<span class="tag bad">調査：脱税発覚</span>',
-               refund: '<span class="tag good">調査：還付</span>', no_filing: '<span class="tag bad">無申告</span>' };
+               refund: '<span class="tag good">調査：還付</span>', no_filing: '<span class="tag bad">無申告</span>',
+               malicious: '<span class="tag bad">調査：悪質なごまかし</span>' };
   $('#txHist').innerHTML = `<h3 style="margin-top:0">わたしの申告の記録</h3>` + (T.returns.length ? T.returns.map(r => {
     const owe = r.tax_due - r.tax_paid;
     return `<div class="mrow"><b>${mlab(r.month)}分</b>${ST[r.status] || ''}${r.benefit ? `<span class="tag good">給付金 +${fmt(r.benefit)}</span>` : ''}<br>
       申告 ${r.declared == null ? 'なし' : fmt(r.declared)}${r.true_income != null ? `／記録 ${fmt(r.true_income)}` : ''}
       ／税 ${fmt(r.tax_due)}${r.penalty ? `（うち罰金・延滞金 ${fmt(r.penalty)}）` : ''}
+      ${r.confiscated ? `<b style="color:var(--lose)">／没収 ${fmt(r.confiscated)}</b>` : ''}
       ${owe > 0 ? `<b style="color:var(--lose)">／未納 ${fmt(owe)}</b>` : (r.tax_due > 0 ? '／納付ずみ' : '')}
       ${r.processed ? '' : '<span class="muted">（16日に締め）</span>'}</div>`;
   }).join('') : '<p class="muted small" style="margin:0">まだありません。</p>');
@@ -887,7 +891,7 @@ async function taxPay() {
 }
 
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金' };
+const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収' };
 async function moreLoad() {
   try {
     const [rk, hs, me] = await Promise.all([call('leaderboard'), call('my_history'), call('my_profile')]);

@@ -123,6 +123,10 @@ create table if not exists public.notices (
   created_at timestamptz not null default now()
 );
 create index if not exists notices_user_idx on public.notices(user_id, id desc);
+-- 悪質なごまかしの没収（あとから足した列）
+alter table public.tax_returns add column if not exists malicious   boolean not null default false;
+alter table public.tax_returns add column if not exists confiscated bigint  not null default 0;
+alter table public.treasury    add column if not exists confiscated_total bigint not null default 0;
 create index if not exists tx_log_user_time_idx on public.tx_log(user_id, created_at);
 
 -- 画面から直接テーブルを読み書きさせない（全部 下の関数を通す）
@@ -691,8 +695,9 @@ end $$;
 --   所得 = その月の（払い戻し − 賭け金）。マイナスなら0。初回の配布と給付金はかからない
 --   税額 = 基礎控除500を引いた残りに 〜2,000:5% 〜10,000:10% 〜50,000:20% 〜200,000:33% それ以上:45%
 --   税務調査：申告した人から 10% ＋ ごまかしの大きさ×80% の確率で。見つかると不足分＋重加算税35%
+--   悪質（半分以上隠した／隠した所得が10,000以上／前にも見つかった）なら、税を納めたあとの残高の7割を没収
 --   申告なし：記録から計算して無申告加算税15%。期限までに納めない分：延滞金10%＋残高から差し押さえ
---   給付金500：期限内に申告して納め、脱税が見つからず、滞納がない人（その月にいた人だけ）
+--   給付金500：期限内に申告して納め、脱税が見つからず、滞納がなく、所持金5,000以下の人（その月にいた人だけ）
 -- ---------------------------------------------------------------------
 create or replace function public._month_of(ts timestamptz) returns int
 language sql stable as $$ select to_char(ts at time zone 'Asia/Tokyo', 'YYYYMM')::int $$;
@@ -771,12 +776,21 @@ begin
   return total;
 end $$;
 
--- 1か月分を締める（税務調査・無申告の決定・延滞金・差し押さえ・給付金）
+-- 所持金（残高＋遊んでいる途中の賭け金）
+create or replace function public._assets(u uuid) returns bigint
+language sql stable set search_path = public as $$
+  select coalesce((select balance from profiles where id = u), 0)
+       + coalesce((select bet from hilo_games where user_id = u), 0)
+       + coalesce((select bet from bj_games where user_id = u), 0)
+       + coalesce((select sum(amount) from race_bets where user_id = u and payout is null), 0)
+$$;
+
+-- 1か月分を締める（税務調査・無申告の決定・延滞金・差し押さえ・没収・給付金）
 create or replace function public._process_month(m int) returns void
 language plpgsql set search_path = public as $$
 declare
   p record; r tax_returns; tru bigint; f numeric; ctax bigint; dtax bigint; x bigint; pen bigint;
-  unpaid bigint; refund bigint; got bigint;
+  unpaid bigint; refund bigint; got bigint; mal boolean; rep boolean; why text; hidden bigint; amt bigint;
   mend timestamptz := _month_start(_next_month(m));
   lbl text := (m % 100)::text || '月分';
 begin
@@ -795,11 +809,21 @@ begin
         ctax := _tax(tru); dtax := _tax(r.declared);
         if ctax > dtax then
           x := ctax - dtax; pen := floor(x * 0.35);
-          update tax_returns set audited = true, evasion = true, status = 'evasion',
+          hidden := tru - r.declared;
+          -- 悪質：半分以上隠した／隠した所得が10,000以上／前にも見つかったことがある
+          rep := exists (select 1 from tax_returns where user_id = p.id and month < m and evasion);
+          mal := f >= 0.5 or hidden >= 10000 or rep;
+          why := concat_ws('・',
+                   case when f >= 0.5 then '所得の半分以上を隠していた' end,
+                   case when hidden >= 10000 then '隠した所得が10,000以上' end,
+                   case when rep then '前にもごまかしが見つかっている' end);
+          update tax_returns set audited = true, evasion = true, malicious = mal,
+                 status = case when mal then 'malicious' else 'evasion' end,
                  tax_due = tax_due + x + pen, penalty = penalty + pen
            where user_id = p.id and month = m;
-          perform _notice(p.id, format('【税務調査】%s：申告より %s 多い所得が見つかりました。不足分 %s ＋ 重加算税 %s を追徴します。この月の給付金はもらえません。',
-                                       lbl, _fmt(tru - r.declared), _fmt(x), _fmt(pen)));
+          perform _notice(p.id, format('【税務調査】%s：申告より %s 多い所得が見つかりました。不足分 %s ＋ 重加算税 %s を追徴します。%sこの月の給付金はもらえません。',
+                                       lbl, _fmt(hidden), _fmt(x), _fmt(pen),
+                                       case when mal then format('悪質なごまかし（%s）と判断したので、税を納めたあとの残高の7割を没収します。', why) else '' end));
         elsif dtax > ctax then
           x := dtax - ctax;
           update tax_returns set audited = true, status = 'refund', tax_due = tax_due - x
@@ -853,16 +877,30 @@ begin
     end if;
   end loop;
 
-  -- 給付金：期限内に申告して納め、脱税が見つからず、滞納がない人
+  -- 悪質なごまかし：税を納めたあとの残高の7割を没収（国庫へ）
+  for r in select * from tax_returns where month = m and malicious loop
+    amt := floor(_bal(r.user_id) * 0.70);
+    if amt > 0 then
+      update profiles set balance = balance - amt where id = r.user_id;
+      update treasury set balance = balance + amt, confiscated_total = confiscated_total + amt where id = 1;
+      update tax_returns set confiscated = amt where user_id = r.user_id and month = m;
+      perform _log(r.user_id, 'confiscate', amt, 0, jsonb_build_object('month', m));
+      perform _notice(r.user_id, format('【没収】%sの悪質なごまかしにより、残高の7割にあたる %s を没収しました。', lbl, _fmt(amt)));
+    end if;
+  end loop;
+
+  -- 給付金：期限内に申告して納め、脱税が見つからず、滞納がなく、所持金が5,000以下の人
   for r in select * from tax_returns where month = m and declared is not null and ontime and not evasion loop
-    if _debt(r.user_id) = 0 then
+    if _debt(r.user_id) > 0 then
+      perform _notice(r.user_id, format('%sの給付金は、滞納があるためもらえませんでした。', lbl));
+    elsif _assets(r.user_id) > 5000 then
+      perform _notice(r.user_id, format('%sの給付金は、所持金が5,000をこえているのでありません。', lbl));
+    else
       update profiles set balance = balance + 500 where id = r.user_id;
       update treasury set balance = balance - 500, benefit_total = benefit_total + 500 where id = 1;
       update tax_returns set benefit = 500 where user_id = r.user_id and month = m;
       perform _log(r.user_id, 'benefit', 0, 500, jsonb_build_object('month', m));
       perform _notice(r.user_id, format('%sの給付金 500 が入りました。', lbl));
-    else
-      perform _notice(r.user_id, format('%sの給付金は、滞納があるためもらえませんでした。', lbl));
     end if;
   end loop;
 end $$;
@@ -930,6 +968,7 @@ begin
            'true_income', case when coalesce(mm.processed, false) then t.true_income end,
            'tax_due', t.tax_due, 'tax_paid', t.tax_paid, 'penalty', t.penalty, 'status', t.status,
            'audited', t.audited, 'evasion', t.evasion, 'benefit', t.benefit,
+           'malicious', t.malicious, 'confiscated', t.confiscated,
            'processed', coalesce(mm.processed, false)) order by t.month desc), '[]'::jsonb) into rets
     from (select * from tax_returns where user_id = u order by month desc limit 12) t
     left join tax_months mm on mm.month = t.month;
@@ -948,7 +987,8 @@ begin
     'debt', _debt(u),
     'returns', rets, 'notices', notes,
     'treasury', jsonb_build_object('balance', coalesce(tr.balance, 0), 'casino', coalesce(tr.casino_total, 0),
-                                   'tax', coalesce(tr.tax_total, 0), 'benefit', coalesce(tr.benefit_total, 0)),
+                                   'tax', coalesce(tr.tax_total, 0), 'benefit', coalesce(tr.benefit_total, 0),
+                                   'confiscated', coalesce(tr.confiscated_total, 0)),
     'top', top, 'top_month', topm,
     'balance', _bal(u));
 end $$;
@@ -1013,7 +1053,7 @@ begin
             'roulette_spin','hilo_state','hilo_start','hilo_guess','hilo_cashout','bj_state',
             'bj_start','bj_hit','bj_stand','bj_double','race_bet','race_state',
             '_now','_month_of','_month_start','_next_month','_prev_month','_jday','_dlabel','_fmt',
-            '_tax','_income','_notice','_debt','_pay_tax','_process_month','_tax_tick','_tax_badge',
+            '_tax','_income','_notice','_debt','_pay_tax','_process_month','_tax_tick','_tax_badge','_assets',
             'tax_state','tax_file','tax_pay') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' or (not race_open and f.proname in ('race_bet', 'race_state')) then
