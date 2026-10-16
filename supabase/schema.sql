@@ -68,15 +68,78 @@ create table if not exists public.race_bets (
 create index if not exists race_bets_race_idx on public.race_bets(race_id);
 create index if not exists race_bets_user_idx on public.race_bets(user_id, race_id desc);
 
+-- 税と給付金 ----------------------------------------------------------
+-- 設定（テスト用の時計 fake_now など。ふだんは空のまま）
+create table if not exists public.app_settings (
+  key   text primary key,
+  value text
+);
+
+-- 国庫（1行だけ）。balance がマイナスのときは国債（国の借金）
+create table if not exists public.treasury (
+  id            int primary key default 1 check (id = 1),
+  balance       bigint not null default 0,
+  casino_total  bigint not null default 0,
+  tax_total     bigint not null default 0,
+  benefit_total bigint not null default 0
+);
+-- はじめて作るときは、これまでのカジノのもうけを国庫に入れておく
+insert into public.treasury(id, balance, casino_total)
+select 1, s, s from (select coalesce(sum(bet - payout), 0)::bigint s from public.tx_log
+                      where game in ('slot','roulette','hilo','blackjack','race')) z
+on conflict (id) do nothing;
+
+-- 締めた月
+create table if not exists public.tax_months (
+  month        int primary key,          -- 例: 202610
+  processed    boolean not null default false,
+  processed_at timestamptz
+);
+
+-- 申告書（1人1か月1枚）
+create table if not exists public.tax_returns (
+  user_id     uuid not null references public.profiles(id) on delete cascade,
+  month       int not null,
+  declared    bigint,                     -- 申告した所得（null = 申告なし）
+  filed_at    timestamptz,
+  true_income bigint,                     -- 締めのときに記録から出した本当の所得
+  tax_due     bigint not null default 0,  -- 納める額（加算税・延滞金こみ）
+  tax_paid    bigint not null default 0,
+  penalty     bigint not null default 0,  -- 加算税・延滞金の合計
+  ontime      boolean not null default false,
+  audited     boolean not null default false,
+  evasion     boolean not null default false,
+  status      text,
+  benefit     bigint not null default 0,
+  primary key (user_id, month)
+);
+
+-- 役所からのお知らせ
+create table if not exists public.notices (
+  id         bigserial primary key,
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  body       text not null,
+  seen       boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create index if not exists notices_user_idx on public.notices(user_id, id desc);
+create index if not exists tx_log_user_time_idx on public.tx_log(user_id, created_at);
+
 -- 画面から直接テーブルを読み書きさせない（全部 下の関数を通す）
-alter table public.profiles   enable row level security;
-alter table public.tx_log     enable row level security;
-alter table public.hilo_games enable row level security;
-alter table public.bj_games   enable row level security;
-alter table public.races      enable row level security;
-alter table public.race_bets  enable row level security;
+alter table public.profiles     enable row level security;
+alter table public.tx_log       enable row level security;
+alter table public.hilo_games   enable row level security;
+alter table public.bj_games     enable row level security;
+alter table public.races        enable row level security;
+alter table public.race_bets    enable row level security;
+alter table public.app_settings enable row level security;
+alter table public.treasury     enable row level security;
+alter table public.tax_months   enable row level security;
+alter table public.tax_returns  enable row level security;
+alter table public.notices      enable row level security;
 revoke all on public.profiles, public.tx_log, public.hilo_games, public.bj_games,
-              public.races, public.race_bets from anon, authenticated;
+              public.races, public.race_bets, public.app_settings, public.treasury,
+              public.tax_months, public.tax_returns, public.notices from anon, authenticated;
 
 -- ---------------------------------------------------------------------
 -- 内部用の小さな関数
@@ -92,6 +155,15 @@ end $$;
 create or replace function public._rint(n int) returns int
 language sql volatile as $$ select floor(random() * n)::int $$;
 
+-- いまの時刻（app_settings に fake_now があればその時刻。テスト用）
+create or replace function public._now() returns timestamptz
+language sql stable set search_path = public as $$
+  select coalesce((select value::timestamptz from app_settings where key = 'fake_now'), now())
+$$;
+alter table public.profiles alter column created_at set default public._now();
+alter table public.tx_log   alter column created_at set default public._now();
+alter table public.notices  alter column created_at set default public._now();
+
 -- 賭け金を引く
 create or replace function public._take(u uuid, amt bigint) returns bigint
 language plpgsql set search_path = public as $$
@@ -103,23 +175,33 @@ begin
   return b;
 end $$;
 
--- 払い戻す
+-- 払い戻す（税金の滞納があると、払い戻しから差し押さえる）
 create or replace function public._give(u uuid, amt bigint) returns bigint
 language plpgsql set search_path = public as $$
 declare b bigint;
 begin
   update profiles set balance = balance + greatest(amt, 0) where id = u returning balance into b;
+  if amt > 0 and exists (select 1 from tax_returns t join tax_months mm on mm.month = t.month and mm.processed
+                          where t.user_id = u and t.tax_due > t.tax_paid) then
+    perform _pay_tax(u, amt, true, 'garnish');
+    b := _bal(u);
+  end if;
   return b;
 end $$;
 
 create or replace function public._bal(u uuid) returns bigint
 language sql stable set search_path = public as $$ select balance from profiles where id = u $$;
 
+-- 記録する。ゲームのときは、カジノのもうけ（賭け金 − 払い戻し）を国庫に入れる
 create or replace function public._log(u uuid, g text, bet bigint, pay bigint, d jsonb) returns void
-language sql set search_path = public as $$
+language plpgsql set search_path = public as $$
+begin
   insert into tx_log(user_id, game, bet, payout, balance_after, detail)
-  values (u, g, bet, pay, (select balance from profiles where id = u), d)
-$$;
+  values (u, g, bet, pay, (select balance from profiles where id = u), d);
+  if g in ('slot','roulette','hilo','blackjack','race') then
+    update treasury set balance = balance + (bet - pay), casino_total = casino_total + (bet - pay) where id = 1;
+  end if;
+end $$;
 
 -- カード 0〜51 → {r:1..13, s:0..3}
 create or replace function public._card(c int) returns jsonb
@@ -142,7 +224,15 @@ begin
   values (u, 'プレイヤー' || lpad(_rint(10000)::text, 4, '0'), 1000)
   on conflict (id) do nothing;
   if found then perform _log(u, 'start', 0, 1000, '{"note":"はじめての配布"}'); end if;
-  return (select jsonb_build_object('nickname', nickname, 'balance', balance) from profiles where id = u);
+  -- 締めの日を過ぎていたら、税の締め（調査・差し押さえ・給付金）をここで行う
+  -- 万一失敗してもログインは止めない
+  begin
+    perform _tax_tick();
+  exception when others then
+    raise warning 'tax tick failed: %', sqlerrm;
+  end;
+  return (select jsonb_build_object('nickname', nickname, 'balance', balance, 'tax', _tax_badge(u))
+            from profiles where id = u);
 end $$;
 
 create or replace function public.my_profile() returns jsonb
@@ -596,6 +686,317 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
+-- 税と給付金（ゲームの中だけの税です。実際の税金とは関係ありません）
+--   1年 = 1か月（日本時間）。毎月1日〜15日に前の月の分を申告し、16日に締める
+--   所得 = その月の（払い戻し − 賭け金）。マイナスなら0。初回の配布と給付金はかからない
+--   税額 = 基礎控除500を引いた残りに 〜2,000:5% 〜10,000:10% 〜50,000:20% 〜200,000:33% それ以上:45%
+--   税務調査：申告した人から 10% ＋ ごまかしの大きさ×80% の確率で。見つかると不足分＋重加算税35%
+--   申告なし：記録から計算して無申告加算税15%。期限までに納めない分：延滞金10%＋残高から差し押さえ
+--   給付金500：期限内に申告して納め、脱税が見つからず、滞納がない人（その月にいた人だけ）
+-- ---------------------------------------------------------------------
+create or replace function public._month_of(ts timestamptz) returns int
+language sql stable as $$ select to_char(ts at time zone 'Asia/Tokyo', 'YYYYMM')::int $$;
+
+create or replace function public._month_start(m int) returns timestamptz
+language sql stable as $$ select make_timestamptz(m / 100, m % 100, 1, 0, 0, 0, 'Asia/Tokyo') $$;
+
+create or replace function public._next_month(m int) returns int
+language sql immutable as $$ select case when m % 100 = 12 then (m / 100 + 1) * 100 + 1 else m + 1 end $$;
+
+create or replace function public._prev_month(m int) returns int
+language sql immutable as $$ select case when m % 100 = 1 then (m / 100 - 1) * 100 + 12 else m - 1 end $$;
+
+create or replace function public._jday(ts timestamptz) returns int
+language sql stable as $$ select extract(day from ts at time zone 'Asia/Tokyo')::int $$;
+
+create or replace function public._dlabel(ts timestamptz) returns text
+language sql stable as $$ select to_char(ts at time zone 'Asia/Tokyo', 'FMMM"月"FMDD"日"') $$;
+
+create or replace function public._fmt(n bigint) returns text
+language sql immutable as $$ select to_char(n, 'FM999,999,999,999,990') $$;
+
+-- 税額（累進課税）
+create or replace function public._tax(inc bigint) returns bigint
+language plpgsql immutable as $$
+declare t numeric := greatest(coalesce(inc, 0) - 500, 0);
+begin
+  return floor(
+      least(t, 2000) * 0.05
+    + greatest(least(t, 10000)  - 2000,   0) * 0.10
+    + greatest(least(t, 50000)  - 10000,  0) * 0.20
+    + greatest(least(t, 200000) - 50000,  0) * 0.33
+    + greatest(t - 200000, 0) * 0.45);
+end $$;
+
+-- その月の所得（記録から）
+create or replace function public._income(u uuid, m int) returns bigint
+language sql stable set search_path = public as $$
+  select greatest(coalesce(sum(payout - bet), 0), 0)::bigint from tx_log
+   where user_id = u and game in ('slot','roulette','hilo','blackjack','race')
+     and created_at >= _month_start(m) and created_at < _month_start(_next_month(m))
+$$;
+
+create or replace function public._notice(u uuid, t text) returns void
+language sql set search_path = public as $$ insert into notices(user_id, body) values (u, t) $$;
+
+-- 滞納（締めたあとの月で、まだ納めていない額）
+create or replace function public._debt(u uuid) returns bigint
+language sql stable set search_path = public as $$
+  select coalesce(sum(t.tax_due - t.tax_paid), 0)::bigint
+    from tax_returns t join tax_months mm on mm.month = t.month and mm.processed
+   where t.user_id = u and t.tax_due > t.tax_paid
+$$;
+
+-- 残高から税を納める（古い月から）。only_overdue = 滞納の分だけに充てる。納めた額を返す
+create or replace function public._pay_tax(u uuid, maxamt bigint, only_overdue boolean, kind text) returns bigint
+language plpgsql set search_path = public as $$
+declare rest bigint := least(greatest(coalesce(maxamt, 0), 0), coalesce(_bal(u), 0)); r record; x bigint; total bigint := 0;
+begin
+  if rest <= 0 then return 0; end if;
+  for r in select t.month, t.tax_due - t.tax_paid as owe
+             from tax_returns t left join tax_months mm on mm.month = t.month
+            where t.user_id = u and t.tax_due > t.tax_paid and (not only_overdue or coalesce(mm.processed, false))
+            order by t.month
+            for update of t loop
+    exit when rest <= 0;
+    x := least(rest, r.owe);
+    update tax_returns set tax_paid = tax_paid + x where user_id = u and month = r.month;
+    rest := rest - x; total := total + x;
+  end loop;
+  if total > 0 then
+    update profiles set balance = balance - total where id = u;
+    update treasury set balance = balance + total, tax_total = tax_total + total where id = 1;
+    perform _log(u, kind, total, 0, null);
+  end if;
+  return total;
+end $$;
+
+-- 1か月分を締める（税務調査・無申告の決定・延滞金・差し押さえ・給付金）
+create or replace function public._process_month(m int) returns void
+language plpgsql set search_path = public as $$
+declare
+  p record; r tax_returns; tru bigint; f numeric; ctax bigint; dtax bigint; x bigint; pen bigint;
+  unpaid bigint; refund bigint; got bigint;
+  mend timestamptz := _month_start(_next_month(m));
+  lbl text := (m % 100)::text || '月分';
+begin
+  insert into tax_months(month) values (m) on conflict (month) do nothing;
+  if (select processed from tax_months where month = m for update) then return; end if;
+
+  for p in select id from profiles where created_at < mend order by created_at loop
+    tru := _income(p.id, m);
+    select * into r from tax_returns where user_id = p.id and month = m for update;
+    if found and r.declared is not null then
+      -- 申告した人
+      unpaid := greatest(r.tax_due - r.tax_paid, 0);
+      update tax_returns set true_income = tru, ontime = (unpaid = 0) where user_id = p.id and month = m;
+      f := case when tru > 0 and r.declared < tru then (tru - r.declared)::numeric / tru else 0 end;
+      if random() < 0.10 + 0.80 * f then
+        ctax := _tax(tru); dtax := _tax(r.declared);
+        if ctax > dtax then
+          x := ctax - dtax; pen := floor(x * 0.35);
+          update tax_returns set audited = true, evasion = true, status = 'evasion',
+                 tax_due = tax_due + x + pen, penalty = penalty + pen
+           where user_id = p.id and month = m;
+          perform _notice(p.id, format('【税務調査】%s：申告より %s 多い所得が見つかりました。不足分 %s ＋ 重加算税 %s を追徴します。この月の給付金はもらえません。',
+                                       lbl, _fmt(tru - r.declared), _fmt(x), _fmt(pen)));
+        elsif dtax > ctax then
+          x := dtax - ctax;
+          update tax_returns set audited = true, status = 'refund', tax_due = tax_due - x
+           where user_id = p.id and month = m
+          returning greatest(tax_paid - tax_due, 0) into refund;
+          if refund > 0 then
+            update tax_returns set tax_paid = tax_due where user_id = p.id and month = m;
+            update profiles set balance = balance + refund where id = p.id;
+            update treasury set balance = balance - refund, tax_total = tax_total - refund where id = 1;
+            perform _log(p.id, 'refund', 0, refund, jsonb_build_object('month', m));
+          end if;
+          perform _notice(p.id, format('【税務調査】%s：所得を多く申告していたので、税額を %s 減らしました%s。',
+                                       lbl, _fmt(x), case when refund > 0 then '（' || _fmt(refund) || ' を還付）' else '' end));
+        else
+          update tax_returns set audited = true, status = 'audit_ok' where user_id = p.id and month = m;
+          perform _notice(p.id, format('【税務調査】%s：問題ありませんでした。', lbl));
+        end if;
+      end if;
+      if unpaid > 0 then
+        pen := floor(unpaid * 0.10);
+        update tax_returns set tax_due = tax_due + pen, penalty = penalty + pen where user_id = p.id and month = m;
+        perform _notice(p.id, format('%sの税金 %s が期限までに納められていなかったので、延滞金 %s がつきました。この月の給付金はもらえません。',
+                                     lbl, _fmt(unpaid), _fmt(pen)));
+      end if;
+    else
+      -- 申告しなかった人：税がかかるなら税務署が決める
+      ctax := _tax(tru);
+      if ctax > 0 then
+        pen := floor(ctax * 0.15);
+        insert into tax_returns(user_id, month, true_income, tax_due, penalty, status)
+        values (p.id, m, tru, ctax + pen, pen, 'no_filing')
+        on conflict (user_id, month) do update
+          set true_income = excluded.true_income, tax_due = excluded.tax_due,
+              penalty = excluded.penalty, status = excluded.status;
+        perform _notice(p.id, format('【決定】%sの申告がなかったので、税務署が所得 %s として税額 %s ＋ 無申告加算税 %s を決めました。',
+                                     lbl, _fmt(tru), _fmt(ctax), _fmt(pen)));
+      end if;
+    end if;
+  end loop;
+
+  update tax_months set processed = true, processed_at = now() where month = m;
+
+  -- 期限までに納められていない分は、残高から差し押さえ
+  for r in select * from tax_returns where month = m and tax_due > tax_paid loop
+    got := _pay_tax(r.user_id, _bal(r.user_id), true, 'garnish');
+    if got > 0 then
+      perform _notice(r.user_id, format('未納の税金として、残高から %s を差し押さえました。', _fmt(got)));
+    end if;
+    if _debt(r.user_id) > 0 then
+      perform _notice(r.user_id, format('まだ %s の滞納があります。当たりが出ると自動で差し押さえられます。', _fmt(_debt(r.user_id))));
+    end if;
+  end loop;
+
+  -- 給付金：期限内に申告して納め、脱税が見つからず、滞納がない人
+  for r in select * from tax_returns where month = m and declared is not null and ontime and not evasion loop
+    if _debt(r.user_id) = 0 then
+      update profiles set balance = balance + 500 where id = r.user_id;
+      update treasury set balance = balance - 500, benefit_total = benefit_total + 500 where id = 1;
+      update tax_returns set benefit = 500 where user_id = r.user_id and month = m;
+      perform _log(r.user_id, 'benefit', 0, 500, jsonb_build_object('month', m));
+      perform _notice(r.user_id, format('%sの給付金 500 が入りました。', lbl));
+    else
+      perform _notice(r.user_id, format('%sの給付金は、滞納があるためもらえませんでした。', lbl));
+    end if;
+  end loop;
+end $$;
+
+-- 締めの日を過ぎた月があれば締める（だれかが開いたときに動く）
+create or replace function public._tax_tick() returns void
+language plpgsql set search_path = public as $$
+declare lastm int := _prev_month(_month_of(_now() - interval '15 days')); m int;
+begin
+  if exists (select 1 from tax_months where month = lastm and processed) then return; end if;
+  perform pg_advisory_xact_lock(20261016);
+  select _month_of(min(created_at)) into m from profiles;
+  if m is null then return; end if;
+  while m <= lastm loop
+    if not coalesce((select processed from tax_months where month = m), false) then
+      perform _process_month(m);
+    end if;
+    m := _next_month(m);
+  end loop;
+end $$;
+
+-- 役所タブに印をつけるための情報
+create or replace function public._tax_badge(u uuid) returns jsonb
+language plpgsql set search_path = public as $$
+declare nowt timestamptz := _now(); cm int := _month_of(nowt);
+begin
+  return jsonb_build_object(
+    'notices', (select count(*) from notices where user_id = u and not seen),
+    'filing_open', _jday(nowt) <= 15 and (select created_at from profiles where id = u) < _month_start(cm),
+    'filed', exists (select 1 from tax_returns where user_id = u and month = _prev_month(cm) and declared is not null),
+    'debt', _debt(u));
+end $$;
+
+-- 役所の画面
+create or replace function public.tax_state() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  u uuid := _me(); nowt timestamptz; cm int; fm int; d int; created timestamptz; r tax_returns;
+  filing jsonb; notes jsonb; rets jsonb; topm int; top jsonb; tr treasury; inc bigint; dl timestamptz; nx timestamptz;
+begin
+  perform _tax_tick();
+  nowt := _now(); cm := _month_of(nowt); fm := _prev_month(cm); d := _jday(nowt);
+  select created_at into created from profiles where id = u;
+  if created is null then raise exception 'ログインしなおしてください'; end if;
+
+  if d <= 15 and created < _month_start(cm) then
+    select * into r from tax_returns where user_id = u and month = fm;
+    dl := _month_start(cm) + interval '15 days';
+    filing := jsonb_build_object(
+      'month', fm, 'deadline', _dlabel(dl - interval '1 day'),
+      'days_left', ceil(extract(epoch from dl - nowt) / 86400)::int,
+      'recorded', _income(u, fm),
+      'filed', r.declared is not null, 'declared', r.declared,
+      'tax_due', coalesce(r.tax_due, 0), 'tax_paid', coalesce(r.tax_paid, 0));
+  end if;
+  nx := _month_start(_next_month(cm));
+  inc := _income(u, cm);
+
+  select coalesce(jsonb_agg(jsonb_build_object('body', body, 'new', not seen,
+           'at', _dlabel(created_at)) order by id desc), '[]'::jsonb) into notes
+    from (select * from notices where user_id = u order by id desc limit 20) z;
+  update notices set seen = true where user_id = u and not seen;
+
+  select coalesce(jsonb_agg(jsonb_build_object('month', t.month, 'declared', t.declared,
+           'true_income', case when coalesce(mm.processed, false) then t.true_income end,
+           'tax_due', t.tax_due, 'tax_paid', t.tax_paid, 'penalty', t.penalty, 'status', t.status,
+           'audited', t.audited, 'evasion', t.evasion, 'benefit', t.benefit,
+           'processed', coalesce(mm.processed, false)) order by t.month desc), '[]'::jsonb) into rets
+    from (select * from tax_returns where user_id = u order by month desc limit 12) t
+    left join tax_months mm on mm.month = t.month;
+
+  select max(month) into topm from tax_months where processed;
+  select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'tax', t.tax_paid) order by t.tax_paid desc), '[]'::jsonb) into top
+    from (select * from tax_returns where month = topm and tax_paid > 0 order by tax_paid desc limit 10) t
+    join profiles p on p.id = t.user_id;
+
+  select * into tr from treasury where id = 1;
+
+  return jsonb_build_object(
+    'current', jsonb_build_object('month', cm, 'income', inc, 'tax', _tax(inc)),
+    'filing', filing,
+    'next', jsonb_build_object('month', cm, 'from', _dlabel(nx), 'to', _dlabel(nx + interval '14 days')),
+    'debt', _debt(u),
+    'returns', rets, 'notices', notes,
+    'treasury', jsonb_build_object('balance', coalesce(tr.balance, 0), 'casino', coalesce(tr.casino_total, 0),
+                                   'tax', coalesce(tr.tax_total, 0), 'benefit', coalesce(tr.benefit_total, 0)),
+    'top', top, 'top_month', topm,
+    'balance', _bal(u));
+end $$;
+
+-- 申告する（期限内なら何度でも出し直せる）
+create or replace function public.tax_file(p_declared bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); nowt timestamptz; cm int; fm int; r tax_returns; refund bigint;
+begin
+  perform _tax_tick();
+  nowt := _now(); cm := _month_of(nowt); fm := _prev_month(cm);
+  if _jday(nowt) > 15 then
+    raise exception '今は申告の期間ではありません（毎月1日〜15日に、前の月の分を申告します）';
+  end if;
+  if (select created_at from profiles where id = u) >= _month_start(cm) then
+    raise exception '%月分の申告はありません（%月にはまだ登録していませんでした）', fm % 100, fm % 100;
+  end if;
+  if p_declared is null or p_declared < 0 or p_declared > 1000000000000 then
+    raise exception '所得は0以上の数字で書いてください';
+  end if;
+  insert into tax_returns(user_id, month, declared, filed_at, tax_due, status)
+  values (u, fm, p_declared, nowt, _tax(p_declared), 'filed')
+  on conflict (user_id, month) do update
+    set declared = excluded.declared, filed_at = excluded.filed_at, tax_due = excluded.tax_due, status = 'filed'
+  returning * into r;
+  -- 出し直して税額が減ったら、納めすぎた分を返す
+  if r.tax_paid > r.tax_due then
+    refund := r.tax_paid - r.tax_due;
+    update tax_returns set tax_paid = tax_due where user_id = u and month = fm;
+    update profiles set balance = balance + refund where id = u;
+    update treasury set balance = balance - refund, tax_total = tax_total - refund where id = 1;
+    perform _log(u, 'refund', 0, refund, jsonb_build_object('month', fm));
+  end if;
+  return tax_state();
+end $$;
+
+-- 納める（滞納の古い月から、今の申告の分まで、残高でまかなえるだけ）
+create or replace function public.tax_pay() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); got bigint;
+begin
+  perform _tax_tick();
+  got := _pay_tax(u, _bal(u), false, 'tax');
+  if got = 0 then raise exception '納める税金がないか、AiliNaXが足りません'; end if;
+  return tax_state() || jsonb_build_object('paid', got);
+end $$;
+
+-- ---------------------------------------------------------------------
 -- 実行権限：内部用（_ではじまる）は画面から呼べないようにする
 -- ---------------------------------------------------------------------
 do $$
@@ -610,7 +1011,10 @@ begin
             '_hilo_json','_bj_total','_bj_json','_bj_finish','_race_cur','_race_get','_race_settle',
             'ensure_profile','my_profile','set_nickname','leaderboard','my_history','slot_spin',
             'roulette_spin','hilo_state','hilo_start','hilo_guess','hilo_cashout','bj_state',
-            'bj_start','bj_hit','bj_stand','bj_double','race_bet','race_state') loop
+            'bj_start','bj_hit','bj_stand','bj_double','race_bet','race_state',
+            '_now','_month_of','_month_start','_next_month','_prev_month','_jday','_dlabel','_fmt',
+            '_tax','_income','_notice','_debt','_pay_tax','_process_month','_tax_tick','_tax_badge',
+            'tax_state','tax_file','tax_pay') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' or (not race_open and f.proname in ('race_bet', 'race_state')) then
       execute format('revoke all on function %s from authenticated', f.sig);

@@ -149,6 +149,24 @@ canvas#track{width:100%;display:block;border-radius:10px;background:#3E7A5A;touc
 .rank li .v{margin-left:auto;font-weight:700}
 .links a{color:var(--accent);font-weight:700}
 .terms{font-size:13px;line-height:1.8;color:var(--muted);padding-left:18px;margin:0}
+/* 役所 */
+nav.tabs button{position:relative}
+nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 10px);width:8px;height:8px;border-radius:50%;background:var(--red)}
+.okbox{background:var(--soft);border-radius:10px;padding:10px 12px;font-size:14px;line-height:1.6;margin-bottom:10px}
+.warnbox{background:rgba(196,58,49,.08);border:1px solid rgba(196,58,49,.25);border-radius:10px;padding:10px 12px;font-size:14px;line-height:1.6}
+.notes{list-style:none;margin:0;padding:0;font-size:14px;line-height:1.6}
+.notes li{padding:8px 0;border-top:1px solid var(--line)}
+.notes li:first-child{border-top:0}
+.notes li.new{font-weight:700}
+.notes li.new::before{content:"NEW";font-size:10px;font-weight:800;color:#fff;background:var(--red);border-radius:4px;padding:1px 4px;margin-right:6px;vertical-align:1px}
+.bigline{font-size:28px;font-weight:800;font-variant-numeric:tabular-nums}
+.kv{display:grid;grid-template-columns:1fr auto;gap:6px 12px;font-size:14px;font-variant-numeric:tabular-nums}
+.kv b{text-align:right}
+.hist .mrow{padding:8px 0;border-top:1px solid var(--line);font-size:13px;line-height:1.6}
+.hist .mrow:first-child{border-top:0}
+.tag{display:inline-block;font-size:11px;font-weight:700;border-radius:999px;padding:1px 8px;background:var(--bg);border:1px solid var(--line);margin-left:4px}
+.tag.bad{color:var(--lose);border-color:rgba(196,58,49,.35)}
+.tag.good{color:var(--win);border-color:rgba(31,107,79,.35)}
 @media (min-width:700px){ .reel{width:110px;height:120px;font-size:56px} }
 </style>
 </head>
@@ -301,6 +319,31 @@ canvas#track{width:100%;display:block;border-radius:10px;background:#3E7A5A;touc
   <p class="muted small">次のカードが今より上か下かをあてます（A がいちばん小さく K がいちばん大きい。同じ数字は負け）。当たるたびに倍率が上がり、好きなときに受け取れます。はずれると賭け金はなくなります。</p>
 </section>
 
+<!-- 役所（税と給付金） -->
+<section id="vTax" class="view hidden">
+  <div id="txNotices"></div>
+  <div class="card" id="txFiling"></div>
+  <div class="card hidden" id="txDebt"></div>
+  <div class="card" id="txNow"></div>
+  <div class="card" id="txTreasury"></div>
+  <div class="card" id="txTop"></div>
+  <div class="card hist" id="txHist"></div>
+  <div class="card">
+    <h3 style="margin-top:0">税のきまり</h3>
+    <ul class="terms">
+      <li>1年＝1か月（日本時間）。毎月1日〜15日に、前の月の分を申告します。</li>
+      <li>所得＝その月の「払い戻し − 賭け金」（マイナスなら0）。はじめての配布と給付金には税金がかかりません。</li>
+      <li>税額：所得から基礎控除500を引いた残りに、〜2,000は5%、〜10,000は10%、〜50,000は20%、〜200,000は33%、それより上は45%。</li>
+      <li>申告した額は自分で書きます。少なく書くこともできますが、16日に税務調査があります。調査される確率は基本10%で、ごまかしが大きいほど高くなります（最大90%）。見つかると不足分＋重加算税35%を追徴します。</li>
+      <li>申告しなかった人は、税務署が記録から計算して無申告加算税15%をつけます。</li>
+      <li>期限（15日）までに納めなかった分は、延滞金10%をつけて残高から差し押さえます。足りない分は、当たりが出るたびに差し押さえます。</li>
+      <li>給付金500：期限内に申告して期限までに納め、脱税が見つからず、滞納がない人に16日に入ります（その月にまだ登録していなかった人は対象外）。</li>
+      <li>カジノのもうけ・税金・罰金は国庫に入り、給付金は国庫から出ます。足りないときは国債（国の借金）になります。</li>
+      <li>ゲームの中だけの税金です。実際の税金とは関係ありません。</li>
+    </ul>
+  </div>
+</section>
+
 <!-- その他 -->
 <section id="vMore" class="view hidden">
   <div class="card">
@@ -337,6 +380,7 @@ canvas#track{width:100%;display:block;border-radius:10px;background:#3E7A5A;touc
   <button data-v="vBj"><b>♠</b>BJ</button>
   <button data-v="vRou"><b>◎</b>ルーレット</button>
   <button data-v="vHilo"><b>↕</b>ハイロー</button>
+  <button data-v="vTax"><b>税</b>役所</button>
   <button data-v="vMore"><b>≡</b>その他</button>
 </div></nav>
 
@@ -412,7 +456,7 @@ async function enter() {
   entered = true;
   try {
     const p = await call('ensure_profile');
-    setBal(p.balance); $('#nick').value = p.nickname;
+    setBal(p.balance); $('#nick').value = p.nickname; setTaxDot(p.tax);
   } catch (e) { toast(e.message); show('vLogin'); entered = false; return; }
   if (location.hash.includes('access_token')) history.replaceState(null, '', location.pathname);
   $('#bal').classList.remove('hidden'); $('#tabs').classList.remove('hidden');
@@ -428,6 +472,7 @@ function go(v) {
   if (v === 'vBj') bjLoad();
   if (v === 'vHilo') hiloLoad();
   if (v === 'vMore') moreLoad();
+  if (v === 'vTax') taxLoad();
 }
 $$('#tabs button').forEach(b => b.onclick = () => go(b.dataset.v));
 if (!RACE_ON) $('#tabs button[data-v=vRace]').classList.add('hidden');
@@ -733,8 +778,116 @@ $('#ruSpin').onclick = async () => {
   btn.disabled = false;
 };
 
+/* =================================================================
+   役所（税と給付金）
+   ================================================================= */
+// 税額：基礎控除500、残りに 5/10/20/33/45%（サーバーと同じ計算）
+function calcTax(inc) {
+  const t = Math.max(0, Math.floor(Number(inc) || 0) - 500);
+  let x = 0, lo = 0;
+  for (const [hi, pct] of [[2000, 5], [10000, 10], [50000, 20], [200000, 33], [Infinity, 45]]) {
+    if (t > lo) x += (Math.min(t, hi) - lo) * pct;
+    lo = hi;
+  }
+  return Math.floor(x / 100);
+}
+const mlab = m => `${m % 100}月`;
+function setTaxDot(b) {
+  const on = !!b && (b.notices > 0 || (b.filing_open && !b.filed) || b.debt > 0);
+  $('#tabs button[data-v=vTax]').classList.toggle('dot', on);
+}
+let TX = null;
+async function taxLoad() {
+  try { TX = await call('tax_state'); taxRender(); }
+  catch (e) { toast(e.message); }
+}
+function taxRender() {
+  const T = TX, F = T.filing;
+  setBal(T.balance);
+  setTaxDot({ notices: 0, filing_open: !!F, filed: !!(F && F.filed), debt: T.debt });
+
+  // お知らせ
+  $('#txNotices').innerHTML = T.notices.length
+    ? `<div class="card"><h3 style="margin-top:0">お知らせ</h3><ul class="notes">${T.notices.slice(0, 8).map(n =>
+        `<li class="${n.new ? 'new' : ''}">${esc(n.body)} <span class="muted small">${n.at}</span></li>`).join('')}</ul></div>` : '';
+
+  // 確定申告
+  if (F) {
+    const owe = F.tax_due - F.tax_paid;
+    $('#txFiling').innerHTML = `<h3 style="margin-top:0">確定申告（${mlab(F.month)}分）</h3>
+      <p class="muted small" style="margin:0 0 10px">期限：${F.deadline}まで（あと${F.days_left}日）</p>
+      ${F.filed ? `<div class="okbox">申告ずみ：所得 <b>${fmt(F.declared)}</b> → 税額 <b>${fmt(F.tax_due)}</b><br>${
+        owe > 0 ? `<b style="color:var(--lose)">あと ${fmt(owe)} を期限までに納めてください</b>` : (F.tax_due > 0 ? '納付ずみです' : '税金はかかりません')}<br>
+        <span class="muted small">期限内なら出し直せます</span></div>` : ''}
+      <div class="row" style="margin-bottom:8px"><span class="muted small grow">記録上の${mlab(F.month)}のもうけ</span><b class="num">${fmt(F.recorded)}</b>
+        <button class="btn" id="txRec" style="padding:6px 10px;font-size:13px">この額を書く</button></div>
+      <div class="bet"><div class="in"><span class="muted small">所得</span><input id="txIn" type="number" inputmode="numeric" min="0" step="1" value="${F.filed ? F.declared : F.recorded}"><span class="unit">AiliNaX</span></div></div>
+      <p style="margin:10px 0">税額：<b class="num" id="txCalc"></b> AiliNaX</p>
+      <button class="btn main big wide" id="txFile">${F.filed ? 'この額で出し直す' : '申告する'}</button>
+      ${owe > 0 ? `<button class="btn big wide" id="txPay" style="margin-top:8px">納める（${fmt(owe)}）</button>` : ''}
+      <p class="muted small" style="margin:10px 0 0">少なく書くこともできますが、16日の税務調査で見つかると不足分＋重加算税35%。期限内に申告して期限までに納めた人には、16日に給付金 500 が入ります。</p>`;
+    const upd = () => { $('#txCalc').textContent = fmt(calcTax($('#txIn').value)); };
+    upd(); $('#txIn').oninput = upd;
+    $('#txRec').onclick = () => { $('#txIn').value = F.recorded; upd(); };
+    $('#txFile').onclick = async () => {
+      const raw = $('#txIn').value.trim();
+      if (!/^\d+$/.test(raw)) return toast('所得は0以上の数字で書いてください');
+      $('#txFile').disabled = true;
+      try { TX = await call('tax_file', { p_declared: Number(raw) }); taxRender(); toast(F.filed ? '出し直しました' : '申告しました'); }
+      catch (e) { toast(e.message); $('#txFile').disabled = false; }
+    };
+    if ($('#txPay')) $('#txPay').onclick = taxPay;
+  } else {
+    $('#txFiling').innerHTML = `<h3 style="margin-top:0">確定申告</h3>
+      <p style="margin:0">次の申告は <b>${T.next.from}〜${T.next.to}</b>（${mlab(T.next.month)}分）です。</p>`;
+  }
+
+  // 滞納
+  $('#txDebt').classList.toggle('hidden', !(T.debt > 0));
+  if (T.debt > 0) {
+    $('#txDebt').innerHTML = `<div class="warnbox"><b>滞納 ${fmt(T.debt)} AiliNaX</b><br>当たりが出ると自動で差し押さえられます。給付金ももらえません。</div>
+      <button class="btn main big wide" id="txPay2" style="margin-top:10px">いま納める</button>`;
+    $('#txPay2').onclick = taxPay;
+  }
+
+  // 今月
+  $('#txNow').innerHTML = `<h3 style="margin-top:0">今月（${mlab(T.current.month)}）のもうけ</h3>
+    <div class="bigline">${fmt(T.current.income)}</div>
+    <p class="muted small" style="margin:4px 0 0">このままだと税額 <b>${fmt(T.current.tax)}</b>（${T.next.from}〜${T.next.to}に申告）。負けている月は0になります。</p>`;
+
+  // 国庫
+  const tb = T.treasury.balance;
+  $('#txTreasury').innerHTML = `<h3 style="margin-top:0">国庫</h3>
+    <div class="kv"><span>${tb >= 0 ? '残高' : '国債（国の借金）'}</span><b style="color:${tb >= 0 ? 'inherit' : 'var(--lose)'}">${fmt(Math.abs(tb))}</b>
+    <span class="muted">カジノのもうけ（累計）</span><b>${fmt(T.treasury.casino)}</b>
+    <span class="muted">税収（累計）</span><b>${fmt(T.treasury.tax)}</b>
+    <span class="muted">給付金（累計）</span><b>${fmt(T.treasury.benefit)}</b></div>`;
+
+  // 高額納税者番付
+  $('#txTop').innerHTML = `<h3 style="margin-top:0">高額納税者番付${T.top_month ? `（${mlab(T.top_month)}分）` : ''}</h3>` +
+    (T.top.length ? `<ul class="rank">${T.top.map((r, i) => `<li><b>${i + 1}</b><span>${esc(r.nickname)}</span><span class="v">${fmt(r.tax)}</span></li>`).join('')}</ul>`
+                  : '<p class="muted small" style="margin:0">毎月16日に発表します。</p>');
+
+  // 記録
+  const ST = { filed: '', audit_ok: '<span class="tag good">調査：問題なし</span>', evasion: '<span class="tag bad">調査：脱税発覚</span>',
+               refund: '<span class="tag good">調査：還付</span>', no_filing: '<span class="tag bad">無申告</span>' };
+  $('#txHist').innerHTML = `<h3 style="margin-top:0">わたしの申告の記録</h3>` + (T.returns.length ? T.returns.map(r => {
+    const owe = r.tax_due - r.tax_paid;
+    return `<div class="mrow"><b>${mlab(r.month)}分</b>${ST[r.status] || ''}${r.benefit ? `<span class="tag good">給付金 +${fmt(r.benefit)}</span>` : ''}<br>
+      申告 ${r.declared == null ? 'なし' : fmt(r.declared)}${r.true_income != null ? `／記録 ${fmt(r.true_income)}` : ''}
+      ／税 ${fmt(r.tax_due)}${r.penalty ? `（うち罰金・延滞金 ${fmt(r.penalty)}）` : ''}
+      ${owe > 0 ? `<b style="color:var(--lose)">／未納 ${fmt(owe)}</b>` : (r.tax_due > 0 ? '／納付ずみ' : '')}
+      ${r.processed ? '' : '<span class="muted">（16日に締め）</span>'}</div>`;
+  }).join('') : '<p class="muted small" style="margin:0">まだありません。</p>');
+}
+async function taxPay() {
+  $$('#vTax .btn').forEach(b => b.disabled = true);
+  try { TX = await call('tax_pay'); taxRender(); toast(`${fmt(TX.paid)} 納めました`); }
+  catch (e) { toast(e.message); $$('#vTax .btn').forEach(b => b.disabled = false); }
+}
+
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬' };
+const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金' };
 async function moreLoad() {
   try {
     const [rk, hs, me] = await Promise.all([call('leaderboard'), call('my_history'), call('my_profile')]);
