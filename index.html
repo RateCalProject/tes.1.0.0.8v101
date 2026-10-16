@@ -283,6 +283,26 @@ h3{font-size:15px;margin:16px 0 8px}
 .wind{display:inline-flex;width:20px;height:20px;border-radius:5px;background:var(--black);color:#fff;font-size:12px;font-weight:800;align-items:center;justify-content:center;flex:none}
 .wind.oya{background:var(--red)}
 .rbar{font-size:10px;font-weight:800;color:#fff;background:#E2A90C;border-radius:4px;padding:1px 5px}
+.bell{margin-left:auto;position:relative;border:1px solid var(--line);background:var(--panel);border-radius:999px;width:38px;height:34px;display:flex;align-items:center;justify-content:center;padding:0;color:var(--ink)}
+.bell + .bal{margin-left:8px}
+.bell .bn{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;border-radius:9px;background:var(--red);color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;padding:0 4px}
+.nt-row{display:flex;gap:8px;padding:10px 2px;border-top:1px solid var(--line);cursor:pointer;align-items:flex-start}
+.nt-row:first-child{border-top:0}
+.nt-row.new{background:var(--soft);border-radius:8px}
+.nt-row .tg2{flex:none;font-size:11px;font-weight:800;border-radius:4px;padding:1px 6px;background:var(--bg);border:1px solid var(--line);margin-top:2px;white-space:nowrap}
+.nt-row .tx{flex:1;font-size:14px;line-height:1.5;word-break:break-word}
+.nt-row .tm{flex:none;font-size:11px;color:var(--muted);white-space:nowrap}
+.men{color:var(--accent);font-weight:700;cursor:pointer;text-decoration:none}
+.men-box{position:relative;z-index:3;display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}
+.men-box button{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:4px 10px;font-size:13px}
+.plink{cursor:pointer}
+.stars{color:#E2A90C;letter-spacing:1px;white-space:nowrap}
+.gtag{font-size:11px;font-weight:800;border-radius:4px;padding:1px 6px;background:#E3F1E9;color:#1F6B4F;margin-left:6px;white-space:nowrap}
+.gtag.gold{background:#FBEBC5;color:#8A5A12}
+.stag.dead{background:#E9E6E0;color:#5A574F}
+.rv-pick{display:flex;gap:2px}
+.rv-pick button{border:0;background:none;font-size:28px;line-height:1;color:#D7D2C6;padding:2px}
+.rv-pick button.on{color:#E2A90C}
 .chat{max-height:220px;overflow:auto;font-size:14px}
 .chat .m{padding:4px 0;border-top:1px solid var(--line)}
 .chat .m:first-child{border-top:0}
@@ -350,6 +370,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 <body>
 <header><div class="wrap">
   <div class="logo">風の芽<small>経済組</small></div>
+  <button class="bell hidden" id="bell" aria-label="通知"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="bn hidden" id="bellN">0</span></button>
   <div class="bal hidden" id="bal"><b class="num" id="balNum">0</b><span>X</span></div>
 </div></header>
 
@@ -374,12 +395,12 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   <div class="card" data-sub="mkt" id="mktFx"></div>
   <div class="card" data-sub="mkt" id="mktStock"></div>
   <div class="card" data-sub="tl">
-    <textarea class="inp" id="tlBody" rows="3" maxlength="140" placeholder="いまどうしてる？（140文字まで）"></textarea>
+    <textarea class="inp" id="tlBody" rows="3" maxlength="140" placeholder="いまどうしてる？（140文字まで。「@」のあとにIDを書くとメンション）"></textarea>
     <div class="row"><span class="muted small grow" id="tlCount">0 / 140</span><button class="btn main s" id="tlSend">投稿</button></div>
     <p class="muted small" style="margin:6px 0 0">TLに残るのは、みんなの投稿の新しい256通までです（古い順に消えます）。</p>
   </div>
   <div class="card" data-sub="tl">
-    <div class="seg" id="tlScope" style="margin-bottom:8px"><button data-k="friends" class="on">フレンド</button><button data-k="all">みんな</button></div>
+    <div class="seg" id="tlScope" style="margin-bottom:8px"><button data-k="friends" class="on">フレンド</button><button data-k="all">みんな</button><button data-k="mention">自分あて</button></div>
     <div id="tlList"></div>
     <button class="btn wide hidden" id="tlMore" style="margin-top:8px">もっと見る</button>
   </div>
@@ -387,6 +408,12 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <h3 style="margin-top:0">フレンド申請</h3>
     <div class="row"><input class="inp grow" id="frTo" inputmode="numeric" maxlength="6" placeholder="相手のID（5けた）" style="margin:0"><button class="btn main s" id="frSend">申請</button></div>
     <p class="muted small" style="margin:6px 0 0">あなたのID：<b id="frMe" style="user-select:all">-----</b>（TLの「＋フレンド」からも申請できます）</p>
+  </div>
+  <div class="card" data-sub="people">
+    <h3 style="margin-top:0">人をさがす</h3>
+    <input class="inp" id="ppQ" placeholder="ニックネームの一部か、ID（5けた）">
+    <div id="ppList"></div>
+    <p class="muted small" style="margin:8px 0 0">何も入れないと、フレンドが並びます。人のページでは、ニックネーム・ID・バッジ・社長をしている会社・書いた本・TLの投稿が見られます（所持金は見えません）。</p>
   </div>
   <div class="card" data-sub="friend"><h3 style="margin-top:0">届いた申請</h3><div id="frIn"></div></div>
   <div class="card" data-sub="friend"><h3 style="margin-top:0">フレンド</h3><div id="frList"></div></div>
@@ -434,6 +461,13 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <h3 style="margin-top:0">会社検索</h3>
     <input class="inp" id="coQ" placeholder="会社名・ID・説明で検索">
     <div id="coList"></div>
+  </div>
+  <div class="card" data-sub="review">
+    <h3 style="margin-top:0">今週の企業評価 <span class="muted small" id="rvWeek"></span></h3>
+    <p class="small" style="margin:0 0 8px">今週関わった会社（買い物・口座・借入・勤め先・持ち株・新聞・請求・送金・取引所）を★で評価すると、<b>週に1回 500 X</b> もらえます。★5がいちばん良い評価です。</p>
+    <div id="rvList"></div>
+    <button class="btn main wide" id="rvSend" style="margin-top:8px">評価を送る</button>
+    <p class="muted small" style="margin:8px 0 0">会社の平均は、1人1社につき最新の評価で計算します。評価が3人以上ついて、平均4.1以上は「良企業」、4.7以上は「優良企業」になります。自分の会社は評価できません。登録から7日たつと評価できます。500 Xは国庫から出て、所得になります。</p>
   </div>
   <div class="card" data-sub="pin"><h3 style="margin-top:0">ピン留めした企業</h3><div id="coPins"></div></div>
   <div class="card" data-sub="job">
@@ -879,7 +913,7 @@ async function enter() {
     if (p.role && !MENU_OF.vMore[3].some(x => x[0] === 'admin')) MENU_OF.vMore[3].push(['admin', '管理']);
   } catch (e) { toast(e.message); show('vLogin'); entered = false; return; }
   if (location.hash.includes('access_token')) history.replaceState(null, '', location.pathname);
-  $('#bal').classList.remove('hidden'); $('#tabs').classList.remove('hidden');
+  $('#bal').classList.remove('hidden'); $('#tabs').classList.remove('hidden'); $('#bell').classList.remove('hidden'); bellPoll();
   go(sessionStorageGet('view') || 'vInfo');
 }
 function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
@@ -887,10 +921,10 @@ const GAMES = ['vGameList', 'vRace', 'vSlot', 'vBj', 'vRou', 'vHilo', 'vLobby', 
 const HIDDEN_SUBS = ['vLobby', 'vRoom'];
 // メインメニュー（左から）とサブメニュー
 const MENU = [
-  ['vInfo', '情報', 'i', [['cur', '通貨'], ['pub', '広報・書籍'], ['mkt', '相場'], ['tl', 'TL'], ['friend', 'フレンド'], ['jack', '競馬億万長者']]],
+  ['vInfo', '情報', 'i', [['cur', '通貨'], ['pub', '広報・書籍'], ['mkt', '相場'], ['tl', 'TL'], ['friend', 'フレンド'], ['people', '人をさがす'], ['jack', '競馬億万長者']]],
   ['vWork', '仕事', '✎', [['jobs', '仕事をえらぶ'], ['stat', '給料'], ['corp', '企業ページ'], ['mywork', '勤め先']]],
   ['vGame', '遊戯', '♠', [['vGameList', '≡ 一覧'], ['vRace', '🏇 競馬'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
-  ['vCorp', '企業', '社', [['search', '会社検索'], ['pin', 'ピン留め'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所']]],
+  ['vCorp', '企業', '社', [['search', '会社検索'], ['review', '評価（500 X）'], ['pin', 'ピン留め'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所']]],
   ['vTax', '役所', '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['court', '訴え'], ['kokko', '国庫・番付']]],
   ['vMore', '設定', '⚙', [['prof', 'プロフィール'], ['hist', '記録'], ['rule', '規約']]],
 ];
@@ -913,7 +947,7 @@ function go(v, sub) {
   $('#subNav').innerHTML = subs.map(x => `<button data-s="${x[0]}" class="${x[0] === sub ? 'on' : ''}">${x[1]}</button>`).join('');
   $$('#subNav button').forEach(b => b.onclick = () => go(main, b.dataset.s));
   window.scrollTo(0, 0);
-  if (sec === 'vInfo') { infoLoad(); if (sub === 'tl') tlLoad(true); if (sub === 'mkt') mktLoad(); if (sub === 'pub') pubLoad(); if (sub === 'friend') friendLoad(); }
+  if (sec === 'vInfo') { infoLoad(); if (sub === 'tl') tlLoad(true); if (sub === 'mkt') mktLoad(); if (sub === 'pub') pubLoad(); if (sub === 'friend') friendLoad(); if (sub === 'people') peopleLoad(); }
   if (sec === 'vWork') workLoad();
   if (sec === 'vRace') kbLoad();
   if (sec === 'vLobby') lobbyLoad();
@@ -1656,7 +1690,7 @@ function calcTax(inc) {
 }
 const mlab = m => `${m % 100}月`;
 function setTaxDot(b) {
-  const on = !!b && (b.notices > 0 || (b.filing_open && !b.filed) || b.debt > 0);
+  const on = !!b && ((b.filing_open && !b.filed) || b.debt > 0);
   $('#tabs button[data-v=vTax]').classList.toggle('dot', on);
 }
 let TX = null;
@@ -1670,10 +1704,7 @@ function taxRender() {
   setBal(T.balance);
   setTaxDot({ notices: 0, filing_open: !!F, filed: !!(F && F.filed), debt: T.debt });
 
-  // お知らせ
-  $('#txNotices').innerHTML = T.notices.length
-    ? `<div class="card"><h3 style="margin-top:0">お知らせ</h3><ul class="notes">${T.notices.slice(0, 8).map(n =>
-        `<li class="${n.new ? 'new' : ''}">${esc(n.body)} <span class="muted small">${n.at}</span></li>`).join('')}</ul></div>` : '';
+  $('#txNotices').innerHTML = '';   // お知らせは右上のベル（通知）へ
 
   // 確定申告
   if (F) {
@@ -1726,7 +1757,8 @@ function taxRender() {
     <span class="muted">没収（累計）</span><b>${fmt(T.treasury.confiscated)}</b>
     <span class="muted">送金の手数料（累計）</span><b>${fmt(T.treasury.fee)}</b>
     <span class="muted">給料（累計）</span><b>${fmt(T.treasury.wage)}</b>
-    <span class="muted">給付金（累計）</span><b>${fmt(T.treasury.benefit)}</b></div>`;
+    <span class="muted">給付金（累計）</span><b>${fmt(T.treasury.benefit)}</b>
+    <span class="muted">企業評価の謝礼（累計）</span><b>${fmt(T.treasury.review || 0)}</b></div>`;
 
   // 高額納税者番付
   $('#txTop').innerHTML = `<h3 style="margin-top:0">高額納税者番付${T.top_month ? `（${mlab(T.top_month)}分）` : ''}</h3>` +
@@ -1963,14 +1995,19 @@ $('#xSend').onclick = async () => {
    企業（さがす・ピン留め・求人・銀行・買ったもの・会社のページ）
    ================================================================= */
 const kindTag = c => (c.official ? '<span class="offtag">公式</span>' : '') + (c.exchange ? '<span class="kindtag">取引所</span>' : c.kind === '銀行' ? '<span class="kindtag">銀行</span>' : c.kind === '証券' ? '<span class="kindtag">証券</span>' : '')
-  + (c.status === 'suspended' ? '<span class="stag">休業中</span>' : '');
+  + (c.status === 'suspended' ? '<span class="stag">休業中</span>' : c.status === 'bankrupt' ? '<span class="stag dead">倒産済み</span>' : c.status === 'closed' ? '<span class="stag dead">廃業済み</span>' : '')
+  + (c.rating && c.rating.grade ? `<span class="gtag ${c.rating.grade === '優良企業' ? 'gold' : ''}">${c.rating.grade}</span>` : '');
+const starStr = n => '★'.repeat(n) + '☆'.repeat(5 - n);
+const ratingH = r => r && r.n ? `<span class="stars">${starStr(Math.round(Number(r.avg)))}</span> <strong>${Number(r.avg).toFixed(1)}</strong><span class="muted">（${r.n}人）</span>` : '<span class="muted">まだ評価なし</span>';
 const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>${esc(c.name)}${kindTag(c)}</b>
-  <small>ID ${c.cid_full || c.cid}・社長 ${nameB(c.owner, c.owner_badge)}${c.description ? '・' + esc(c.description) : ''}</small></span>${c.pinned ? '📌' : ''}</div>`;
+  <small>ID ${c.cid_full || c.cid}・社長 ${nameB(c.owner, c.owner_badge)}${c.status === 'bankrupt' || c.status === 'closed' ? `・${c.closed_at || ''}${c.status === 'bankrupt' ? '倒産' : '廃業'}` : ''}${c.description ? '・' + esc(c.description) : ''}</small>
+  ${c.rating && c.rating.n ? `<small>${ratingH(c.rating)}</small>` : ''}</span>${c.pinned ? '📌' : ''}</div>`;
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 async function corpLoad(sub) {
   try {
     if (sub === 'search') await coSearch();
+    if (sub === 'review') await reviewLoad();
     if (sub === 'pin') {
       const d = await call('corp_pins');
       $('#coPins').innerHTML = d.length ? d.map(coRow).join('') : '<p class="muted small" style="margin:0">まだありません。会社のページで「ピン留め」すると、ここに並びます。</p>';
@@ -2032,14 +2069,17 @@ async function corpOpen(cid) {
   try { c = await call('corp_page', { p_cid: cid }); setBal(c.balance); } catch (e) { return toast(e.message); }
   $$('.modal').forEach(m => m.remove());
   const m = document.createElement('div'); m.className = 'modal';
-  const bank = c.kind === '銀行';
+  const dead = c.status === 'closed' || c.status === 'bankrupt', bank = c.kind === '銀行' && !dead;
+  const rt = c.rating || { n: 0 };
   m.innerHTML = `<div class="sheet">
     <div class="row"><b style="font-size:20px">${esc(c.name)}</b>${kindTag(c)}<button class="btn s" style="margin-left:auto" data-x>とじる</button></div>
     <p class="muted small" style="margin:4px 0">ID <b style="user-select:all">${c.cid_full}</b>（${c.cid} だけでもOK）・社長 ${nameB(c.owner, c.owner_badge)}</p>
+    ${dead ? `<p class="notice small" style="margin:6px 0">この会社は${c.closed_at ? c.closed_at + 'に' : ''}<b>${c.status === 'bankrupt' ? '倒産' : '廃業'}</b>しました（${c.status === 'bankrupt' ? '倒産済み' : '廃業済み'}）。もう取引はできません。</p>` : ''}
     ${c.status === 'suspended' ? '<p class="notice small" style="margin:6px 0">この会社はいま<b>休業中</b>です。買い物・送金・預け入れはできません（銀行の引き出しはできます）。</p>' : ''}
     ${c.description ? `<p style="white-space:pre-wrap;margin:8px 0">${esc(c.description)}</p>` : ''}
-    <div class="row" style="margin:8px 0"><button class="btn s" data-pin>${c.pinned ? '📌 ピン留めをやめる' : '📌 ピン留め'}</button>
-      ${c.mine || c.status !== 'active' ? '' : '<button class="btn s" data-send>この会社に送金</button>'}</div>
+    <div class="small" style="margin:6px 0">評価：${ratingH(rt)}${rt.n ? `<span class="muted">　★5 ${rt.dist[4]}・★4 ${rt.dist[3]}・★3 ${rt.dist[2]}・★2 ${rt.dist[1]}・★1 ${rt.dist[0]}</span>` : ''}</div>
+    ${dead ? '' : `<div class="row" style="margin:8px 0"><button class="btn s" data-pin>${c.pinned ? '📌 ピン留めをやめる' : '📌 ピン留め'}</button>
+      ${c.mine || c.status !== 'active' ? '' : '<button class="btn s" data-send>この会社に送金</button>'}</div>`}
     ${bank ? `<h3>銀行</h3><p class="small" style="margin:0 0 6px">預金の金利：1日 <b>${Number(c.rate)}%</b>（毎日つきます）・口座開設：${{ auto: 'すぐ', approve: '銀行の許可制', off: '受け付けていません' }[c.acct_mode]}${c.acct_need_check ? '（オレンジのチェックが必要）' : ''}</p>
       ${c.account ? (c.account.status === 'pending' ? '<p class="small"><span class="tag">口座は申込中（銀行の許可待ち）</span></p>'
         : `<div class="kv"><span>あなたの預金</span><b>${fmt(c.account.balance)} X</b><span class="muted">もらった利息</span><b>${fmt(c.account.interest_total)} X</b></div>
@@ -2054,18 +2094,18 @@ async function corpOpen(cid) {
           ${c.mine || c.status !== 'active' ? '' : `<button class="btn main s" data-loan="${pk.id}" data-name="${esc(pk.name)}" data-amt="${pk.amount}" data-ret="${pk.repay}" data-days="${pk.days}" data-auto="${pk.auto ? 1 : 0}">申し込む</button>`}</div>`).join('')
         : (c.loan_on ? '<p class="muted small" style="margin:0">いまは貸出パックがありません</p>' : '')}
       <p class="muted small">期限を過ぎると延滞の利息がつき、あなたにお金が入るたびに銀行が取り立てます。</p>` : ''}
-    ${c.official ? '<p class="small muted">国営の会社です（株はありません）。</p>' : `<h3>${unitOf(c) === '株' ? '株主' : '出資者'}</h3>
+    ${dead ? '' : c.official ? '<p class="small muted">国営の会社です（株はありません）。</p>' : `<h3>${unitOf(c) === '株' ? '株主' : '出資者'}</h3>
     <p class="small muted" style="margin:0 0 4px">発行 ${fmt(c.shares)} ${unitOf(c)}</p>${holdersHtml(c, 10)}`}
-    <h3>商品</h3>
+    ${dead ? '' : `<h3>商品</h3>
     ${c.items.length ? c.items.map(it => `<div class="item"><div class="row" style="justify-content:space-between"><b>${esc(it.name)}</b><b class="num" style="margin-left:auto;white-space:nowrap">${fmt(it.price)} X</b></div>
         ${it.description ? `<p class="small muted" style="margin:4px 0;white-space:pre-wrap">${esc(it.description)}</p>` : ''}
         ${c.mine || c.status !== 'active' ? '' : `<button class="btn main s" data-buy="${it.id}" data-price="${it.price}" data-name="${esc(it.name)}">購入する</button>`}</div>`).join('')
       : '<p class="muted small">いまは商品がありません</p>'}
-    <p class="muted small">買うときは手数料（1%・最低1 X）がかかります。品物（マイクラのブロックなど）は会社がサイトの外で渡します。</p></div>`;
+    <p class="muted small">買うときは手数料（1%・最低1 X）がかかります。品物（マイクラのブロックなど）は会社がサイトの外で渡します。</p>`}</div>`;
   m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) m.remove(); };
   document.body.appendChild(m);
   const act = async (fn, args, msg) => { try { const r = await call(fn, args); if (msg) toast(msg); corpOpen(cid); return r; } catch (e) { toast(e.message); } };
-  m.querySelector('[data-pin]').onclick = () => act('corp_pin', { p_cid: cid, p_on: !c.pinned }, c.pinned ? 'ピン留めをやめました' : 'ピン留めしました');
+  const pinB = m.querySelector('[data-pin]'); if (pinB) pinB.onclick = () => act('corp_pin', { p_cid: cid, p_on: !c.pinned }, c.pinned ? 'ピン留めをやめました' : 'ピン留めしました');
   const sendB = m.querySelector('[data-send]');
   if (sendB) sendB.onclick = () => { m.remove(); go('vTax', 'xfer'); $('#xTo').value = cid; $('#xAmt').focus(); xferInput(); };
   const oa = m.querySelector('[data-open-acct]'); if (oa) oa.onclick = () => act('bank_open', { p_cid: cid }, c.acct_mode === 'auto' ? '口座を開きました' : '口座を申し込みました。銀行の許可を待ちましょう');
@@ -2435,18 +2475,18 @@ async function adminLoad() {
    TL・フレンド
    ================================================================= */
 let tlScope = 'friends', tlLast = null;
-const tlItem = x => `<div class="item" data-pid="${x.id}">
-  <div class="row"><b>${nameB(x.nickname, x.badge)}</b><span class="muted small">ID ${x.uid}</span>
+const tlItem = x => `<div class="item" data-pid="${x.id}" ${x.to_me ? 'style="border-left:3px solid var(--accent)"' : ''}>
+  <div class="row"><b class="plink" data-person="${x.uid}">${nameB(x.nickname, x.badge)}</b><span class="muted small">ID ${x.uid}</span>
     ${!x.mine && !x.friend ? (x.asked ? '<span class="muted small">申請中</span>' : `<button class="btn s" data-fr="${x.uid}" style="padding:2px 8px">＋フレンド</button>`) : ''}
     <span class="muted small" style="margin-left:auto">${x.at}</span></div>
-  <p style="margin:4px 0 0;white-space:pre-wrap;word-break:break-word">${esc(x.body)}</p>
+  <p style="margin:4px 0 0;white-space:pre-wrap;word-break:break-word">${richText(x.body, x.names)}</p>
   ${x.mine || ME.is_admin ? `<div style="text-align:right"><button class="btn s" data-del="${x.id}" style="padding:2px 8px">消す</button></div>` : ''}</div>`;
 async function tlLoad(reset) {
   try {
     if (reset) tlLast = null;
     const d = await call('tl_list', { p_scope: tlScope, p_before: tlLast });
     const html = d.map(tlItem).join('');
-    if (reset) $('#tlList').innerHTML = html || `<p class="muted small" style="margin:0">${tlScope === 'friends' ? 'まだ投稿がありません。フレンドを作るか「みんな」を見てみましょう' : 'まだ投稿がありません'}</p>`;
+    if (reset) $('#tlList').innerHTML = html || `<p class="muted small" style="margin:0">${tlScope === 'friends' ? 'まだ投稿がありません。フレンドを作るか「みんな」を見てみましょう' : tlScope === 'mention' ? 'まだ、あなたあての投稿（メンション）はありません' : 'まだ投稿がありません'}</p>`;
     else $('#tlList').insertAdjacentHTML('beforeend', html);
     if (d.length) tlLast = d[d.length - 1].id;
     $('#tlMore').classList.toggle('hidden', d.length < 30);
@@ -2472,7 +2512,7 @@ function frRender(d) {
   const none = t => `<p class="muted small" style="margin:0">${t}</p>`;
   $('#frIn').innerHTML = d.incoming.map(x => `<div class="line"><span class="grow">${nameB(x.nickname, x.badge)}（ID ${x.uid}）<small>${x.at}</small></span>
     <button class="btn main s" data-ok="${x.uid}">受ける</button><button class="btn s" data-ng="${x.uid}">断る</button></div>`).join('') || none('ありません');
-  $('#frList').innerHTML = d.friends.map(x => `<div class="line"><span class="grow">${nameB(x.nickname, x.badge)}<small>ID ${x.uid}・${x.since}から</small></span>
+  $('#frList').innerHTML = d.friends.map(x => `<div class="line"><span class="grow"><b class="plink" data-person="${x.uid}">${nameB(x.nickname, x.badge)}</b><small>ID ${x.uid}・${x.since}から</small></span>
     <button class="btn s" data-send="${x.uid}">送金</button><button class="btn s" data-bill="${x.uid}">請求</button><button class="btn s" data-rm="${x.uid}">やめる</button></div>`).join('') || none('まだいません');
   $('#frOut').innerHTML = d.outgoing.map(x => `<div class="line"><span class="grow">${nameB(x.nickname, x.badge)}（ID ${x.uid}）<small>${x.at}</small></span>
     <button class="btn s" data-rm="${x.uid}">取り消す</button></div>`).join('') || none('ありません');
@@ -2840,7 +2880,7 @@ function roomRender() {
 }
 function roomChat(d) {
   const ch = $('#rmChat'), atBottom = ch.scrollHeight - ch.scrollTop - ch.clientHeight < 30;
-  ch.innerHTML = d.chat.map(m => `<div class="m"><b>${nameB(m.nickname, m.badge)}</b>${m.player ? '<span class="muted small">（対局者）</span>' : ''}：${esc(m.body)}</div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>';
+  ch.innerHTML = d.chat.map(m => `<div class="m"><b class="plink" data-person="${m.uid || ''}">${nameB(m.nickname, m.badge)}</b>${m.player ? '<span class="muted small">（対局者）</span>' : ''}：${richText(m.body, m.names)}</div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>';
   if (atBottom) ch.scrollTop = ch.scrollHeight;
 }
 function rvBoard(d) {
@@ -3197,7 +3237,7 @@ $('#rmChatIn').onkeydown = ev => { if (ev.key === 'Enter') $('#rmChatSend').clic
 const PB = { tab: 'news', q: '', edit: null };
 const priceTxt = x => x.price === 0 ? '無料' : x.kind === 'paper' ? `${fmt(x.price)} X／${x.period_days}日` : `${fmt(x.price)} X`;
 const byTxt = x => `${esc(x.by)}${x.official ? '<span class="offtag">公式</span>' : ''}${badgeH(x.by_badge)}`;
-const pubRow = x => `<div class="co-row" data-pub="${x.id}"><span class="nm"><b>${esc(x.title)}${x.status === 'hidden' ? '<span class="stag">非公開</span>' : ''}</b>
+const pubRow = x => `<div class="co-row" data-pub="${x.id}"><span class="nm"><b>${esc(x.title)}${x.status === 'hidden' ? '<span class="stag">非公開</span>' : x.status === 'deleted' ? '<span class="stag dead">削除済み</span>' : ''}</b>
   <small>${x.kind === 'paper' ? '新聞' : '本'}・${byTxt(x)}・${priceTxt(x)}・${x.kind === 'paper' ? '記事' : '章'} ${x.items}${x.owned ? (x.until ? `・<b>${x.until}まで購読中</b>` : '・<b>買った</b>') : ''}</small></span><span style="color:var(--muted);font-size:20px">›</span></div>`;
 async function pubLoad() {
   $$('#pbTabs button').forEach(b => b.classList.toggle('on', b.dataset.k === PB.tab));
@@ -3256,7 +3296,8 @@ async function pubOpen(id) {
     <p class="muted small" style="margin:4px 0">${d.kind === 'paper' ? '新聞' : '本'}・${byTxt(d)}・${priceTxt(d)}${d.updated ? '・' + d.updated + '更新' : ''}</p>
     ${d.status === 'hidden' ? `<p class="notice small">管理者によって非公開になっています。${d.reason ? '理由：' + esc(d.reason) : ''}</p>` : ''}
     ${d.description ? `<p style="white-space:pre-wrap;margin:8px 0">${esc(d.description)}</p>` : ''}
-    ${d.mine ? '<p class="small muted">あなたが出しているものです（「書く」から編集できます）。</p>'
+    ${d.status === 'deleted' ? `<p class="notice small">書いた人が削除しました。${d.kind === 'paper' ? '購読の期間が終わるまで、これまでの記事を読めます。' : '買った人は、このまま読めます。'}</p>` : ''}
+    ${d.mine ? '<div class="row" style="margin:6px 0"><button class="btn main s" data-pedit-go>編集する</button><button class="btn s" data-pdel-pub>削除する</button></div>'
       : d.price > 0 && (d.kind === 'paper' || !d.owned) ? `<button class="btn main wide" data-buy>${d.kind === 'paper' ? (d.owned ? `購読を${d.period_days}日のばす（${fmt(d.price)} X）` : `購読する（${d.period_days}日 ${fmt(d.price)} X）`) : `買う（${fmt(d.price)} X）`}</button>
         <p class="muted small" style="margin:4px 0 0">手数料1%（最低1 X）がかかります。${d.owned && d.until ? d.until + 'まで購読中です。' : ''}</p>` : ''}
     <h3>${d.kind === 'paper' ? '記事' : '目次'}</h3>
@@ -3272,6 +3313,10 @@ async function pubOpen(id) {
     if (!confirm(`${d.title} を${d.kind === 'paper' ? '購読' : '購入'}します（${fmt(d.price)} X＋手数料）。よろしいですか？`)) return;
     try { const r = await call('pub_buy', { p_id: d.id }); setBal(r.balance); toast(d.kind === 'paper' ? '購読しました' : '買いました'); pubOpen(d.id); } catch (e) { toast(e.message); }
   };
+  const eg = m.querySelector('[data-pedit-go]');
+  if (eg) eg.onclick = () => { m.remove(); PB.tab = 'write'; PB.edit = d.id; PB.q = ''; if (view === 'vInfo' && sessionStorageGet('sub:vInfo') === 'pub') pubLoad(); else go('vInfo', 'pub'); };
+  const dp = m.querySelector('[data-pdel-pub]');
+  if (dp) dp.onclick = async () => { if (await pubDelete(d)) { m.remove(); if (view === 'vInfo') pubLoad(); } };
   const hd = m.querySelector('[data-hide]');
   if (hd) hd.onclick = async () => { const hide = d.status !== 'hidden'; const why = hide ? prompt('非公開にする理由（書いた人に届きます）', '') : ''; if (why === null) return;
     try { await call('admin_pub_hide', { p_id: d.id, p_hide: hide, p_reason: why }); toast('できました'); pubOpen(d.id); } catch (e) { toast(e.message); } };
@@ -3291,6 +3336,10 @@ async function pubReader(id) {
   m.querySelector('[data-back]').onclick = () => pubOpen(r.pub.id);
   m.querySelectorAll('[data-go]').forEach(b => b.onclick = () => pubReader(Number(b.dataset.go)));
   m.querySelector('.sheet').scrollTop = 0;
+}
+async function pubDelete(d) {
+  if (!confirm(`「${d.title}」を削除しますか？もとにはもどせません。`)) return false;
+  try { await call('pub_delete', { p_id: d.id }); toast('削除しました'); return true; } catch (e) { toast(e.message); return false; }
 }
 async function pubEditor(id) {
   let d; try { d = await call('pub_page', { p_id: id }); } catch (e) { PB.edit = null; return toast(e.message); }
@@ -3312,8 +3361,12 @@ async function pubEditor(id) {
     <h4>${d.kind === 'paper' ? '新しい記事' : '新しい章'}</h4>${itemForm2(null)}
     <h4>${d.kind === 'paper' ? '記事' : '章'}（${d.list.length}）</h4>
     ${d.list.map(x => `<div class="co-row" data-pedit-item="${x.id}"><span class="nm"><b>${esc(x.title)}</b><small>${x.at}・${fmt(x.chars)}文字${x.free ? '・無料' : ''}</small></span><span style="color:var(--muted)">直す ›</span></div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
-    <div id="peItem"></div>`;
+    <div id="peItem"></div>
+    <div class="item" style="margin-top:16px"><b>${d.kind === 'paper' ? 'この新聞' : 'この本'}を削除する</b>
+      <p class="muted small" style="margin:4px 0">買った人・購読中の人がいなければ、記事・章ごと全部消えます。いれば一覧から消え、その人たちは本棚から読めるまま残ります（もとにはもどせません）。</p>
+      <button class="btn s" data-pdel-pub>削除する</button></div>`;
   box.querySelector('[data-pback]').onclick = () => { PB.edit = null; pubLoad(); };
+  box.querySelector('[data-pdel-pub]').onclick = async () => { if (await pubDelete(d)) { PB.edit = null; pubLoad(); } };
   box.querySelector('[data-popen]').onclick = () => pubOpen(d.id);
   $('#peSave').onclick = async () => {
     try { await call('pub_save', { p_id: d.id, p_kind: d.kind, p_cid: '', p_title: $('#peTitle').value, p_desc: $('#peDesc').value,
@@ -3336,6 +3389,187 @@ async function pubEditor(id) {
     catch (e) { toast(e.message); }
   });
 }
+
+/* =================================================================
+   通知（ベル）
+   ================================================================= */
+const NT = { unread: 0, latest: null, timer: null, more: null };
+function setBell(n) {
+  NT.unread = n; const b = $('#bellN');
+  b.textContent = n > 99 ? '99+' : n; b.classList.toggle('hidden', !n);
+}
+const ntLocal = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } };
+async function bellPoll() {
+  clearTimeout(NT.timer);
+  if (!document.hidden || ntLocal('ntPush') === '1') {
+    try {
+      const d = await call('notice_count'); setBell(d.unread);
+      const seen = Number(ntLocal('ntLatest') || 0);
+      if (d.latest && d.latest > seen) {
+        if (seen && document.hidden && ntLocal('ntPush') === '1' && 'Notification' in window && Notification.permission === 'granted') {
+          try { new Notification('風の芽経済組', { body: noticeText(d.latest_body), tag: 'kz-' + d.latest }); } catch (e) {}
+        }
+        ntLocal('ntLatest', String(d.latest));
+      }
+    } catch (e) {}
+  }
+  NT.timer = setTimeout(bellPoll, 30000);
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && entered) bellPoll(); });
+// 【カテゴリ】をとった本文と、カテゴリ
+const noticeTag = b => { const m = /^【([^】]+)】/.exec(b || ''); return m ? m[1].replace(/\s*#\d+$/, '') : /届きました|入りました|返しました/.test(b) ? 'お金' : 'お知らせ'; };
+const noticeText = b => (b || '').replace(/^【[^】]+】/, '');
+const NT_GO = { フレンド: ['vInfo', 'friend'], メンション: ['vInfo', 'tl'], 請求: ['vTax', 'bill'], 訴え: ['vTax', 'court'], 税務調査: ['vTax', 'tax'], 決定: ['vTax', 'tax'],
+  没収: ['vTax', 'tax'], 企業申請: ['vWork', 'corp'], 社長交代: ['vWork', 'corp'], 命令: ['vWork', 'corp'], 応募: ['vWork', 'corp'], 口座の申込: ['vWork', 'corp'],
+  借入の申込: ['vWork', 'corp'], 返済: ['vWork', 'corp'], 採用: ['vWork', 'mywork'], 株: ['vCorp', 'stock'], 株の譲渡: ['vCorp', 'stock'], 配当: ['vCorp', 'stock'],
+  口座: ['vCorp', 'bank'], 借入: ['vCorp', 'bank'], 交換: ['vCorp', 'invest'], 本: ['vInfo', 'pub'], '広報・書籍': ['vInfo', 'pub'], 対戦: ['vGame', 'vGameList'],
+  倒産: ['vMore', 'hist'], 廃業: ['vMore', 'hist'], お金: ['vMore', 'hist'] };
+function noticeGo(n) {
+  const L = n.link || {}, b = n.body || '', tag = noticeTag(b);
+  $$('.modal').forEach(m => m.remove());
+  if (L.go === 'room' || (tag === '対戦' && /部屋 #(\d+)/.test(b))) { RM.id = Number(L.room || /部屋 #(\d+)/.exec(b)[1]); return go('vRoom'); }
+  if (L.go === 'tl') { tlScope = 'mention'; $$('#tlScope button').forEach(x => x.classList.toggle('on', x.dataset.k === 'mention')); return go('vInfo', 'tl'); }
+  if (tag === '注文') return go(/渡してください/.test(b) ? 'vWork' : 'vCorp', /渡してください/.test(b) ? 'corp' : 'order');
+  const g = NT_GO[tag] || (/税|給付金|滞納|差し押さえ/.test(b) ? ['vTax', 'tax'] : null);
+  if (g) go(g[0], g[1]);
+}
+async function noticeOpen() {
+  let d; try { d = await call('notice_list', { p_before: null, p_read: true }); } catch (e) { return toast(e.message); }
+  setBell(d.unread);
+  $$('.modal').forEach(m => m.remove());
+  const m = document.createElement('div'); m.className = 'modal';
+  const can = 'Notification' in window;
+  const row = n => `<div class="nt-row ${n.new ? 'new' : ''}" data-nt="${n.id}"><span class="tg2">${esc(noticeTag(n.body))}</span><span class="tx">${esc(noticeText(n.body))}</span><span class="tm">${n.at}<br>${n.time}</span></div>`;
+  m.innerHTML = `<div class="sheet"><div class="row"><b style="font-size:19px">通知</b><button class="btn s" style="margin-left:auto" data-x>とじる</button></div>
+    ${can ? `<label class="small" style="display:block;margin:6px 0"><input type="checkbox" id="ntPush" ${ntLocal('ntPush') === '1' && Notification.permission === 'granted' ? 'checked' : ''}> この端末にも通知を出す（このサイトを開いているとき）</label>` : ''}
+    <div id="ntList">${d.items.map(row).join('') || '<p class="muted small">まだ通知はありません</p>'}</div>
+    <button class="btn wide ${d.items.length < 30 ? 'hidden' : ''}" id="ntMore" style="margin-top:8px">もっと見る</button>
+    <p class="muted small" style="margin:8px 0 0">通知を押すと、その画面を開きます。通知は新しい500件まで残ります。</p></div>`;
+  m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) m.remove(); };
+  document.body.appendChild(m);
+  let items = d.items.slice();
+  m.querySelector('#ntList').onclick = ev => { const r = ev.target.closest('[data-nt]'); if (!r) return; const n = items.find(x => String(x.id) === r.dataset.nt); if (n) noticeGo(n); };
+  const more = m.querySelector('#ntMore');
+  more.onclick = async () => {
+    try { const e = await call('notice_list', { p_before: items[items.length - 1].id, p_read: true }); items = items.concat(e.items);
+      m.querySelector('#ntList').insertAdjacentHTML('beforeend', e.items.map(row).join('')); more.classList.toggle('hidden', e.items.length < 30); setBell(e.unread); } catch (e2) { toast(e2.message); }
+  };
+  const pu = m.querySelector('#ntPush');
+  if (pu) pu.onchange = async () => {
+    if (pu.checked) {
+      const r = await Notification.requestPermission().catch(() => 'denied');
+      if (r !== 'granted') { pu.checked = false; return toast('この端末では通知が許可されていません（ブラウザの設定で許可してください）'); }
+      ntLocal('ntPush', '1'); toast('このサイトを開いているあいだ、新しい通知をこの端末にも出します');
+    } else ntLocal('ntPush', '0');
+  };
+}
+$('#bell').onclick = noticeOpen;
+
+/* =================================================================
+   メンション・人のページ
+   ================================================================= */
+// 本文の「@ID」を、名前のリンクにする
+function richText(body, names) {
+  return esc(body || '').replace(/@(\d{5,6})(?!\d)/g, (mm, id) => names && names[id] ? `<a class="men" data-person="${id}">@${esc(names[id])}</a>` : mm);
+}
+document.addEventListener('click', ev => {
+  const a = ev.target.closest('[data-person]');
+  if (a && a.dataset.person) { ev.stopPropagation(); personOpen(a.dataset.person); }
+}, true);
+// 「@」を打つと、人の候補を出す（えらぶと @ID を入れる）
+function mentionAssist(input) {
+  const box = document.createElement('div'); box.className = 'men-box hidden';
+  (input.parentElement.classList.contains('row') ? input.parentElement : input).insertAdjacentElement('afterend', box);
+  let t = null, seq = 0;
+  input.addEventListener('input', () => {
+    clearTimeout(t);
+    const m = /@([^\s@]{0,12})$/.exec(input.value.slice(0, input.selectionStart));
+    if (!m) { box.classList.add('hidden'); return; }
+    t = setTimeout(async () => {
+      const my = ++seq;
+      try {
+        const list = await call('people_search', { p_q: m[1] });
+        if (my !== seq) return;
+        box.innerHTML = list.filter(x => !x.me).slice(0, 6).map(x => `<button type="button" data-mid="${x.uid}">${esc(x.nickname)} <small class="muted">ID ${x.uid}</small></button>`).join('');
+        box.classList.toggle('hidden', !box.innerHTML);
+      } catch (e) { box.classList.add('hidden'); }
+    }, 250);
+  });
+  box.addEventListener('click', ev => {
+    const b = ev.target.closest('[data-mid]'); if (!b) return;
+    const pos = input.selectionStart, before = input.value.slice(0, pos).replace(/@([^\s@]{0,12})$/, '@' + b.dataset.mid + ' ');
+    input.value = before + input.value.slice(pos); input.focus(); input.setSelectionRange(before.length, before.length);
+    box.classList.add('hidden'); input.dispatchEvent(new Event('input'));
+  });
+}
+mentionAssist($('#tlBody')); mentionAssist($('#rmChatIn'));
+const friendTag = f => f === 'ok' ? '<span class="tag good">フレンド</span>' : f === 'out' ? '<span class="tag">申請中</span>' : f === 'in' ? '<span class="tag">申請が来ています</span>' : '';
+let ppT = null;
+async function peopleLoad() {
+  try {
+    const d = await call('people_search', { p_q: $('#ppQ').value });
+    $('#ppList').innerHTML = d.map(x => `<div class="co-row" data-person="${x.uid}"><span class="nm"><b>${nameB(x.nickname, x.badge)}${x.me ? '<span class="tag">あなた</span>' : ''}${friendTag(x.friend)}</b>
+        <small>ID ${x.uid}</small></span><span style="color:var(--muted);font-size:20px">›</span></div>`).join('')
+      || `<p class="muted small" style="margin:6px 0 0">${$('#ppQ').value.trim() ? '見つかりませんでした' : 'まだフレンドはいません。ニックネームかIDでさがせます'}</p>`;
+  } catch (e) { toast(e.message); }
+}
+$('#ppQ').oninput = () => { clearTimeout(ppT); ppT = setTimeout(peopleLoad, 350); };
+async function personOpen(uid) {
+  let d; try { d = await call('person_page', { p_uid: uid }); } catch (e) { return toast(e.message); }
+  $$('.modal').forEach(m => m.remove());
+  const m = document.createElement('div'); m.className = 'modal';
+  m.innerHTML = `<div class="sheet"><div class="row"><b style="font-size:20px">${nameB(d.nickname, d.badge)}</b><button class="btn s" style="margin-left:auto" data-x>とじる</button></div>
+    <p class="muted small" style="margin:4px 0">ID <b style="user-select:all">${d.uid}</b>・${d.since}から${d.me ? '・あなたです' : ''} ${friendTag(d.friend)}</p>
+    ${d.me ? '' : `<div class="row" style="margin:8px 0;flex-wrap:wrap;gap:6px">
+      ${d.friend === 'ok' ? '' : d.friend === 'out' ? '' : d.friend === 'in' ? '<button class="btn main s" data-pa="ok">フレンド申請を受ける</button>' : '<button class="btn main s" data-pa="fr">フレンド申請</button>'}
+      <button class="btn s" data-pa="men">メンションする</button><button class="btn s" data-pa="send">送金</button><button class="btn s" data-pa="bill">請求</button></div>`}
+    <h3>社長をしている会社</h3>${d.companies.map(coRow).join('') || '<p class="muted small" style="margin:0">ありません</p>'}
+    <h3>書いた本</h3>${d.books.map(b => `<div class="co-row" data-pubopen="${b.id}"><span class="nm"><b>${esc(b.title)}</b><small>${b.price ? fmt(b.price) + ' X' : '無料'}・章 ${b.items}</small></span><span style="color:var(--muted);font-size:20px">›</span></div>`).join('') || '<p class="muted small" style="margin:0">ありません</p>'}
+    <h3>最近の投稿</h3>${d.posts.map(x => `<div class="item"><p style="margin:0;white-space:pre-wrap;word-break:break-word">${richText(x.body, x.names)}</p><div class="muted small" style="text-align:right">${x.at}</div></div>`).join('') || '<p class="muted small" style="margin:0">ありません</p>'}</div>`;
+  m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) m.remove(); };
+  document.body.appendChild(m);
+  bindRows(m);
+  m.querySelectorAll('[data-pubopen]').forEach(r => r.onclick = () => pubOpen(Number(r.dataset.pubopen)));
+  m.querySelectorAll('[data-pa]').forEach(b => b.onclick = async () => {
+    const a = b.dataset.pa;
+    try {
+      if (a === 'fr') { await call('friend_request', { p_to: d.uid }); toast('フレンド申請しました'); personOpen(d.uid); }
+      if (a === 'ok') { await call('friend_answer', { p_from: d.uid, p_ok: true }); toast('フレンドになりました'); personOpen(d.uid); }
+      if (a === 'men') { m.remove(); go('vInfo', 'tl'); const t = $('#tlBody'); t.value = `@${d.uid} ` + t.value; t.focus(); t.dispatchEvent(new Event('input')); }
+      if (a === 'send') { m.remove(); go('vTax', 'xfer'); $('#xTo').value = d.uid; $('#xAmt').focus(); xferInput(); }
+      if (a === 'bill') { m.remove(); go('vTax', 'bill'); $('#bTo').value = d.uid; $('#bAmt').focus(); }
+    } catch (e) { toast(e.message); }
+  });
+}
+
+/* =================================================================
+   企業の評価（週に1回 500 X）
+   ================================================================= */
+const RV = { pick: {} };
+async function reviewLoad() {
+  let d; try { d = await call('review_state'); } catch (e) { return toast(e.message); }
+  RV.pick = {}; d.list.forEach(c => { if (c.my) RV.pick[c.cid] = c.my; });
+  $('#rvWeek').textContent = `（${d.week}）`;
+  $('#rvList').innerHTML = (d.done ? '<p class="okbox small" style="margin:0 0 8px">今週の500 Xは受け取りました。評価はいつでも直せます（数えられるのは最新の評価）。</p>' : '')
+    + (!d.can ? `<p class="notice small">評価できるのは、登録から7日たってからです（${d.can_from}から）。</p>` : '')
+    + (d.list.map(c => `<div class="item" data-rvc="${c.cid}"><div class="row"><b>${esc(c.name)}</b>${kindTag(c)}</div>
+        <div class="small muted">関わり：${esc(c.how)}・いまの評価 ${ratingH(c.rating)}</div>
+        <div class="rv-pick">${[1, 2, 3, 4, 5].map(k => `<button type="button" data-st="${k}" class="${(RV.pick[c.cid] || 0) >= k ? 'on' : ''}" aria-label="★${k}">★</button>`).join('')}</div></div>`).join('')
+      || '<p class="muted small" style="margin:0">今週関わった会社はまだありません。会社で買い物をしたり、銀行に口座を作ったりすると評価できます。</p>');
+  $('#rvSend').classList.toggle('hidden', !d.list.length || !d.can);
+  $$('#rvList [data-rvc]').forEach(row => row.querySelectorAll('[data-st]').forEach(b => b.onclick = () => {
+    const k = Number(b.dataset.st); RV.pick[row.dataset.rvc] = k;
+    row.querySelectorAll('[data-st]').forEach(x => x.classList.toggle('on', Number(x.dataset.st) <= k));
+  }));
+}
+$('#rvSend').onclick = async () => {
+  const ratings = Object.entries(RV.pick).map(([cid, stars]) => ({ cid, stars }));
+  if (!ratings.length) return toast('★を押して評価してください');
+  try {
+    const before = balance; const d = await call('review_submit', { p_ratings: ratings }); setBal(d.balance, d.balance > before);
+    toast(d.balance > before ? `評価を送りました。${fmt(d.balance - before)} X もらいました` : '評価を送りました'); reviewLoad();
+  } catch (e) { toast(e.message); }
+};
 
 /* ---------------- その他 ---------------- */
 const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て' };

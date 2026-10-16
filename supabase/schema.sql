@@ -860,7 +860,7 @@ end $$;
 create or replace function public._income(u uuid, m int) returns bigint
 language sql stable set search_path = public as $$
   select greatest(coalesce(sum(payout - bet), 0), 0)::bigint from tx_log
-   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend','liquidation','game_bet','game_stake','pub_sale')
+   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend','liquidation','game_bet','game_stake','pub_sale','review')
      and created_at >= _month_start(m) and created_at < _month_start(_next_month(m))
 $$;
 
@@ -1132,7 +1132,6 @@ begin
   select coalesce(jsonb_agg(jsonb_build_object('body', body, 'new', not seen,
            'at', _dlabel(created_at)) order by id desc), '[]'::jsonb) into notes
     from (select * from notices where user_id = u order by id desc limit 20) z;
-  update notices set seen = true where user_id = u and not seen;
 
   select coalesce(jsonb_agg(jsonb_build_object('month', t.month, 'declared', t.declared,
            'true_income', case when coalesce(mm.processed, false) then t.true_income end,
@@ -1159,7 +1158,7 @@ begin
     'treasury', jsonb_build_object('casino', coalesce(tr.casino_total, 0),
                                    'tax', coalesce(tr.tax_total, 0), 'benefit', coalesce(tr.benefit_total, 0),
                                    'confiscated', coalesce(tr.confiscated_total, 0),
-                                   'wage', coalesce(tr.wage_total, 0), 'fee', coalesce(tr.fee_total, 0)),
+                                   'wage', coalesce(tr.wage_total, 0), 'fee', coalesce(tr.fee_total, 0), 'review', coalesce(tr.review_total, 0)),
     'top', top, 'top_month', topm,
     'balance', _bal(u));
 end $$;
@@ -2295,6 +2294,29 @@ begin
 end $$;
 
 -- 会社の見た目（だれでも見られる部分）
+-- 企業の評価（くわしくは下の「企業の評価」）：評価の表と、会社の平均
+create table if not exists public.corp_reviews (
+  company_id int not null references public.companies(id) on delete cascade,
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  stars      int not null check (stars between 1 and 5),
+  week       date not null,
+  updated_at timestamptz not null default now(),
+  primary key (company_id, user_id)
+);
+-- その週の月曜（日本時間）
+create or replace function public._week_start(ts timestamptz) returns date
+language sql stable as $$ select date_trunc('week', ts at time zone 'Asia/Tokyo')::date $$;
+
+-- 会社の評価（平均・人数・★ごとの人数・良企業／優良企業）
+create or replace function public._corp_rating(cid_int int) returns jsonb
+language sql stable set search_path = public as $$
+  select jsonb_build_object('avg', case when count(*) > 0 then round(avg(stars)::numeric, 1) end, 'n', count(*),
+    'dist', jsonb_build_array(count(*) filter (where stars = 1), count(*) filter (where stars = 2), count(*) filter (where stars = 3),
+                              count(*) filter (where stars = 4), count(*) filter (where stars = 5)),
+    'grade', case when count(*) >= 3 and avg(stars) >= 4.7 then '優良企業' when count(*) >= 3 and avg(stars) >= 4.1 then '良企業' end)
+  from corp_reviews where company_id = cid_int $$;
+
+
 create or replace function public._corp_card(c companies, u uuid) returns jsonb
 language sql stable set search_path = public as $$
   select jsonb_build_object('cid', c.cid, 'cid_full', _cfull(c), 'name', c.name, 'form', c.form, 'kind', c.kind, 'description', c.description,
@@ -2302,6 +2324,8 @@ language sql stable set search_path = public as $$
     'exchange', c.cid = (select value from app_settings where key = 'exchange_cid'), 'official', c.official, 'acct_mode', c.acct_mode,
     'acct_need_check', c.acct_need_check, 'loan_on', c.loan_on, 'loan_need_acct', c.loan_need_acct, 'loan_need_check', c.loan_need_check,
     'pinned', exists (select 1 from corp_pins where user_id = u and company_id = c.id),
+    'closed_at', case when c.closed_at is null then null else _dlabel(c.closed_at) end,
+    'rating', _corp_rating(c.id),
     'mine', c.owner = u)
 $$;
 
@@ -2310,10 +2334,11 @@ create or replace function public.corp_search(p_q text) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); q text := btrim(coalesce(p_q, ''));
 begin
-  return (select coalesce(jsonb_agg(_corp_card(c, u) order by c.name), '[]'::jsonb) from (
+  return (select coalesce(jsonb_agg(_corp_card(c, u) order by (c.status in ('active', 'suspended')) desc, c.name), '[]'::jsonb) from (
     select * from companies
-     where status in ('active', 'suspended') and (q = '' or name ilike '%' || q || '%' or cid = split_part(q, '-', 1) or description ilike '%' || q || '%')
-     order by name limit 50) c);
+     where status in ('active', 'suspended', 'closed', 'bankrupt')
+       and (q = '' or name ilike '%' || q || '%' or cid = split_part(q, '-', 1) or description ilike '%' || q || '%')
+     order by (status in ('active', 'suspended')) desc, name limit 50) c);
 end $$;
 
 create or replace function public.corp_pins() returns jsonb
@@ -2340,8 +2365,12 @@ create or replace function public.corp_page(p_cid text) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies; acct bank_accounts;
 begin
-  select * into c from companies where cid = _cid_norm(p_cid) and status in ('active', 'suspended');
+  select * into c from companies where cid = _cid_norm(p_cid) and status in ('active', 'suspended', 'closed', 'bankrupt');
   if not found then raise exception '会社が見つかりません'; end if;
+  if c.status in ('closed', 'bankrupt') then   -- 廃業・倒産した会社：名前・説明・社長・評価だけ
+    return _corp_card(c, u) || jsonb_build_object('items', '[]'::jsonb, 'account', null, 'packs', '[]'::jsonb, 'loans', '[]'::jsonb,
+                                                 'shares', 0, 'holders', '[]'::jsonb, 'balance', _bal(u));
+  end if;
   if c.kind = '銀行' then perform _bank_accrue(c.id, u); end if;
   select * into acct from bank_accounts where company_id = c.id and user_id = u;
   return _corp_card(c, u) || jsonb_build_object(
@@ -3236,18 +3265,21 @@ declare u uuid := _me();
 begin
   return (select coalesce(jsonb_agg(jsonb_build_object('id', z.id, 'body', z.body, 'at', _dlabel(z.created_at),
             'ts', floor(extract(epoch from z.created_at) * 1000), 'nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id),
-            'mine', z.user_id = u, 'friend', _is_friend(u, z.user_id),
+            'mine', z.user_id = u, 'friend', _is_friend(u, z.user_id), 'names', _mention_names(z.body),
+            'to_me', (select account_no from profiles where id = u) = any(_mention_ids(z.body)),
             'asked', exists (select 1 from friends f where f.from_user = u and f.to_user = z.user_id and f.status = 'pending'))
             order by z.id desc), '[]'::jsonb)
     from (select * from posts
            where (p_before is null or id < p_before)
-             and (coalesce(p_scope, 'all') = 'all' or user_id = u or _is_friend(u, user_id))
+             and case coalesce(p_scope, 'all') when 'all' then true
+                      when 'mention' then (select account_no from profiles where id = u) = any(_mention_ids(body))
+                      else user_id = u or _is_friend(u, user_id) end
            order by id desc limit 30) z join profiles p on p.id = z.user_id);
 end $$;
 
 create or replace function public.tl_post(p_body text) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); b text := btrim(coalesce(p_body, ''));
+declare u uuid := _me(); b text := btrim(coalesce(p_body, '')); pid bigint;
 begin
   if char_length(b) < 1 then raise exception '何か書いてください'; end if;
   if char_length(b) > 140 then raise exception '140文字までです'; end if;
@@ -3257,7 +3289,8 @@ begin
   if (select count(*) from posts where user_id = u and created_at > _now() - interval '1 day') >= 100 then
     raise exception '投稿は1日100件までです';
   end if;
-  insert into posts(user_id, body, created_at) values (u, b, _now());
+  insert into posts(user_id, body, created_at) values (u, b, _now()) returning id into pid;
+  perform _mention_notify(u, b, 'TL', jsonb_build_object('go', 'tl', 'post', pid));
   -- TLは256通まで。あふれたら古い順に消す
   delete from posts where id <= (select id from posts order by id desc offset 256 limit 1);
   return jsonb_build_object('ok', true);
@@ -7051,8 +7084,8 @@ begin
     'stakes', (select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'seat', array_position(r.seats, k.user_id) - 1,
                   'amount', k.amount, 'payout', k.payout, 'me', k.user_id = u) order by k.at), '[]'::jsonb)
                  from game_stakes k join profiles p on p.id = k.user_id where k.room_id = r.id),
-    'chat', (select coalesce(jsonb_agg(jsonb_build_object('id', z.id, 'nickname', p.nickname, 'badge', _badge(p.id), 'body', z.body,
-               'ts', _kb_ms(z.at), 'player', z.user_id = any(r.seats)) order by z.id), '[]'::jsonb) from (
+    'chat', (select coalesce(jsonb_agg(jsonb_build_object('id', z.id, 'nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id), 'body', z.body,
+               'names', _mention_names(z.body), 'ts', _kb_ms(z.at), 'player', z.user_id = any(r.seats)) order by z.id), '[]'::jsonb) from (
               select * from game_chat where room_id = r.id order by id desc limit 40) z join profiles p on p.id = z.user_id),
     'now_ms', _kb_ms(_now()), 'balance', _bal(u));
 end $$;
@@ -7151,6 +7184,7 @@ begin
   if char_length(b) > 100 then raise exception '100文字までです'; end if;
   if exists (select 1 from game_chat where user_id = u and at > _now() - interval '10 seconds') then raise exception '送るのは10秒に1回までです'; end if;
   insert into game_chat(room_id, user_id, body, at) values (p_room, u, b, _now());
+  perform _mention_notify(u, b, format('部屋 #%s のチャット', p_room), jsonb_build_object('go', 'room', 'room', p_room));
   return room_state(p_room);
 end $$;
 
@@ -7229,7 +7263,7 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); q text := btrim(coalesce(p_q, ''));
 begin
   return (select coalesce(jsonb_agg(_pub_json(p, u) order by p.updated_at desc), '[]'::jsonb) from (
-    select * from pubs p where p.kind = p_kind and (p.status = 'active' or _pub_mine(p, u))
+    select * from pubs p where p.kind = p_kind and (p.status = 'active' or (p.status <> 'deleted' and _pub_mine(p, u)))
        and (p.company_id is null or exists (select 1 from companies c where c.id = p.company_id and c.status in ('active', 'suspended')))
        and (q = '' or p.title ilike '%' || q || '%' or p.description ilike '%' || q || '%')
      order by p.updated_at desc limit 50) p);
@@ -7254,7 +7288,10 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); p pubs; rd boolean;
 begin
   select * into p from pubs where id = p_id;
-  if not found or (p.status <> 'active' and not _pub_mine(p, u) and not _is_staff(u)) then raise exception '見つかりません'; end if;
+  if not found or (p.status <> 'active' and not (_pub_mine(p, u) and p.status <> 'deleted') and not _is_staff(u)
+                   and not exists (select 1 from pub_access a where a.pub_id = p.id and a.user_id = u and (a.until is null or a.until > _now()))) then
+    raise exception '見つかりません';
+  end if;
   rd := _pub_can_read(p, u);
   return _pub_json(p, u) || jsonb_build_object('staff', _is_staff(u),
     'list', (select coalesce(jsonb_agg(jsonb_build_object('id', i.id, 'title', i.title, 'free', i.free, 'at', _dlabel(i.created_at),
@@ -7271,7 +7308,10 @@ begin
   select * into i from pub_items where id = p_item;
   if not found then raise exception '見つかりません'; end if;
   select * into p from pubs where id = i.pub_id;
-  if p.status <> 'active' and not _pub_mine(p, u) and not _is_staff(u) then raise exception '見つかりません'; end if;
+  if p.status <> 'active' and not (_pub_mine(p, u) and p.status <> 'deleted') and not _is_staff(u)
+     and not exists (select 1 from pub_access a where a.pub_id = p.id and a.user_id = u and (a.until is null or a.until > _now())) then
+    raise exception '見つかりません';
+  end if;
   if not i.free and not _pub_can_read(p, u) and not _is_staff(u) then
     raise exception '%', case when p.kind = 'paper' then '購読すると読めます' else '買うと読めます' end;
   end if;
@@ -7342,7 +7382,7 @@ begin
     return pub_page(nid);
   end if;
   select * into p from pubs where id = p_id;
-  if not found or not _pub_mine(p, u) then raise exception '自分のものではありません'; end if;
+  if not found or not _pub_mine(p, u) or p.status = 'deleted' then raise exception '自分のものではありません（または削除ずみ）'; end if;
   update pubs set title = t, description = left(coalesce(p_desc, ''), 1000), price = p_price,
          period_days = greatest(1, least(coalesce(p_period, period_days), 365)), updated_at = _now()
    where id = p.id;
@@ -7355,7 +7395,7 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); p pubs; t text := btrim(coalesce(p_title, '')); b text := coalesce(p_body, '');
 begin
   select * into p from pubs where id = p_pub;
-  if not found or not _pub_mine(p, u) then raise exception '自分のものではありません'; end if;
+  if not found or not _pub_mine(p, u) or p.status = 'deleted' then raise exception '自分のものではありません（または削除ずみ）'; end if;
   if char_length(t) < 1 or char_length(t) > 60 then raise exception 'タイトルは1〜60文字です'; end if;
   if char_length(btrim(b)) < 1 then raise exception '本文を書いてください'; end if;
   if char_length(b) > 20000 then raise exception '本文は2万文字までです（長いときは分けてください）'; end if;
@@ -7380,7 +7420,7 @@ begin
   select * into i from pub_items where id = p_item;
   if not found then raise exception '見つかりません'; end if;
   select * into p from pubs where id = i.pub_id;
-  if not _pub_mine(p, u) and not _is_staff(u) then raise exception '自分のものではありません'; end if;
+  if (not _pub_mine(p, u) or p.status = 'deleted') and not _is_staff(u) then raise exception '自分のものではありません（または削除ずみ）'; end if;
   delete from pub_items where id = i.id;
   return pub_page(p.id);
 end $$;
@@ -7393,7 +7433,7 @@ begin
   return jsonb_build_object(
     'library', (select coalesce(jsonb_agg(_pub_json(p, u) order by p.updated_at desc), '[]'::jsonb)
                   from pubs p join pub_access a on a.pub_id = p.id and a.user_id = u where a.until is null or a.until > _now()),
-    'mine', (select coalesce(jsonb_agg(_pub_json(p, u) order by p.updated_at desc), '[]'::jsonb) from pubs p where _pub_mine(p, u)),
+    'mine', (select coalesce(jsonb_agg(_pub_json(p, u) order by p.updated_at desc), '[]'::jsonb) from pubs p where _pub_mine(p, u) and p.status <> 'deleted'),
     'corps', (select coalesce(jsonb_agg(jsonb_build_object('cid', cid, 'name', name) order by id), '[]'::jsonb)
                 from companies where owner = u and status in ('active', 'suspended')));
 end $$;
@@ -7405,12 +7445,231 @@ declare u uuid := _me(); p pubs; owner_u uuid;
 begin
   if not _is_staff(u) then raise exception '管理者だけが使えます'; end if;
   select * into p from pubs where id = p_id for update;
-  if not found then raise exception '見つかりません'; end if;
+  if not found or p.status = 'deleted' then raise exception '見つかりません（削除ずみ）'; end if;
   update pubs set status = case when p_hide then 'hidden' else 'active' end, reason = case when p_hide then left(coalesce(p_reason, ''), 200) end where id = p.id;
   owner_u := coalesce(p.author, (select owner from companies where id = p.company_id));
   perform _notice(owner_u, format('【広報・書籍】「%s」は管理者によって%s。%s', p.title, case when p_hide then '非公開になりました' else '公開にもどりました' end,
                   case when p_hide and coalesce(p_reason, '') <> '' then '理由：' || p_reason else '' end));
   return pub_page(p.id);
+end $$;
+
+-- ---------------------------------------------------------------------
+-- 通知（ベル）
+--   これまでのお知らせ（notices）に、開く場所（link）と、だれからか（from_user）を足した
+--   一覧を開くと既読になる。新しい500件だけ残す
+-- ---------------------------------------------------------------------
+alter table public.notices add column if not exists link jsonb;
+alter table public.notices add column if not exists from_user uuid references public.profiles(id) on delete set null;
+
+create or replace function public._notice_l(u uuid, t text, lk jsonb, fu uuid) returns void
+language sql set search_path = public as $$ insert into notices(user_id, body, link, from_user) values (u, t, lk, fu) $$;
+
+-- 通知の一覧（p_before より前を30件）。p_read = true なら、出したものを既読にする
+create or replace function public.notice_list(p_before bigint, p_read boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); res jsonb; ids bigint[]; cut bigint;
+begin
+  select coalesce(jsonb_agg(jsonb_build_object('id', z.id, 'body', z.body, 'new', not z.seen, 'at', _dlabel(z.created_at),
+           'time', to_char(z.created_at at time zone 'Asia/Tokyo', 'HH24:MI'), 'link', z.link,
+           'from', (select jsonb_build_object('nickname', p.nickname, 'uid', p.account_no) from profiles p where p.id = z.from_user)) order by z.id desc), '[]'::jsonb),
+         array_agg(z.id)
+    into res, ids
+    from (select * from notices where user_id = u and (p_before is null or id < p_before) order by id desc limit 30) z;
+  if coalesce(p_read, false) and ids is not null then update notices set seen = true where user_id = u and id = any(ids) and not seen; end if;
+  select id into cut from notices where user_id = u order by id desc offset 499 limit 1;
+  if cut is not null then delete from notices where user_id = u and id < cut; end if;
+  return jsonb_build_object('items', res, 'unread', (select count(*) from notices where user_id = u and not seen));
+end $$;
+
+-- 未読の数と、いちばん新しい通知（ベルの数字・この端末への通知に使う）
+create or replace function public.notice_count() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); n record;
+begin
+  select id, body into n from notices where user_id = u order by id desc limit 1;
+  return jsonb_build_object('unread', (select count(*) from notices where user_id = u and not seen), 'latest', n.id, 'latest_body', n.body);
+end $$;
+
+create or replace function public.notice_read_all() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me();
+begin
+  update notices set seen = true where user_id = u and not seen;
+  return jsonb_build_object('unread', 0);
+end $$;
+
+-- ---------------------------------------------------------------------
+-- メンション：本文の「@ID（5けた）」。TLと対戦部屋のチャットで使える
+-- ---------------------------------------------------------------------
+create or replace function public._mention_ids(b text) returns text[]
+language sql immutable as $$
+  select coalesce(array(select distinct m[1] from regexp_matches(coalesce(b, ''), '@([0-9]{5,6})(?![0-9])', 'g') m), '{}') $$;
+
+-- 本文に出てくる @ID → ニックネーム（表示用）
+create or replace function public._mention_names(b text) returns jsonb
+language sql stable set search_path = public as $$
+  select coalesce(jsonb_object_agg(p.account_no, p.nickname), '{}'::jsonb) from profiles p where p.account_no = any(_mention_ids(b)) $$;
+
+-- メンションされた人に知らせる（自分はのぞく・5人まで）
+create or replace function public._mention_notify(u uuid, b text, wher text, lk jsonb) returns void
+language plpgsql set search_path = public as $$
+declare me profiles; t uuid; ex text := regexp_replace(b, '\s+', ' ', 'g'); r record;
+begin
+  select * into me from profiles where id = u;
+  for r in select key, value from jsonb_each_text(_mention_names(b)) loop ex := replace(ex, '@' || r.key, '@' || r.value); end loop;   -- @ID → @名前
+  for t in select p.id from profiles p where p.account_no = any(_mention_ids(b)) and p.id <> u limit 5 loop
+    perform _notice_l(t, format('【メンション】%s さんが%sであなたをメンションしました：「%s」', me.nickname, wher, left(ex, 60)), lk, u);
+  end loop;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- 人をさがす（ニックネームの一部かID）・人のページ
+--   見えるのは、ニックネーム・ID・バッジ・社長をしている会社・書いた本・TLの投稿だけ（所持金などは見えない）
+-- ---------------------------------------------------------------------
+create or replace function public._person_card(p profiles, u uuid) returns jsonb
+language sql stable set search_path = public as $$
+  select jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id), 'me', p.id = u,
+    'friend', (select case when f.status = 'ok' then 'ok' when f.from_user = u then 'out' else 'in' end from friends f
+                where least(f.from_user, f.to_user) = least(u, p.id) and greatest(f.from_user, f.to_user) = greatest(u, p.id) limit 1)) $$;
+
+create or replace function public.people_search(p_q text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); q text := btrim(coalesce(p_q, '')); lk text;
+begin
+  if q = '' then   -- 何も入れないとき：フレンド
+    return (select coalesce(jsonb_agg(_person_card(p, u) order by p.nickname), '[]'::jsonb) from (
+              select * from profiles p where _is_friend(u, p.id) order by p.nickname limit 50) p);
+  end if;
+  q := ltrim(q, '@');
+  lk := '%' || replace(replace(replace(q, '\', '\\'), '%', '\%'), '_', '\_') || '%';
+  return (select coalesce(jsonb_agg(_person_card(p, u) order by (p.account_no = q) desc, _is_friend(u, p.id) desc, p.nickname), '[]'::jsonb) from (
+            select * from profiles p where p.account_no = q or p.nickname ilike lk
+             order by (p.account_no = q) desc, p.nickname limit 30) p);
+end $$;
+
+create or replace function public.person_page(p_uid text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); p profiles;
+begin
+  select * into p from profiles where account_no = ltrim(btrim(coalesce(p_uid, '')), '@');
+  if not found then raise exception 'その人は見つかりません'; end if;
+  return _person_card(p, u) || jsonb_build_object(
+    'since', to_char(p.created_at at time zone 'Asia/Tokyo', 'YYYY"年"FMMM"月"'),
+    'companies', (select coalesce(jsonb_agg(_corp_card(c, u) order by (c.status in ('active', 'suspended')) desc, c.id), '[]'::jsonb)
+                    from companies c where c.owner = p.id and c.status in ('active', 'suspended', 'closed', 'bankrupt')),
+    'books', (select coalesce(jsonb_agg(jsonb_build_object('id', x.id, 'title', x.title, 'price', x.price, 'kind', x.kind,
+                'items', (select count(*) from pub_items where pub_id = x.id)) order by x.updated_at desc), '[]'::jsonb)
+                from pubs x where x.author = p.id and x.status = 'active'),
+    'posts', (select coalesce(jsonb_agg(jsonb_build_object('id', z.id, 'body', z.body, 'at', _dlabel(z.created_at), 'names', _mention_names(z.body)) order by z.id desc), '[]'::jsonb)
+                from (select * from posts where user_id = p.id order by id desc limit 5) z));
+end $$;
+
+-- ---------------------------------------------------------------------
+-- 新聞・本を消す
+--   買った人・購読中の人がいなければ、記事・章ごと全部消す
+--   いれば「削除済み」にして一覧から消す（買った人は本棚から読めるまま。購読は期間が終わるまで）
+-- ---------------------------------------------------------------------
+create or replace function public.pub_delete(p_id bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); p pubs;
+begin
+  select * into p from pubs where id = p_id for update;
+  if not found or p.status = 'deleted' or not _pub_mine(p, u) then raise exception '消せるものが見つかりません'; end if;
+  if exists (select 1 from pub_access where pub_id = p.id) then
+    update pubs set status = 'deleted', updated_at = _now() where id = p.id;
+  else
+    delete from pubs where id = p.id;
+  end if;
+  return my_pubs();
+end $$;
+
+-- ---------------------------------------------------------------------
+-- 企業の評価（週に1回・★1〜5）
+--   その週（月〜日）に関わった会社を評価できる：買い物・口座・借入・勤め先・持ち株・新聞や本・請求・送金・取引所
+--   1社以上評価すると、その週は国庫から 500 X（所得）。登録から7日たった人だけ。自分の会社は評価できない
+--   会社の平均は「1人1社につき最新の評価」。評価が3人以上で、平均4.1以上は良企業・4.7以上は優良企業
+-- ---------------------------------------------------------------------
+create table if not exists public.review_rewards (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  week    date not null,
+  amount  bigint not null,
+  at      timestamptz not null default now(),
+  primary key (user_id, week)
+);
+alter table public.review_rewards enable row level security;
+revoke all on public.review_rewards from anon, authenticated;
+alter table public.treasury add column if not exists review_total bigint not null default 0;
+alter table public.corp_reviews enable row level security;
+alter table public.review_rewards enable row level security;
+revoke all on public.corp_reviews, public.review_rewards from anon, authenticated;
+
+
+-- その週に関わった会社（company_id と、関わり方）
+create or replace function public._corp_involved(u uuid) returns table(company_id int, how text)
+language sql stable set search_path = public as $$
+  with since as (select (_week_start(_now())::timestamp at time zone 'Asia/Tokyo') t),
+  links as (
+    select o.company_id, '買い物' how from corp_orders o, since where o.buyer = u and o.created_at >= since.t
+    union all select b.company_id, '口座' from bank_accounts b where b.user_id = u and b.status = 'active'
+    union all select l.company_id, '借入' from loans l, since where l.user_id = u and (l.status = 'active' or l.applied_at >= since.t)
+    union all select m.company_id, '勤め先' from corp_members m where m.user_id = u
+    union all select h.company_id, '株' from corp_holders h where h.user_id = u
+    union all select x.company_id, case when x.kind = 'paper' then '新聞' else '本' end from pub_access a join pubs x on x.id = a.pub_id
+               where a.user_id = u and x.company_id is not null and (a.until is null or a.until > _now())
+    union all select coalesce(i.from_comp, i.to_comp), '請求' from invoices i, since
+               where (i.from_user = u or i.to_user = u) and coalesce(i.from_comp, i.to_comp) is not null and coalesce(i.done_at, i.created_at) >= since.t
+    union all select c.id, '送金' from tx_log t join companies c on c.cid = split_part(t.detail->>'id', '-', 1), since
+               where t.user_id = u and t.game = 'send' and t.created_at >= since.t and coalesce(t.detail->>'id', '') <> ''
+    union all select f.exch_id, '取引所' from fx_trades f, since where (f.buyer = u or f.seller = u) and f.exch_id is not null and f.created_at >= since.t)
+  select l.company_id, string_agg(distinct l.how, '・') from links l join companies c on c.id = l.company_id
+   where c.owner <> u and c.status in ('active', 'suspended')
+   group by l.company_id $$;
+
+create or replace function public.review_state() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); wk date := _week_start(_now()); made timestamptz;
+begin
+  select created_at into made from profiles where id = u;
+  return jsonb_build_object('week', to_char(wk, 'FMMM"月"FMDD"日"') || '〜' || to_char(wk + 6, 'FMMM"月"FMDD"日"'),
+    'reward', 500, 'done', exists (select 1 from review_rewards where user_id = u and week = wk),
+    'can', _now() >= made + interval '7 days', 'can_from', _dlabel(made + interval '7 days'),
+    'list', (select coalesce(jsonb_agg(_corp_card(c, u) || jsonb_build_object('how', iv.how,
+               'my', (select stars from corp_reviews r where r.company_id = c.id and r.user_id = u),
+               'my_week', (select r.week = wk from corp_reviews r where r.company_id = c.id and r.user_id = u)) order by c.name), '[]'::jsonb)
+             from _corp_involved(u) iv join companies c on c.id = iv.company_id),
+    'balance', _bal(u));
+end $$;
+
+-- 評価を送る（p_ratings：[{cid, stars}]）。その週はじめての評価なら 500 X
+create or replace function public.review_submit(p_ratings jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); wk date := _week_start(_now()); e jsonb; c companies; st int; n int := 0; made timestamptz; amt bigint := 500; tb bigint;
+begin
+  select created_at into made from profiles where id = u for update;
+  if _now() < made + interval '7 days' then raise exception '評価できるのは、登録から7日たってからです（%から）', _dlabel(made + interval '7 days'); end if;
+  if jsonb_typeof(p_ratings) <> 'array' or jsonb_array_length(p_ratings) = 0 then raise exception '評価する会社をえらんでください'; end if;
+  if jsonb_array_length(p_ratings) > 50 then raise exception '一度に評価できるのは50社までです'; end if;
+  for e in select * from jsonb_array_elements(p_ratings) loop
+    st := case when jsonb_typeof(e->'stars') = 'number' then (e->>'stars')::numeric::int end;
+    if st is null or st not between 1 and 5 or (e->>'stars')::numeric <> st then raise exception '★は1〜5でえらんでください'; end if;
+    select * into c from companies where cid = _cid_norm(e->>'cid');
+    if not found or not exists (select 1 from _corp_involved(u) iv where iv.company_id = c.id) then
+      raise exception '「%」は、今週関わった会社ではないので評価できません', coalesce(c.name, e->>'cid');
+    end if;
+    insert into corp_reviews(company_id, user_id, stars, week, updated_at) values (c.id, u, st, wk, _now())
+    on conflict (company_id, user_id) do update set stars = excluded.stars, week = excluded.week, updated_at = excluded.updated_at;
+    n := n + 1;
+  end loop;
+  if not exists (select 1 from review_rewards where user_id = u and week = wk) then
+    select balance into tb from treasury where id = 1 for update;
+    if tb >= amt then
+      update treasury set balance = balance - amt, review_total = review_total + amt where id = 1;
+      insert into review_rewards(user_id, week, amount, at) values (u, wk, amt, _now());
+      perform _give(u, amt);
+      perform _log(u, 'review', 0, amt, jsonb_build_object('week', wk, 'companies', n));
+    end if;
+  end if;
+  return review_state();
 end $$;
 
 -- 前の5けたの会社IDを、3けたの会社番号に変える（何度流しても同じ）
@@ -7473,6 +7732,8 @@ begin
             '_mj_pending','_mj_delay','_mj_act','_mj_view','_mj_tval','_mj_safe','_mj_seen','_mj_sh_after','_mj_cpu',
             '_is_multi','_mg_init','_mg_pending','_mg_act','_mg_cpu','_mg_view','_mg_delay','_mg_final','_room_cancel','_room_refund','_room_stake',
             '_mroom_hum','_mroom_start','_mroom_settle','_mroom_tick','_mroom_move','room_start','room_quit',
+            '_notice_l','notice_list','notice_count','notice_read_all','_mention_ids','_mention_names','_mention_notify',
+            '_person_card','people_search','person_page','pub_delete','_week_start','_corp_rating','_corp_involved','review_state','review_submit',
             '_pub_mine','_pub_can_read','_pub_json','pub_list','news_list','pub_page','pub_read','pub_buy','pub_save','pub_item_save',
             'pub_item_delete','my_pubs','admin_pub_hide',
             '_kb_norm','_kb_gumbel','_kb_midx','_kb_jday','_kb_ms','_kb_agef','_kb_fit','_kb_name','_kb_new_horse',
