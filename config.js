@@ -1,6 +1,6 @@
-// Supabase の設定（README の「設定のしかた」の 5 番で取ったものを貼る）
-// anon（publishable）キーは公開して大丈夫なキーです。service_role（secret）キーは絶対に貼らないでください。
+// Supabase の設定
+// この anon（publishable）キーは公開して大丈夫なキーです。secret / service_role キーは絶対にここに書かないでください。
 window.AILINAX_CONFIG = {
-  url: "",      // 例: "https://abcdefghijkl.supabase.co"
-  anonKey: ""   // 例: "eyJhbGciOi..." または "sb_publishable_..."
+  url: "https://lkxnsnhrszqslcpaaypj.supabase.co",
+  anonKey: "sb_publishable_ofQ3GBrpD-RD53k3YGGTBQ_H0-2AC-s"
 };

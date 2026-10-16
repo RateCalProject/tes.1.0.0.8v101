@@ -1,6 +1,6 @@
 # AiliNaX カジノ
 
-架空通貨 **AiliNaX**（アイリナックス）で遊ぶカジノサイトです。Google でログインして遊びます。
+架空通貨 **AiliNaX**（アイリナックス）で遊ぶカジノサイトです。メールアドレスでログインして遊びます。
 
 > **AiliNaX は架空の通貨です。現金・物・他の通貨・電子マネー・ポイント・ゲーム内アイテムなど、どんなものとも交換できません。売買や交換の持ちかけも禁止です。**
 
@@ -20,31 +20,20 @@
 | ファイル | 中身 |
 |---|---|
 | `index.html` | カジノの画面 |
-| `config.js` | Supabase の URL とキー（設定のしかた 5） |
+| `config.js` | Supabase の URL と公開用キー |
 | `supabase/schema.sql` | サーバー側（テーブルと、残高・各ゲームの関数） |
 | `battle/index.html` | 付属ゲーム「市区町村バトル」 |
 
-## 設定のしかた（はじめの1回だけ）
+## サーバー（Supabase）
 
-ページの公開先（GitHub Pages）：`https://ratecalproject.github.io/tes.1.0.0.8v101/`
+設定ずみです（プロジェクト `ailinax-casino`、組織 `AiliNaX`、東京リージョン）。
 
-1. **Supabase のプロジェクトを作る**　[supabase.com](https://supabase.com) に GitHub か Google で登録し、New project（無料プラン・リージョンは Tokyo がおすすめ）。
-2. **サーバー側を入れる**　左の **SQL Editor** → New query に `supabase/schema.sql` の中身をぜんぶ貼って **Run**。「Success」が出ればOK（あとで更新したときも同じように貼りなおして Run。残高は消えません）。
-3. **Google ログインを用意する**
-   1. Supabase の **Authentication → Sign In / Providers → Google** を開き、そこに出ている **Callback URL**（`https://〇〇.supabase.co/auth/v1/callback`）をコピー。
-   2. [Google Cloud Console](https://console.cloud.google.com/) でプロジェクトを作り、**Google Auth Platform**（OAuth 同意画面）でアプリ名などを入れて作成。**対象（Audience）を「本番環境（In production）」に公開**しておく（テストのままだと登録した人しかログインできません）。
-   3. **クライアント → クライアントを作成**、種類は「ウェブ アプリケーション」。
-      - 承認済みの JavaScript 生成元：`https://ratecalproject.github.io`
-      - 承認済みのリダイレクト URI：1. でコピーした Callback URL
-   4. できた **クライアント ID** と **クライアント シークレット** を Supabase の Google の画面に貼って、Google を **Enabled** にして保存。
-4. **戻り先の URL を登録**　Supabase の **Authentication → URL Configuration** で
-   - Site URL：`https://ratecalproject.github.io/tes.1.0.0.8v101/`
-   - Redirect URLs に同じ URL を追加
-5. **キーを config.js に書く**　Supabase の **Project Settings → API Keys** にある **Publishable key**（または legacy の anon key）と、**Project URL**（Project Settings → Data API などにある `https://〇〇.supabase.co`）を `config.js` に貼って保存（GitHub の画面で config.js を開いて鉛筆マークから編集できます）。
-   - **secret / service_role キーは絶対に貼らないでください。** Publishable（anon）キーは公開しても大丈夫なキーです。
-6. **GitHub Pages を確認**　リポジトリの Settings → Pages で、Branch が `main` / `(root)` になっていればOK。
-
-うまくいかないとき：ログイン後に真っ白・エラーなら 4. の URL、Google の画面でエラーなら 3. のリダイレクト URI と公開状態を見なおしてください。
+- ページ：`https://ratecalproject.github.io/tes.1.0.0.8v101/`
+- ログイン：メールアドレスに届くリンクで入る（パスワードなし）
+- **無料プランのメール送信は、サイト全体で1時間に2通まで**です。たくさんの人が同時に新しく登録すると「送りすぎ」と出ます。増やしたいときは Supabase の Authentication → Emails で自分のメールサーバー（SMTP）を設定してください
+- サーバー側を更新したとき：Supabase の SQL Editor に `supabase/schema.sql` を貼って Run（何度やっても残高は消えません）
+- `config.js` の anon（publishable）キーは公開して大丈夫なキーです。secret / service_role キーは絶対に書かないでください
+- 無料プランのプロジェクトは、1週間だれも使わないと一時停止します。Supabase の画面で「Restore」を押せば戻ります
 
 ## しくみ（メモ）
 
