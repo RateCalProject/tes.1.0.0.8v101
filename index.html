@@ -279,7 +279,13 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <h3 style="margin-top:0">企業の申請</h3>
     <p class="muted small" style="margin:0 0 6px">申請料 1,000 X（国庫へ）。管理者が審査して、許可されると企業として活動できます（却下なら申請料は戻ります）。1人3社まで。</p>
     <input class="inp" id="apName" maxlength="24" placeholder="会社名（24文字まで）">
-    <div class="seg" id="apKind" style="margin:4px 0"><button data-k="一般" class="on">一般の会社</button><button data-k="銀行">銀行</button></div>
+    <div class="small muted" style="margin:6px 0 2px">会社の形</div>
+    <div class="seg" id="apForm"><button data-k="株式会社" class="on">株式会社</button><button data-k="有限会社">有限会社</button><button data-k="合同会社">合同会社</button></div>
+    <div class="small muted" style="margin:6px 0 2px">「株式会社」などをつける場所（例：株式会社〇〇／〇〇株式会社）</div>
+    <div class="seg" id="apPos"><button data-k="1" class="on">前につける</button><button data-k="0">後につける</button></div>
+    <div class="small muted" style="margin:6px 0 2px">業種</div>
+    <div class="seg" id="apKind" style="margin:0 0 4px"><button data-k="一般" class="on">ふつうの会社</button><button data-k="銀行">銀行（株式会社だけ）</button></div>
+    <p class="small" id="apPrev" style="margin:4px 0">申請する名前：<b>—</b></p>
     <textarea class="inp" id="apDesc" rows="3" maxlength="1000" placeholder="どんな会社か（企業ページに出ます）"></textarea>
     <button class="btn main wide" id="apSend">申請する（1,000 X）</button>
   </div>
@@ -1546,8 +1552,8 @@ $('#xSend').onclick = async () => {
 /* =================================================================
    企業（さがす・ピン留め・求人・銀行・買ったもの・会社のページ）
    ================================================================= */
-const kindTag = k => `<span class="kindtag">${esc(k)}</span>`;
-const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>${esc(c.name)}${kindTag(c.kind)}</b>
+const kindTag = c => c.kind === '銀行' ? '<span class="kindtag">銀行</span>' : '';
+const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>${esc(c.name)}${kindTag(c)}</b>
   <small>ID ${c.cid}・社長 ${esc(c.owner)}${c.description ? '・' + esc(c.description) : ''}</small></span>${c.pinned ? '📌' : ''}</div>`;
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
@@ -1612,7 +1618,7 @@ async function corpOpen(cid) {
   const m = document.createElement('div'); m.className = 'modal';
   const bank = c.kind === '銀行';
   m.innerHTML = `<div class="sheet">
-    <div class="row"><b style="font-size:20px">${esc(c.name)}</b>${kindTag(c.kind)}<button class="btn s" style="margin-left:auto" data-x>とじる</button></div>
+    <div class="row"><b style="font-size:20px">${esc(c.name)}</b>${kindTag(c)}<button class="btn s" style="margin-left:auto" data-x>とじる</button></div>
     <p class="muted small" style="margin:4px 0">ID <b style="user-select:all">${c.cid}</b>・社長 ${esc(c.owner)}</p>
     ${c.description ? `<p style="white-space:pre-wrap;margin:8px 0">${esc(c.description)}</p>` : ''}
     <div class="row" style="margin:8px 0"><button class="btn s" data-pin>${c.pinned ? '📌 ピン留めをやめる' : '📌 ピン留め'}</button>
@@ -1649,12 +1655,23 @@ async function corpOpen(cid) {
 /* =================================================================
    企業ページ（自分の会社の運営）・勤め先
    ================================================================= */
-let OW = null, apKind = '一般';
-$$('#apKind button').forEach(b => b.onclick = () => { apKind = b.dataset.k; $$('#apKind button').forEach(x => x.classList.toggle('on', x === b)); });
+let OW = null, apKind = '一般', apForm = '株式会社', apPre = true;
+const apName = () => { const n = $('#apName').value.trim(); return n ? (apPre ? apForm + n : n + apForm) : ''; };
+function apUpd() {
+  if (apKind === '銀行' && apForm !== '株式会社') apForm = '株式会社';
+  $$('#apKind button').forEach(x => x.classList.toggle('on', x.dataset.k === apKind));
+  $$('#apForm button').forEach(x => x.classList.toggle('on', x.dataset.k === apForm));
+  $$('#apPos button').forEach(x => x.classList.toggle('on', (x.dataset.k === '1') === apPre));
+  $('#apPrev').innerHTML = `申請する名前：<b>${esc(apName()) || '—'}</b>`;
+}
+$$('#apKind button').forEach(b => b.onclick = () => { apKind = b.dataset.k; apUpd(); });
+$$('#apForm button').forEach(b => b.onclick = () => { apForm = b.dataset.k; if (apForm !== '株式会社' && apKind === '銀行') apKind = '一般'; apUpd(); });
+$$('#apPos button').forEach(b => b.onclick = () => { apPre = b.dataset.k === '1'; apUpd(); });
+$('#apName').oninput = apUpd;
 $('#apSend').onclick = async () => {
-  const name = $('#apName').value.trim(); if (!name) return toast('会社名を入れてください');
-  if (!confirm(`「${name}」（${apKind}）を申請します。申請料 1,000 X がかかります。よろしいですか？`)) return;
-  try { OW = await call('corp_apply', { p_name: name, p_kind: apKind, p_desc: $('#apDesc').value }); toast('申請しました。審査をお待ちください'); $('#apName').value = ''; $('#apDesc').value = ''; ownRender(); setBal(OW.balance); }
+  const name = apName(); if (!name) return toast('会社名を入れてください');
+  if (!confirm(`「${name}」（${apKind === '銀行' ? '銀行' : apForm}）を申請します。申請料 1,000 X がかかります。よろしいですか？`)) return;
+  try { OW = await call('corp_apply', { p_name: $('#apName').value.trim(), p_form: apForm, p_pre: apPre, p_kind: apKind, p_desc: $('#apDesc').value }); toast('申請しました。審査をお待ちください'); $('#apName').value = ''; $('#apDesc').value = ''; apUpd(); ownRender(); setBal(OW.balance); }
   catch (e) { toast(e.message); }
 };
 async function ownLoad() { try { OW = await call('my_corps'); ownRender(); } catch (e) { toast(e.message); } }
@@ -1663,11 +1680,11 @@ function ownRender() {
   if (!OW) return;
   const corps = OW.corps;
   let h = corps.map(c => {
-    if (c.status !== 'active') return `<div class="card own"><h3 style="margin-top:0">${esc(c.name)}${kindTag(c.kind)} <span class="tag">${ST_CO[c.status] || c.status}</span></h3>
+    if (c.status !== 'active') return `<div class="card own"><h3 style="margin-top:0">${esc(c.name)}${kindTag(c)} <span class="tag">${ST_CO[c.status] || c.status}</span></h3>
       <p class="muted small" style="margin:0">管理者が確認するまでお待ちください。許可されると、お知らせが届きます。</p></div>`;
     const bank = c.kind === '銀行', cid = c.cid;
     return `<div class="card own" data-co="${cid}">
-      <h3 style="margin-top:0">${esc(c.name)}${kindTag(c.kind)} <span class="tag good">活動中</span></h3>
+      <h3 style="margin-top:0">${esc(c.name)}${kindTag(c)} <span class="tag good">活動中</span></h3>
       <div class="kv"><span>会社のID</span><b>${cid}</b><span>会社のお金</span><b>${fmt(c.balance)} X</b>
         ${bank ? `<span class="muted">あずかっている預金</span><b>${fmt(c.deposits)} X</b><span class="muted">口座の数</span><b>${c.accounts}</b>` : ''}</div>
       <div class="row" style="margin-top:8px;flex-wrap:wrap">
@@ -1775,7 +1792,7 @@ async function adminLoad() {
   try {
     const d = await call('admin_state'), t = d.treasury;
     $('#adminBox').innerHTML = `<h3 style="margin-top:0">企業の審査</h3>
-      ${d.pending.length ? d.pending.map(c => `<div class="item"><div class="row"><b>${esc(c.name)}</b>${kindTag(c.kind)}</div>
+      ${d.pending.length ? d.pending.map(c => `<div class="item"><div class="row"><b>${esc(c.name)}</b>${kindTag(c)}</div>
           <p class="small muted" style="margin:4px 0">申請者 ${esc(c.owner)}（ID ${c.owner_id}）・${c.at}・会社ID ${c.cid}</p>
           ${c.description ? `<p class="small" style="white-space:pre-wrap;margin:4px 0">${esc(c.description)}</p>` : ''}
           <div class="row"><button class="btn main s" data-ok="${c.cid}">許可</button><button class="btn s" data-ng="${c.cid}">却下</button></div></div>`).join('')
@@ -1788,7 +1805,7 @@ async function adminLoad() {
         <span class="muted">手数料・申請料</span><b>${fmt(t.fee_total)}</b><span class="muted">給料（仕事）</span><b>${fmt(t.wage_total)}</b>
         <span class="muted">没収</span><b>${fmt(t.confiscated_total)}</b></div>
       <h3>活動中の企業</h3>
-      ${d.active.map(c => `<p class="small" style="margin:4px 0">${esc(c.name)}（${esc(c.kind)}・ID ${c.cid}・社長 ${esc(c.owner)}）お金 ${fmt(c.balance)} X</p>`).join('') || '<p class="muted small">まだありません</p>'}`;
+      ${d.active.map(c => `<p class="small" style="margin:4px 0">${esc(c.name)}（${esc(c.kind === '銀行' ? '銀行' : c.form)}・ID ${c.cid}・社長 ${esc(c.owner)}）お金 ${fmt(c.balance)} X</p>`).join('') || '<p class="muted small">まだありません</p>'}`;
     $$('#adminBox [data-ok]').forEach(b => b.onclick = async () => { try { await call('admin_corp_decide', { p_cid: b.dataset.ok, p_ok: true, p_reason: null }); toast('許可しました'); adminLoad(); } catch (e) { toast(e.message); } });
     $$('#adminBox [data-ng]').forEach(b => b.onclick = async () => { const why = prompt('却下の理由（申請者に届きます）', ''); if (why === null) return;
       try { await call('admin_corp_decide', { p_cid: b.dataset.ng, p_ok: false, p_reason: why }); toast('却下しました（申請料は返しました）'); adminLoad(); } catch (e) { toast(e.message); } });
@@ -1796,7 +1813,7 @@ async function adminLoad() {
 }
 
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金' };
+const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給' };
 async function moreLoad() {
   try {
     const [hs, me] = await Promise.all([call('my_history'), call('my_profile')]);

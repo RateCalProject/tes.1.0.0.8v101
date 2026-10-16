@@ -259,6 +259,13 @@ create table if not exists public.companies (
   decided_at  timestamptz
 );
 create unique index if not exists companies_name_idx on public.companies(lower(name)) where status <> 'rejected';
+-- 会社の形（株式会社・有限会社・合同会社）。name には「株式会社〇〇」のように形もふくめた名前を入れる
+alter table public.companies add column if not exists form text not null default '株式会社';
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'companies_form_chk') then
+    alter table public.companies add constraint companies_form_chk check (form in ('株式会社', '有限会社', '合同会社'));
+  end if;
+end $$;
 create table if not exists public.corp_items (
   id          bigserial primary key,
   company_id  int not null references public.companies(id) on delete cascade,
@@ -2148,7 +2155,7 @@ end $$;
 -- 会社の見た目（だれでも見られる部分）
 create or replace function public._corp_card(c companies, u uuid) returns jsonb
 language sql stable set search_path = public as $$
-  select jsonb_build_object('cid', c.cid, 'name', c.name, 'kind', c.kind, 'description', c.description,
+  select jsonb_build_object('cid', c.cid, 'name', c.name, 'form', c.form, 'kind', c.kind, 'description', c.description,
     'owner', (select nickname from profiles where id = c.owner), 'rate', c.rate,
     'pinned', exists (select 1 from corp_pins where user_id = u and company_id = c.id),
     'mine', c.owner = u)
@@ -2292,12 +2299,17 @@ begin
 end $$;
 
 -- 企業の申請
-create or replace function public.corp_apply(p_name text, p_kind text, p_desc text) returns jsonb
+drop function if exists public.corp_apply(text, text, text);
+create or replace function public.corp_apply(p_name text, p_form text, p_pre boolean, p_kind text, p_desc text) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); nm text := btrim(coalesce(p_name, ''));
+declare u uuid := _me(); base text := btrim(coalesce(p_name, '')); nm text;
 begin
-  if char_length(nm) < 1 or char_length(nm) > 24 then raise exception '会社名は1〜24文字です'; end if;
+  if char_length(base) < 1 or char_length(base) > 24 then raise exception '会社名は1〜24文字です'; end if;
+  if p_form not in ('株式会社', '有限会社', '合同会社') then raise exception '会社の形（株式会社・有限会社・合同会社）をえらんでください'; end if;
+  if base ~ '(株式会社|有限会社|合同会社|合資会社|合名会社)' then raise exception '会社名には「株式会社」などを入れないでください（下でえらべます）'; end if;
   if p_kind not in ('一般', '銀行') then raise exception '会社の種類をえらんでください'; end if;
+  if p_kind = '銀行' and p_form <> '株式会社' then raise exception '銀行は株式会社だけです'; end if;
+  nm := case when coalesce(p_pre, true) then p_form || base else base || p_form end;
   if (select count(*) from companies where owner = u and status in ('pending', 'active')) >= 3 then
     raise exception '会社は1人3つまでです';
   end if;
@@ -2307,8 +2319,8 @@ begin
   perform _take(u, 1000);
   update treasury set balance = balance + 1000, fee_total = fee_total + 1000 where id = 1;
   perform _log(u, 'corp_fee', 1000, 0, jsonb_build_object('company', nm));
-  insert into companies(cid, owner, name, kind, description, fee_paid)
-  values (_new_acct(), u, nm, p_kind, left(coalesce(p_desc, ''), 1000), 1000);
+  insert into companies(cid, owner, name, form, kind, description, fee_paid)
+  values (_new_acct(), u, nm, p_form, p_kind, left(coalesce(p_desc, ''), 1000), 1000);
   return my_corps();
 end $$;
 
@@ -2318,7 +2330,7 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me();
 begin
   return jsonb_build_object('corps', (select coalesce(jsonb_agg(jsonb_build_object(
-      'cid', c.cid, 'name', c.name, 'kind', c.kind, 'description', c.description, 'status', c.status, 'reason', c.reason,
+      'cid', c.cid, 'name', c.name, 'form', c.form, 'kind', c.kind, 'description', c.description, 'status', c.status, 'reason', c.reason,
       'balance', c.balance, 'rate', c.rate,
       'items', (select coalesce(jsonb_agg(jsonb_build_object('id', i.id, 'name', i.name, 'price', i.price,
                   'description', i.description, 'active', i.active) order by i.id), '[]'::jsonb) from corp_items i where i.company_id = c.id),
@@ -2494,7 +2506,7 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); q text := btrim(coalesce(p_q, ''));
 begin
   return (select coalesce(jsonb_agg(z order by z.id desc), '[]'::jsonb) from (
-    select j.id, j.title, j.description, j.wage, j.contact, c.name company, c.cid, c.kind,
+    select j.id, j.title, j.description, j.wage, j.contact, c.name company, c.cid, c.kind, c.form,
            (select status from corp_applies a where a.job_id = j.id and a.user_id = u) applied,
            exists (select 1 from corp_members m where m.company_id = c.id and m.user_id = u) member,
            c.owner = u mine
@@ -2617,10 +2629,10 @@ begin
   if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
   select * into tr from treasury where id = 1;
   return jsonb_build_object(
-    'pending', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'kind', c.kind, 'description', c.description,
+    'pending', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'form', c.form, 'kind', c.kind, 'description', c.description,
                   'owner', p.nickname, 'owner_id', p.account_no, 'at', _dlabel(c.created_at)) order by c.id), '[]'::jsonb)
                   from companies c join profiles p on p.id = c.owner where c.status = 'pending'),
-    'active', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'kind', c.kind, 'owner', p.nickname,
+    'active', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'form', c.form, 'kind', c.kind, 'owner', p.nickname,
                   'balance', c.balance) order by c.name), '[]'::jsonb)
                   from companies c join profiles p on p.id = c.owner where c.status = 'active'),
     'treasury', to_jsonb(tr),
