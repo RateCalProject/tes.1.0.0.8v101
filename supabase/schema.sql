@@ -1026,7 +1026,7 @@ begin
     left join tax_months mm on mm.month = t.month;
 
   select max(month) into topm from tax_months where processed;
-  select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'tax', t.tax_paid) order by t.tax_paid desc), '[]'::jsonb) into top
+  select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname) order by t.tax_paid desc), '[]'::jsonb) into top
     from (select * from tax_returns where month = topm and tax_paid > 0 order by tax_paid desc limit 10) t
     join profiles p on p.id = t.user_id;
 
@@ -1134,6 +1134,23 @@ insert into public.keiba_names(kind, idx, name, grade, surface, dist, cond, hand
 on conflict (kind, idx) do nothing;
 -- カタカナの「アイリナックス」はやめて AiliNaX に
 update public.keiba_names set name = replace(name, 'アイリナックス', 'AiliNaX') where name like '%アイリナックス%';
+-- 重賞の名前を府中・京都・中京に合わせる（メインレースはその競馬場で行う）
+alter table public.keiba_names add column if not exists venue int not null default 5;
+do $$
+declare r record;
+begin
+  for r in select * from (values
+      ('g1', 0, '白浜スプリントカップ', '中京スプリントカップ', 1, '芝', 1200),
+      ('g1', 2, '風見マイルチャンピオン', '府中マイルチャンピオン', 5, '芝', 1600),
+      ('g1', 3, '銀杏ダートクラシック', '京都ダートクラシック', 2, 'ダ', 1900),
+      ('sat', 1, '風見ステークス', '府中ステークス', 5, '芝', 1400),
+      ('sat', 2, '白浜杯', '中京杯', 1, 'ダ', 1800),
+      ('sat', 3, '銀杏賞', '京都賞', 2, '芝', 1800)) v(kind, idx, old, new, venue, surface, dist) loop
+    update public.keiba_names set name = r.new, venue = r.venue, surface = r.surface, dist = r.dist
+     where kind = r.kind and idx = r.idx and name = r.old;
+    update public.keiba_races set name = r.new where name = r.old;
+  end loop;
+end $$;
 update public.keiba_races set name = replace(name, 'アイリナックス', 'AiliNaX') where name like '%アイリナックス%';
 
 -- 小さな道具
@@ -1450,7 +1467,7 @@ begin
     nr.name := 'オープン特別'; nr.grade := 'OP'; nr.surface := '芝'; nr.dist := 1800; nr.cond := '3up'; nr.handicap := false;
   end if;
   posttime := make_timestamptz(extract(year from d)::int, extract(month from d)::int, extract(day from d)::int, 20, 30, 0, 'Asia/Tokyo');
-  perform _kb_make_race(d, 29, 5, 11, posttime, nr.name, nr.grade, null, nr.cond, nr.surface, nr.dist,
+  perform _kb_make_race(d, 29, coalesce(nr.venue, 5), 11, posttime, nr.name, nr.grade, null, nr.cond, nr.surface, nr.dist,
                         case when nr.surface = '芝' then gt[5] else gd[5] end, wth[5],
                         case when nr.grade = 'G1' then 'g1' else 'graded' end, nr.handicap,
                         case nr.grade when 'G1' then 16 when 'G2' then 12 when 'G3' then 12 else 10 end,
@@ -2640,7 +2657,13 @@ begin
     'treasury', to_jsonb(tr),
     'supply', (select coalesce(sum(balance), 0) from profiles),
     'corp_money', (select coalesce(sum(balance), 0) from companies),
-    'bank_money', (select coalesce(sum(balance), 0) from bank_accounts));
+    'bank_money', (select coalesce(sum(balance), 0) from bank_accounts),
+    'ca_total', (select coalesce(sum(ca), 0) from profiles)
+                + (select coalesce(sum(remain * price), 0) from fx_orders where side = 'buy' and status = 'open')
+                + (select coalesce(sum(amount), 0) from fx_requests where kind = 'out' and status = 'pending'),
+    'fx_requests', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'kind', r.kind, 'amount', r.amount, 'contact', r.contact,
+                     'nickname', p.nickname, 'uid', p.account_no, 'ca', p.ca, 'at', _dlabel(r.created_at)) order by r.id), '[]'::jsonb)
+                     from fx_requests r join profiles p on p.id = r.user_id where r.status = 'pending'));
 end $$;
 
 create or replace function public.admin_corp_decide(p_cid text, p_ok boolean, p_reason text) returns jsonb
@@ -3077,6 +3100,212 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
+-- 通貨の取引所（AiliNaX ⇄ Cièlani-Alpićsk）
+--   Cièlani-Alpićsk（CA）：Cièlani-Nièpha（CN・風の芽公式サーバーの通貨）と同じ価値の、サイトの中で使う通貨
+--   値段は「1 X = 何 CA」。買い注文＝CAを払ってXを買う、売り注文＝Xを売ってCAをもらう（指値・先に出た値段で約定）
+--   注文中のお金は預かる（買い：数量×値段のCA、売り：数量のX）。取り消すと戻る
+--   CN ⇄ CA は運営者が手で交換（1万単位）：交換申請 → 管理者が処理
+-- ---------------------------------------------------------------------
+alter table public.profiles add column if not exists ca bigint not null default 0;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'profiles_ca_chk') then
+    alter table public.profiles add constraint profiles_ca_chk check (ca >= 0);
+  end if;
+end $$;
+
+create table if not exists public.fx_orders (
+  id         bigserial primary key,
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  side       text not null check (side in ('buy', 'sell')),   -- buy：Xを買う（CAを払う）／sell：Xを売る
+  price      bigint not null check (price > 0),               -- 1 X あたりの CA
+  qty        bigint not null check (qty > 0),                 -- X の数
+  remain     bigint not null check (remain >= 0),
+  status     text not null default 'open',                    -- open / done / canceled
+  created_at timestamptz not null default now()
+);
+create index if not exists fx_orders_book_idx on public.fx_orders(side, status, price, id);
+create index if not exists fx_orders_user_idx on public.fx_orders(user_id, status);
+create table if not exists public.fx_trades (
+  id         bigserial primary key,
+  buy_order  bigint not null,
+  sell_order bigint not null,
+  buyer      uuid not null references public.profiles(id) on delete cascade,
+  seller     uuid not null references public.profiles(id) on delete cascade,
+  price      bigint not null,
+  qty        bigint not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists fx_trades_time_idx on public.fx_trades(created_at);
+create table if not exists public.fx_requests (
+  id         bigserial primary key,
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  kind       text not null check (kind in ('in', 'out')),     -- in：CN→CA ／ out：CA→CN
+  amount     bigint not null check (amount > 0),
+  contact    text not null default '',
+  status     text not null default 'pending',                 -- pending / done / rejected
+  note       text,
+  created_at timestamptz not null default now(),
+  done_at    timestamptz
+);
+alter table public.fx_orders enable row level security;
+alter table public.fx_trades enable row level security;
+alter table public.fx_requests enable row level security;
+revoke all on public.fx_orders, public.fx_trades, public.fx_requests from anon, authenticated;
+
+-- 相場（だれでも見られる部分。だれが取引したかは出さない）
+create or replace function public._fx_market() returns jsonb
+language sql stable set search_path = public as $$
+  select jsonb_build_object(
+    'last', (select price from fx_trades order by id desc limit 1),
+    'prev', (select price from fx_trades where created_at <= _now() - interval '1 day' order by id desc limit 1),
+    'first', (select price from fx_trades where created_at > _now() - interval '1 day' order by id limit 1),
+    'bid', (select max(price) from fx_orders where side = 'buy' and status = 'open'),
+    'ask', (select min(price) from fx_orders where side = 'sell' and status = 'open'),
+    'vol', (select coalesce(sum(qty), 0) from fx_trades where created_at > _now() - interval '1 day'),
+    'bids', (select coalesce(jsonb_agg(jsonb_build_object('price', price, 'qty', q) order by price desc), '[]'::jsonb) from (
+              select price, sum(remain) q from fx_orders where side = 'buy' and status = 'open' group by price order by price desc limit 8) z),
+    'asks', (select coalesce(jsonb_agg(jsonb_build_object('price', price, 'qty', q) order by price), '[]'::jsonb) from (
+              select price, sum(remain) q from fx_orders where side = 'sell' and status = 'open' group by price order by price limit 8) z),
+    'trades', (select coalesce(jsonb_agg(jsonb_build_object('price', price, 'qty', qty, 'ts', _kb_ms(created_at)) order by id desc), '[]'::jsonb) from (
+              select * from fx_trades order by id desc limit 20) z),
+    'chart', (select coalesce(jsonb_agg(jsonb_build_object('price', price, 'ts', _kb_ms(created_at)) order by id), '[]'::jsonb) from (
+              select * from fx_trades order by id desc limit 100) z),
+    'exchange', (select jsonb_build_object('cid', cid, 'name', name) from companies
+                  where cid = (select value from app_settings where key = 'exchange_cid') and status = 'active'))
+$$;
+
+-- 情報タブの「相場」
+create or replace function public.market_info() returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  perform _me();
+  return jsonb_build_object('fx', _fx_market(), 'stocks', '[]'::jsonb);
+end $$;
+
+-- 取引所の画面（相場＋自分の残高・注文・交換申請）
+create or replace function public.fx_state() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me();
+begin
+  return jsonb_build_object('market', _fx_market(),
+    'ca', (select ca from profiles where id = u), 'balance', _bal(u),
+    'orders', (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'side', side, 'price', price, 'qty', qty, 'remain', remain,
+                 'status', status, 'at', _dlabel(created_at)) order by (status = 'open') desc, id desc), '[]'::jsonb) from (
+               select * from fx_orders where user_id = u order by (status = 'open') desc, id desc limit 30) z),
+    'requests', (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'kind', kind, 'amount', amount, 'contact', contact,
+                 'status', status, 'note', note, 'at', _dlabel(created_at)) order by id desc), '[]'::jsonb) from (
+               select * from fx_requests where user_id = u order by id desc limit 20) z));
+end $$;
+
+-- 注文する
+create or replace function public.fx_order(p_side text, p_price bigint, p_qty bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); o fx_orders; m fx_orders; q bigint; got bigint;
+begin
+  if p_side not in ('buy', 'sell') then raise exception '買いか売りをえらんでください'; end if;
+  if p_price is null or p_price < 1 or p_price > 1000000000 then raise exception '値段は1〜10億 CA にしてください'; end if;
+  if p_qty is null or p_qty < 1 or p_qty > 1000000000 then raise exception '数量は1〜10億 X にしてください'; end if;
+  if (select count(*) from fx_orders where user_id = u and status = 'open') >= 30 then raise exception '出せる注文は30件までです'; end if;
+  perform 1 from profiles where id = u for update;
+  if p_side = 'buy' then
+    update profiles set ca = ca - p_price * p_qty where id = u and ca >= p_price * p_qty;
+    if not found then raise exception 'Cièlani-Alpićsk が足りません（% CA 必要です）', p_price * p_qty; end if;
+  else
+    update profiles set balance = balance - p_qty where id = u and balance >= p_qty;
+    if not found then raise exception 'AiliNaX が足りません'; end if;
+  end if;
+  insert into fx_orders(user_id, side, price, qty, remain, created_at) values (u, p_side, p_price, p_qty, p_qty, _now()) returning * into o;
+  -- 反対側の注文と合わせる（値段の良い順・先に出た順。自分の注文とは合わせない）
+  loop
+    exit when o.remain = 0;
+    if o.side = 'buy' then
+      select * into m from fx_orders where side = 'sell' and status = 'open' and price <= o.price and user_id <> u
+       order by price, id limit 1 for update;
+    else
+      select * into m from fx_orders where side = 'buy' and status = 'open' and price >= o.price and user_id <> u
+       order by price desc, id limit 1 for update;
+    end if;
+    exit when not found;
+    q := least(o.remain, m.remain);
+    got := q * m.price;                                    -- 動く CA（値段は先に出ていた注文の値段）
+    if o.side = 'buy' then
+      update profiles set ca = ca + q * (o.price - m.price) where id = u;      -- 安く買えた分のCAを返す
+      perform _give(u, q);                                                     -- 買った X
+      update profiles set ca = ca + got where id = m.user_id;                  -- 売った人に CA
+      insert into fx_trades(buy_order, sell_order, buyer, seller, price, qty, created_at) values (o.id, m.id, u, m.user_id, m.price, q, _now());
+    else
+      update profiles set ca = ca + got where id = u;                          -- 売った X の代金
+      perform _give(m.user_id, q);                                             -- 買った人に X
+      insert into fx_trades(buy_order, sell_order, buyer, seller, price, qty, created_at) values (m.id, o.id, m.user_id, u, m.price, q, _now());
+    end if;
+    update fx_orders set remain = remain - q, status = case when remain - q = 0 then 'done' else status end where id = m.id;
+    update fx_orders set remain = remain - q, status = case when remain - q = 0 then 'done' else status end where id = o.id returning * into o;
+  end loop;
+  return fx_state();
+end $$;
+
+-- 注文を取り消す（残りの預けたお金を返す）
+create or replace function public.fx_cancel(p_id bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); o fx_orders;
+begin
+  select * into o from fx_orders where id = p_id and user_id = u and status = 'open' for update;
+  if not found then raise exception '取り消せる注文が見つかりません'; end if;
+  update fx_orders set status = 'canceled' where id = o.id;
+  if o.side = 'buy' then update profiles set ca = ca + o.remain * o.price where id = u;
+  else perform _give(u, o.remain); end if;
+  return fx_state();
+end $$;
+
+-- Cièlani-Nièpha との交換申請（1万単位。運営者が手で処理）
+create or replace function public.fx_request(p_kind text, p_amount bigint, p_contact text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); me profiles;
+begin
+  if p_kind not in ('in', 'out') then raise exception '交換の向きをえらんでください'; end if;
+  if p_amount is null or p_amount < 10000 or p_amount % 10000 <> 0 or p_amount > 10000000000 then raise exception '交換は1万単位です'; end if;
+  if char_length(btrim(coalesce(p_contact, ''))) < 2 then raise exception '連絡先（Discordなど）を書いてください'; end if;
+  if (select count(*) from fx_requests where user_id = u and status = 'pending') >= 5 then raise exception '処理待ちの申請は5件までです'; end if;
+  select * into me from profiles where id = u for update;
+  if p_kind = 'out' then
+    update profiles set ca = ca - p_amount where id = u and ca >= p_amount;
+    if not found then raise exception 'Cièlani-Alpićsk が足りません'; end if;
+  end if;
+  insert into fx_requests(user_id, kind, amount, contact, created_at) values (u, p_kind, p_amount, left(btrim(p_contact), 120), _now());
+  return fx_state();
+end $$;
+
+-- 申請を取り消す（処理前だけ）
+create or replace function public.fx_request_cancel(p_id bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); r fx_requests;
+begin
+  select * into r from fx_requests where id = p_id and user_id = u and status = 'pending' for update;
+  if not found then raise exception '取り消せる申請が見つかりません'; end if;
+  update fx_requests set status = 'rejected', note = '本人が取り消し', done_at = _now() where id = r.id;
+  if r.kind = 'out' then update profiles set ca = ca + r.amount where id = u; end if;
+  return fx_state();
+end $$;
+
+-- 管理者：交換申請を処理する（in を通すと CA をふやす。out を通すと預かった CA を消す。断ると out は CA を返す）
+create or replace function public.admin_fx_decide(p_id bigint, p_ok boolean, p_note text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); r fx_requests;
+begin
+  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  select * into r from fx_requests where id = p_id and status = 'pending' for update;
+  if not found then raise exception '処理待ちの申請が見つかりません'; end if;
+  update fx_requests set status = case when p_ok then 'done' else 'rejected' end, note = left(coalesce(p_note, ''), 200), done_at = _now() where id = r.id;
+  if p_ok and r.kind = 'in' then update profiles set ca = ca + r.amount where id = r.user_id; end if;
+  if not p_ok and r.kind = 'out' then update profiles set ca = ca + r.amount where id = r.user_id; end if;
+  perform _notice(r.user_id, format('【交換】%s %s の申請（#%s）は%s。%s',
+    case r.kind when 'in' then 'Cièlani-Nièpha → Cièlani-Alpićsk' else 'Cièlani-Alpićsk → Cièlani-Nièpha' end, _fmt(r.amount), r.id,
+    case when p_ok then 'できあがりました' else '断られました' end,
+    case when coalesce(p_note, '') <> '' then 'メモ：' || p_note else '' end));
+  return admin_state();
+end $$;
+
+-- ---------------------------------------------------------------------
 -- 実行権限：内部用（_ではじまる）は画面から呼べないようにする
 -- ---------------------------------------------------------------------
 do $$
@@ -3102,6 +3331,7 @@ begin
             '_inv_json','invoice_list','invoice_create','invoice_pay','invoice_close',
             '_corp_holders','_add_shares','corp_shares_change','share_give','my_stocks','corp_dividend','corp_owner_set',
             '_is_friend','friend_list','friend_request','friend_answer','friend_remove','tl_list','tl_post','tl_delete',
+            '_fx_market','market_info','fx_state','fx_order','fx_cancel','fx_request','fx_request_cancel','admin_fx_decide',
             '_kb_norm','_kb_gumbel','_kb_midx','_kb_jday','_kb_ms','_kb_agef','_kb_fit','_kb_name','_kb_new_horse',
             '_kb_make_race','_kb_make_day','_kb_seq','_kb_prob','_kb_prob_trio','_kb_rate','_kb_odds','_kb_check_sel',
             '_kb_hit','_kb_settle','_kb_month','_kb_seed','_kb_tick','_kb_status',
