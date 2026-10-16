@@ -860,7 +860,7 @@ end $$;
 create or replace function public._income(u uuid, m int) returns bigint
 language sql stable set search_path = public as $$
   select greatest(coalesce(sum(payout - bet), 0), 0)::bigint from tx_log
-   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend','liquidation','game_bet','pub_sale')
+   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend','liquidation','game_bet','game_stake','pub_sale')
      and created_at >= _month_start(m) and created_at < _month_start(_next_month(m))
 $$;
 
@@ -4495,12 +4495,13 @@ end $$;
 
 
 -- ---------------------------------------------------------------------
--- 対戦ゲーム（リバーシ・チェス・将棋…）
+-- 対戦ゲーム（リバーシ・チェス・将棋・ワンカード・麻雀）
 --   部屋：主催が作る（ゲーム・持ち時間・招待・観戦の賭けあり／なし）。だれでも入れる部屋と、IDで招待した人だけの部屋
---   ふたりそろうと始まる（先手・後手はランダム）。持ち時間は1人ずつ（最大3時間）。切れたら負け
---   本人どうしは賭けない（無料）。観戦する人は、どちらが勝つかに賭けられる（山分け。国庫が5%）
+--   リバーシ・チェス・将棋：ふたりそろうと始まる（先手・後手はランダム）。持ち時間は1人ずつ（最大3時間）。切れたら負け
+--     本人どうしは賭けない（無料）。観戦する人は、どちらが勝つかに賭けられる（山分け。国庫が5%。登録から7日たってから）
 --     ・賭けられるのは10手目まで（それ以降は締め切り）・対局している本人は賭けられない
 --     ・引き分け・片方にしか賭けがないときは全部返す
+--   ワンカード・麻雀：下の「4人までのゲーム」を見る（本人どうしの賭けだけ。観戦の賭けはなし）
 --   チャット：10秒に1回・100文字まで
 -- ---------------------------------------------------------------------
 create table if not exists public.game_rooms (
@@ -4557,6 +4558,32 @@ alter table public.game_moves enable row level security;
 alter table public.game_bets  enable row level security;
 alter table public.game_chat  enable row level security;
 revoke all on public.game_rooms, public.game_moves, public.game_bets, public.game_chat from anon, authenticated;
+
+-- ---------- ワンカード・麻雀の部屋（4人まで） ----------
+--   席は2〜4。主催が「コンピューターを入れて始める」と、空いている席にコンピューターが入る（席はランダム）
+--   賭け：主催が1人あたりの賭け金を決める（0は賭けなし）。入るときにはらう。コンピューターは賭けない
+--     all（1位の総取り）：人の中でいちばん上の人が全部受け取る（国庫5%）
+--     points（点数で分ける）：人どうしで、点数の差に合わせてやりとり（負けは賭け金まで・国庫はもうけの5%）
+--   持ち時間：自分が考えているあいだだけ減る。切れたら、そのあとはコンピューターが代わりに打つ
+alter table public.game_rooms add column if not exists max_seats  int not null default 2;
+alter table public.game_rooms add column if not exists cpu        int[] not null default '{}';         -- コンピューターの席
+alter table public.game_rooms add column if not exists auto       int[] not null default '{}';         -- 時間切れ・抜けた人の席
+alter table public.game_rooms add column if not exists invites    uuid[] not null default '{}';        -- 招待した人
+alter table public.game_rooms add column if not exists stake      bigint not null default 0;           -- 1人の賭け金
+alter table public.game_rooms add column if not exists stake_mode text not null default 'all';         -- all / points
+alter table public.game_rooms add column if not exists opts       jsonb not null default '{}';
+alter table public.game_rooms add column if not exists act_at     timestamptz;                         -- 最後に動いた時刻
+alter table public.game_rooms add column if not exists wait_at    timestamptz[] not null default '{}';  -- 席ごとの、考えはじめた時刻
+create table if not exists public.game_stakes (
+  room_id bigint not null references public.game_rooms(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  amount  bigint not null check (amount > 0),
+  payout  bigint,
+  at      timestamptz not null default now(),
+  primary key (room_id, user_id)
+);
+alter table public.game_stakes enable row level security;
+revoke all on public.game_stakes from anon, authenticated;
 
 -- ---------- リバーシ（8×8。盤は64文字：. 空き / B 黒 / W 白。黒が先手＝席0） ----------
 create or replace function public._rv_flips(b text, pos int, me text) returns int[]
@@ -4995,6 +5022,1409 @@ begin
   return ns;
 end $$;
 
+-- ---------- ワンカード（UNOと同じ遊び方。2〜4人） ----------
+--   カード 0〜107：0〜99 は色つき（色 = id / 25：0 赤・1 黄・2 緑・3 青。id % 25：0 は「0」、1〜9 と 10〜18 は「1〜9」、
+--   19・20 スキップ S、21・22 リバース R、23・24 ドロー2 D）。100〜103 ワイルド W、104〜107 ワイルドドロー4 F
+--   状態：hands（席ごとの手札）・deck（山札）・pile（捨て札。最後が一番上）・turn・dir（1 / -1）・color（いまの色）
+--         drew（引いたカードが出せるので、出すかパスをえらぶ）・drawn・uno（1枚になったのに「ワンカード」と言わなかった席）
+--         said（2枚のときに先に「ワンカード」と言った席）・win（番が変わるたびに増える）・log（最近のできごと）
+create or replace function public._oc_col(c int) returns int
+language sql immutable as $$ select case when c < 100 then c / 25 else -1 end $$;
+
+create or replace function public._oc_sym(c int) returns text
+language sql immutable as $$
+  select case when c >= 104 then 'F' when c >= 100 then 'W'
+              when c % 25 = 0 then '0' when c % 25 <= 9 then (c % 25)::text when c % 25 <= 18 then (c % 25 - 9)::text
+              when c % 25 <= 20 then 'S' when c % 25 <= 22 then 'R' else 'D' end $$;
+
+-- 点数（数字はその数・スキップ／リバース／ドロー2は20・ワイルドは50）
+create or replace function public._oc_pts(c int) returns int
+language sql immutable as $$
+  select case when c >= 100 then 50 when c % 25 = 0 then 0 when c % 25 <= 18 then (c % 25 - 1) % 9 + 1 else 20 end $$;
+
+create or replace function public._oc_hand(st jsonb, s int) returns int[]
+language sql immutable as $$ select coalesce(array(select jsonb_array_elements_text(st->'hands'->s)::int), '{}') $$;
+
+create or replace function public._oc_arr(st jsonb, k text) returns int[]
+language sql immutable as $$ select coalesce(array(select jsonb_array_elements_text(st->k)::int), '{}') $$;
+
+create or replace function public._oc_top(st jsonb) returns int
+language sql immutable as $$ select (st->'pile'->>(jsonb_array_length(st->'pile') - 1))::int $$;
+
+-- 出せるか
+create or replace function public._oc_ok(st jsonb, hand int[], c int) returns boolean
+language plpgsql immutable as $$
+declare top int := _oc_top(st); col int := (st->>'color')::int;
+begin
+  if c >= 104 then return not exists (select 1 from unnest(hand) x where _oc_col(x) = col); end if;   -- いまの色のカードがないときだけ
+  if c >= 100 then return true; end if;
+  if _oc_col(c) = col then return true; end if;
+  return top < 100 and _oc_sym(c) = _oc_sym(top);
+end $$;
+
+-- 出せるカード（引いたあとは、引いたカードだけ）
+create or replace function public._oc_legal(st jsonb, s int) returns int[]
+language plpgsql immutable as $$
+declare h int[] := _oc_hand(st, s);
+begin
+  if coalesce((st->>'drew')::boolean, false) then
+    return case when _oc_ok(st, h, (st->>'drawn')::int) then array[(st->>'drawn')::int] else '{}'::int[] end;
+  end if;
+  return coalesce(array(select x from unnest(h) x where _oc_ok(st, h, x)), '{}');
+end $$;
+
+create or replace function public._oc_next(st jsonb, k int) returns int
+language sql immutable as $$
+  select (((st->>'turn')::int + (st->>'dir')::int * k) % (st->>'n')::int + (st->>'n')::int) % (st->>'n')::int $$;
+
+create or replace function public._oc_log(st jsonb, e jsonb) returns jsonb
+language sql immutable as $$
+  select jsonb_set(st, '{log}', coalesce((select jsonb_agg(x order by o) from (
+           select x, o from jsonb_array_elements(coalesce(st->'log', '[]'::jsonb) || jsonb_build_array(e)) with ordinality t(x, o)
+            order by o desc limit 14) z), '[]'::jsonb)) $$;
+
+-- k 枚引く（山札がなくなったら、捨て札の一番上を残して切りなおす）
+create or replace function public._oc_draw(st jsonb, s int, k int) returns jsonb
+language plpgsql volatile as $$
+declare deck int[] := _oc_arr(st, 'deck'); pile int[]; h int[] := _oc_hand(st, s); i int;
+begin
+  for i in 1..k loop
+    if cardinality(deck) = 0 then
+      pile := _oc_arr(st, 'pile');
+      if cardinality(pile) <= 1 then exit; end if;
+      deck := array(select x from unnest(pile[1:cardinality(pile) - 1]) x order by random());
+      st := jsonb_set(st, '{pile}', to_jsonb(array[pile[cardinality(pile)]]));
+    end if;
+    h := h || deck[1]; deck := deck[2:];
+  end loop;
+  st := jsonb_set(st, '{deck}', to_jsonb(deck));
+  return jsonb_set(st, array['hands', s::text], to_jsonb(h));
+end $$;
+
+create or replace function public._oc_init(n int) returns jsonb
+language plpgsql volatile as $$
+declare deck int[]; hands jsonb := '[]'; i int; c int;
+begin
+  deck := array(select g from generate_series(0, 107) g order by random());
+  for i in 0..n - 1 loop hands := hands || jsonb_build_array(to_jsonb(deck[i * 7 + 1:i * 7 + 7])); end loop;
+  deck := deck[n * 7 + 1:];
+  loop   -- 最初の1枚は数字のカード（ほかは山札の下へ）
+    c := deck[1]; deck := deck[2:];
+    exit when _oc_sym(c) between '0' and '9';
+    deck := deck || c;
+  end loop;
+  return jsonb_build_object('n', n, 'hands', hands, 'deck', to_jsonb(deck), 'pile', jsonb_build_array(c), 'turn', 0, 'dir', 1,
+                            'color', _oc_col(c), 'drew', false, 'drawn', null, 'uno', null, 'said', null, 'win', 1, 'log', '[]'::jsonb, 'over', false);
+end $$;
+
+-- 番を進める
+create or replace function public._oc_turn(st jsonb, k int) returns jsonb
+language sql immutable as $$
+  select st || jsonb_build_object('turn', _oc_next(st, k), 'drew', false, 'drawn', null, 'said', null, 'win', (st->>'win')::int + 1) $$;
+
+create or replace function public._oc_act(st jsonb, s int, mv jsonb) returns jsonb
+language plpgsql volatile as $$
+declare a text := mv->>'a'; h int[]; c int; col int; v int; sym text; n int := (st->>'n')::int;
+begin
+  if coalesce((st->>'over')::boolean, false) then raise exception 'このゲームはもう終わっています'; end if;
+  if a = 'timer' then return st; end if;
+  h := _oc_hand(st, s);
+  if a = 'catch' then   -- 「ワンカード」と言い忘れた人を指摘する → その人が2枚引く
+    if st->>'uno' is null or (st->>'uno')::int = s then raise exception '指摘できる人はいません'; end if;
+    v := (st->>'uno')::int;
+    st := _oc_draw(st, v, 2);
+    return _oc_log(st || jsonb_build_object('uno', null), jsonb_build_object('s', s, 'a', 'catch', 't', v));
+  end if;
+  if a = 'uno' then   -- 「ワンカード！」
+    if st->>'uno' is not null and (st->>'uno')::int = s then
+      return _oc_log(st || jsonb_build_object('uno', null), jsonb_build_object('s', s, 'a', 'uno'));
+    end if;
+    if (st->>'turn')::int = s and cardinality(h) = 2 then
+      return _oc_log(st || jsonb_build_object('said', s), jsonb_build_object('s', s, 'a', 'uno'));
+    end if;
+    raise exception 'いまは言えません（手札が2枚の自分の番、または1枚になった直後）';
+  end if;
+  if (st->>'turn')::int <> s then raise exception 'いまはあなたの番ではありません'; end if;
+  -- 次の人が動いたら、前の人の言い忘れはもう指摘できない
+  if st->>'uno' is not null and (st->>'uno')::int <> s then st := st || jsonb_build_object('uno', null); end if;
+  if a = 'play' then
+    c := (mv->>'c')::int;
+    if c is null or not (c = any(h)) then raise exception 'そのカードは持っていません'; end if;
+    if coalesce((st->>'drew')::boolean, false) and c <> (st->>'drawn')::int then raise exception '引いたあとは、引いたカードしか出せません'; end if;
+    if not _oc_ok(st, h, c) then
+      raise exception '%', case when c >= 104 then 'ワイルドドロー4は、いまの色のカードを持っていないときだけ出せます' else 'そのカードは出せません（色か数字・記号を合わせます）' end;
+    end if;
+    sym := _oc_sym(c);
+    if c >= 100 then
+      col := (mv->>'col')::int;
+      if col is null or col not between 0 and 3 then raise exception '次の色をえらんでください'; end if;
+    else col := _oc_col(c); end if;
+    h := array_remove(h, c);
+    st := jsonb_set(st, array['hands', s::text], to_jsonb(h));
+    st := st || jsonb_build_object('pile', (st->'pile') || to_jsonb(c), 'color', col);
+    st := _oc_log(st, jsonb_build_object('s', s, 'a', 'play', 'c', c, 'col', col));
+    if cardinality(h) = 1 and not (coalesce((mv->>'uno')::boolean, false) or (st->>'said' is not null and (st->>'said')::int = s)) then
+      st := st || jsonb_build_object('uno', s);
+    end if;
+    if cardinality(h) = 0 then   -- あがり
+      st := st || jsonb_build_object('over', true, 'winner', s, 'uno', null, 'why', 'あがり',
+              'pts', (select jsonb_agg((select coalesce(sum(_oc_pts(x)), 0) from unnest(_oc_hand(st, i)) x) order by i) from generate_series(0, n - 1) i));
+      return st || jsonb_build_object('final', _oc_final(st), 'win', (st->>'win')::int + 1);
+    end if;
+    if sym = 'S' then return _oc_turn(st, 2); end if;
+    if sym = 'R' then
+      if n = 2 then return _oc_turn(st, 2); end if;
+      return _oc_turn(st || jsonb_build_object('dir', -(st->>'dir')::int), 1);
+    end if;
+    if sym in ('D', 'F') then
+      v := _oc_next(st, 1);
+      st := _oc_draw(st, v, case sym when 'D' then 2 else 4 end);
+      st := _oc_log(st, jsonb_build_object('s', v, 'a', 'take', 'k', case sym when 'D' then 2 else 4 end));
+      return _oc_turn(st, 2);
+    end if;
+    return _oc_turn(st, 1);
+  end if;
+  if a = 'draw' then
+    if coalesce((st->>'drew')::boolean, false) then raise exception 'もう引きました（引いたカードを出すか、パス）'; end if;
+    v := jsonb_array_length(st->'hands'->s);
+    st := _oc_draw(st, s, 1);
+    h := _oc_hand(st, s);
+    st := _oc_log(st, jsonb_build_object('s', s, 'a', 'draw'));
+    if cardinality(h) = v then return _oc_turn(st, 1); end if;      -- 山札も捨て札もない
+    c := h[cardinality(h)];
+    if _oc_ok(st, h, c) then return st || jsonb_build_object('drew', true, 'drawn', c); end if;
+    return _oc_turn(st, 1);
+  end if;
+  if a = 'pass' then
+    if not coalesce((st->>'drew')::boolean, false) then raise exception 'パスは、カードを引いたあとだけです'; end if;
+    return _oc_turn(_oc_log(st, jsonb_build_object('s', s, 'a', 'pass')), 1);
+  end if;
+  raise exception 'その動きはできません';
+end $$;
+
+-- 順位：あがった人、残りは手札の点数が少ない順（同じなら席の順）。v は「手札の点数のマイナス」
+create or replace function public._oc_final(st jsonb) returns jsonb
+language plpgsql immutable as $$
+declare n int := (st->>'n')::int; pts int[]; w int := (st->>'winner')::int;
+begin
+  pts := array(select (select coalesce(sum(_oc_pts(x)), 0) from unnest(_oc_hand(st, i)) x) from generate_series(0, n - 1) i order by i);
+  return jsonb_build_object('rank', (select jsonb_agg(i order by (i = w) desc nulls last, pts[i + 1], i) from generate_series(0, n - 1) i),
+                            'v', (select jsonb_agg(-pts[i + 1] order by i) from generate_series(0, n - 1) i), 'scale', 100, 'ref', 'best');
+end $$;
+
+create or replace function public._oc_pending(st jsonb) returns int[]
+language sql immutable as $$ select case when coalesce((st->>'over')::boolean, false) then '{}'::int[] else array[(st->>'turn')::int] end $$;
+
+-- コンピューター
+create or replace function public._oc_cpu(st jsonb, s int) returns jsonb
+language plpgsql immutable as $$
+declare h int[] := _oc_hand(st, s); ok int[]; c int; col int; nxt int; nh int;
+begin
+  if st->>'uno' is not null and (st->>'uno')::int <> s then return '{"a":"catch"}'; end if;
+  ok := _oc_legal(st, s);
+  if cardinality(ok) = 0 then
+    return case when coalesce((st->>'drew')::boolean, false) then '{"a":"pass"}' else '{"a":"draw"}' end::jsonb;
+  end if;
+  nxt := _oc_next(st, 1); nh := jsonb_array_length(st->'hands'->nxt);
+  -- 次の人の手札が少ないときは攻める（ドロー2・スキップ・リバース・ドロー4）。ふだんはワイルドを残し、多い色・大きい数字から
+  select x into c from unnest(ok) x
+   order by case when nh <= 2 and _oc_sym(x) in ('D', 'F', 'S', 'R') then 0 else 1 end,
+            (x >= 100),
+            (select count(*) from unnest(h) y where _oc_col(y) = _oc_col(x)) desc,
+            _oc_pts(x) desc, x
+   limit 1;
+  col := coalesce((select _oc_col(y) from unnest(array_remove(h, c)) y where y < 100 group by _oc_col(y) order by count(*) desc, _oc_col(y) limit 1),
+                  floor(random() * 4)::int);
+  return jsonb_build_object('a', 'play', 'c', c, 'col', col, 'uno', true);
+end $$;
+
+-- 見えるもの（自分の手札だけ。終わったら全員の手札）
+create or replace function public._oc_view(st jsonb, me int) returns jsonb
+language plpgsql immutable as $$
+declare n int := (st->>'n')::int; over boolean := coalesce((st->>'over')::boolean, false); my boolean := me is not null and not over and (st->>'turn')::int = me;
+begin
+  return jsonb_build_object('n', n, 'turn', (st->>'turn')::int, 'dir', (st->>'dir')::int, 'color', (st->>'color')::int,
+    'top', _oc_top(st), 'pile_n', jsonb_array_length(st->'pile'), 'deck_n', jsonb_array_length(st->'deck'),
+    'counts', (select jsonb_agg(jsonb_array_length(st->'hands'->i) order by i) from generate_series(0, n - 1) i),
+    'hand', case when me is null then null else (select coalesce(jsonb_agg(x order by _oc_col(x) < 0, _oc_col(x), _oc_sym(x), x), '[]'::jsonb) from unnest(_oc_hand(st, me)) x) end,
+    'hands', case when over then st->'hands' else null end,
+    'drew', my and coalesce((st->>'drew')::boolean, false), 'drawn', case when my then st->'drawn' else null end,
+    'legal', case when my then to_jsonb(_oc_legal(st, me)) else '[]'::jsonb end,
+    'uno', st->'uno', 'said', st->'said', 'log', st->'log', 'over', over, 'winner', st->'winner', 'pts', st->'pts', 'final', st->'final');
+end $$;
+
+-- ---------- 麻雀（日本のリーチ麻雀・4人。赤ドラ3枚・喰いタンあり・頭ハネ・東風戦／半荘戦） ----------
+--   牌：0〜135（種類 = id / 4）。種類 0〜8 萬子 1〜9・9〜17 筒子・18〜26 索子・27 東 28 南 29 西 30 北・31 白 32 發 33 中
+--   赤5：16（5萬）・52（5筒）・88（5索）。配列の数え方（c）は 34 個で、c[種類 + 1] がその牌の枚数
+create or replace function public._mj_ids(j jsonb) returns int[]
+language sql immutable as $$ select coalesce(array(select jsonb_array_elements_text(j)::int), '{}') $$;
+
+create or replace function public._mj_cnt(ids int[]) returns int[]
+language plpgsql immutable as $$
+declare c int[] := array_fill(0, array[34]); x int;
+begin
+  foreach x in array coalesce(ids, '{}') loop c[x / 4 + 1] := c[x / 4 + 1] + 1; end loop;
+  return c;
+end $$;
+
+-- 么九牌（1・9・字牌）
+create or replace function public._mj_yao(k int) returns boolean
+language sql immutable as $$ select k >= 27 or k % 9 in (0, 8) $$;
+
+-- 国士無双の形
+create or replace function public._mj_kokushi(c int[]) returns boolean
+language sql immutable as $$
+  select bool_and(c[k + 1] >= 1) and sum(c[k + 1]) = 14 from unnest(array[0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33]) k $$;
+
+-- 雀頭をのぞいた残りが、全部面子に分けられるか
+create or replace function public._mj_sets_ok(c int[]) returns boolean
+language plpgsql immutable as $$
+declare b int; i int; n int;
+begin
+  for b in 0..2 loop
+    for i in 0..8 loop
+      n := c[b * 9 + i + 1];
+      if n < 0 then return false; end if;
+      n := n % 3;
+      if n > 0 then
+        if i > 6 then return false; end if;
+        c[b * 9 + i + 2] := c[b * 9 + i + 2] - n;
+        c[b * 9 + i + 3] := c[b * 9 + i + 3] - n;
+      end if;
+    end loop;
+  end loop;
+  for i in 28..34 loop if c[i] % 3 <> 0 then return false; end if; end loop;
+  return true;
+end $$;
+
+-- あがりの形か（nm：鳴き・カンの数）
+create or replace function public._mj_agari(c int[], nm int) returns boolean
+language plpgsql immutable as $$
+declare k int; d int[];
+begin
+  if nm = 0 then
+    if (select count(*) from unnest(c) x where x = 2) = 7 then return true; end if;
+    if _mj_kokushi(c) then return true; end if;
+  end if;
+  for k in 1..34 loop
+    if c[k] >= 2 then
+      d := c; d[k] := d[k] - 2;
+      if _mj_sets_ok(d) then return true; end if;
+    end if;
+  end loop;
+  return false;
+end $$;
+
+-- 待ち（あと1枚であがれる牌の種類）。自分の手で4枚とも使っている牌は待ちにならない
+create or replace function public._mj_waits(hand int[], nm int) returns int[]
+language plpgsql immutable as $$
+declare c int[] := _mj_cnt(hand); k int; w int[] := '{}'; near boolean;
+begin
+  for k in 0..33 loop
+    continue when c[k + 1] >= 4;
+    if c[k + 1] = 0 then
+      near := k < 27 and ((k % 9 >= 1 and c[k] > 0) or (k % 9 >= 2 and c[k - 1] > 0) or (k % 9 <= 7 and c[k + 2] > 0) or (k % 9 <= 6 and c[k + 3] > 0));
+      continue when not near and not (nm = 0 and _mj_yao(k));
+    end if;
+    c[k + 1] := c[k + 1] + 1;
+    if _mj_agari(c, nm) then w := w || k; end if;
+    c[k + 1] := c[k + 1] - 1;
+  end loop;
+  return w;
+end $$;
+
+-- シャンテン数：1つの色（または字牌）の中で、面子 m・塔子 t・雀頭 p の組み合わせを全部さがす
+--   r[p * 5 + m + 1] = その m・p のときの塔子の最大（作れないなら -1）。hon = true は字牌（順子・両面・嵌張なし）
+create or replace function public._mj_sh_part(c int[], i int, m int, t int, p int, r int[], hon boolean) returns int[]
+language plpgsql immutable as $$
+declare L int := cardinality(c);
+begin
+  while i <= L and c[i] = 0 loop i := i + 1; end loop;
+  if i > L then
+    if m <= 4 and r[p * 5 + m + 1] < least(t, 4) then r[p * 5 + m + 1] := least(t, 4); end if;
+    return r;
+  end if;
+  if not hon and i <= L - 2 and c[i + 1] > 0 and c[i + 2] > 0 then
+    c[i] := c[i] - 1; c[i + 1] := c[i + 1] - 1; c[i + 2] := c[i + 2] - 1;
+    r := _mj_sh_part(c, i, m + 1, t, p, r, hon);
+    c[i] := c[i] + 1; c[i + 1] := c[i + 1] + 1; c[i + 2] := c[i + 2] + 1;
+  end if;
+  if c[i] >= 3 then c[i] := c[i] - 3; r := _mj_sh_part(c, i, m + 1, t, p, r, hon); c[i] := c[i] + 3; end if;
+  if c[i] >= 2 and p = 0 then c[i] := c[i] - 2; r := _mj_sh_part(c, i, m, t, 1, r, hon); c[i] := c[i] + 2; end if;
+  if c[i] >= 2 then c[i] := c[i] - 2; r := _mj_sh_part(c, i, m, t + 1, p, r, hon); c[i] := c[i] + 2; end if;
+  if not hon and i <= L - 1 and c[i + 1] > 0 then
+    c[i] := c[i] - 1; c[i + 1] := c[i + 1] - 1; r := _mj_sh_part(c, i, m, t + 1, p, r, hon); c[i] := c[i] + 1; c[i + 1] := c[i + 1] + 1;
+  end if;
+  if not hon and i <= L - 2 and c[i + 2] > 0 then
+    c[i] := c[i] - 1; c[i + 2] := c[i + 2] - 1; r := _mj_sh_part(c, i, m, t + 1, p, r, hon); c[i] := c[i] + 1; c[i + 2] := c[i + 2] + 1;
+  end if;
+  c[i] := 0;   -- 残りは使わない
+  return _mj_sh_part(c, i + 1, m, t, p, r, hon);
+end $$;
+
+-- 結果の覚え書き（同じ形を何度も数えないように）
+create table if not exists public.mj_cache (k bigint primary key, v int[] not null);
+alter table public.mj_cache enable row level security;
+revoke all on public.mj_cache from anon, authenticated;
+
+create or replace function public._mj_part(c int[], hon boolean) returns int[]
+language plpgsql volatile set search_path = public as $$
+declare key bigint := case when hon then 1 else 2 end; x int; r int[];
+begin
+  foreach x in array c loop key := key * 5 + x; end loop;
+  select v into r from mj_cache where k = key;
+  if r is null then
+    r := _mj_sh_part(c, 1, 0, 0, 0, array_fill(-1, array[10]), hon);
+    if pg_try_advisory_xact_lock(7212, key::int) then insert into mj_cache values (key, r) on conflict do nothing; end if;
+  end if;
+  return r;
+end $$;
+
+-- シャンテン数（-1 があがり、0 がテンパイ）。nm：鳴き・カンの数
+create or replace function public._mj_shanten(c int[], nm int) returns int
+language plpgsql volatile as $$
+declare dp int[] := array[0, -1, -1, -1, -1, -1, -1, -1, -1, -1]; nd int[]; r int[]; b int; pp int; pm int; qp int; qm int; v int; best int := 8; s int; t int;
+        pairs int; kinds int; yk int; yp int;
+begin
+  for b in 0..3 loop
+    r := case when b < 3 then _mj_part(c[b * 9 + 1:b * 9 + 9], false) else _mj_part(c[28:34], true) end;
+    nd := array_fill(-1, array[10]);
+    for pp in 0..1 loop for pm in 0..4 loop
+      continue when dp[pp * 5 + pm + 1] < 0;
+      for qp in 0..1 - pp loop for qm in 0..4 - pm loop
+        continue when r[qp * 5 + qm + 1] < 0;
+        v := least(dp[pp * 5 + pm + 1] + r[qp * 5 + qm + 1], 4);
+        if nd[(pp + qp) * 5 + pm + qm + 1] < v then nd[(pp + qp) * 5 + pm + qm + 1] := v; end if;
+      end loop; end loop;
+    end loop; end loop;
+    dp := nd;
+  end loop;
+  for pp in 0..1 loop for pm in 0..4 - nm loop
+    t := dp[pp * 5 + pm + 1];
+    continue when t < 0;
+    s := 8 - 2 * (pm + nm) - least(t, 4 - pm - nm) - pp;
+    if s < best then best := s; end if;
+  end loop; end loop;
+  if nm = 0 then
+    select count(*) filter (where x >= 2), count(*) filter (where x >= 1) into pairs, kinds from unnest(c) x;
+    best := least(best, 6 - pairs + greatest(0, 7 - kinds));
+    select count(*) filter (where c[k + 1] >= 1), count(*) filter (where c[k + 1] >= 2) into yk, yp
+      from unnest(array[0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33]) k;
+    best := least(best, 13 - yk - case when yp > 0 then 1 else 0 end);
+  end if;
+  return best;
+end $$;
+
+-- 面子への分け方を全部（順子 100 + 種類・刻子 200 + 種類）
+create or replace function public._mj_dec_sets(c int[], i int) returns setof int[]
+language plpgsql immutable as $$
+declare rest int[];
+begin
+  while i <= 34 and c[i] = 0 loop i := i + 1; end loop;
+  if i > 34 then return next '{}'::int[]; return; end if;
+  if c[i] >= 3 then
+    c[i] := c[i] - 3;
+    for rest in select * from _mj_dec_sets(c, i) loop return next (200 + i - 1) || rest; end loop;
+    c[i] := c[i] + 3;
+  end if;
+  if i <= 27 and (i - 1) % 9 <= 6 and c[i + 1] > 0 and c[i + 2] > 0 then
+    c[i] := c[i] - 1; c[i + 1] := c[i + 1] - 1; c[i + 2] := c[i + 2] - 1;
+    for rest in select * from _mj_dec_sets(c, i) loop return next (100 + i - 1) || rest; end loop;
+  end if;
+  return;
+end $$;
+
+-- 雀頭（300 + 種類）と面子への分け方
+create or replace function public._mj_decomp(c int[]) returns setof int[]
+language plpgsql immutable as $$
+declare k int; d int[]; s int[];
+begin
+  for k in 1..34 loop
+    if c[k] >= 2 then
+      d := c; d[k] := d[k] - 2;
+      if _mj_sets_ok(d) then
+        for s in select * from _mj_dec_sets(d, 1) loop return next (300 + k - 1) || s; end loop;
+      end if;
+    end if;
+  end loop;
+end $$;
+
+-- ドラ表示牌の種類 → ドラの種類
+create or replace function public._mj_dora_of(k int) returns int
+language sql immutable as $$
+  select case when k < 27 then (k / 9) * 9 + (k % 9 + 1) % 9 when k <= 30 then 27 + (k - 27 + 1) % 4 else 31 + (k - 31 + 1) % 3 end $$;
+
+create or replace function public._mj_kname(k int) returns text
+language sql immutable as $$
+  select case when k < 27 then (k % 9 + 1)::text || (array['萬', '筒', '索'])[k / 9 + 1] else (array['東', '南', '西', '北', '白', '發', '中'])[k - 26] end $$;
+
+-- 点数の基本点
+create or replace function public._mj_base(han int, fu int, ym int) returns int
+language sql immutable as $$
+  select case when ym > 0 then 8000 * ym when han >= 13 then 8000 when han >= 11 then 6000 when han >= 8 then 4000
+              when han >= 6 then 3000 when han >= 5 then 2000 else least(2000, fu * (2 ^ (han + 2))::int) end $$;
+
+create or replace function public._mj_c100(x int) returns int
+language sql immutable as $$ select ((x + 99) / 100) * 100 $$;
+
+-- 役と点数
+--   hand：手の中の牌（あがり牌をふくむ 14 − 3×鳴きの数 枚）・melds：鳴き（k：chi / pon / minkan / kakan / ankan、t：牌）
+--   x：場のようす（tsumo・dealer・seatw（自風の種類）・roundw（場風の種類）・riichi・dbl・ippatsu・rinshan・chankan・haitei・houtei・tenhou・chiihou・dora（表示牌）・ura（裏ドラ表示牌））
+--   役がなければ null
+create or replace function public._mj_score(hand int[], melds jsonb, win int, x jsonb) returns jsonb
+language plpgsql immutable as $$
+declare c int[] := _mj_cnt(hand); allids int[] := hand; ac int[]; nm int := jsonb_array_length(coalesce(melds, '[]'));
+        m jsonb; isopen boolean := false; wk int := win / 4; tsumo boolean := coalesce((x->>'tsumo')::boolean, false);
+        mseq int[] := '{}'; mtri int[] := '{}'; mtric boolean[] := '{}'; mkan boolean[] := '{}'; kans int := 0;
+        d int[]; g int; i int; j int; best jsonb; cur jsonb; ym jsonb; yl jsonb; han int; fu int; dora int := 0; aka int := 0; ura int := 0;
+        seqs int[]; tris int[]; tric boolean[]; trik boolean[]; pair int; wait text; slots text[]; sl text; ronopen int;
+        yaku jsonb; yh int; base int; yakuhai_k int[]; k int; suits int[]; hon boolean; onlyyao boolean; allhon boolean; allterm boolean;
+        green int[] := array[19, 20, 21, 23, 25, 32]; nconc int; npk int; dsum int; wsum int; v int; ymn int; b int; q2 int;
+begin
+  -- 鳴き
+  for m in select * from jsonb_array_elements(coalesce(melds, '[]')) loop
+    allids := allids || _mj_ids(m->'t');
+    k := (select min(z) from unnest(_mj_ids(m->'t')) z) / 4;
+    if m->>'k' = 'chi' then mseq := mseq || k; isopen := true;
+    else
+      mtri := mtri || k; mtric := mtric || (m->>'k' = 'ankan'); mkan := mkan || (m->>'k' in ('minkan', 'kakan', 'ankan'));
+      if m->>'k' <> 'ankan' then isopen := true; end if;
+      if m->>'k' in ('minkan', 'kakan', 'ankan') then kans := kans + 1; end if;
+    end if;
+  end loop;
+  ac := _mj_cnt(allids);
+  -- ドラ・赤・裏
+  for i in select * from unnest(_mj_ids(x->'dora')) loop dora := dora + ac[_mj_dora_of(i / 4) + 1]; end loop;
+  if coalesce((x->>'riichi')::boolean, false) then
+    for i in select * from unnest(_mj_ids(x->'ura')) loop ura := ura + ac[_mj_dora_of(i / 4) + 1]; end loop;
+  end if;
+  aka := (select count(*) from unnest(allids) z where z in (16, 52, 88));
+  allhon := (select coalesce(sum(ac[q]), 0) from generate_series(1, 27) q) = 0;
+  onlyyao := (select bool_and(ac[q + 1] = 0 or _mj_yao(q)) from generate_series(0, 33) q);
+  allterm := onlyyao and (select coalesce(sum(ac[q]), 0) from generate_series(28, 34) q) = 0;
+  suits := array(select distinct q / 9 from generate_series(0, 26) q where ac[q + 1] > 0);
+  hon := (select coalesce(sum(ac[q]), 0) from generate_series(28, 34) q) > 0;
+
+  -- 役満（形に関係ないもの）
+  ym := '[]';
+  if coalesce((x->>'tenhou')::boolean, false) then ym := ym || '["天和"]'; end if;
+  if coalesce((x->>'chiihou')::boolean, false) then ym := ym || '["地和"]'; end if;
+
+  -- 国士無双
+  if nm = 0 and _mj_kokushi(c) then
+    ym := ym || '["国士無双"]';
+    return jsonb_build_object('yakuman', jsonb_array_length(ym), 'yaku', (select jsonb_agg(jsonb_build_array(z, 13)) from jsonb_array_elements_text(ym) z),
+                              'han', 13 * jsonb_array_length(ym), 'fu', 0, 'base', _mj_base(0, 0, jsonb_array_length(ym)));
+  end if;
+
+  best := null;
+  -- 七対子
+  if nm = 0 and (select count(*) from unnest(c) z where z = 2) = 7 then
+    yl := '[]';
+    if allhon then
+      yl := ym || '["字一色"]';
+    else
+      yl := ym;
+    end if;
+    if jsonb_array_length(yl) > 0 then
+      best := jsonb_build_object('yakuman', jsonb_array_length(yl), 'yaku', (select jsonb_agg(jsonb_build_array(z, 13)) from jsonb_array_elements_text(yl) z),
+                                 'han', 13 * jsonb_array_length(yl), 'fu', 25, 'base', _mj_base(0, 0, jsonb_array_length(yl)));
+    else
+      yaku := '[]';
+      if coalesce((x->>'riichi')::boolean, false) then yaku := yaku || case when coalesce((x->>'dbl')::boolean, false) then '[["ダブル立直", 2]]' else '[["立直", 1]]' end::jsonb; end if;
+      if coalesce((x->>'ippatsu')::boolean, false) then yaku := yaku || '[["一発", 1]]'; end if;
+      if tsumo then yaku := yaku || '[["門前清自摸和", 1]]'; end if;
+      yaku := yaku || '[["七対子", 2]]';
+      if not onlyyao and (select bool_and(ac[q + 1] = 0 or not _mj_yao(q)) from generate_series(0, 33) q) then yaku := yaku || '[["断幺九", 1]]'; end if;
+      if onlyyao then yaku := yaku || '[["混老頭", 2]]'; end if;
+      if cardinality(suits) = 1 then yaku := yaku || case when hon then '[["混一色", 3]]' else '[["清一色", 6]]' end::jsonb; end if;
+      if coalesce((x->>'chankan')::boolean, false) then yaku := yaku || '[["槍槓", 1]]'; end if;
+      if coalesce((x->>'haitei')::boolean, false) then yaku := yaku || '[["海底摸月", 1]]'; end if;
+      if coalesce((x->>'houtei')::boolean, false) then yaku := yaku || '[["河底撈魚", 1]]'; end if;
+      yh := (select sum((z->>1)::int) from jsonb_array_elements(yaku) z);
+      if dora > 0 then yaku := yaku || jsonb_build_array(jsonb_build_array('ドラ', dora)); end if;
+      if aka > 0 then yaku := yaku || jsonb_build_array(jsonb_build_array('赤ドラ', aka)); end if;
+      if ura > 0 then yaku := yaku || jsonb_build_array(jsonb_build_array('裏ドラ', ura)); end if;
+      han := yh + dora + aka + ura;
+      best := jsonb_build_object('yakuman', 0, 'yaku', yaku, 'han', han, 'fu', 25, 'base', _mj_base(han, 25, 0));
+    end if;
+  end if;
+
+  -- ふつうの形（4面子1雀頭）
+  for d in select * from _mj_decomp(c) loop
+    pair := null; seqs := mseq; tris := '{}'; tric := '{}'; trik := '{}';
+    foreach g in array d loop
+      if g >= 300 then pair := g - 300; elsif g >= 200 then tris := tris || (g - 200); tric := tric || true; trik := trik || false;
+      else seqs := seqs || (g - 100); end if;
+    end loop;
+    -- あがり牌がどこに入ったか（待ちの形）
+    slots := '{}';
+    if pair = wk then slots := slots || 'T'::text; end if;
+    for i in 1..cardinality(tris) loop if tris[i] = wk then slots := slots || ('S' || i); end if; end loop;
+    foreach q2 in array array(select distinct z - 100 from unnest(d) z where z between 100 and 199) loop
+      if wk between q2 and q2 + 2 then
+        slots := slots || case when wk = q2 + 1 then 'K' when (wk = q2 and q2 % 9 = 6) or (wk = q2 + 2 and q2 % 9 = 0) then 'P' else 'R' end;
+      end if;
+    end loop;
+    tris := tris || mtri; tric := tric || mtric; trik := trik || mkan;
+    foreach sl in array (select array(select distinct z from unnest(slots) z)) loop
+      wait := left(sl, 1);
+      ronopen := case when wait = 'S' and not tsumo then substr(sl, 2)::int else 0 end;
+      -- 暗刻の数（ロンで完成した刻子は明刻）
+      nconc := 0;
+      for i in 1..cardinality(tris) loop if tric[i] and i <> ronopen then nconc := nconc + 1; end if; end loop;
+      dsum := (select count(*) from unnest(tris) z where z between 31 and 33);
+      wsum := (select count(*) from unnest(tris) z where z between 27 and 30);
+      -- 役満
+      yl := ym;
+      if nconc = 4 then yl := yl || '["四暗刻"]'; end if;
+      if dsum = 3 then yl := yl || '["大三元"]'; end if;
+      if wsum = 4 then yl := yl || '["大四喜"]'; elsif wsum = 3 and pair between 27 and 30 then yl := yl || '["小四喜"]'; end if;
+      if allhon then yl := yl || '["字一色"]'; end if;
+      if allterm then yl := yl || '["清老頭"]'; end if;
+      if (select bool_and(ac[q + 1] = 0 or q = any(green)) from generate_series(0, 33) q) then yl := yl || '["緑一色"]'; end if;
+      if kans = 4 then yl := yl || '["四槓子"]'; end if;
+      if nm = 0 and cardinality(suits) = 1 and not hon then
+        b := suits[1];
+        if (select bool_and(c[b * 9 + q + 1] >= (array[3, 1, 1, 1, 1, 1, 1, 1, 3])[q + 1]) from generate_series(0, 8) q) then yl := yl || '["九蓮宝燈"]'; end if;
+      end if;
+      if jsonb_array_length(yl) > 0 then
+        cur := jsonb_build_object('yakuman', jsonb_array_length(yl), 'yaku', (select jsonb_agg(jsonb_build_array(z, 13)) from jsonb_array_elements_text(yl) z),
+                                  'han', 13 * jsonb_array_length(yl), 'fu', 0, 'base', _mj_base(0, 0, jsonb_array_length(yl)));
+        if best is null or (cur->>'base')::int > (best->>'base')::int then best := cur; end if;
+        continue;
+      end if;
+      -- ふつうの役
+      yaku := '[]';
+      if coalesce((x->>'riichi')::boolean, false) then yaku := yaku || case when coalesce((x->>'dbl')::boolean, false) then '[["ダブル立直", 2]]' else '[["立直", 1]]' end::jsonb; end if;
+      if coalesce((x->>'ippatsu')::boolean, false) then yaku := yaku || '[["一発", 1]]'; end if;
+      if tsumo and not isopen then yaku := yaku || '[["門前清自摸和", 1]]'; end if;
+      yakuhai_k := array[31, 32, 33, (x->>'seatw')::int, (x->>'roundw')::int];
+      if not isopen and cardinality(tris) = 0 and wait = 'R' and not (pair = any(yakuhai_k)) then yaku := yaku || '[["平和", 1]]'; end if;
+      if (select bool_and(ac[q + 1] = 0 or not _mj_yao(q)) from generate_series(0, 33) q) then yaku := yaku || '[["断幺九", 1]]'; end if;
+      if not isopen then
+        npk := (select coalesce(sum(n / 2), 0) from (select count(*) n from unnest(seqs) z group by z) zz);
+        if npk >= 2 then yaku := yaku || '[["二盃口", 3]]'; elsif npk = 1 then yaku := yaku || '[["一盃口", 1]]'; end if;
+      end if;
+      foreach k in array tris loop
+        if k = 31 then yaku := yaku || '[["役牌 白", 1]]'; end if;
+        if k = 32 then yaku := yaku || '[["役牌 發", 1]]'; end if;
+        if k = 33 then yaku := yaku || '[["役牌 中", 1]]'; end if;
+        if k = (x->>'seatw')::int then yaku := yaku || jsonb_build_array(jsonb_build_array('自風 ' || _mj_kname(k), 1)); end if;
+        if k = (x->>'roundw')::int then yaku := yaku || jsonb_build_array(jsonb_build_array('場風 ' || _mj_kname(k), 1)); end if;
+      end loop;
+      if coalesce((x->>'rinshan')::boolean, false) then yaku := yaku || '[["嶺上開花", 1]]'; end if;
+      if coalesce((x->>'chankan')::boolean, false) then yaku := yaku || '[["槍槓", 1]]'; end if;
+      if coalesce((x->>'haitei')::boolean, false) then yaku := yaku || '[["海底摸月", 1]]'; end if;
+      if coalesce((x->>'houtei')::boolean, false) then yaku := yaku || '[["河底撈魚", 1]]'; end if;
+      if exists (select 1 from generate_series(0, 6) q where q = any(seqs) and q + 9 = any(seqs) and q + 18 = any(seqs)) then
+        yaku := yaku || jsonb_build_array(jsonb_build_array('三色同順', case when isopen then 1 else 2 end));
+      end if;
+      if exists (select 1 from generate_series(0, 2) q where q * 9 = any(seqs) and q * 9 + 3 = any(seqs) and q * 9 + 6 = any(seqs)) then
+        yaku := yaku || jsonb_build_array(jsonb_build_array('一気通貫', case when isopen then 1 else 2 end));
+      end if;
+      if cardinality(seqs) > 0 and _mj_yao(pair) and (select bool_and(z % 9 in (0, 6)) from unnest(seqs) z) and (select coalesce(bool_and(_mj_yao(z)), true) from unnest(tris) z) then
+        if hon then yaku := yaku || jsonb_build_array(jsonb_build_array('混全帯幺九', case when isopen then 1 else 2 end));
+        else yaku := yaku || jsonb_build_array(jsonb_build_array('純全帯幺九', case when isopen then 2 else 3 end)); end if;
+      end if;
+      if cardinality(seqs) = 0 then yaku := yaku || '[["対々和", 2]]'; end if;
+      if nconc = 3 then yaku := yaku || '[["三暗刻", 2]]'; end if;
+      if exists (select 1 from generate_series(0, 8) q where q = any(tris) and q + 9 = any(tris) and q + 18 = any(tris)) then yaku := yaku || '[["三色同刻", 2]]'; end if;
+      if kans = 3 then yaku := yaku || '[["三槓子", 2]]'; end if;
+      if dsum = 2 and pair between 31 and 33 then yaku := yaku || '[["小三元", 2]]'; end if;
+      if onlyyao then yaku := yaku || '[["混老頭", 2]]'; end if;
+      if cardinality(suits) = 1 then
+        if hon then yaku := yaku || jsonb_build_array(jsonb_build_array('混一色', case when isopen then 2 else 3 end));
+        else yaku := yaku || jsonb_build_array(jsonb_build_array('清一色', case when isopen then 5 else 6 end)); end if;
+      end if;
+      yh := coalesce((select sum((z->>1)::int) from jsonb_array_elements(yaku) z), 0);
+      continue when yh = 0;
+      -- 符
+      if not isopen and cardinality(tris) = 0 and wait = 'R' and not (pair = any(yakuhai_k)) then
+        fu := case when tsumo then 20 else 30 end;
+      else
+        fu := 20;
+        if not isopen and not tsumo then fu := fu + 10; end if;
+        if tsumo then fu := fu + 2; end if;
+        for i in 1..cardinality(tris) loop
+          v := case when trik[i] then 8 else 2 end;
+          if tric[i] and i <> ronopen then v := v * 2; end if;
+          if _mj_yao(tris[i]) then v := v * 2; end if;
+          fu := fu + v;
+        end loop;
+        if pair between 31 and 33 then fu := fu + 2; end if;
+        if pair = (x->>'seatw')::int then fu := fu + 2; end if;
+        if pair = (x->>'roundw')::int then fu := fu + 2; end if;
+        if wait in ('K', 'P', 'T') then fu := fu + 2; end if;
+        fu := ((fu + 9) / 10) * 10;
+        if isopen and fu = 20 then fu := 30; end if;
+      end if;
+      if dora > 0 then yaku := yaku || jsonb_build_array(jsonb_build_array('ドラ', dora)); end if;
+      if aka > 0 then yaku := yaku || jsonb_build_array(jsonb_build_array('赤ドラ', aka)); end if;
+      if ura > 0 then yaku := yaku || jsonb_build_array(jsonb_build_array('裏ドラ', ura)); end if;
+      han := yh + dora + aka + ura;
+      base := _mj_base(han, fu, 0);
+      cur := jsonb_build_object('yakuman', 0, 'yaku', yaku, 'han', han, 'fu', fu, 'base', base);
+      if best is null or base > (best->>'base')::int or (base = (best->>'base')::int and (han > (best->>'han')::int or (han = (best->>'han')::int and fu > (best->>'fu')::int))) then
+        best := cur;
+      end if;
+    end loop;
+  end loop;
+  return best;
+end $$;
+
+-- 支払い（親：dealer。ron：放銃者がはらう合計、tsumo_oya・tsumo_ko：ツモのときに親・子がはらう額（本場をのぞく））
+create or replace function public._mj_pay(base int, dealer boolean) returns jsonb
+language sql immutable as $$
+  select jsonb_build_object('ron', case when dealer then _mj_c100(base * 6) else _mj_c100(base * 4) end,
+                            'tsumo_oya', case when dealer then 0 else _mj_c100(base * 2) end,
+                            'tsumo_ko', case when dealer then _mj_c100(base * 2) else _mj_c100(base) end) $$;
+
+-- 点数のよび名
+create or replace function public._mj_label(sc jsonb) returns text
+language sql immutable as $$
+  select case when (sc->>'yakuman')::int >= 2 then (sc->>'yakuman') || '倍役満' when (sc->>'yakuman')::int = 1 then '役満'
+              when (sc->>'han')::int >= 13 then '数え役満' when (sc->>'han')::int >= 11 then '三倍満' when (sc->>'han')::int >= 8 then '倍満'
+              when (sc->>'han')::int >= 6 then '跳満' when (sc->>'base')::int >= 2000 then '満貫'
+              else (sc->>'fu') || '符' || (sc->>'han') || '翻' end $$;
+
+-- ---------- 麻雀の進行 ----------
+--   状態：rules（len：east 東風戦 / south 半荘戦）・round（場：0 東・1 南）・kyoku（局。親の席）・honba・kyotaku（リーチ棒）・scores
+--         dead（王牌14枚：0〜3 嶺上牌・4〜8 ドラ表示牌・9〜13 裏ドラ表示牌）・wall（山）・hands・melds・river（捨て牌）
+--         riichi（宣言した捨て牌の番号。-1 はなし）・ippatsu・dbl・fur（見のがし振聴）・furr（リーチ後の振聴）・fd（まだ1回も捨てていない）
+--         kans・dora_n・rin（使った嶺上牌）・calls（鳴き・カンの回数）・first4・rpend（宣言したばかりのリーチ）・waits（待ち）
+--         phase：act（turn の人が打つ）/ call（捨て牌に対してロン・ポン・チー・カン）/ rob（槍槓）/ end（局の結果）/ over
+--         pend（鳴ける人とできること）・resp（答え）・aopt（打つ人ができること）・result・ready・timer_at・win・log
+create or replace function public._mj_log(st jsonb, e jsonb) returns jsonb
+language sql immutable as $$
+  select jsonb_set(st, '{log}', coalesce((select jsonb_agg(x order by o) from (
+           select x, o from jsonb_array_elements(coalesce(st->'log', '[]'::jsonb) || jsonb_build_array(e)) with ordinality t(x, o)
+            order by o desc limit 24) z), '[]'::jsonb)) $$;
+
+create or replace function public._mj_hand(st jsonb, s int) returns int[]
+language sql immutable as $$ select _mj_ids(st->'hands'->s) $$;
+
+create or replace function public._mj_set(st jsonb, k text, s int, v jsonb) returns jsonb
+language sql immutable as $$ select jsonb_set(st, array[k, s::text], v) $$;
+
+create or replace function public._mj_sorted(a int[]) returns jsonb
+language sql immutable as $$ select coalesce(jsonb_agg(x order by x), '[]'::jsonb) from unnest(a) x $$;
+
+create or replace function public._mj_nm(st jsonb, s int) returns int
+language sql immutable as $$ select jsonb_array_length(st->'melds'->s) $$;
+
+create or replace function public._mj_open(st jsonb, s int) returns boolean
+language sql immutable as $$ select exists (select 1 from jsonb_array_elements(st->'melds'->s) m where m->>'k' <> 'ankan') $$;
+
+create or replace function public._mj_wall_n(st jsonb) returns int
+language sql immutable as $$ select jsonb_array_length(st->'wall') $$;
+
+create or replace function public._mj_seatw(st jsonb, s int) returns int
+language sql immutable as $$ select 27 + (s - (st->>'kyoku')::int + 4) % 4 $$;
+
+create or replace function public._mj_has(h int[], ks int[]) returns boolean
+language sql immutable as $$
+  select not exists (select 1 from (select z, count(*) n from unnest(ks) z group by z) need
+                      where need.n > (select count(*) from unnest(h) x where x / 4 = need.z)) $$;
+
+-- 鳴いたあと、捨てられる牌が残るか（喰い替えの牌は捨てられない）
+create or replace function public._mj_can_after(h int[], ks int[], forbid int[]) returns boolean
+language plpgsql immutable as $$
+declare c int[] := _mj_cnt(h); k int;
+begin
+  foreach k in array ks loop c[k + 1] := c[k + 1] - 1; end loop;
+  return exists (select 1 from generate_series(0, 33) q where c[q + 1] > 0 and not (q = any(forbid)));
+end $$;
+
+-- チーのあとに捨てられない牌（a：順子の始まり − 鳴いた牌。0 は鳴いた牌が下の端、-2 は上の端）
+create or replace function public._mj_kuikae_chi(k int, a int) returns int[]
+language sql immutable as $$
+  select case when a = 0 and k % 9 <= 5 then array[k, k + 3] when a = -2 and k % 9 >= 3 then array[k, k - 3] else array[k] end $$;
+
+-- 鳴くときに使う牌（赤5を使わない／使う）
+create or replace function public._mj_variants(h int[], ks int[]) returns jsonb
+language plpgsql immutable as $$
+declare k int; used int[] := '{}'; res jsonb := '[]'; hasred boolean := false; y0 int;
+begin
+  foreach k in array ks loop
+    select y into y0 from unnest(h) y where y / 4 = k and not (y = any(used)) order by (y in (16, 52, 88)), y limit 1;
+    used := used || y0;
+  end loop;
+  res := res || jsonb_build_array(_mj_sorted(used));
+  used := '{}';
+  foreach k in array ks loop
+    select y into y0 from unnest(h) y where y / 4 = k and not (y = any(used)) order by (y in (16, 52, 88)) desc, y limit 1;
+    if y0 in (16, 52, 88) then hasred := true; end if;
+    used := used || y0;
+  end loop;
+  if hasred and _mj_sorted(used) <> res->0 then res := res || jsonb_build_array(_mj_sorted(used)); end if;
+  return res;
+end $$;
+
+-- 役を数えるときの場のようす
+create or replace function public._mj_ctx(st jsonb, s int, tsumo boolean, chankan boolean) returns jsonb
+language plpgsql immutable as $$
+declare dn int := (st->>'dora_n')::int; ri boolean := (st->'riichi'->>s)::int >= 0; wn int := _mj_wall_n(st);
+        first boolean := (st->'fd'->>s)::boolean and (st->>'calls')::int = 0; rin boolean := coalesce((st->>'rinshan')::boolean, false);
+begin
+  return jsonb_build_object('tsumo', tsumo, 'seatw', _mj_seatw(st, s), 'roundw', 27 + (st->>'round')::int,
+    'riichi', ri, 'dbl', ri and (st->'dbl'->>s)::boolean, 'ippatsu', ri and (st->'ippatsu'->>s)::boolean,
+    'rinshan', tsumo and rin, 'chankan', chankan, 'haitei', tsumo and not rin and wn = 0, 'houtei', not tsumo and not chankan and wn = 0,
+    'tenhou', tsumo and first and s = (st->>'kyoku')::int, 'chiihou', tsumo and first and s <> (st->>'kyoku')::int,
+    'dora', (select jsonb_agg(st->'dead'->(4 + q)) from generate_series(0, dn - 1) q),
+    'ura', case when ri then (select jsonb_agg(st->'dead'->(9 + q)) from generate_series(0, dn - 1) q) else '[]'::jsonb end);
+end $$;
+
+-- あがれるなら点数（ロンは t を足す）
+create or replace function public._mj_try(st jsonb, s int, t int, tsumo boolean, chankan boolean) returns jsonb
+language plpgsql immutable as $$
+declare h int[] := _mj_hand(st, s);
+begin
+  if not tsumo then h := h || t; end if;
+  if not _mj_agari(_mj_cnt(h), _mj_nm(st, s)) then return null; end if;
+  return _mj_score(h, st->'melds'->s, t, _mj_ctx(st, s, tsumo, chankan));
+end $$;
+
+-- 振聴（ロンできない）
+create or replace function public._mj_furiten(st jsonb, p int) returns boolean
+language sql immutable as $$
+  select coalesce((st->'fur'->>p)::boolean, false) or coalesce((st->'furr'->>p)::boolean, false)
+      or exists (select 1 from jsonb_array_elements(st->'river'->p) r where ((r->>'t')::int / 4) = any(_mj_ids(st->'waits'->p))) $$;
+
+-- 打つ人ができること（ツモ・捨てられる牌・リーチできる牌・カン・九種九牌）
+create or replace function public._mj_actopts(st jsonb) returns jsonb
+language plpgsql volatile as $$
+declare s int := (st->>'turn')::int; h int[] := _mj_hand(st, s); c int[] := _mj_cnt(h); nm int := _mj_nm(st, s);
+        ri boolean := (st->'riichi'->>s)::int >= 0; dr int := (st->>'drawn')::int; o jsonb := '{}'; k int; rl int[] := '{}';
+        kans int[] := '{}'; wn int := _mj_wall_n(st); tk int := (select sum(x::int) from jsonb_array_elements_text(st->'kans') x);
+        disc int[]; kk int[] := _mj_ids(st->'kuikae'); m jsonb; w0 int[]; h2 int[]; c2 int[];
+begin
+  if dr is not null and _mj_agari(c, nm) and _mj_try(st, s, dr, true, false) is not null then o := o || '{"tsumo": true}'; end if;
+  if ri then disc := array[dr];
+  else disc := coalesce(array(select x from unnest(h) x where not ((x / 4) = any(kk)) order by x), '{}'); end if;
+  o := o || jsonb_build_object('discard', to_jsonb(disc));
+  if dr is not null and not ri and not _mj_open(st, s) and (st->'scores'->>s)::int >= 1000 and wn >= 4 and _mj_shanten(c, nm) <= 0 then
+    for k in select distinct x / 4 from unnest(h) x loop
+      c2 := c; c2[k + 1] := c2[k + 1] - 1;
+      if _mj_shanten(c2, nm) = 0 and cardinality(_mj_waits(array_remove(h, (select x from unnest(h) x where x / 4 = k limit 1)), nm)) > 0 then
+        rl := rl || array(select x from unnest(h) x where x / 4 = k order by x);
+      end if;
+    end loop;
+    if cardinality(rl) > 0 then o := o || jsonb_build_object('riichi', to_jsonb(rl)); end if;
+  end if;
+  if dr is not null and wn > 0 and tk < 4 then
+    for k in 0..33 loop
+      if c[k + 1] = 4 then
+        if not ri then kans := kans || k;
+        elsif k = dr / 4 then   -- リーチ後は、待ちが変わらないときだけ
+          h2 := array(select x from unnest(h) x where x / 4 <> k);
+          w0 := _mj_ids(st->'waits'->s);
+          if cardinality(w0) > 0 and _mj_waits(h2, nm + 1) = w0 then kans := kans || k; end if;
+        end if;
+      end if;
+    end loop;
+    if not ri then
+      for m in select * from jsonb_array_elements(st->'melds'->s) loop
+        if m->>'k' = 'pon' and c[(m->'t'->>0)::int / 4 + 1] >= 1 then kans := kans || ((m->'t'->>0)::int / 4); end if;
+      end loop;
+    end if;
+    if cardinality(kans) > 0 then o := o || jsonb_build_object('kan', to_jsonb(kans)); end if;
+  end if;
+  if dr is not null and (st->'fd'->>s)::boolean and (st->>'calls')::int = 0
+     and (select count(*) from generate_series(0, 33) q where _mj_yao(q) and c[q + 1] > 0) >= 9 then o := o || '{"kyuushu": true}'; end if;
+  return st || jsonb_build_object('aopt', o);
+end $$;
+
+-- 牌を引く（rin：嶺上牌。そのぶん山の最後が1枚へる）
+create or replace function public._mj_draw(st jsonb, s int, rin boolean) returns jsonb
+language plpgsql volatile as $$
+declare t int; w int[] := _mj_ids(st->'wall'); r int := (st->>'rin')::int;
+begin
+  if rin then
+    t := (st->'dead'->>r)::int;
+    st := st || jsonb_build_object('rin', r + 1, 'wall', to_jsonb(w[1:cardinality(w) - 1]), 'dead', (st->'dead') || to_jsonb(w[cardinality(w)]));
+  else
+    t := w[1];
+    st := st || jsonb_build_object('wall', to_jsonb(coalesce(w[2:], '{}')));
+  end if;
+  st := _mj_set(st, 'hands', s, _mj_sorted(_mj_hand(st, s) || t));
+  st := st || jsonb_build_object('phase', 'act', 'turn', s, 'drawn', t, 'rinshan', rin, 'kuikae', '[]'::jsonb,
+                                 'pend', '[]'::jsonb, 'resp', '{}'::jsonb, 'timer_at', null, 'cwok', null, 'win', (st->>'win')::int + 1);
+  return _mj_actopts(st);
+end $$;
+
+-- 配る
+create or replace function public._mj_deal(st jsonb) returns jsonb
+language plpgsql volatile as $$
+declare w int[]; d int := (st->>'kyoku')::int; hs jsonb := '[]'; i int;
+begin
+  w := array(select g from generate_series(0, 135) g order by random());
+  for i in 0..3 loop hs := hs || jsonb_build_array(_mj_sorted(w[15 + i * 13:27 + i * 13])); end loop;
+  st := st || jsonb_build_object('dead', to_jsonb(w[1:14]), 'wall', to_jsonb(w[67:136]), 'hands', hs,
+    'melds', '[[],[],[],[]]'::jsonb, 'river', '[[],[],[],[]]'::jsonb, 'riichi', '[-1,-1,-1,-1]'::jsonb,
+    'ippatsu', '[false,false,false,false]'::jsonb, 'dbl', '[false,false,false,false]'::jsonb,
+    'fur', '[false,false,false,false]'::jsonb, 'furr', '[false,false,false,false]'::jsonb, 'fd', '[true,true,true,true]'::jsonb,
+    'kans', '[0,0,0,0]'::jsonb, 'dora_n', 1, 'rin', 0, 'calls', 0, 'first4', '[]'::jsonb, 'rpend', null,
+    'last', null, 'result', null, 'ready', null, 'timer_at', null, 'renchan', null, 'aopt', null);
+  st := jsonb_set(st, '{waits}', (select jsonb_agg(case when q = d then '[]'::jsonb else to_jsonb(_mj_waits(_mj_ids(st->'hands'->q), 0)) end order by q)
+                                    from generate_series(0, 3) q));
+  st := _mj_log(st, jsonb_build_object('a', 'start', 'round', (st->>'round')::int, 'kyoku', d, 'honba', (st->>'honba')::int));
+  return _mj_draw(st, d, false);
+end $$;
+
+create or replace function public._mj_init(opts jsonb) returns jsonb
+language plpgsql volatile as $$
+begin
+  return _mj_deal(jsonb_build_object('rules', jsonb_build_object('len', case when opts->>'len' = 'south' then 'south' else 'east' end),
+    'round', 0, 'kyoku', 0, 'honba', 0, 'kyotaku', 0, 'scores', '[25000,25000,25000,25000]'::jsonb, 'win', 0, 'log', '[]'::jsonb, 'over', false));
+end $$;
+
+-- 順位（点の多い順。同じ点なら起家に近い順）
+create or replace function public._mj_final(st jsonb) returns jsonb
+language sql immutable as $$
+  select jsonb_build_object('rank', (select jsonb_agg(q order by (st->'scores'->>q)::int desc, q) from generate_series(0, 3) q),
+                            'v', st->'scores', 'scale', 25000, 'ref', 'avg') $$;
+
+-- 局の終わり（点数を動かして結果を出す）
+create or replace function public._mj_end(st jsonb, res jsonb, ren boolean) returns jsonb
+language plpgsql volatile as $$
+declare dl int[] := _mj_ids(res->'delta'); p int;
+begin
+  for p in 0..3 loop st := _mj_set(st, 'scores', p, to_jsonb((st->'scores'->>p)::int + coalesce(dl[p + 1], 0))); end loop;
+  return st || jsonb_build_object('phase', 'end', 'result', res || jsonb_build_object('scores', st->'scores', 'honba', st->'honba'), 'renchan', ren,
+    'ready', '[false,false,false,false]'::jsonb, 'timer_at', coalesce((st->>'now')::bigint, 0) + 25000,
+    'pend', '[]'::jsonb, 'resp', '{}'::jsonb, 'aopt', null, 'drawn', null, 'win', (st->>'win')::int + 1);
+end $$;
+
+create or replace function public._mj_abort(st jsonb, why text) returns jsonb
+language sql volatile as $$
+  select _mj_end(_mj_log(st, jsonb_build_object('a', 'abort', 'why', why)), jsonb_build_object('kind', 'abort', 'reason', why, 'delta', '[0,0,0,0]'::jsonb), true) $$;
+
+-- 流局（山がなくなった）：テンパイの人に、ノーテンの人から合わせて3000点
+create or replace function public._mj_ryukyoku(st jsonb) returns jsonb
+language plpgsql volatile as $$
+declare tp boolean[] := '{}'; n int := 0; p int; delta int[] := array[0, 0, 0, 0]; hs jsonb := '{}';
+begin
+  for p in 0..3 loop
+    tp := tp || (jsonb_array_length(st->'waits'->p) > 0);
+    if tp[p + 1] then n := n + 1; hs := hs || jsonb_build_object(p::text, st->'hands'->p); end if;
+  end loop;
+  if n between 1 and 3 then
+    for p in 0..3 loop delta[p + 1] := case when tp[p + 1] then 3000 / n else -3000 / (4 - n) end; end loop;
+  end if;
+  st := _mj_log(st, '{"a": "ryukyoku"}');
+  return _mj_end(st, jsonb_build_object('kind', 'ryukyoku', 'reason', '流局', 'tenpai', to_jsonb(tp), 'hands', hs, 'delta', to_jsonb(delta)),
+                 tp[(st->>'kyoku')::int + 1]);
+end $$;
+
+-- あがり
+create or replace function public._mj_win(st jsonb, w int, frm int, t int, tsumo boolean, chankan boolean) returns jsonb
+language plpgsql volatile as $$
+declare sc jsonb := _mj_try(st, w, t, tsumo, chankan); d int := (st->>'kyoku')::int; hb int := (st->>'honba')::int; pay jsonb;
+        delta int[] := array[0, 0, 0, 0]; p int; amt int; h int[] := _mj_hand(st, w); dn int := (st->>'dora_n')::int; tot int := 0;
+begin
+  if sc is null then raise exception 'あがれません（役がありません）'; end if;
+  pay := _mj_pay((sc->>'base')::int, w = d);
+  if tsumo then
+    for p in 0..3 loop
+      continue when p = w;
+      amt := case when w = d or p <> d then (pay->>'tsumo_ko')::int else (pay->>'tsumo_oya')::int end + 100 * hb;
+      delta[p + 1] := -amt; tot := tot + amt;
+    end loop;
+  else
+    amt := (pay->>'ron')::int + 300 * hb;
+    delta[frm + 1] := -amt; tot := amt;
+    h := h || t;
+  end if;
+  delta[w + 1] := tot + 1000 * (st->>'kyotaku')::int;
+  st := st || jsonb_build_object('kyotaku', 0, 'rpend', null);
+  st := _mj_log(st, jsonb_build_object('a', case when tsumo then 'tsumo' else 'ron' end, 's', w, 'from', frm, 't', t));
+  return _mj_end(st, jsonb_build_object('kind', case when tsumo then 'tsumo' else 'ron' end,
+      'win', jsonb_build_object('s', w, 'from', frm, 't', t, 'hand', _mj_sorted(h), 'melds', st->'melds'->w,
+         'yaku', sc->'yaku', 'han', sc->'han', 'fu', sc->'fu', 'yakuman', sc->'yakuman', 'label', _mj_label(sc),
+         'points', case when not tsumo then (pay->>'ron') || '点'
+                        when w = d then (pay->>'tsumo_ko') || '点オール'
+                        else (pay->>'tsumo_ko') || '・' || (pay->>'tsumo_oya') || '点' end,
+         'dora', (select jsonb_agg(st->'dead'->(4 + q)) from generate_series(0, dn - 1) q),
+         'ura', case when (st->'riichi'->>w)::int >= 0 then (select jsonb_agg(st->'dead'->(9 + q)) from generate_series(0, dn - 1) q) else '[]'::jsonb end),
+      'delta', to_jsonb(delta)), w = d);
+end $$;
+
+-- 終局（残ったリーチ棒は1位に）
+create or replace function public._mj_over(st jsonb, why text) returns jsonb
+language plpgsql volatile as $$
+declare top int := ((_mj_final(st))->'rank'->>0)::int;
+begin
+  if (st->>'kyotaku')::int > 0 then
+    st := _mj_set(st, 'scores', top, to_jsonb((st->'scores'->>top)::int + 1000 * (st->>'kyotaku')::int));
+    st := st || jsonb_build_object('kyotaku', 0);
+  end if;
+  st := st || jsonb_build_object('phase', 'over', 'over', true, 'why', why, 'timer_at', null, 'win', (st->>'win')::int + 1);
+  return st || jsonb_build_object('final', _mj_final(st));
+end $$;
+
+-- 次の局
+create or replace function public._mj_next_hand(st jsonb) returns jsonb
+language plpgsql volatile as $$
+declare ren boolean := coalesce((st->>'renchan')::boolean, false); kind text := st->'result'->>'kind';
+        rd int := (st->>'round')::int; ky int := (st->>'kyoku')::int; lastr int := case when st->'rules'->>'len' = 'south' then 1 else 0 end;
+begin
+  if exists (select 1 from jsonb_array_elements_text(st->'scores') x where x::int < 0) then return _mj_over(st, '飛び（点数がマイナスになった人がいる）'); end if;
+  if rd = lastr and ky = 3 then
+    if not ren then return _mj_over(st, '終局'); end if;
+    if ((_mj_final(st))->'rank'->>0)::int = ky then return _mj_over(st, '終局（オーラスで親がトップ）'); end if;
+  end if;
+  st := st || jsonb_build_object('honba', case when kind in ('ryukyoku', 'abort') or ren then (st->>'honba')::int + 1 else 0 end);
+  if not ren then
+    ky := ky + 1;
+    if ky = 4 then ky := 0; rd := rd + 1; end if;
+  end if;
+  return _mj_deal(st || jsonb_build_object('round', rd, 'kyoku', ky));
+end $$;
+
+-- 次の人が引く（その前に、途中流局・流局を見る）
+create or replace function public._mj_after(st jsonb) returns jsonb
+language plpgsql volatile as $$
+declare f int[] := _mj_ids(st->'first4');
+begin
+  if cardinality(f) = 4 and (st->>'calls')::int = 0 and f[1] between 27 and 30 and f[2] = f[1] and f[3] = f[1] and f[4] = f[1] then
+    return _mj_abort(st, '四風連打');
+  end if;
+  if (select sum(x::int) from jsonb_array_elements_text(st->'kans') x) >= 4 and (select max(x::int) from jsonb_array_elements_text(st->'kans') x) < 4 then
+    return _mj_abort(st, '四槓散了');
+  end if;
+  if _mj_wall_n(st) = 0 then return _mj_ryukyoku(st); end if;
+  return _mj_draw(st, ((st->'last'->>'s')::int + 1) % 4, false);
+end $$;
+
+-- 鳴く（ポン・チー・大明槓）
+create or replace function public._mj_call(st jsonb, p int, r jsonb) returns jsonb
+language plpgsql volatile as $$
+declare s int := (st->'last'->>'s')::int; t int := (st->'last'->>'t')::int; k int := t / 4; h int[] := _mj_hand(st, p); use int[];
+        kind text := r->>'a'; n int; kk int[]; a int;
+begin
+  if kind = 'kan' then use := array(select x from unnest(h) x where x / 4 = k);
+  else use := _mj_ids(r->'t'); end if;
+  h := array(select x from unnest(h) x where not (x = any(use)));
+  st := _mj_set(st, 'hands', p, _mj_sorted(h));
+  st := _mj_set(st, 'melds', p, (st->'melds'->p) || jsonb_build_object('k', case kind when 'kan' then 'minkan' else kind end,
+                                   't', _mj_sorted(use || t), 'from', s, 'c', t));
+  n := jsonb_array_length(st->'river'->s) - 1;
+  st := jsonb_set(st, array['river', s::text, n::text, 'x'], 'true');
+  st := st || jsonb_build_object('calls', (st->>'calls')::int + 1, 'ippatsu', '[false,false,false,false]'::jsonb, 'fd', '[false,false,false,false]'::jsonb);
+  st := _mj_log(st, jsonb_build_object('a', kind, 's', p, 't', t, 'from', s));
+  if kind = 'kan' then
+    st := _mj_set(st, 'kans', p, to_jsonb((st->'kans'->>p)::int + 1));
+    st := st || jsonb_build_object('dora_n', (st->>'dora_n')::int + 1);
+    return _mj_draw(st, p, true);
+  end if;
+  if kind = 'pon' then kk := array[k];
+  else
+    a := least((select min(x / 4) from unnest(use) x), k) - k;
+    kk := _mj_kuikae_chi(k, a);
+  end if;
+  st := st || jsonb_build_object('phase', 'act', 'turn', p, 'drawn', null, 'rinshan', false, 'kuikae', to_jsonb(kk),
+                                 'pend', '[]'::jsonb, 'resp', '{}'::jsonb, 'timer_at', null, 'cwok', null, 'win', (st->>'win')::int + 1);
+  return _mj_actopts(st);
+end $$;
+
+-- 捨て牌への答えがそろったら決める（ロンは頭ハネ → ポン・カン → チー → 次の人）
+create or replace function public._mj_resolve(st jsonb) returns jsonb
+language plpgsql volatile as $$
+declare s int := (st->'last'->>'s')::int; t int := (st->'last'->>'t')::int; k int := t / 4; p int; r jsonb; rob boolean := st->>'phase' = 'rob';
+begin
+  for p in select (s + q) % 4 from generate_series(1, 3) q loop
+    if st->'resp'->(p::text)->>'a' = 'ron' then return _mj_win(st, p, s, t, false, rob); end if;
+  end loop;
+  for p in select (s + q) % 4 from generate_series(1, 3) q loop   -- あがれる牌を見のがした人は振聴
+    if k = any(_mj_ids(st->'waits'->p)) then
+      st := _mj_set(st, 'fur', p, 'true');
+      if (st->'riichi'->>p)::int >= 0 then st := _mj_set(st, 'furr', p, 'true'); end if;
+    end if;
+  end loop;
+  if rob then   -- 槍槓がなかったので、加槓が決まる
+    st := _mj_set(st, 'kans', s, to_jsonb((st->'kans'->>s)::int + 1));
+    st := st || jsonb_build_object('dora_n', (st->>'dora_n')::int + 1);
+    return _mj_draw(st, s, true);
+  end if;
+  if st->>'rpend' is not null then   -- リーチが通った
+    p := (st->>'rpend')::int;
+    st := _mj_set(st, 'scores', p, to_jsonb((st->'scores'->>p)::int - 1000));
+    st := st || jsonb_build_object('kyotaku', (st->>'kyotaku')::int + 1, 'rpend', null);
+    if (select count(*) from jsonb_array_elements_text(st->'riichi') x where x::int >= 0) = 4 then return _mj_abort(st, '四家立直'); end if;
+  end if;
+  for p in select (s + q) % 4 from generate_series(1, 3) q loop
+    r := st->'resp'->(p::text);
+    if r->>'a' in ('pon', 'kan') then return _mj_call(st, p, r); end if;
+  end loop;
+  for p in select (s + q) % 4 from generate_series(1, 3) q loop
+    r := st->'resp'->(p::text);
+    if r->>'a' = 'chi' then return _mj_call(st, p, r); end if;
+  end loop;
+  return _mj_after(st);
+end $$;
+
+-- 捨てる（rii：リーチ宣言）
+create or replace function public._mj_discard(st jsonb, s int, t int, rii boolean) returns jsonb
+language plpgsql volatile as $$
+declare h int[]; k int := t / 4; p int; o jsonb; pend jsonb := '[]'; hp int[]; cn int; wn int; fd0 boolean := (st->'fd'->>s)::boolean;
+        ch jsonb; a int; ks int[];
+begin
+  h := array_remove(_mj_hand(st, s), t);
+  st := _mj_set(st, 'hands', s, _mj_sorted(h));
+  st := _mj_set(st, 'river', s, (st->'river'->s) || jsonb_build_object('t', t, 'r', rii, 'g', t = coalesce((st->>'drawn')::int, -1), 'x', false));
+  if rii then
+    st := _mj_set(st, 'riichi', s, to_jsonb(jsonb_array_length(st->'river'->s) - 1));
+    st := _mj_set(st, 'dbl', s, to_jsonb(fd0 and (st->>'calls')::int = 0));
+    st := _mj_set(st, 'ippatsu', s, 'true');
+    st := st || jsonb_build_object('rpend', s);
+  else
+    st := _mj_set(st, 'ippatsu', s, 'false');
+  end if;
+  if fd0 and (st->>'calls')::int = 0 then st := st || jsonb_build_object('first4', (st->'first4') || to_jsonb(k)); end if;
+  st := _mj_set(st, 'fd', s, 'false');
+  st := _mj_set(st, 'fur', s, 'false');
+  st := _mj_set(st, 'waits', s, to_jsonb(_mj_waits(h, _mj_nm(st, s))));
+  st := st || jsonb_build_object('last', jsonb_build_object('s', s, 't', t), 'drawn', null, 'kuikae', '[]'::jsonb, 'rinshan', false, 'aopt', null);
+  st := _mj_log(st, jsonb_build_object('a', case when rii then 'riichi' else 'discard' end, 's', s, 't', t));
+  wn := _mj_wall_n(st);
+  for p in select (s + q) % 4 from generate_series(1, 3) q loop
+    o := '{}';
+    if k = any(_mj_ids(st->'waits'->p)) and not _mj_furiten(st, p) and _mj_try(st, p, t, false, false) is not null then o := o || '{"ron": true}'; end if;
+    if wn > 0 and (st->'riichi'->>p)::int < 0 then
+      hp := _mj_hand(st, p);
+      cn := (select count(*) from unnest(hp) x where x / 4 = k);
+      if cn >= 2 and _mj_can_after(hp, array[k, k], array[k]) then o := o || jsonb_build_object('pon', _mj_variants(hp, array[k, k])); end if;
+      if cn = 3 and (select sum(x::int) from jsonb_array_elements_text(st->'kans') x) < 4 then o := o || '{"kan": true}'; end if;
+      if p = (s + 1) % 4 and k < 27 then
+        ch := '[]';
+        foreach a in array array[-2, -1, 0] loop
+          if (k % 9) + a >= 0 and (k % 9) + a + 2 <= 8 then
+            ks := array(select k + a + z from generate_series(0, 2) z where a + z <> 0);
+            if _mj_has(hp, ks) and _mj_can_after(hp, ks, _mj_kuikae_chi(k, a)) then ch := ch || _mj_variants(hp, ks); end if;
+          end if;
+        end loop;
+        if jsonb_array_length(ch) > 0 then o := o || jsonb_build_object('chi', ch); end if;
+      end if;
+    end if;
+    if o <> '{}'::jsonb then pend := pend || (o || jsonb_build_object('s', p)); end if;
+  end loop;
+  -- 鳴ける人がいてもいなくても、同じだけ待つ（だれが鳴けるか、ほかの人にわからないように）
+  return st || jsonb_build_object('pend', pend, 'resp', '{}'::jsonb, 'phase', 'call', 'cwok', false,
+                                  'timer_at', coalesce((st->>'now')::bigint, 0) + 600, 'win', (st->>'win')::int + 1);
+end $$;
+
+-- 暗槓・加槓（加槓は槍槓できる人がいれば、まず聞く）
+create or replace function public._mj_selfkan(st jsonb, s int, k int) returns jsonb
+language plpgsql volatile as $$
+declare h int[] := _mj_hand(st, s); m jsonb; i int := 0; idx int := -1; t int; p int; pend jsonb := '[]';
+begin
+  for m in select * from jsonb_array_elements(st->'melds'->s) loop
+    if m->>'k' = 'pon' and (m->'t'->>0)::int / 4 = k then idx := i; end if;
+    i := i + 1;
+  end loop;
+  st := st || jsonb_build_object('ippatsu', '[false,false,false,false]'::jsonb, 'fd', '[false,false,false,false]'::jsonb,
+                                 'calls', (st->>'calls')::int + 1, 'aopt', null);
+  if idx >= 0 then
+    t := (select x from unnest(h) x where x / 4 = k limit 1);
+    st := _mj_set(st, 'hands', s, _mj_sorted(array_remove(h, t)));
+    m := st->'melds'->s->idx;
+    st := jsonb_set(st, array['melds', s::text, idx::text], m || jsonb_build_object('k', 'kakan', 't', _mj_sorted(_mj_ids(m->'t') || t)));
+    st := _mj_log(st, jsonb_build_object('a', 'kakan', 's', s, 't', t));
+    for p in select (s + q) % 4 from generate_series(1, 3) q loop
+      if k = any(_mj_ids(st->'waits'->p)) and not _mj_furiten(st, p) and _mj_try(st, p, t, false, true) is not null then
+        pend := pend || jsonb_build_object('s', p, 'ron', true);
+      end if;
+    end loop;
+    -- 槍槓できる人がいてもいなくても、同じだけ待つ
+    return st || jsonb_build_object('phase', 'rob', 'last', jsonb_build_object('s', s, 't', t), 'pend', pend, 'resp', '{}'::jsonb, 'drawn', null,
+                                    'cwok', false, 'timer_at', coalesce((st->>'now')::bigint, 0) + 600, 'win', (st->>'win')::int + 1);
+  else
+    st := _mj_set(st, 'melds', s, (st->'melds'->s) || jsonb_build_object('k', 'ankan', 't', _mj_sorted(array(select x from unnest(h) x where x / 4 = k))));
+    st := _mj_set(st, 'hands', s, _mj_sorted(array(select x from unnest(h) x where x / 4 <> k)));
+    st := _mj_log(st, jsonb_build_object('a', 'ankan', 's', s, 'k', k));
+  end if;
+  st := _mj_set(st, 'kans', s, to_jsonb((st->'kans'->>s)::int + 1));
+  st := st || jsonb_build_object('dora_n', (st->>'dora_n')::int + 1);
+  return _mj_draw(st, s, true);
+end $$;
+
+-- いま考える番の席
+create or replace function public._mj_pending(st jsonb) returns int[]
+language sql immutable as $$
+  select case when coalesce((st->>'over')::boolean, false) then '{}'::int[]
+              when st->>'phase' = 'act' then array[(st->>'turn')::int]
+              when st->>'phase' in ('call', 'rob') then coalesce(array(
+                select (e->>'s')::int from jsonb_array_elements(st->'pend') e where not (st->'resp' ? (e->>'s'))
+                 order by ((e->>'s')::int - (st->'last'->>'s')::int + 4) % 4), '{}')
+              else '{}'::int[] end $$;
+
+create or replace function public._mj_delay(st jsonb) returns int
+language sql immutable as $$ select case when st->>'phase' = 'act' then 700 else 300 end $$;
+
+-- 人・コンピューターの動き
+--   act：{a: discard, t, riichi} / {a: tsumo} / {a: kan, k} / {a: kyuushu}
+--   call・rob：{a: ron} / {a: pon, t} / {a: kan} / {a: chi, t} / {a: pass}
+--   end：{a: ready}（次の局へ）。timer：時間がきたら次の局
+create or replace function public._mj_act(st jsonb, s int, mv jsonb) returns jsonb
+language plpgsql volatile as $$
+declare a text := mv->>'a'; ph text := st->>'phase'; o jsonb; t int; k int; e jsonb; v jsonb; ls int;
+begin
+  if coalesce((st->>'over')::boolean, false) then raise exception 'このゲームはもう終わっています'; end if;
+  if a = 'timer' then
+    if st->>'timer_at' is null or coalesce((st->>'now')::bigint, 0) < (st->>'timer_at')::bigint then return st; end if;
+    if ph = 'end' then return _mj_next_hand(st); end if;
+    if ph in ('call', 'rob') then   -- 待つ時間がすぎた。みんな答えていれば決める
+      st := st || jsonb_build_object('cwok', true, 'timer_at', null);
+      if not exists (select 1 from jsonb_array_elements(st->'pend') e2 where not (st->'resp' ? (e2->>'s'))) then return _mj_resolve(st); end if;
+    end if;
+    return st;
+  end if;
+  if ph = 'end' then
+    if a <> 'ready' then raise exception '次の局を待っています'; end if;
+    st := _mj_set(st, 'ready', s, 'true');
+    if (select coalesce(bool_and((st->'ready'->>(x::int))::boolean), true) from jsonb_array_elements_text(coalesce(st->'hum', '[]')) x) then
+      return _mj_next_hand(st);
+    end if;
+    return st;
+  end if;
+  if ph = 'act' then
+    if s <> (st->>'turn')::int then raise exception 'いまはあなたの番ではありません'; end if;
+    o := st->'aopt';
+    if a = 'tsumo' then
+      if not coalesce((o->>'tsumo')::boolean, false) then raise exception 'ツモあがりできません'; end if;
+      return _mj_win(st, s, null, (st->>'drawn')::int, true, false);
+    end if;
+    if a = 'kyuushu' then
+      if not coalesce((o->>'kyuushu')::boolean, false) then raise exception '九種九牌ではありません'; end if;
+      return _mj_abort(st, '九種九牌');
+    end if;
+    if a = 'kan' then
+      k := (mv->>'k')::int;
+      if k is null or not (k = any(_mj_ids(o->'kan'))) then raise exception 'そのカンはできません'; end if;
+      return _mj_selfkan(st, s, k);
+    end if;
+    if a = 'discard' then
+      t := (mv->>'t')::int;
+      if t is null or not (t = any(_mj_ids(o->'discard'))) then raise exception 'その牌は捨てられません'; end if;
+      if coalesce((mv->>'riichi')::boolean, false) then
+        if not (t = any(_mj_ids(o->'riichi'))) then raise exception 'その牌を捨ててもテンパイにならないので、リーチできません'; end if;
+        return _mj_discard(st, s, t, true);
+      end if;
+      return _mj_discard(st, s, t, false);
+    end if;
+    raise exception 'その動きはできません';
+  end if;
+  if ph in ('call', 'rob') then
+    select e2 into e from jsonb_array_elements(st->'pend') e2 where (e2->>'s')::int = s;
+    if e is null then raise exception 'いまは何もできません'; end if;
+    if st->'resp' ? s::text then raise exception 'もう答えました'; end if;
+    if a = 'ron' then
+      if not coalesce((e->>'ron')::boolean, false) then raise exception 'ロンできません'; end if;
+      v := '{"a": "ron"}';
+    elsif a = 'pon' and ph = 'call' then
+      if e->'pon' is null then raise exception 'ポンできません'; end if;
+      v := coalesce((select x from jsonb_array_elements(e->'pon') x where x = _mj_sorted(_mj_ids(mv->'t'))), e->'pon'->0);
+      v := jsonb_build_object('a', 'pon', 't', v);
+    elsif a = 'kan' and ph = 'call' then
+      if not coalesce((e->>'kan')::boolean, false) then raise exception 'カンできません'; end if;
+      v := '{"a": "kan"}';
+    elsif a = 'chi' and ph = 'call' then
+      if e->'chi' is null then raise exception 'チーできません'; end if;
+      v := (select x from jsonb_array_elements(e->'chi') x where x = _mj_sorted(_mj_ids(mv->'t')));
+      if v is null then raise exception 'そのチーはできません'; end if;
+      v := jsonb_build_object('a', 'chi', 't', v);
+    elsif a = 'pass' then v := '{"a": "pass"}';
+    else raise exception 'その動きはできません'; end if;
+    st := jsonb_set(st, array['resp', s::text], v);
+    if not coalesce((st->>'cwok')::boolean, false) then return st; end if;   -- 待つ時間がすぎるまでは決めない
+    if not exists (select 1 from jsonb_array_elements(st->'pend') e2 where not (st->'resp' ? (e2->>'s'))) then return _mj_resolve(st); end if;
+    if a = 'ron' then   -- 自分より前にロンできる人が答えていなければ待つ。いなければすぐ決まる
+      ls := (st->'last'->>'s')::int;
+      if not exists (select 1 from jsonb_array_elements(st->'pend') e2 where coalesce((e2->>'ron')::boolean, false) and not (st->'resp' ? (e2->>'s'))
+                      and ((e2->>'s')::int - ls + 4) % 4 < (s - ls + 4) % 4) then
+        return _mj_resolve(st);
+      end if;
+    end if;
+    return st;
+  end if;
+  raise exception 'いまは何もできません';
+end $$;
+
+-- 見えるもの（自分の手牌だけ。局が終わったら、あがった人・テンパイの人の手）
+create or replace function public._mj_view(st jsonb, me int) returns jsonb
+language plpgsql immutable as $$
+declare ph text := st->>'phase'; o jsonb := null; e jsonb; dn int := coalesce((st->>'dora_n')::int, 1);
+begin
+  if me is not null and ph = 'act' and (st->>'turn')::int = me then o := jsonb_build_object('act', st->'aopt');
+  elsif me is not null and ph in ('call', 'rob') then
+    select e2 into e from jsonb_array_elements(st->'pend') e2 where (e2->>'s')::int = me;
+    if e is not null and not (st->'resp' ? me::text) then o := jsonb_build_object('call', e); end if;
+  end if;
+  return jsonb_build_object('rules', st->'rules', 'round', st->'round', 'kyoku', st->'kyoku', 'honba', st->'honba', 'kyotaku', st->'kyotaku',
+    'scores', st->'scores', 'wall_n', jsonb_array_length(coalesce(st->'wall', '[]')),
+    'dora', (select jsonb_agg(st->'dead'->(4 + q)) from generate_series(0, dn - 1) q),
+    'melds', st->'melds', 'river', st->'river', 'riichi', st->'riichi',
+    'counts', (select jsonb_agg(jsonb_array_length(st->'hands'->q) order by q) from generate_series(0, 3) q),
+    'hand', case when me is null then null else st->'hands'->me end,
+    'drawn', case when me is not null and (st->>'turn')::int = me and ph = 'act' then st->'drawn' else null end,
+    'turn', st->'turn', 'phase', ph, 'last', st->'last', 'opts', o,
+    'result', st->'result', 'ready', st->'ready', 'timer_at', st->'timer_at', 'log', st->'log',
+    'furiten', case when me is null or ph in ('end', 'over') then null else to_jsonb(_mj_furiten(st, me)) end,
+    'waits', case when me is null then null else st->'waits'->me end,
+    'over', coalesce((st->>'over')::boolean, false), 'final', st->'final');
+end $$;
+
+-- ---------- 麻雀のコンピューター ----------
+-- 残しておきたい度合い（低いものから捨てる）
+create or replace function public._mj_tval(st jsonb, s int, c int[], k int) returns int
+language plpgsql immutable as $$
+declare v int := 0; dk int[];
+begin
+  dk := array(select _mj_dora_of((st->'dead'->>(4 + q))::int / 4) from generate_series(0, (st->>'dora_n')::int - 1) q);
+  if k >= 27 then
+    if c[k + 1] >= 2 then v := 10; end if;
+    if k >= 31 or k = _mj_seatw(st, s) or k = 27 + (st->>'round')::int then v := v + 3; end if;
+  else
+    v := (c[k + 1] - 1) * 5;
+    if k % 9 >= 1 and c[k] > 0 then v := v + 4; end if;
+    if k % 9 <= 7 and c[k + 2] > 0 then v := v + 4; end if;
+    if k % 9 >= 2 and c[k - 1] > 0 then v := v + 2; end if;
+    if k % 9 <= 6 and c[k + 3] > 0 then v := v + 2; end if;
+    v := v + case when k % 9 in (0, 8) then 0 when k % 9 in (1, 7) then 1 else 2 end;
+  end if;
+  return v + 3 * (select count(*) from unnest(dk) z where z = k);
+end $$;
+
+-- 安全度（リーチしている人に対して。高いほど安全）
+create or replace function public._mj_safe(st jsonb, s int, k int) returns int
+language plpgsql immutable as $$
+declare p int; v int := 0; rk int[]; seen int;
+begin
+  for p in 0..3 loop
+    continue when p = s or (st->'riichi'->>p)::int < 0;
+    rk := array(select (r->>'t')::int / 4 from jsonb_array_elements(st->'river'->p) r);
+    if k = any(rk) then v := v + 20;
+    elsif k >= 27 then
+      seen := (select count(*) from jsonb_array_elements(st->'river') rv, jsonb_array_elements(rv) r where (r->>'t')::int / 4 = k)
+            + (select count(*) from jsonb_array_elements(st->'melds') mm, jsonb_array_elements(mm) m, jsonb_array_elements_text(m->'t') x where x::int / 4 = k);
+      v := v + case when seen >= 3 then 18 when seen = 2 then 12 else 6 end;
+    elsif (k % 9 between 3 and 5 and (k - 3) = any(rk) and (k + 3) = any(rk)) or (k % 9 <= 2 and (k + 3) = any(rk)) or (k % 9 >= 6 and (k - 3) = any(rk)) then
+      v := v + 10;
+    elsif k % 9 in (0, 8) then v := v + 4;
+    elsif k % 9 in (1, 7) then v := v + 2;
+    end if;
+  end loop;
+  return v;
+end $$;
+
+-- 見えている枚数（自分の手・捨て牌・鳴き・ドラ表示牌）
+create or replace function public._mj_seen(st jsonb, s int, k int) returns int
+language sql immutable as $$
+  select (select count(*) from unnest(_mj_ids(st->'hands'->s)) x where x / 4 = k)
+       + (select count(*) from jsonb_array_elements(st->'river') rv, jsonb_array_elements(rv) r where (r->>'t')::int / 4 = k and not (r->>'x')::boolean)
+       + (select count(*) from jsonb_array_elements(st->'melds') mm, jsonb_array_elements(mm) m, jsonb_array_elements_text(m->'t') x where x::int / 4 = k)
+       + (select count(*) from generate_series(0, (st->>'dora_n')::int - 1) q where (st->'dead'->>(4 + q))::int / 4 = k) $$;
+
+-- 鳴いたあとの、いちばんよいシャンテン数（use：鳴きに使う牌の種類、forbid：捨てられない牌）
+create or replace function public._mj_sh_after(c int[], use int[], forbid int[], nm int) returns int
+language plpgsql volatile as $$
+declare k int; best int := 99; s int; c2 int[];
+begin
+  foreach k in array use loop c[k + 1] := c[k + 1] - 1; end loop;
+  for k in 0..33 loop
+    continue when c[k + 1] = 0 or k = any(forbid);
+    c2 := c; c2[k + 1] := c2[k + 1] - 1;
+    s := _mj_shanten(c2, nm + 1);
+    if s < best then best := s; end if;
+  end loop;
+  return best;
+end $$;
+
+create or replace function public._mj_cpu(st jsonb, s int) returns jsonb
+language plpgsql volatile as $$
+declare ph text := st->>'phase'; o jsonb; e jsonb; h int[]; c int[]; c2 int[]; nm int; k int; cur int; sh int; mn int := 99;
+        cand int[]; riis int; ks int[]; bestk int; bestsc numeric; sc numeric; defend boolean; rl int[]; wv int; bw int := -1; bt int;
+        yk int[]; hasyh boolean; tan boolean; xj jsonb; shs int[] := array_fill(99, array[34]);
+begin
+  if ph = 'act' then
+    o := st->'aopt'; h := _mj_hand(st, s); c := _mj_cnt(h); nm := _mj_nm(st, s);
+    if coalesce((o->>'tsumo')::boolean, false) then return '{"a": "tsumo"}'; end if;
+    if coalesce((o->>'kyuushu')::boolean, false) and (select count(*) from generate_series(0, 33) q where _mj_yao(q) and c[q + 1] > 0) <= 10 then
+      return '{"a": "kyuushu"}';
+    end if;
+    if (st->'riichi'->>s)::int >= 0 then
+      if o->'kan' is not null then return jsonb_build_object('a', 'kan', 'k', (o->'kan'->>0)::int); end if;
+      return jsonb_build_object('a', 'discard', 't', (st->>'drawn')::int);
+    end if;
+    cur := _mj_shanten(c, nm);
+    if o->'kan' is not null then
+      k := (o->'kan'->>0)::int;
+      if c[k + 1] = 4 then
+        c2 := c; c2[k + 1] := 0;
+        if _mj_sh_after(c2, '{}', '{}', nm) <= cur then return jsonb_build_object('a', 'kan', 'k', k); end if;
+      else
+        return jsonb_build_object('a', 'kan', 'k', k);
+      end if;
+    end if;
+    cand := _mj_ids(o->'discard');
+    ks := array(select distinct x / 4 from unnest(cand) x);
+    foreach k in array ks loop
+      c2 := c; c2[k + 1] := c2[k + 1] - 1;
+      shs[k + 1] := _mj_shanten(c2, nm);
+      if shs[k + 1] < mn then mn := shs[k + 1]; end if;
+    end loop;
+    riis := (select count(*) from generate_series(0, 3) q where q <> s and (st->'riichi'->>q)::int >= 0);
+    defend := riis > 0 and mn >= 2;
+    -- テンパイになる捨て牌がいくつかあるなら、待ちの多いものを
+    if mn = 0 then
+      rl := _mj_ids(o->'riichi');
+      foreach k in array ks loop
+        continue when shs[k + 1] <> 0;
+        h := array_remove(_mj_hand(st, s), (select max(x) from unnest(cand) x where x / 4 = k));
+        wv := (select coalesce(sum(greatest(0, 4 - _mj_seen(st, s, w))), 0) from unnest(_mj_waits(h, nm)) w);
+        if wv > bw then bw := wv; bestk := k; end if;
+      end loop;
+      bt := (select max(x) from unnest(cand) x where x / 4 = bestk);
+      if not (bt = any(rl)) then bt := coalesce((select max(x) from unnest(rl) x where x / 4 = bestk), bt); end if;
+      return jsonb_build_object('a', 'discard', 't', bt, 'riichi', bt = any(rl) and bw > 0);
+    end if;
+    bestsc := null;
+    foreach k in array ks loop
+      if defend then sc := -_mj_safe(st, s, k) * 100 + shs[k + 1] * 10 + _mj_tval(st, s, c, k) / 10.0;
+      elsif riis > 0 then sc := shs[k + 1] * 100 - _mj_safe(st, s, k) * 2 + _mj_tval(st, s, c, k);
+      else sc := shs[k + 1] * 100 + _mj_tval(st, s, c, k); end if;
+      if bestsc is null or sc < bestsc then bestsc := sc; bestk := k; end if;
+    end loop;
+    bt := (select max(x) from unnest(cand) x where x / 4 = bestk);   -- 赤5はなるべく残す
+    return jsonb_build_object('a', 'discard', 't', bt);
+  end if;
+  if ph in ('call', 'rob') then
+    select e2 into e from jsonb_array_elements(st->'pend') e2 where (e2->>'s')::int = s;
+    if coalesce((e->>'ron')::boolean, false) then return '{"a": "ron"}'; end if;
+    if ph = 'rob' then return '{"a": "pass"}'; end if;
+    h := _mj_hand(st, s); c := _mj_cnt(h); nm := _mj_nm(st, s); k := (st->'last'->>'t')::int / 4;
+    cur := _mj_shanten(c, nm);
+    yk := array[31, 32, 33, _mj_seatw(st, s), 27 + (st->>'round')::int];
+    hasyh := exists (select 1 from jsonb_array_elements(st->'melds'->s) m where m->>'k' <> 'chi' and (m->'t'->>0)::int / 4 = any(yk));
+    tan := not _mj_yao(k)
+       and not exists (select 1 from jsonb_array_elements(st->'melds'->s) m, jsonb_array_elements_text(m->'t') t2 where _mj_yao(t2::int / 4))
+       and (select count(*) from unnest(h) x where _mj_yao(x / 4)) <= 2;
+    if e->'pon' is not null and (k = any(yk) or hasyh or tan) then
+      if _mj_sh_after(c, array[k, k], array[k], nm) < cur then return jsonb_build_object('a', 'pon', 't', e->'pon'->0); end if;
+    end if;
+    if e->'chi' is not null and (hasyh or tan) then
+      for xj in select * from jsonb_array_elements(e->'chi') loop
+        ks := array(select y::int / 4 from jsonb_array_elements_text(xj) y);
+        continue when tan and exists (select 1 from unnest(ks) z where _mj_yao(z));
+        if _mj_sh_after(c, ks, _mj_kuikae_chi(k, least(ks[1], ks[2], k) - k), nm) < cur then return jsonb_build_object('a', 'chi', 't', xj); end if;
+      end loop;
+    end if;
+    return '{"a": "pass"}';
+  end if;
+  return '{"a": "ready"}';
+end $$;
+
 -- ---------- ゲームごとの入り口 ----------
 create or replace function public._game_init(g text) returns jsonb
 language plpgsql immutable as $$
@@ -5025,7 +6455,71 @@ begin
 end $$;
 
 create or replace function public._game_name(g text) returns text
-language sql immutable as $$ select case g when 'reversi' then 'リバーシ' when 'chess' then 'チェス' when 'shogi' then '将棋' else g end $$;
+language sql immutable as $$
+  select case g when 'reversi' then 'リバーシ' when 'chess' then 'チェス' when 'shogi' then '将棋'
+                when 'onecard' then 'ワンカード' when 'mahjong' then '麻雀' else g end $$;
+
+-- 4人までのゲーム（ワンカード・麻雀）
+create or replace function public._is_multi(g text) returns boolean
+language sql immutable as $$ select g in ('onecard', 'mahjong') $$;
+
+create or replace function public._mg_init(g text, n int, opts jsonb) returns jsonb
+language plpgsql volatile as $$
+begin
+  if g = 'onecard' then return _oc_init(n); end if;
+  if g = 'mahjong' then return _mj_init(opts); end if;
+  raise exception 'そのゲームはまだ遊べません';
+end $$;
+
+-- いま考える番の席
+create or replace function public._mg_pending(g text, st jsonb) returns int[]
+language plpgsql immutable as $$
+begin
+  if g = 'onecard' then return _oc_pending(st); end if;
+  if g = 'mahjong' then return _mj_pending(st); end if;
+  return '{}';
+end $$;
+
+create or replace function public._mg_act(g text, st jsonb, s int, mv jsonb) returns jsonb
+language plpgsql volatile as $$
+begin
+  if g = 'onecard' then return _oc_act(st, s, mv); end if;
+  if g = 'mahjong' then return _mj_act(st, s, mv); end if;
+  raise exception 'そのゲームはまだ遊べません';
+end $$;
+
+create or replace function public._mg_cpu(g text, st jsonb, s int) returns jsonb
+language plpgsql volatile as $$
+begin
+  if g = 'onecard' then return _oc_cpu(st, s); end if;
+  if g = 'mahjong' then return _mj_cpu(st, s); end if;
+  raise exception 'そのゲームはまだ遊べません';
+end $$;
+
+create or replace function public._mg_view(g text, st jsonb, me int) returns jsonb
+language plpgsql immutable as $$
+begin
+  if g = 'onecard' then return _oc_view(st, me); end if;
+  if g = 'mahjong' then return _mj_view(st, me); end if;
+  return '{}';
+end $$;
+
+-- コンピューターが動くまでの間（ミリ秒）
+create or replace function public._mg_delay(g text, st jsonb) returns int
+language plpgsql immutable as $$
+begin
+  if g = 'mahjong' then return _mj_delay(st); end if;
+  return 1100;
+end $$;
+
+-- いまの順位（rank：上から席、v：分けるときの点数、scale：賭け金ぶんの点数、ref：avg（人の平均とくらべる）/ best（人の1位とくらべる））
+create or replace function public._mg_final(g text, st jsonb) returns jsonb
+language plpgsql immutable as $$
+begin
+  if g = 'onecard' then return _oc_final(st); end if;
+  if g = 'mahjong' then return _mj_final(st); end if;
+  return '{}';
+end $$;
 
 -- 終わり：賭けの精算（山分け・国庫5%）
 create or replace function public._room_finish(rid bigint, w int, why text) returns void
@@ -5064,13 +6558,247 @@ begin
   update treasury set balance = balance + cut, casino_total = casino_total + cut where id = 1;
 end $$;
 
--- 持ち時間が切れていないか見る（切れていたら負け）
-create or replace function public._room_tick(rid bigint) returns void
+-- 預かっている賭け（観戦の賭け・賭け金）を返す
+create or replace function public._room_refund(rid bigint) returns void
+language plpgsql set search_path = public as $$
+declare b record;
+begin
+  for b in select * from game_bets where room_id = rid and payout is null loop
+    update profiles set balance = balance + b.amount where id = b.user_id;
+    update game_bets set payout = b.amount where id = b.id;
+    perform _log(b.user_id, 'game_bet', b.amount, b.amount, jsonb_build_object('room', rid, 'refund', true));
+  end loop;
+  for b in select * from game_stakes where room_id = rid and payout is null loop
+    update profiles set balance = balance + b.amount where id = b.user_id;
+    update game_stakes set payout = b.amount where room_id = rid and user_id = b.user_id;
+    perform _log(b.user_id, 'game_stake', b.amount, b.amount, jsonb_build_object('room', rid, 'refund', true));
+  end loop;
+end $$;
+
+-- 部屋をなくして、預かりを返す（only_waiting：まだ始まっていない部屋だけ）
+drop function if exists public._room_cancel(bigint);
+create or replace function public._room_cancel(rid bigint, only_waiting boolean default false) returns void
+language plpgsql set search_path = public as $$
+declare stt text;
+begin
+  select status into stt from game_rooms where id = rid for update;
+  if stt is null or (only_waiting and stt <> 'waiting') then return; end if;
+  if stt in ('waiting', 'playing') then update game_rooms set status = 'canceled', finished_at = _now() where id = rid; end if;
+  perform _room_refund(rid);
+end $$;
+
+-- 賭け金をはらう（登録から7日・税の滞納なし）
+create or replace function public._room_stake(r game_rooms, u uuid) returns void
+language plpgsql set search_path = public as $$
+declare made timestamptz;
+begin
+  if r.stake <= 0 then return; end if;
+  select created_at into made from profiles where id = u;
+  if _now() < made + interval '7 days' then
+    raise exception '賭けありの部屋は、登録から7日たってから入れます（%から）', _dlabel(made + interval '7 days');
+  end if;
+  if _debt(u) > 0 then raise exception '税金の滞納があるので、賭けありの部屋には入れません'; end if;
+  perform _take(u, r.stake);
+  insert into game_stakes(room_id, user_id, amount, at) values (r.id, u, r.stake, _now());
+end $$;
+
+-- いま人が打っている席（コンピューター・時間切れでない）
+create or replace function public._mroom_hum(r game_rooms) returns jsonb
+language sql immutable as $$
+  select coalesce(jsonb_agg(i - 1 order by i), '[]'::jsonb) from generate_series(1, cardinality(r.seats)) i
+   where r.seats[i] is not null and not ((i - 1) = any(r.auto)) $$;
+
+-- 始める（人とコンピューターの席をランダムに）
+create or replace function public._mroom_start(rid bigint, by_u uuid) returns void
+language plpgsql set search_path = public as $$
+declare r game_rooms; s uuid[]; cs int[] := '{}'; n int; i int; st jsonb; b record; humans int;
+begin
+  select * into r from game_rooms where id = rid for update;
+  n := r.max_seats;
+  s := array(select x from unnest(r.seats || array_fill(null::uuid, array[n - cardinality(r.seats)])) x order by random());
+  for i in 1..n loop if s[i] is null then cs := cs || (i - 1); end if; end loop;
+  humans := n - cardinality(cs);
+  if humans <= 1 then   -- 人がひとりなら賭けはなし（返す）
+    for b in select * from game_stakes where room_id = rid loop
+      update profiles set balance = balance + b.amount where id = b.user_id;
+      perform _log(b.user_id, 'game_stake', b.amount, b.amount, jsonb_build_object('room', rid, 'refund', true));
+    end loop;
+    delete from game_stakes where room_id = rid;
+  end if;
+  st := _mg_init(r.game, n, r.opts);
+  r.seats := s; r.auto := '{}';
+  st := st || jsonb_build_object('hum', _mroom_hum(r));
+  update game_rooms set seats = s, cpu = cs, auto = '{}', status = 'playing', started_at = _now(), act_at = _now(), turn_at = _now(),
+         wait_at = array_fill(_now(), array[n]), clock_ms = array_fill(r.time_ms, array[n]), move_no = 0, state = st,
+         turn = coalesce((_mg_pending(r.game, st))[1], 0)
+   where id = rid;
+  for i in 1..n loop
+    if s[i] is not null and s[i] <> by_u then
+      perform _notice(s[i], format('【対戦】部屋 #%s（%s）が始まりました。遊戯タブの%sから入れます。', rid, _game_name(r.game), _game_name(r.game)));
+    end if;
+  end loop;
+end $$;
+
+-- 賭け金の精算
+create or replace function public._mroom_settle(rid bigint) returns void
+language plpgsql set search_path = public as $$
+declare r game_rooms; f jsonb; rk int[]; v numeric[]; scale numeric; hs int[] := '{}'; sk record; amt bigint; i int; s int;
+        uid uuid; pot bigint; cut bigint; tcut bigint := 0; best int; ref numeric; raw numeric[]; loss bigint[]; gain bigint[];
+        lsum bigint := 0; gsum numeric := 0; given bigint := 0; first_g int; n int; pay bigint;
+begin
+  select * into r from game_rooms where id = rid for update;
+  if not found or r.status <> 'playing' then return; end if;
+  f := coalesce(r.state->'final', _mg_final(r.game, r.state));
+  rk := array(select jsonb_array_elements_text(f->'rank')::int);
+  update game_rooms set status = 'finished', finished_at = _now(), winner = rk[1], reason = coalesce(r.state->>'why', '終わり') where id = rid;
+  if not exists (select 1 from game_stakes where room_id = rid and payout is null) then return; end if;
+  n := cardinality(r.seats);
+  amt := r.stake;
+  -- 賭けている人の席（順位の順）
+  foreach s in array rk loop
+    if r.seats[s + 1] is not null and exists (select 1 from game_stakes where room_id = rid and user_id = r.seats[s + 1]) then hs := hs || s; end if;
+  end loop;
+  if cardinality(hs) <= 1 then perform _room_refund(rid); return; end if;
+  loss := array_fill(0::bigint, array[n]); gain := array_fill(0::bigint, array[n]);
+  if r.stake_mode = 'all' then
+    pot := (select sum(amount) from game_stakes where room_id = rid);
+    best := hs[1];
+    loss := array_fill(amt, array[n]); loss[best + 1] := 0;
+    gain[best + 1] := pot - amt;
+  else
+    v := array(select jsonb_array_elements_text(f->'v')::numeric);
+    scale := (f->>'scale')::numeric;
+    raw := array_fill(0::numeric, array[n]);
+    if f->>'ref' = 'best' then
+      best := hs[1];
+      foreach s in array hs loop
+        if s <> best then raw[s + 1] := amt * (v[s + 1] - v[best + 1]) / scale; end if;
+      end loop;
+      foreach s in array hs loop
+        if s <> best then loss[s + 1] := least(amt, floor(-raw[s + 1]))::bigint; lsum := lsum + loss[s + 1]; end if;
+      end loop;
+      gain[best + 1] := lsum;
+    else
+      ref := (select avg(v[x + 1]) from unnest(hs) x);
+      foreach s in array hs loop
+        raw[s + 1] := amt * (v[s + 1] - ref) / scale;
+        if raw[s + 1] < 0 then loss[s + 1] := least(amt, floor(-raw[s + 1]))::bigint; lsum := lsum + loss[s + 1];
+        elsif raw[s + 1] > 0 then gsum := gsum + raw[s + 1]; end if;
+      end loop;
+      if gsum > 0 then
+        foreach s in array hs loop
+          if raw[s + 1] > 0 then
+            gain[s + 1] := floor(lsum * raw[s + 1] / gsum)::bigint; given := given + gain[s + 1];
+            if first_g is null then first_g := s; end if;
+          end if;
+        end loop;
+        gain[first_g + 1] := gain[first_g + 1] + (lsum - given);   -- 端数は上の人に
+      end if;
+    end if;
+  end if;
+  foreach s in array hs loop
+    uid := r.seats[s + 1];
+    cut := floor(gain[s + 1] * 0.05);
+    tcut := tcut + cut;
+    pay := amt - loss[s + 1] + gain[s + 1] - cut;
+    if pay > 0 then perform _give(uid, pay); end if;
+    update game_stakes set payout = pay where room_id = rid and user_id = uid;
+    perform _log(uid, 'game_stake', amt, pay, jsonb_build_object('room', rid, 'game', r.game, 'rank', array_position(rk, s)));
+  end loop;
+  if tcut > 0 then update treasury set balance = balance + tcut, casino_total = casino_total + tcut where id = 1; end if;
+end $$;
+
+-- 時間を進める：コンピューターの番・時間切れ・タイマー（古いできごとから順に）
+--   人が全員いなくなったら（時間切れ・抜けた）、待たずにコンピューターだけで最後まで進める（budget：1回に進めるできごとの数）
+drop function if exists public._mroom_tick(bigint);
+create or replace function public._mroom_tick(rid bigint, budget int default 150) returns void
+language plpgsql set search_path = public as $$
+declare r game_rooms; st jsonb; pend int[]; s int; ev timestamptz; best timestamptz; who int; kind text;
+        n int := 0; nowt timestamptz := _now(); w0 text; p int; mv jsonb; fast boolean; lim int;
+begin
+  select * into r from game_rooms where id = rid for update;
+  if not found or r.status <> 'playing' or not _is_multi(r.game) then return; end if;
+  st := r.state;
+  fast := jsonb_array_length(_mroom_hum(r)) = 0;
+  lim := case when fast then budget else least(budget, 40) end;
+  while n < lim and not coalesce((st->>'over')::boolean, false) loop
+    pend := _mg_pending(r.game, st);
+    best := null; who := null; kind := null;
+    if st->>'timer_at' is not null then best := to_timestamp((st->>'timer_at')::numeric / 1000); kind := 'timer'; end if;
+    foreach s in array pend loop
+      if r.seats[s + 1] is null or s = any(r.auto) then
+        ev := r.act_at + make_interval(secs => _mg_delay(r.game, st) / 1000.0);
+        if best is null or ev < best then best := ev; who := s; kind := 'cpu'; end if;
+      else
+        ev := r.wait_at[s + 1] + make_interval(secs => r.clock_ms[s + 1] / 1000.0);
+        if best is null or ev < best then best := ev; who := s; kind := 'timeout'; end if;
+      end if;
+    end loop;
+    exit when best is null or (not fast and best > nowt);
+    if best < r.act_at then best := r.act_at; end if;
+    w0 := st->>'win';
+    st := jsonb_set(st, '{now}', to_jsonb(_kb_ms(best)));
+    if kind = 'timer' then
+      st := _mg_act(r.game, st, -1, '{"a":"timer"}');
+    elsif kind = 'timeout' then
+      r.auto := r.auto || who; r.clock_ms[who + 1] := 0;
+      st := st || jsonb_build_object('hum', _mroom_hum(r));
+      fast := jsonb_array_length(_mroom_hum(r)) = 0;
+      if fast then lim := greatest(lim, budget); end if;
+    else
+      mv := _mg_cpu(r.game, st, who);
+      st := _mg_act(r.game, st, who, mv);
+    end if;
+    r.act_at := best;
+    if st->>'win' is distinct from w0 then
+      foreach p in array _mg_pending(r.game, st) loop r.wait_at[p + 1] := best; end loop;
+    end if;
+    n := n + 1;
+  end loop;
+  if n = 0 and not coalesce((st->>'over')::boolean, false) then return; end if;
+  update game_rooms set state = st, auto = r.auto, clock_ms = r.clock_ms, act_at = r.act_at, wait_at = r.wait_at,
+         turn = coalesce((_mg_pending(r.game, st))[1], turn), move_no = move_no + n where id = rid;
+  if coalesce((st->>'over')::boolean, false) then perform _mroom_settle(rid); end if;
+end $$;
+
+-- 人が動く
+create or replace function public._mroom_move(rid bigint, u uuid, mv jsonb) returns void
+language plpgsql set search_path = public as $$
+declare r game_rooms; me int; st jsonb; nowt timestamptz := _now(); w0 text; p int; pend int[];
+begin
+  perform _mroom_tick(rid);
+  select * into r from game_rooms where id = rid for update;
+  if not found or r.status <> 'playing' then raise exception 'このゲームはもう終わっています'; end if;
+  me := array_position(r.seats, u) - 1;
+  if me is null then raise exception 'あなたは参加していません'; end if;
+  if me = any(r.auto) then raise exception '時間切れ（または抜けた）なので、コンピューターが代わりに打っています'; end if;
+  pend := _mg_pending(r.game, r.state);
+  w0 := r.state->>'win';
+  st := _mg_act(r.game, jsonb_set(r.state, '{now}', to_jsonb(_kb_ms(nowt))), me, mv);
+  if me = any(pend) then
+    r.clock_ms[me + 1] := greatest(r.clock_ms[me + 1] - floor(extract(epoch from (nowt - r.wait_at[me + 1])) * 1000)::int, 0);
+    r.wait_at[me + 1] := nowt;
+    r.act_at := nowt;
+  end if;
+  if st->>'win' is distinct from w0 then
+    foreach p in array _mg_pending(r.game, st) loop r.wait_at[p + 1] := nowt; end loop;
+    r.act_at := nowt;
+  end if;
+  update game_rooms set state = st, clock_ms = r.clock_ms, wait_at = r.wait_at, act_at = r.act_at,
+         turn = coalesce((_mg_pending(r.game, st))[1], turn), move_no = move_no + 1 where id = rid;
+  if coalesce((st->>'over')::boolean, false) then perform _mroom_settle(rid); end if;
+end $$;
+
+-- 持ち時間が切れていないか見る（ふたりのゲームは切れたら負け。4人までのゲームは、コンピューターが代わりに打つ）
+drop function if exists public._room_tick(bigint);
+create or replace function public._room_tick(rid bigint, budget int default 150) returns void
 language plpgsql set search_path = public as $$
 declare r game_rooms; used int;
 begin
   select * into r from game_rooms where id = rid;
-  if r.status <> 'playing' or r.turn_at is null then return; end if;
+  if not found or r.status <> 'playing' then return; end if;
+  if _is_multi(r.game) then perform _mroom_tick(rid, budget); return; end if;
+  if r.turn_at is null then return; end if;
   used := floor(extract(epoch from (_now() - r.turn_at)) * 1000);
   if used >= r.clock_ms[r.turn + 1] then
     update game_rooms set clock_ms[r.turn + 1] = 0 where id = rid;
@@ -5080,19 +6808,50 @@ end $$;
 
 create or replace function public._room_json(r game_rooms, u uuid) returns jsonb
 language plpgsql stable set search_path = public as $$
-declare me int; used int := 0; clocks int[] := r.clock_ms;
+declare me int; used int := 0; clocks int[] := r.clock_ms; pend int[] := '{}'; run int[] := '{}'; sx int;
 begin
+  if _is_multi(r.game) then
+    me := array_position(r.seats, u) - 1;
+    if r.status = 'playing' then
+      pend := _mg_pending(r.game, r.state);
+      foreach sx in array pend loop
+        if r.seats[sx + 1] is not null and not (sx = any(r.auto)) then
+          run := run || sx;
+          clocks[sx + 1] := greatest(clocks[sx + 1] - floor(extract(epoch from (_now() - r.wait_at[sx + 1])) * 1000)::int, 0);
+        end if;
+      end loop;
+    end if;
+    -- 麻雀は、自分の持ち時間だけ見える（ほかの人の時間がへると、鳴けるかどうかがわかってしまうので）
+    if r.game = 'mahjong' then
+      run := case when me is not null and me = any(run) then array[me] else '{}'::int[] end;
+      clocks := array(select case when i - 1 = me then clocks[i] else -1 end from generate_series(1, cardinality(clocks)) i);
+    end if;
+    return jsonb_build_object('id', r.id, 'game', r.game, 'game_name', _game_name(r.game), 'title', r.title, 'status', r.status, 'multi', true,
+      'host', (select nickname from profiles where id = r.host), 'host_badge', _badge(r.host), 'mine_host', r.host = u,
+      'invites', (select coalesce(jsonb_agg(account_no), '[]'::jsonb) from profiles where id = any(r.invites)), 'invited_me', u = any(r.invites),
+      'max_seats', r.max_seats, 'stake', r.stake, 'stake_mode', r.stake_mode, 'opts', r.opts,
+      'players', (select coalesce(jsonb_agg(jsonb_build_object('seat', i - 1, 'nickname', coalesce(p.nickname, 'コンピューター'), 'uid', p.account_no,
+                    'badge', case when p.id is null then null else _badge(p.id) end, 'cpu', r.seats[i] is null, 'auto', (i - 1) = any(r.auto)) order by i), '[]'::jsonb)
+                  from generate_series(1, cardinality(r.seats)) i left join profiles p on p.id = r.seats[i]),
+      'me', me, 'time_ms', r.time_ms, 'clock_ms', to_jsonb(clocks), 'running', to_jsonb(run),
+      'turn', case when r.game = 'mahjong' then (r.state->>'turn')::int else r.turn end,
+      'move_no', case when r.game = 'mahjong' then 0 else r.move_no end,
+      'state', case when r.status in ('playing', 'finished') then _mg_view(r.game, r.state, me) else null end,
+      'winner', r.winner, 'reason', r.reason, 'bets_on', false, 'bet_open', false, 'draw_offer', null, 'legal', '[]'::jsonb,
+      'at', _dlabel(r.created_at));
+  end if;
   me := case when r.seats[1] = u then 0 when r.seats[2] = u then 1 else null end;
   if r.status = 'playing' and r.turn_at is not null then
     used := floor(extract(epoch from (_now() - r.turn_at)) * 1000);
     clocks[r.turn + 1] := greatest(clocks[r.turn + 1] - used, 0);
   end if;
-  return jsonb_build_object('id', r.id, 'game', r.game, 'game_name', _game_name(r.game), 'title', r.title, 'status', r.status,
+  return jsonb_build_object('id', r.id, 'game', r.game, 'game_name', _game_name(r.game), 'title', r.title, 'status', r.status, 'multi', false,
     'host', (select nickname from profiles where id = r.host), 'host_badge', _badge(r.host), 'mine_host', r.host = u,
     'invite', (select account_no from profiles where id = r.invite), 'invited_me', r.invite = u,
     'players', (select coalesce(jsonb_agg(jsonb_build_object('seat', s.n - 1, 'nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id)) order by s.n), '[]'::jsonb)
                   from unnest(r.seats) with ordinality s(uid, n) join profiles p on p.id = s.uid),
-    'me', me, 'time_ms', r.time_ms, 'clock_ms', to_jsonb(clocks), 'turn', r.turn, 'move_no', r.move_no,
+    'me', me, 'time_ms', r.time_ms, 'clock_ms', to_jsonb(clocks), 'running', case when r.status = 'playing' then jsonb_build_array(r.turn) else '[]'::jsonb end,
+    'turn', r.turn, 'move_no', r.move_no,
     'state', r.state - 'rep' - 'legal', 'winner', r.winner, 'reason', r.reason, 'bets_on', r.bets_on, 'draw_offer', r.draw_offer,
     'bet_open', r.bets_on and r.status in ('waiting', 'playing') and r.move_no < 10,
     'legal', case when r.status = 'playing' and me = r.turn then _game_legal(r.game, r.state, me) else '[]'::jsonb end,
@@ -5104,12 +6863,23 @@ create or replace function public.room_list(p_game text) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); r record;
 begin
-  -- 1日たっても始まらない部屋は片づける
-  update game_rooms set status = 'canceled', finished_at = _now() where status = 'waiting' and created_at < _now() - interval '1 day';
-  for r in select id from game_rooms where status = 'playing' and game = p_game loop perform _room_tick(r.id); end loop;
+  -- 1日たっても始まらない部屋は片づける（賭け金は返す）
+  for r in select id from game_rooms where status = 'waiting' and created_at < _now() - interval '1 day' order by id for update skip locked loop
+    perform _room_cancel(r.id, true);
+  end loop;
+  -- 長く止まっている部屋と自分の部屋を少しずつ進める（ほかの人が使っている部屋はとばす）
+  for r in select id from game_rooms where status = 'playing' and game = p_game
+              and (u = any(seats) or id in (select id from game_rooms where status = 'playing' and game = p_game order by coalesce(act_at, turn_at) nulls first limit 20))
+            order by id for update skip locked loop
+    begin
+      perform _room_tick(r.id, 25);
+    exception when others then null;   -- 1部屋のエラーで一覧を止めない
+    end;
+  end loop;
   return jsonb_build_object(
     'waiting', (select coalesce(jsonb_agg(_room_json(g, u) order by g.id desc), '[]'::jsonb) from (
-                 select * from game_rooms where game = p_game and status = 'waiting' and (invite is null or invite = u or host = u)
+                 select * from game_rooms where game = p_game and status = 'waiting'
+                    and ((invite is null and cardinality(invites) = 0) or invite = u or u = any(invites) or host = u or u = any(seats))
                   order by id desc limit 30) g),
     'playing', (select coalesce(jsonb_agg(_room_json(g, u) || jsonb_build_object(
                    'pool', (select coalesce(sum(amount), 0) from game_bets where room_id = g.id)) order by g.id desc), '[]'::jsonb) from (
@@ -5119,13 +6889,48 @@ begin
 end $$;
 
 -- 部屋を作る
-create or replace function public.room_create(p_game text, p_title text, p_time_min int, p_invite text, p_bets boolean) returns jsonb
+--   ワンカード：p_seats 2〜4 人。麻雀：4人（p_opts の len：east 東風戦 / south 半荘戦）
+--   p_stake：1人の賭け金（0は賭けなし）。p_mode：all（1位の総取り）/ points（点数で分ける）
+drop function if exists public.room_create(text, text, int, text, boolean);
+create or replace function public.room_create(p_game text, p_title text, p_time_min int, p_invite text, p_bets boolean,
+                                              p_seats int default null, p_stake bigint default 0, p_mode text default 'all', p_opts jsonb default '{}')
+returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); inv uuid; rid bigint;
+declare u uuid := _me(); inv uuid; invs uuid[] := '{}'; rid bigint; n int := 2; x text; o jsonb := '{}'; r game_rooms;
 begin
-  if p_game not in ('reversi', 'chess', 'shogi') then raise exception 'そのゲームはまだ遊べません'; end if;
+  if p_game not in ('reversi', 'chess', 'shogi', 'onecard', 'mahjong') then raise exception 'そのゲームはまだ遊べません'; end if;
   if p_time_min is null or p_time_min < 1 or p_time_min > 180 then raise exception '持ち時間は1〜180分（3時間）です'; end if;
   if (select count(*) from game_rooms where host = u and status = 'waiting') >= 3 then raise exception '待っている部屋は3つまでです'; end if;
+  if _is_multi(p_game) then
+    n := case when p_game = 'mahjong' then 4 else coalesce(p_seats, 4) end;
+    if n not between 2 and 4 then raise exception '人数は2〜4人です'; end if;
+    if coalesce(p_stake, 0) < 0 or coalesce(p_stake, 0) > 10000000 then raise exception '賭け金は0〜1,000万 Xです'; end if;
+    if coalesce(p_mode, 'all') not in ('all', 'points') then raise exception '分け方は「1位の総取り」か「点数で分ける」です'; end if;
+    if p_game = 'mahjong' then
+      o := jsonb_build_object('len', case when coalesce(p_opts->>'len', 'east') = 'south' then 'south' else 'east' end);
+    end if;
+    foreach x in array coalesce(regexp_split_to_array(btrim(coalesce(p_invite, '')), '[\s,、，]+'), '{}') loop
+      continue when x = '';
+      select id into inv from profiles where account_no = x;
+      if inv is null then raise exception '招待する人のID（%）が見つかりません', x; end if;
+      if inv = u then raise exception '自分は招待できません'; end if;
+      if not (inv = any(invs)) then invs := invs || inv; end if;
+    end loop;
+    if cardinality(invs) > n - 1 then raise exception '招待できるのは%人までです', n - 1; end if;
+    if (select count(*) from game_rooms where u = any(seats) and status in ('waiting', 'playing') and _is_multi(game)) >= 3 then
+      raise exception 'ワンカード・麻雀で参加中の部屋は3つまでです（終わってから作ってください）';
+    end if;
+    insert into game_rooms(game, title, host, invites, seats, time_ms, bets_on, max_seats, stake, stake_mode, opts, created_at)
+    values (p_game, left(btrim(coalesce(p_title, '')), 30), u, invs, array[u], p_time_min * 60000, false, n, coalesce(p_stake, 0), coalesce(p_mode, 'all'), o, _now())
+    returning * into r;
+    perform _room_stake(r, u);
+    foreach inv in array invs loop
+      perform _notice(inv, format('【対戦】%s さんから%sに招待されました。遊戯タブの%sから入れます（部屋 #%s%s）。',
+                      (select nickname from profiles where id = u), _game_name(p_game), _game_name(p_game), r.id,
+                      case when r.stake > 0 then '・賭け金 ' || r.stake || ' X' else '' end));
+    end loop;
+    return room_state(r.id);
+  end if;
   if coalesce(btrim(p_invite), '') <> '' then
     select id into inv from profiles where account_no = btrim(p_invite);
     if inv is null then raise exception '招待する人のIDが見つかりません'; end if;
@@ -5141,7 +6946,7 @@ begin
   return room_state(rid);
 end $$;
 
--- 部屋に入る（ふたりそろったら始まる）
+-- 部屋に入る（ふたりのゲームは、そろったら始まる。4人までのゲームは、席がうまったら始まる）
 create or replace function public.room_join(p_room bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); r game_rooms; s uuid[];
@@ -5149,6 +6954,19 @@ begin
   select * into r from game_rooms where id = p_room for update;
   if not found or r.status <> 'waiting' then raise exception 'この部屋にはもう入れません'; end if;
   if u = any(r.seats) then raise exception 'もう入っています'; end if;
+  if _is_multi(r.game) then
+    if cardinality(r.invites) > 0 and not (u = any(r.invites)) then raise exception 'この部屋は招待された人だけです'; end if;
+    if cardinality(r.seats) >= r.max_seats then raise exception '席がいっぱいです'; end if;
+    if (select count(*) from game_rooms where u = any(seats) and status in ('waiting', 'playing') and _is_multi(game)) >= 3 then
+      raise exception 'ワンカード・麻雀で参加中の部屋は3つまでです';
+    end if;
+    perform _room_stake(r, u);
+    update game_rooms set seats = seats || u where id = r.id;
+    perform _notice(r.host, format('【対戦】%s さんが部屋 #%s に入りました（%s/%s人）。', (select nickname from profiles where id = u), r.id,
+                    cardinality(r.seats) + 1, r.max_seats));
+    if cardinality(r.seats) + 1 >= r.max_seats then perform _mroom_start(r.id, u); end if;
+    return room_state(r.id);
+  end if;
   if r.invite is not null and r.invite <> u then raise exception 'この部屋は招待された人だけです'; end if;
   if exists (select 1 from game_bets where room_id = r.id and user_id = u) then raise exception 'この部屋に賭けているので、対局はできません'; end if;
   s := r.seats || u;
@@ -5160,20 +6978,59 @@ begin
   return room_state(r.id);
 end $$;
 
+-- 主催が始める（p_cpu：空いている席にコンピューターを入れる。false なら、いまいる人だけ＝ワンカードだけ）
+create or replace function public.room_start(p_room bigint, p_cpu boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); r game_rooms;
+begin
+  select * into r from game_rooms where id = p_room for update;
+  if not found or r.status <> 'waiting' or not _is_multi(r.game) then raise exception '始められる部屋が見つかりません'; end if;
+  if r.host <> u then raise exception '始められるのは主催だけです'; end if;
+  if not coalesce(p_cpu, false) then
+    if r.game = 'mahjong' then raise exception '麻雀は4人で打ちます（足りない席はコンピューターが入ります）'; end if;
+    if cardinality(r.seats) < 2 then raise exception 'ふたり以上いないと始められません（コンピューターを入れることもできます）'; end if;
+    update game_rooms set max_seats = cardinality(r.seats) where id = r.id;
+  end if;
+  perform _mroom_start(r.id, u);
+  return room_state(r.id);
+end $$;
+
 -- 部屋を出る（始まる前だけ。主催が出ると部屋はなくなる。賭けは返す）
 create or replace function public.room_leave(p_room bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); r game_rooms; b record;
+declare u uuid := _me(); r game_rooms; amt bigint;
 begin
-  select * into r from game_rooms where id = p_room and status = 'waiting' and host = u for update;
-  if not found then raise exception '出られる部屋が見つかりません（始まったあとは「投了」してください）'; end if;
-  update game_rooms set status = 'canceled', finished_at = _now() where id = r.id;
-  for b in select * from game_bets where room_id = r.id loop
-    update profiles set balance = balance + b.amount where id = b.user_id;
-    update game_bets set payout = b.amount where id = b.id;
-    perform _log(b.user_id, 'game_bet', b.amount, b.amount, jsonb_build_object('room', r.id, 'refund', true));
-  end loop;
+  select * into r from game_rooms where id = p_room and status = 'waiting' and u = any(seats) for update;
+  if not found then raise exception '出られる部屋が見つかりません（始まったあとは「投了」か「抜ける」）'; end if;
+  if r.host = u then
+    perform _room_cancel(r.id);
+  else
+    update game_rooms set seats = array_remove(seats, u) where id = r.id;
+    delete from game_stakes where room_id = r.id and user_id = u returning amount into amt;
+    if amt is not null then
+      update profiles set balance = balance + amt where id = u;
+      perform _log(u, 'game_stake', amt, amt, jsonb_build_object('room', r.id, 'refund', true));
+    end if;
+  end if;
   return room_list(r.game);
+end $$;
+
+-- 対局中に抜ける（そのあとはコンピューターが代わりに打つ。賭け金はそのまま）
+create or replace function public.room_quit(p_room bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); r game_rooms; me int;
+begin
+  perform _room_tick(p_room);
+  select * into r from game_rooms where id = p_room for update;
+  if not found or r.status <> 'playing' or not _is_multi(r.game) then raise exception '抜けられるゲームが見つかりません'; end if;
+  me := array_position(r.seats, u) - 1;
+  if me is null then raise exception 'あなたは参加していません'; end if;
+  if not (me = any(r.auto)) then
+    r.auto := r.auto || me;
+    update game_rooms set auto = r.auto, state = state || jsonb_build_object('hum', _mroom_hum(r)) where id = r.id;
+  end if;
+  perform _room_tick(r.id);
+  return room_state(r.id);
 end $$;
 
 -- 部屋のようす（観戦もこれ）
@@ -5185,22 +7042,30 @@ begin
   select * into r from game_rooms where id = p_room;
   if not found then raise exception '部屋が見つかりません'; end if;
   return _room_json(r, u) || jsonb_build_object(
-    'moves', (select coalesce(jsonb_agg(jsonb_build_object('n', n, 'seat', seat, 'move', move) order by n), '[]'::jsonb) from game_moves where room_id = r.id),
+    'moves', case when _is_multi(r.game) then '[]'::jsonb else
+              (select coalesce(jsonb_agg(jsonb_build_object('n', n, 'seat', seat, 'move', move) order by n), '[]'::jsonb) from game_moves where room_id = r.id) end,
     'pool', (select coalesce(jsonb_agg(jsonb_build_object('seat', seat, 'amount', a, 'people', c) order by seat), '[]'::jsonb) from (
               select seat, sum(amount) a, count(distinct user_id) c from game_bets where room_id = r.id group by seat) z),
     'my_bets', (select coalesce(jsonb_agg(jsonb_build_object('seat', seat, 'amount', amount, 'payout', payout) order by id), '[]'::jsonb)
                   from game_bets where room_id = r.id and user_id = u),
+    'stakes', (select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'seat', array_position(r.seats, k.user_id) - 1,
+                  'amount', k.amount, 'payout', k.payout, 'me', k.user_id = u) order by k.at), '[]'::jsonb)
+                 from game_stakes k join profiles p on p.id = k.user_id where k.room_id = r.id),
     'chat', (select coalesce(jsonb_agg(jsonb_build_object('id', z.id, 'nickname', p.nickname, 'badge', _badge(p.id), 'body', z.body,
                'ts', _kb_ms(z.at), 'player', z.user_id = any(r.seats)) order by z.id), '[]'::jsonb) from (
               select * from game_chat where room_id = r.id order by id desc limit 40) z join profiles p on p.id = z.user_id),
     'now_ms', _kb_ms(_now()), 'balance', _bal(u));
 end $$;
 
--- 手を指す
+-- 手を指す・カードを出す・牌を打つ
 create or replace function public.room_move(p_room bigint, p_move jsonb) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); r game_rooms; me int; used int; ns jsonb; left_ms int;
 begin
+  if exists (select 1 from game_rooms where id = p_room and _is_multi(game)) then
+    perform _mroom_move(p_room, u, p_move);
+    return room_state(p_room);
+  end if;
   perform _room_tick(p_room);
   select * into r from game_rooms where id = p_room for update;
   if not found or r.status <> 'playing' then raise exception 'この対局はもう終わっています'; end if;
@@ -5225,6 +7090,7 @@ declare u uuid := _me(); r game_rooms; me int;
 begin
   select * into r from game_rooms where id = p_room for update;
   if not found or r.status <> 'playing' then raise exception 'この対局はもう終わっています'; end if;
+  if _is_multi(r.game) then raise exception 'このゲームに投了はありません（「抜ける」とコンピューターが代わりに打ちます）'; end if;
   me := case when r.seats[1] = u then 0 when r.seats[2] = u then 1 else null end;
   if me is null then raise exception 'あなたは対局していません'; end if;
   perform _room_finish(r.id, 1 - me, '投了');
@@ -5238,6 +7104,7 @@ declare u uuid := _me(); r game_rooms; me int;
 begin
   select * into r from game_rooms where id = p_room for update;
   if not found or r.status <> 'playing' then raise exception 'この対局はもう終わっています'; end if;
+  if _is_multi(r.game) then raise exception 'このゲームでは引き分けの申し出はできません'; end if;
   me := case when r.seats[1] = u then 0 when r.seats[2] = u then 1 else null end;
   if me is null then raise exception 'あなたは対局していません'; end if;
   if p_action = 'offer' then
@@ -5252,20 +7119,22 @@ begin
   return room_state(r.id);
 end $$;
 
--- 観戦して賭ける（勝つと思う席に）
+-- 観戦して賭ける（勝つと思う席に。登録から7日たってから）
 create or replace function public.room_bet(p_room bigint, p_seat int, p_amount bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); r game_rooms;
+declare u uuid := _me(); r game_rooms; made timestamptz;
 begin
   select * into r from game_rooms where id = p_room for update;
   if not found or r.status not in ('waiting', 'playing') then raise exception 'この対局にはもう賭けられません'; end if;
-  if not r.bets_on then raise exception 'この部屋は賭けなしです'; end if;
+  if not r.bets_on or _is_multi(r.game) then raise exception 'この部屋は賭けなしです'; end if;
   if r.move_no >= 10 then raise exception '賭けは10手目までです'; end if;
   if u = any(r.seats) then raise exception '対局している本人は賭けられません'; end if;
   if r.status = 'waiting' then raise exception '対局が始まってから賭けられます（先手・後手が決まってから）'; end if;
   if p_seat not in (0, 1) then raise exception '賭ける側をえらんでください'; end if;
   if exists (select 1 from game_bets where room_id = r.id and user_id = u and seat <> p_seat) then raise exception '両方には賭けられません'; end if;
   if p_amount is null or p_amount < 1 then raise exception '1 X以上にしてください'; end if;
+  select created_at into made from profiles where id = u;
+  if _now() < made + interval '7 days' then raise exception '観戦の賭けは、登録から7日たってからです（%から）', _dlabel(made + interval '7 days'); end if;
   if _debt(u) > 0 then raise exception '税金の滞納があるので賭けられません'; end if;
   perform _take(u, p_amount);
   insert into game_bets(room_id, user_id, seat, amount, at) values (r.id, u, p_seat, p_amount, _now());
@@ -5594,6 +7463,16 @@ begin
             'room_list','room_create','room_join','room_leave','room_state','room_move','room_resign','room_bet','room_chat','room_draw',
             '_ch_at','_ch_attacked','_ch_make','_ch_legal','_ch_init','_ch_apply','_sg_promo','_sg_base','_sg_steps','_sg_slides',
             '_sg_attacked','_sg_make','_sg_legal','_sg_init','_sg_apply',
+            '_oc_col','_oc_sym','_oc_pts','_oc_hand','_oc_arr','_oc_top','_oc_ok','_oc_legal','_oc_next','_oc_log','_oc_draw','_oc_init',
+            '_oc_turn','_oc_act','_oc_final','_oc_pending','_oc_cpu','_oc_view',
+            '_mj_ids','_mj_cnt','_mj_yao','_mj_kokushi','_mj_sets_ok','_mj_agari','_mj_waits','_mj_sh_part','_mj_part','_mj_shanten',
+            '_mj_dec_sets','_mj_decomp','_mj_dora_of','_mj_kname','_mj_base','_mj_c100','_mj_score','_mj_pay','_mj_label',
+            '_mj_log','_mj_hand','_mj_set','_mj_sorted','_mj_nm','_mj_open','_mj_wall_n','_mj_seatw','_mj_has','_mj_can_after','_mj_kuikae_chi',
+            '_mj_variants','_mj_ctx','_mj_try','_mj_furiten','_mj_actopts','_mj_draw','_mj_deal','_mj_init','_mj_final','_mj_end','_mj_abort',
+            '_mj_ryukyoku','_mj_win','_mj_over','_mj_next_hand','_mj_after','_mj_call','_mj_resolve','_mj_discard','_mj_selfkan',
+            '_mj_pending','_mj_delay','_mj_act','_mj_view','_mj_tval','_mj_safe','_mj_seen','_mj_sh_after','_mj_cpu',
+            '_is_multi','_mg_init','_mg_pending','_mg_act','_mg_cpu','_mg_view','_mg_delay','_mg_final','_room_cancel','_room_refund','_room_stake',
+            '_mroom_hum','_mroom_start','_mroom_settle','_mroom_tick','_mroom_move','room_start','room_quit',
             '_pub_mine','_pub_can_read','_pub_json','pub_list','news_list','pub_page','pub_read','pub_buy','pub_save','pub_item_save',
             'pub_item_delete','my_pubs','admin_pub_hide',
             '_kb_norm','_kb_gumbel','_kb_midx','_kb_jday','_kb_ms','_kb_agef','_kb_fit','_kb_name','_kb_new_horse',
@@ -5606,5 +7485,17 @@ begin
     else
       execute format('grant execute on function %s to authenticated', f.sig);
     end if;
+  end loop;
+end $$;
+-- 念のため：一覧に入れわすれた関数も、だれでも（ログインなし）は呼べない。_ ではじまるものはログインしても呼べない
+do $$
+declare
+  f record;
+begin
+  for f in select p.oid::regprocedure sig, p.proname from pg_proc p
+           join pg_namespace n on n.oid = p.pronamespace
+          where n.nspname = 'public' and p.prokind = 'f' loop
+    execute format('revoke all on function %s from public, anon', f.sig);
+    if left(f.proname, 1) = '_' then execute format('revoke all on function %s from authenticated', f.sig); end if;
   end loop;
 end $$;

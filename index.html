@@ -232,6 +232,57 @@ h3{font-size:15px;margin:16px 0 8px}
 .pl .ck.low{color:var(--lose)}
 .stone{display:inline-block;width:12px;height:12px;border-radius:50%;vertical-align:-1px;margin-right:4px;border:1px solid #888}
 .stone.B{background:#111}.stone.W{background:#fff}
+.pl4{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.pl4 .pl{padding:6px 8px}.pl4 .pl .ck{font-size:16px}
+.tg{font-size:10px;font-weight:800;border-radius:4px;padding:0 5px;background:var(--soft);color:var(--accent);margin-left:4px;white-space:nowrap}
+.tg.warn{background:#F3E3C7;color:#8A5A12}
+/* ワンカード */
+.oc-table{display:flex;flex-direction:column;align-items:center;gap:8px;margin:4px 0}
+.oc-mid{display:flex;align-items:center;justify-content:center;gap:16px}
+.occ{width:44px;height:64px;border-radius:8px;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);display:inline-flex;align-items:center;justify-content:center;
+  font-weight:900;font-size:21px;color:#fff;position:relative;user-select:none;flex:none;text-shadow:0 1px 2px rgba(0,0,0,.4);transition:transform .12s}
+.occ.r{background:#D93A2F}.occ.y{background:#E2A90C}.occ.g{background:#2E9B4E}.occ.b{background:#2B6FD6}
+.occ.w{background:conic-gradient(#D93A2F 0 25%,#E2A90C 0 50%,#2E9B4E 0 75%,#2B6FD6 0)}
+.occ.back{background:repeating-linear-gradient(45deg,#3A3A36 0 6px,#4A4A45 6px 12px)}
+.occ.big{width:64px;height:92px;font-size:30px}
+.occ.can{cursor:pointer;transform:translateY(-7px);box-shadow:0 5px 9px rgba(0,0,0,.35),0 0 0 3px var(--accent)}
+.occ.dim{opacity:.5}
+.occ svg{filter:drop-shadow(0 1px 1px rgba(0,0,0,.35))}
+.occ .ch{position:absolute;right:3px;bottom:3px;width:12px;height:12px;border-radius:50%;border:2px solid #fff}
+.oc-hand{display:flex;flex-wrap:wrap;gap:5px;justify-content:center;padding-top:9px;width:100%}
+.oc-dot{display:inline-block;width:13px;height:13px;border-radius:50%;vertical-align:-2px;margin-right:3px}
+.oc-dot.r,.ch.r{background:#D93A2F}.oc-dot.y,.ch.y{background:#E2A90C}.oc-dot.g,.ch.g{background:#2E9B4E}.oc-dot.b,.ch.b{background:#2B6FD6}
+.oc-pick{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+.oc-pick button{min-width:58px;height:42px;border-radius:10px;border:0;color:#fff;font-weight:800}
+.oc-log{font-size:12px;color:var(--muted);text-align:center;min-height:16px;line-height:1.6}
+/* 麻雀 */
+.mt{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;width:26px;height:35px;background:#FBF8F0;border:1px solid #B9B2A0;border-radius:4px;
+  box-shadow:0 2px 0 #D2CAB4;color:#222;font-weight:800;line-height:1;user-select:none;flex:none;vertical-align:middle;transition:transform .1s}
+.mt b{font-size:15px}.mt i{font-style:normal;font-size:9px;margin-top:1px}
+.mt.m i{color:#B3261E}.mt.p i{color:#1F5FB8}.mt.s i{color:#1F7A3E}
+.mt.red{background:#FFE3DE}.mt.red b{color:#C0281E}
+.mt.z{font-size:16px}.mt.hatsu{color:#1F7A3E}.mt.chun{color:#C0281E}.mt.haku{color:#A39C8A}
+.mt.sm{width:19px;height:25px;border-radius:3px;box-shadow:0 1px 0 #D2CAB4}.mt.sm b{font-size:11px}.mt.sm i{font-size:7px}.mt.sm.z{font-size:12px}
+.mt.side{transform:rotate(90deg);margin:0 3px}.mt.x{opacity:.3}.mt.lastd{box-shadow:0 0 0 2px #E2A90C}.mt.win{box-shadow:0 0 0 2px var(--lose)}
+.mt.back{background:#2E6B52;border-color:#1D4A38;color:transparent}.mt.back i,.mt.back b{color:transparent}
+.mj-hand{display:flex;flex-wrap:nowrap;gap:2px;justify-content:center;margin:8px 0 2px;padding-top:9px}
+.mj-hand .mt.h{flex:1 1 0;min-width:0;max-width:32px;width:auto;height:auto;aspect-ratio:3/4.1}
+.mj-hand .mt.h b{font-size:min(3.9vw,16px)}.mj-hand .mt.h i{font-size:min(2.3vw,9px)}.mj-hand .mt.h.z{font-size:min(4.2vw,17px)}
+.mj-hand .gap{flex:0 0 7px}
+.mt.can{cursor:pointer}.mt.no{opacity:.45}.mt.sel{transform:translateY(-9px);box-shadow:0 2px 0 #D2CAB4,0 0 0 2px var(--accent)}
+.mt.ri{box-shadow:0 2px 0 #D2CAB4,0 0 0 2px #E2A90C}
+.mj-info{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;justify-content:center;font-size:13px;margin:2px 0 6px}
+.mj-row{border:1px solid var(--line);border-radius:10px;padding:5px 7px;margin-top:5px}
+.mj-row.turn{border-color:var(--accent);box-shadow:0 0 0 2px var(--soft)}
+.mj-row .who{font-size:12px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.mj-row .sc{margin-left:auto;font-variant-numeric:tabular-nums}.mj-row .ck{font-variant-numeric:tabular-nums;font-weight:800}.mj-row .ck.low{color:var(--lose)}
+.mj-river{display:flex;flex-wrap:wrap;gap:2px;margin-top:4px;min-height:25px;align-items:center}
+.mj-melds{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}.mj-meld{display:inline-flex;gap:1px;align-items:center}
+.mj-res{border:2px solid var(--accent);border-radius:12px;padding:10px;margin:8px 0;background:var(--soft);font-size:14px}
+.mj-res .mj-hand{flex-wrap:wrap;justify-content:flex-start;margin:6px 0;padding-top:0}
+.wind{display:inline-flex;width:20px;height:20px;border-radius:5px;background:var(--black);color:#fff;font-size:12px;font-weight:800;align-items:center;justify-content:center;flex:none}
+.wind.oya{background:var(--red)}
+.rbar{font-size:10px;font-weight:800;color:#fff;background:#E2A90C;border-radius:4px;padding:1px 5px}
 .chat{max-height:220px;overflow:auto;font-size:14px}
 .chat .m{padding:4px 0;border-top:1px solid var(--line)}
 .chat .m:first-child{border-top:0}
@@ -469,10 +520,18 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <input class="inp" id="lbName" maxlength="30" placeholder="部屋の名前（なくてもOK）">
     <div class="row"><span class="small" style="width:5.5em">持ち時間</span>
       <select class="inp grow" id="lbTime" style="margin:0"><option value="5">1人 5分</option><option value="10" selected>1人 10分</option><option value="30">1人 30分</option><option value="60">1人 1時間</option><option value="180">1人 3時間</option></select></div>
-    <input class="inp" id="lbInvite" inputmode="numeric" maxlength="6" placeholder="招待する人のID（なければ、だれでも入れる）">
-    <label class="small" style="display:block;margin:4px 0"><input type="checkbox" id="lbBets" checked> 観戦している人が、どちらが勝つかに賭けられるようにする</label>
+    <div class="row lb-m" id="lbSeatsRow"><span class="small" style="width:5.5em">人数</span>
+      <select class="inp grow" id="lbSeats" style="margin:0"><option value="2">2人</option><option value="3">3人</option><option value="4" selected>4人</option></select></div>
+    <div class="row lb-m" id="lbLenRow"><span class="small" style="width:5.5em">長さ</span>
+      <select class="inp grow" id="lbLen" style="margin:0"><option value="east" selected>東風戦（東場だけ。短め）</option><option value="south">半荘戦（東場と南場）</option></select></div>
+    <div class="row lb-m"><span class="small" style="width:5.5em">賭け金</span>
+      <input class="inp grow" id="lbStake" type="number" min="0" step="1" value="0" style="margin:0"><span class="small">X（1人あたり。0は賭けなし）</span></div>
+    <div class="row lb-m"><span class="small" style="width:5.5em">分け方</span>
+      <select class="inp grow" id="lbMode" style="margin:0"><option value="all">1位の総取り</option><option value="points">点数で分ける</option></select></div>
+    <input class="inp" id="lbInvite" maxlength="40" placeholder="招待する人のID（なければ、だれでも入れる）">
+    <label class="small" style="display:block;margin:4px 0" id="lbBetsRow"><input type="checkbox" id="lbBets" checked> 観戦している人が、どちらが勝つかに賭けられるようにする</label>
     <button class="btn main wide" id="lbCreate">部屋を作る</button>
-    <p class="muted small" style="margin:6px 0 0">対局する本人どうしは賭けません（無料）。ふたりそろうと始まり、先手・後手はランダムです。</p>
+    <p class="muted small" style="margin:6px 0 0" id="lbNote">対局する本人どうしは賭けません（無料）。ふたりそろうと始まり、先手・後手はランダムです。</p>
   </div>
   <div class="card"><h3 style="margin-top:0">相手を待っている部屋</h3><div id="lbWait"></div></div>
   <div class="card"><h3 style="margin-top:0">対局中（観戦できます）</h3><div id="lbPlay"></div></div>
@@ -879,10 +938,11 @@ const GAME_LIST = [
   ['reversi', '◐', 'リバーシ', 'ふたりで対戦。相手の石をはさんでひっくり返す。観戦して、勝つ人に賭けることもできる'],
   ['chess', '♞', 'チェス', 'ふたりで対戦。相手のキングをチェックメイトしたら勝ち。観戦して賭けることもできる'],
   ['shogi', '☗', '将棋', 'ふたりで対戦。とった駒を自分の駒として使える。観戦して賭けることもできる'],
-  ['onecard', '🃏', 'ワンカード', '準備中（UNOと同じ遊び方。本人どうしで賭ける）'],
-  ['mahjong', '🀄', '麻雀', '準備中（人数が足りないときはコンピューターが入る）'],
+  ['onecard', '🃏', 'ワンカード', '2〜4人。色か数字を合わせてカードを出し、先に出しきった人の勝ち。コンピューターも入れられる'],
+  ['mahjong', '🀄', '麻雀', '4人で打つリーチ麻雀。人が足りないときはコンピューターが入る（東風戦・半荘戦）'],
 ];
-const BOARD_GAMES = { reversi: 'リバーシ', chess: 'チェス', shogi: '将棋' };
+const BOARD_GAMES = { reversi: 'リバーシ', chess: 'チェス', shogi: '将棋', onecard: 'ワンカード', mahjong: '麻雀' };
+const MULTI_GAMES = { onecard: true, mahjong: true };
 $('#gameList').innerHTML = GAME_LIST.filter(g => g[0] !== 'vRace' || RACE_ON).map(g => {
   const soon = g[3] === '準備中' || g[3].startsWith('準備中（');
   return `<div class="game-row ${soon ? 'soon' : ''}" data-g="${g[0]}">
@@ -2604,19 +2664,74 @@ const HOWTO = {
     桂：「2マス前の左か右」に飛ぶ／香：前に何マスでも／歩：前に1マス<br>
     龍（成った飛）：飛＋ななめ1マス／馬（成った角）：角＋たて・よこ1マス／と・成銀・成桂・成香：金と同じ動き</p>
   <p class="small"><b>してはいけないこと</b>：同じ列に自分の歩を2つ置く「二歩」、歩を打って詰ませる「打ち歩詰め」、動けなくなる場所に駒を打つこと（1段目の歩・香、1〜2段目の桂）。この画面では、できない手は最初から選べません。同じ形が4回くり返すと<b>千日手</b>で引き分けです。</p>`,
+  onecard: `<ol>
+    <li>はじめに1人7枚ずつ配ります。<b>手札を先に全部出しきった人の勝ち</b>です。</li>
+    <li>自分の番では、場のいちばん上のカードと<b>同じ色</b>か、<b>同じ数字・記号</b>のカードを1枚出します。出せるカードは少し浮いて光ります。押すと出します。</li>
+    <li>出せないとき（出したくないとき）は「引く」で山から1枚引きます。引いたカードが出せるなら、そのまま出せます（「パス」で出さなくてもOK）。</li>
+    <li>残りが2枚のときは、出す前に<b>「ワンカード！」</b>を押します。言わずに1枚になり、次の人が出す前にほかの人に「指摘」されると2枚引きます（1枚になったあとでも、指摘される前に押せばセーフ）。</li>
+  </ol>
+  <p class="small"><b>記号のカード</b><br>
+    ⊘ スキップ：次の人を1回とばす／⇄ リバース：順番が逆回りになる（2人のときはスキップと同じ）<br>
+    +2 ドロー2：次の人が2枚引いて、1回休み<br>
+    W ワイルド：いつでも出せて、次の色を好きにえらべる<br>
+    +4 ワイルドドロー4：次の色をえらび、次の人が4枚引いて1回休み。<b>いまの色のカードを持っていないときだけ</b>出せます</p>
+  <p class="small"><b>点数</b>（「点数で分ける」部屋）：残った手札の点数は、数字はその数、記号は20点、ワイルドは50点です。</p>`,
+  mahjong: `<p class="small">4人で打つ、日本の「リーチ麻雀」です。むずかしく見えますが、形を覚えれば大丈夫。できることはボタンで出ます。</p>
+  <ol>
+    <li><b>牌（パイ）</b>：数字の牌が3種類（萬子 1〜9萬・筒子 1〜9筒・索子 1〜9索）と、字牌（東・南・西・北・白・發・中）。同じ牌が4枚ずつあります。</li>
+    <li><b>自分の番</b>：山から1枚引き（手のいちばん右）、いらない牌を1枚捨てます。捨てる牌は<b>2回押します</b>（1回目でえらぶ）。</li>
+    <li><b>あがりの形</b>：14枚を「3枚のまとまり×4 ＋ 同じ牌2枚」にします。まとまりは<b>同じ牌3枚</b>（例 5筒5筒5筒）か、<b>同じ種類の続き番号</b>（例 3萬4萬5萬）。字牌は続き番号にできません。</li>
+    <li><b>あがり方</b>：自分で引いてそろえたら「ツモ」（ほかの3人からもらう）。ほかの人が捨てた牌でそろったら「ロン」（捨てた人がはらう）。</li>
+    <li><b>役（やく）</b>：あがるには役が1つ以上いります。かんたんなのは、<b>リーチ</b>（鳴かずに、あと1枚であがる形＝テンパイになったら宣言。1000点を出す）、<b>タンヤオ</b>（2〜8の数字の牌だけ）、<b>役牌</b>（白・發・中、自分の風・場の風の牌を3枚）、<b>ツモ</b>（鳴かずに自分で引いてあがる）。</li>
+    <li><b>鳴き</b>：ほかの人が捨てた牌をもらえます。<b>ポン</b>（同じ牌を2枚持っているとき）、<b>チー</b>（左の人＝上家の捨て牌で続き番号）、<b>カン</b>（同じ牌4枚）。鳴くとリーチはできず、使える役もへります。</li>
+    <li><b>振聴（フリテン）</b>：自分が前に捨てた牌が待ちに入っていると、ロンはできません（ツモはできます）。画面に「振聴」と出ます。</li>
+  </ol>
+  <p class="small"><b>点数</b>：はじめは25,000点。東風戦は東1局〜東4局、半荘戦は南4局まで打ち、最後にいちばん点数の多い人が1位です。だれかの点数がマイナスになると、そこで終わります（飛び）。親（風が「東」の人）があがると点数が1.5倍になり、もう一度親をつづけます。</p>
+  <p class="small"><b>この部屋の決まり</b>：赤ドラ（赤い5）あり・鳴いてもタンヤオあり・ロンが2人いたら捨てた人から近い人だけ（頭ハネ）。山がなくなったら、テンパイの人がノーテンの人から合わせて3000点もらいます。</p>`,
 };
 const ROOM_RULES = `<p class="small muted" style="margin:6px 0 0">
   ・持ち時間は1人ずつ。自分の番のあいだだけ減り、0になると負けです。<br>
   ・「投了」すると負けを認めて終わります。<br>
   ・観戦している人は、10手目まで、勝つと思う人に賭けられます（対局している本人は賭けられません）。勝った側に賭けた人で賭け金を山分けします（国庫が5%）。引き分けや、片方にしか賭けがないときは全部返します。もうけは所得になります。</p>`;
+const ROOM_RULES_M = `<p class="small muted" style="margin:6px 0 0">
+  ・席がうまると始まります。主催は「コンピューターを入れて始める」で、空いている席にコンピューターを入れられます（ワンカードは「いまの人数で始める」も）。席はランダムです。<br>
+  ・持ち時間は1人ずつ。自分が考えているあいだだけ減ります。0になったり「抜ける」を押したりすると、そのあとはコンピューターが代わりに打ちます（賭けはそのまま）。麻雀では、自分の持ち時間だけが見えます（ほかの人が鳴けるかどうか、わからないように）。<br>
+  ・参加中（待っている・対局中）の部屋は、1人3つまでです。<br>
+  ・賭け金は主催が決めます（0なら賭けなし）。入るときにはらい、始まる前に出れば返ります。コンピューターは賭けません。人がひとりだけのときは返します。賭けありの部屋に入れるのは、登録から7日たってからです。<br>
+  ・<b>1位の総取り</b>：人の中でいちばん上の人が、全員の賭け金を受け取ります。<b>点数で分ける</b>：ワンカードは、負けた人が手札の点数ぶん（100点で賭け金ぜんぶ）を1位の人にはらいます。麻雀は、人どうしの点数の差でやりとりします（25,000点の差で賭け金ぶん）。どちらも負けは賭け金まで。国庫がもうけの5%をとり、もうけは所得になります。<br>
+  ・観戦はだれでもできます（手札・手牌は見えません）。観戦の賭けはありません。</p>`;
+const stakeTxt = r => r.stake > 0 ? `賭け金 ${fmt(r.stake)} X（${r.stake_mode === 'points' ? '点数で分ける' : '1位の総取り'}）` : '賭けなし';
 const clockTxt = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s2 = t % 60;
   return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s2).padStart(2, '0'); };
 async function lobbyLoad() {
+  const multi = !!MULTI_GAMES[LB.game];
   $('#lbTitle').textContent = BOARD_GAMES[LB.game] || '';
-  $('#lbHow').innerHTML = (HOWTO[LB.game] || '') + ROOM_RULES;
+  $('#lbHow').innerHTML = (HOWTO[LB.game] || '') + (multi ? ROOM_RULES_M : ROOM_RULES);
+  $$('#vLobby .lb-m').forEach(e => e.classList.toggle('hidden', !multi));
+  $('#lbSeatsRow').classList.toggle('hidden', LB.game !== 'onecard');
+  $('#lbLenRow').classList.toggle('hidden', LB.game !== 'mahjong');
+  $('#lbBetsRow').classList.toggle('hidden', multi);
+  $('#lbInvite').placeholder = multi ? '招待する人のID（何人でも「,」で区切る。なければ、だれでも入れる）' : '招待する人のID（なければ、だれでも入れる）';
+  $('#lbNote').textContent = !multi ? '対局する本人どうしは賭けません（無料）。ふたりそろうと始まり、先手・後手はランダムです。'
+    : LB.game === 'mahjong' ? '4人そろうと始まります。主催は、空いている席にコンピューターを入れて始めることもできます。'
+    : '席がうまると始まります。主催は、コンピューターを入れたり、いまの人数で始めたりもできます。';
   try {
     const d = await call('room_list', { p_game: LB.game });
-    const pl = r => r.players.map(p => nameB(p.nickname, p.badge)).join(' 対 ');
+    const pl = r => r.multi ? r.players.map(p => p.cpu ? 'コンピューター' : nameB(p.nickname, p.badge)).join('・') : r.players.map(p => nameB(p.nickname, p.badge)).join(' 対 ');
+    if (multi) {
+      $('#lbWait').innerHTML = d.waiting.map(r => `<div class="line"><span class="grow">#${r.id} ${esc(r.title || '（名前なし）')}
+          <small>主催 ${nameB(r.host, r.host_badge)}・${r.players.length}/${r.max_seats}人・1人 ${Math.round(r.time_ms / 60000)}分・${stakeTxt(r)}${r.game === 'mahjong' ? '・' + (r.opts.len === 'south' ? '半荘戦' : '東風戦') : ''}${r.invites.length ? '・招待あり' : ''}</small></span>
+          ${r.me != null ? `<button class="btn s" data-lbopen="${r.id}">見る</button><button class="btn s" data-lbleave="${r.id}">${r.mine_host ? 'やめる' : '出る'}</button>`
+            : `<button class="btn main s" data-lbjoin="${r.id}" data-stake="${r.stake}">入る</button>`}</div>`).join('')
+        || '<p class="muted small" style="margin:0">いまはありません。部屋を作って待ちましょう</p>';
+      $('#lbPlay').innerHTML = d.playing.map(r => `<div class="line"><span class="grow">#${r.id} ${pl(r)}<small>${stakeTxt(r)}</small></span>
+          <button class="btn ${r.me != null ? 'main' : ''} s" data-lbopen="${r.id}">${r.me != null ? '対局へ' : '観戦'}</button></div>`).join('')
+        || '<p class="muted small" style="margin:0">いまはありません</p>';
+      $('#lbDone').innerHTML = d.finished.map(r => { const f = r.state && r.state.final, rk = f ? f.rank.indexOf(r.me) + 1 : 0;
+        return `<div class="line"><span class="grow">#${r.id} ${pl(r)}<small>${rk ? `<b${rk === 1 ? ' style="color:var(--win)"' : ''}>${rk}位</b>・` : ''}${esc(r.reason || '')}</small></span>
+          <button class="btn s" data-lbopen="${r.id}">見る</button></div>`; }).join('') || '<p class="muted small" style="margin:0">まだありません</p>';
+      return;
+    }
     $('#lbWait').innerHTML = d.waiting.map(r => `<div class="line"><span class="grow">#${r.id} ${esc(r.title || '（名前なし）')}
         <small>主催 ${nameB(r.host, r.host_badge)}・1人 ${Math.round(r.time_ms / 60000)}分${r.invite ? '・招待：ID ' + r.invite : ''}${r.bets_on ? '・観戦の賭けあり' : ''}</small></span>
         ${r.mine_host ? `<button class="btn s" data-lbopen="${r.id}">見る</button><button class="btn s" data-lbleave="${r.id}">やめる</button>` : `<button class="btn main s" data-lbjoin="${r.id}">入る</button>`}</div>`).join('')
@@ -2633,23 +2748,33 @@ async function lobbyLoad() {
 $('#lbBack').onclick = () => go('vGameList');
 $('#lbCreate').onclick = async () => {
   try {
+    const multi = !!MULTI_GAMES[LB.game], stake = multi ? Math.max(0, Math.floor(Number($('#lbStake').value) || 0)) : 0;
+    if (stake > 0 && !confirm(`賭け金 ${fmt(stake)} X をはらって部屋を作りますか？（始まる前にやめれば返ります）`)) return;
     const r = await call('room_create', { p_game: LB.game, p_title: $('#lbName').value, p_time_min: Number($('#lbTime').value),
-      p_invite: $('#lbInvite').value.trim() || null, p_bets: $('#lbBets').checked });
+      p_invite: $('#lbInvite').value.trim() || null, p_bets: multi ? false : $('#lbBets').checked,
+      p_seats: LB.game === 'onecard' ? Number($('#lbSeats').value) : null, p_stake: stake, p_mode: $('#lbMode').value,
+      p_opts: LB.game === 'mahjong' ? { len: $('#lbLen').value } : {} });
+    if (stake > 0) setBal(r.balance);
     $('#lbName').value = ''; $('#lbInvite').value = ''; RM.id = r.id; toast('部屋を作りました。相手を待ちましょう'); go('vRoom');
   } catch (e) { toast(e.message); }
 };
 $('#vLobby').addEventListener('click', async ev => {
   const j = ev.target.closest('[data-lbjoin]'), o = ev.target.closest('[data-lbopen]'), l = ev.target.closest('[data-lbleave]');
   try {
-    if (j) { const r = await call('room_join', { p_room: Number(j.dataset.lbjoin) }); RM.id = r.id; go('vRoom'); }
+    if (j) {
+      const sk = Number(j.dataset.stake || 0);
+      if (sk > 0 && !confirm(`賭け金 ${fmt(sk)} X をはらって入りますか？（始まる前に出れば返ります）`)) return;
+      const r = await call('room_join', { p_room: Number(j.dataset.lbjoin) }); if (sk > 0) setBal(r.balance); RM.id = r.id; go('vRoom');
+    }
     if (o) { RM.id = Number(o.dataset.lbopen); go('vRoom'); }
-    if (l) { if (!confirm('この部屋をやめますか？')) return; await call('room_leave', { p_room: Number(l.dataset.lbleave) }); lobbyLoad(); }
+    if (l) { if (!confirm('この部屋を出ますか？（賭け金は返ります）')) return; await call('room_leave', { p_room: Number(l.dataset.lbleave) }); lobbyLoad(); call('my_profile').then(p => setBal(p.balance)).catch(() => {}); }
   } catch (e) { toast(e.message); }
 });
 function roomStop() { if (RM.timer) clearInterval(RM.timer); RM.timer = null; }
 function roomStart() {
   roomStop(); RM.data = null; RM.lastMoves = 0; $('#rmBoard').innerHTML = ''; $('#rmChat').innerHTML = '';
-  roomPoll(); RM.timer = setInterval(() => { if (view === 'vRoom') roomPoll(); else roomStop(); }, 1500);
+  RM.wild = null; RM.mjSel = null; RM.riichi = false; RM.mjKey = ''; RM.balDone = false;
+  roomPoll(); RM.timer = setInterval(() => { if (view === 'vRoom') roomPoll(); else roomStop(); }, 1000);
 }
 async function roomPoll() {
   if (!RM.id || RM.sending) return;
@@ -2658,14 +2783,17 @@ async function roomPoll() {
 function roomClock() {
   const d = RM.data; if (!d) return;
   const el = Date.now() - d.got;
-  $$('#rmPlayers .ck').forEach(c => { const seat = Number(c.dataset.seat); let ms = d.clock_ms[seat];
-    if (d.status === 'playing' && d.turn === seat) ms -= el; c.textContent = clockTxt(ms); c.classList.toggle('low', ms < 60000); });
+  $$('#rmPlayers .ck, #rmBoard .ck').forEach(c => { const seat = Number(c.dataset.seat); let ms = d.clock_ms[seat];
+    if (ms == null || ms < 0) { c.textContent = ''; return; }
+    if (d.status === 'playing' && (d.running || [d.turn]).includes(seat)) ms -= el; c.textContent = clockTxt(ms); c.classList.toggle('low', ms < 60000); });
+  const tm = $('#mjTimer'); if (tm && d.state && d.state.timer_at) tm.textContent = Math.max(0, Math.ceil((d.state.timer_at - (d.now_ms + el)) / 1000));
 }
 setInterval(() => { if (view === 'vRoom') roomClock(); }, 250);
 function roomRender() {
   const d = RM.data, st = d.state || {};
   $('#rmTitle').textContent = `${d.game_name}${d.title ? '・' + d.title : ''}`;
   $('#rmNo').textContent = `部屋 #${d.id}`;
+  if (d.multi) { mroomRender(d); roomChat(d); return; }
   const colName = GCOL[d.game] || ['先手', '後手'];
   const icon = seat => d.game === 'reversi' ? `<span class="stone ${seat === 0 ? 'B' : 'W'}"></span>` : d.game === 'chess' ? (seat === 0 ? '♔\uFE0E ' : '♚\uFE0E ') : (seat === 0 ? '▲' : '△');
   $('#rmPlayers').innerHTML = d.status === 'waiting' ? `<p class="small" style="margin:0">主催 ${nameB(d.host, d.host_badge)}。相手が入るのを待っています…${d.invite ? `（招待：ID ${d.invite}）` : ''}</p>`
@@ -2708,7 +2836,9 @@ function roomRender() {
     const a = Math.floor(Number($('#rmBetAmt').value) || 0); if (a < 1) return toast('額を入れてください');
     try { RM.data = await call('room_bet', { p_room: d.id, p_seat: Number(b.dataset.bseat), p_amount: a }); RM.data.got = Date.now(); setBal(RM.data.balance); roomRender(); toast('賭けました'); } catch (e) { toast(e.message); }
   });
-  // チャット
+  roomChat(d);
+}
+function roomChat(d) {
   const ch = $('#rmChat'), atBottom = ch.scrollHeight - ch.scrollTop - ch.clientHeight < 30;
   ch.innerHTML = d.chat.map(m => `<div class="m"><b>${nameB(m.nickname, m.badge)}</b>${m.player ? '<span class="muted small">（対局者）</span>' : ''}：${esc(m.body)}</div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>';
   if (atBottom) ch.scrollTop = ch.scrollHeight;
@@ -2826,6 +2956,231 @@ function sgBoard(d) {
     const mine = p !== '.' && (d.me === 0 ? p === p.toUpperCase() : p === p.toLowerCase());
     RM.sel = mine && RM.sel !== i ? i : null; sgBoard(d);
   });
+}
+
+/* ---------- ワンカード・麻雀の部屋 ---------- */
+const OC_COL = ['r', 'y', 'g', 'b'], OC_COLN = ['赤', '黄', '緑', '青'], OC_HEX = ['#D93A2F', '#E2A90C', '#2E9B4E', '#2B6FD6'];
+const ocSym = c => c >= 104 ? 'F' : c >= 100 ? 'W' : c % 25 === 0 ? '0' : c % 25 <= 18 ? String((c % 25 - 1) % 9 + 1) : c % 25 <= 20 ? 'S' : c % 25 <= 22 ? 'R' : 'D';
+const OC_LBL = { S: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="8"/><path d="M6.5 17.5 17.5 6.5"/></svg>',
+  R: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8.5h14l-3.5-3.5"/><path d="M20 15.5H6l3.5 3.5"/></svg>',
+  D: '+2', W: 'W', F: '+4' }, OC_NAME = { S: 'スキップ', R: 'リバース', D: 'ドロー2', W: 'ワイルド', F: 'ワイルドドロー4' };
+const ocCard = (c, cls = '', col = null) => `<span class="occ ${c >= 100 ? 'w' : OC_COL[Math.floor(c / 25)]} ${cls}" data-c="${c}">${OC_LBL[ocSym(c)] || ocSym(c)}${c >= 100 && col != null ? `<span class="ch ${OC_COL[col]}"></span>` : ''}</span>`;
+const ocCardName = c => (c >= 100 ? '' : OC_COLN[Math.floor(c / 25)]) + (OC_NAME[ocSym(c)] || ocSym(c));
+const mName = (d, s) => { const p = d.players[s] || {}; return p.cpu ? `コンピューター${s + 1}` : (p.nickname || ''); };
+function ocLog(d, e) {
+  const who = esc(mName(d, e.s));
+  if (e.a === 'play') return `${who}：${ocCardName(e.c)}${e.c >= 100 ? `（次は${OC_COLN[e.col]}）` : ''}`;
+  if (e.a === 'draw') return `${who}：1枚引いた`;
+  if (e.a === 'pass') return `${who}：パス`;
+  if (e.a === 'take') return `${who}：${e.k}枚引いて休み`;
+  if (e.a === 'uno') return `${who}：ワンカード！`;
+  if (e.a === 'catch') return `${who}：${esc(mName(d, e.t))}の言い忘れを指摘（2枚）`;
+  return '';
+}
+function ocBoard(d) {
+  const st = d.state, me = d.me, auto = me != null && d.players[me] && d.players[me].auto;
+  const my = d.status === 'playing' && me != null && !auto && st.turn === me, legal = new Set(my ? st.legal : []);
+  let h = `<div class="oc-table"><div class="oc-mid">
+      <div style="text-align:center"><span class="occ back"></span><div class="small muted">山 ${st.deck_n}枚</div></div>
+      <div style="text-align:center">${ocCard(st.top, 'big', st.color)}<div class="small"><span class="oc-dot ${OC_COL[st.color]}"></span>いまの色：<b>${OC_COLN[st.color]}</b></div></div>
+      <div style="text-align:center;font-size:26px;line-height:1">${st.dir === 1 ? '↻' : '↺'}<div class="small muted" style="font-size:11px">${st.dir === 1 ? '時計回り' : '反時計回り'}</div></div></div>
+    <div class="oc-log">${(st.log || []).slice(-3).map(e => ocLog(d, e)).filter(Boolean).join('<br>')}</div>`;
+  if (my && RM.wild != null) h += `<div class="small" style="text-align:center"><b>次の色をえらんでください</b></div><div class="oc-pick">${OC_COLN.map((n, i) =>
+      `<button data-ocol="${i}" style="background:${OC_HEX[i]}">${n}</button>`).join('')}<button class="btn s" data-ocol="-1" style="color:inherit">やめる</button></div>`;
+  if (st.over && st.hands) {
+    h += `<div style="width:100%">${st.hands.map((hd, s2) => `<div class="small" style="margin-top:6px">${esc(mName(d, s2))}（${st.pts[s2]}点）</div>
+        <div class="oc-hand" style="padding-top:2px">${hd.map(c => ocCard(c)).join('') || '<span class="small muted">なし（あがり）</span>'}</div>`).join('')}</div>`;
+  } else if (me != null && st.hand) {
+    h += `<div class="oc-hand">${st.hand.map(c => ocCard(c, legal.has(c) ? 'can' : my ? 'dim' : '')).join('')}</div>`;
+  }
+  $('#rmBoard').innerHTML = h + '</div>';
+  $$('#rmBoard .occ.can').forEach(el => el.onclick = () => {
+    const c = Number(el.dataset.c);
+    if (c >= 100) { RM.wild = c; return ocBoard(d); }
+    sendMove(d, { a: 'play', c });
+  });
+  $$('#rmBoard [data-ocol]').forEach(b => b.onclick = () => {
+    const col = Number(b.dataset.ocol), c = RM.wild; RM.wild = null;
+    if (col < 0) return ocBoard(d);
+    sendMove(d, { a: 'play', c, col });
+  });
+}
+
+const MJ_HON = ['東', '南', '西', '北', '白', '發', '中'], MJ_SU = '萬筒索', WIND = ['東', '南', '西', '北'];
+const mjKname = k => k >= 27 ? MJ_HON[k - 27] : (k % 9 + 1) + MJ_SU[Math.floor(k / 9)];
+function mjTile(id, cls = '') {
+  if (id == null) return '';
+  const k = id >> 2, red = id === 16 || id === 52 || id === 88;
+  if (k >= 27) return `<span class="mt z ${['', '', '', '', 'haku', 'hatsu', 'chun'][k - 27]} ${cls}" data-t="${id}">${MJ_HON[k - 27]}</span>`;
+  const su = Math.floor(k / 9);
+  return `<span class="mt ${'mps'[su]} ${red ? 'red' : ''} ${cls}" data-t="${id}"><b>${k % 9 + 1}</b><i>${MJ_SU[su]}</i></span>`;
+}
+function mjMeld(m, cls = 'sm') {
+  const t = m.t.slice().sort((a, b) => a - b);
+  if (m.k === 'ankan') return mjTile(t[0], cls + ' back') + mjTile(t[1], cls) + mjTile(t[2], cls) + mjTile(t[3], cls + ' back');
+  return mjTile(m.c, cls + ' side') + t.filter(x => x !== m.c).map(x => mjTile(x, cls)).join('');
+}
+function mjResult(d) {
+  const st = d.state, r = st.result, nm = s2 => esc(mName(d, s2));
+  let h = '<div class="mj-res">';
+  if (r.kind === 'ron' || r.kind === 'tsumo') {
+    const w = r.win;
+    h += `<b style="font-size:16px">${nm(w.s)} の${r.kind === 'tsumo' ? 'ツモ' : 'ロン'}！</b>${r.kind === 'ron' ? `（${nm(w.from)} が放銃）` : ''}
+      <div class="mj-hand">${w.hand.map(t => mjTile(t, 'sm' + (t === w.t ? ' win' : ''))).join('')}${(w.melds || []).map(m => `<span class="mj-meld" style="margin-left:6px">${mjMeld(m)}</span>`).join('')}</div>
+      <div class="small">${w.yaku.map(y => `${esc(y[0])} ${w.yakuman ? '' : y[1] + '翻'}`).join('・')}</div>
+      <div style="margin-top:4px"><b>${esc(w.label)}</b>　${esc(w.points)}</div>
+      <div class="small muted" style="margin-top:4px">ドラ表示 ${(w.dora || []).map(t => mjTile(t, 'sm')).join('')}${w.ura && w.ura.length ? `　裏ドラ表示 ${w.ura.map(t => mjTile(t, 'sm')).join('')}` : ''}</div>`;
+  } else if (r.kind === 'ryukyoku') {
+    h += `<b style="font-size:16px">流局</b>（山がなくなりました）<div class="small">テンパイ：${r.tenpai.map((t, s2) => t ? nm(s2) : '').filter(Boolean).join('・') || 'なし'}</div>`;
+    for (const k in r.hands) h += `<div class="small" style="margin-top:4px">${nm(Number(k))}</div><div class="mj-hand">${r.hands[k].map(t => mjTile(t, 'sm')).join('')}</div>`;
+  } else {
+    h += `<b style="font-size:16px">途中流局：${esc(r.reason)}</b><div class="small muted">親はそのまま、もう一度配りなおします</div>`;
+  }
+  h += `<div class="kv" style="margin-top:6px">${[0, 1, 2, 3].map(s2 => `<span>${nm(s2)}</span><b style="color:${r.delta[s2] > 0 ? 'var(--win)' : r.delta[s2] < 0 ? 'var(--lose)' : 'inherit'}">${r.delta[s2] > 0 ? '+' : ''}${fmt(r.delta[s2])} → ${fmt(r.scores[s2])}</b>`).join('')}</div>`;
+  if (!st.over) h += `<div class="small muted" style="margin-top:4px"><span id="mjTimer"></span>秒で次の局へ（人が全員「次の局へ」を押すとすぐ）</div>`;
+  return h + '</div>';
+}
+function mFinal(d) {
+  const st = d.state, f = st && st.final; if (!f) return '';
+  const pay = s2 => (d.stakes.find(k => k.seat === s2) || {}).payout;
+  return `<div class="mj-res"><b>結果</b>（${esc(d.reason || '')}）${f.rank.map((s2, i) => `<div class="line"><span class="grow"><b>${i + 1}位</b> ${esc(mName(d, s2))}${s2 === d.me ? '（あなた）' : ''}</span>
+      <b>${d.game === 'mahjong' ? fmt(f.v[s2]) + '点' : (f.v[s2] === 0 && i === 0 ? 'あがり' : '残り ' + (-f.v[s2]) + '点')}</b>${pay(s2) != null ? `<span class="small" style="margin-left:8px">${fmt(pay(s2))} X</span>` : ''}</div>`).join('')}</div>`;
+}
+function mjBoard(d) {
+  const st = d.state, me = d.me, dealer = st.kyoku;
+  const order = me != null ? [1, 2, 3, 0].map(x => (me + x) % 4) : [0, 1, 2, 3];
+  const rel = s2 => me == null ? '' : ['', '下家', '対面', '上家'][(s2 - me + 4) % 4];
+  const key = (st.hand || []).join(',') + '|' + st.phase + '|' + st.turn;
+  if (RM.mjKey !== key) { RM.mjKey = key; RM.mjSel = null; if (!(st.opts && st.opts.act)) RM.riichi = false; }
+  let h = `<div class="mj-info"><b>${WIND[st.round]}${st.kyoku + 1}局</b><span>${st.honba}本場</span><span>リーチ棒 ${st.kyotaku}本</span><span>残り ${st.wall_n}枚</span>
+    <span>ドラ表示 ${(st.dora || []).map(t => mjTile(t, 'sm')).join('')}</span></div>`;
+  for (const s2 of order) {
+    const p = d.players[s2] || {}, turn = d.status === 'playing' && ((st.phase === 'act' && st.turn === s2) || (d.running || []).includes(s2));
+    const riv = (st.river[s2] || []).map(r => mjTile(r.t, 'sm' + (r.r ? ' side' : '') + (r.x ? ' x' : '') + (st.phase === 'call' && st.last && st.last.s === s2 && st.last.t === r.t ? ' lastd' : ''))).join('');
+    const melds = (st.melds[s2] || []).map(m => `<span class="mj-meld">${mjMeld(m)}</span>`).join('');
+    h += `<div class="mj-row ${turn ? 'turn' : ''}"><div class="who"><span class="wind ${s2 === dealer ? 'oya' : ''}">${WIND[(s2 - dealer + 4) % 4]}</span>
+        <b>${p.cpu ? `コンピューター${s2 + 1}` : nameB(p.nickname || '', p.badge)}</b>${s2 === me ? '<span class="tg">あなた</span>' : `<span class="muted">${rel(s2)}</span>`}${p.auto ? '<span class="tg warn">おまかせ</span>' : ''}
+        ${st.riichi[s2] >= 0 ? '<span class="rbar">リーチ</span>' : ''}${s2 === me ? `<span class="ck" data-seat="${s2}"></span>` : ''}<b class="sc">${fmt(st.scores[s2])}</b></div>
+      ${melds ? `<div class="mj-melds">${melds}</div>` : ''}<div class="mj-river">${riv || '<span class="small muted">（まだ捨てていません）</span>'}</div></div>`;
+  }
+  if (st.phase === 'end' && st.result) h += mjResult(d);
+  if (st.over) h += mFinal(d);
+  else if (me != null && st.hand && st.phase !== 'end') {
+    const o = st.opts && st.opts.act, my = !!o && !(d.players[me] || {}).auto;
+    const can = new Set(my ? (RM.riichi ? (o.riichi || []) : o.discard) : []);
+    const dr = st.drawn, hand = dr != null ? st.hand.filter(x => x !== dr) : st.hand;
+    const tl = x => mjTile(x, ['h', my ? (can.has(x) ? 'can' : 'no') : '', RM.mjSel === x ? 'sel' : '', RM.riichi && can.has(x) ? 'ri' : ''].join(' '));
+    h += `<div class="mj-hand">${hand.map(tl).join('')}${dr != null ? '<span class="gap"></span>' + tl(dr) : ''}</div>`;
+    if (st.waits && st.waits.length) h += `<p class="small" style="text-align:center;margin:2px 0">テンパイ：待ち <b>${st.waits.map(mjKname).join('・')}</b>${st.furiten ? '　<b style="color:var(--lose)">振聴（ロンはできません）</b>' : ''}</p>`;
+  }
+  $('#rmBoard').innerHTML = h;
+  $$('#rmBoard .mj-hand .mt.can').forEach(el => el.onclick = () => {
+    const t = Number(el.dataset.t);
+    if (RM.mjSel === t) { RM.mjSel = null; const r2 = RM.riichi; RM.riichi = false; return sendMove(d, { a: 'discard', t, riichi: r2 }); }
+    RM.mjSel = t; mjBoard(d);
+  });
+}
+function mjButtons(d) {
+  const st = d.state, o = st.opts || {}; let b = '';
+  const J = v => `data-mj='${JSON.stringify(v)}'`;
+  if (o.act) {
+    if (o.act.tsumo) b += `<button class="btn main s" ${J({ a: 'tsumo' })}>ツモ</button>`;
+    if (o.act.riichi) b += `<button class="btn ${RM.riichi ? 'main' : ''} s" data-mjr="1">${RM.riichi ? 'リーチをやめる' : 'リーチ'}</button>`;
+    (o.act.kan || []).forEach(k => b += `<button class="btn s" ${J({ a: 'kan', k })}>カン（${mjKname(k)}）</button>`);
+    if (o.act.kyuushu) b += `<button class="btn s" ${J({ a: 'kyuushu' })}>九種九牌（流す）</button>`;
+  }
+  if (o.call) {
+    const c = o.call;
+    if (c.ron) b += `<button class="btn main s" ${J({ a: 'ron' })}>ロン${st.phase === 'rob' ? '（槍槓）' : ''}</button>`;
+    (c.pon || []).forEach(v => b += `<button class="btn s" ${J({ a: 'pon', t: v })}>ポン${c.pon.length > 1 ? (v.some(x => x === 16 || x === 52 || x === 88) ? '（赤5を使う）' : '（赤5を残す）') : ''}</button>`);
+    if (c.kan) b += `<button class="btn s" ${J({ a: 'kan' })}>カン</button>`;
+    (c.chi || []).forEach(v => b += `<button class="btn s" ${J({ a: 'chi', t: v })}>チー ${v.map(x => mjTile(x, 'sm')).join('')}</button>`);
+    b += `<button class="btn s" ${J({ a: 'pass' })}>しない</button>`;
+  }
+  if (st.phase === 'end' && !st.over && d.me != null && st.ready && !st.ready[d.me] && !(d.players[d.me] || {}).auto) b += `<button class="btn main s" ${J({ a: 'ready' })}>次の局へ</button>`;
+  return b;
+}
+function mroomRender(d) {
+  const st = d.state || {}, me = d.me, mp = me != null ? d.players[me] : null;
+  $('#rmBetCard').classList.remove('hidden');
+  if (d.status === 'waiting') {
+    $('#rmPlayers').innerHTML = `<p class="small" style="margin:0">主催 ${nameB(d.host, d.host_badge)}。${d.max_seats}人そろうと始まります${d.invites.length ? `（招待：ID ${d.invites.join('・')}）` : ''}</p>
+      <div class="pl4" style="margin-top:6px">${Array.from({ length: d.max_seats }, (_, i) => { const p = d.players[i];
+        return `<div class="pl"><div class="nm">${p ? nameB(p.nickname, p.badge) + (p.seat === me ? '<span class="tg">あなた</span>' : '') : '<span class="muted">あき</span>'}</div></div>`; }).join('')}</div>`;
+    $('#rmBoard').innerHTML = `<p class="small muted" style="text-align:center;margin:8px 0">${d.game === 'mahjong' ? (d.opts.len === 'south' ? '半荘戦' : '東風戦') + '・' : ''}1人 ${Math.round(d.time_ms / 60000)}分</p>`;
+  } else if (d.game === 'onecard') {
+    $('#rmPlayers').innerHTML = `<div class="${d.players.length > 2 ? 'pl4' : 'pl-bar'}">${d.players.map(p => { const s2 = p.seat, turn = d.status === 'playing' && st.turn === s2, cnt = st.counts ? st.counts[s2] : 0;
+      return `<div class="pl ${turn ? 'turn' : ''}"><div class="nm">${p.cpu ? `コンピューター${s2 + 1}` : nameB(p.nickname, p.badge)}${s2 === me ? '<span class="tg">あなた</span>' : ''}${p.auto ? '<span class="tg warn">おまかせ</span>' : ''}</div>
+        <div class="row" style="justify-content:space-between;gap:4px"><span class="small">🂠 ${cnt}枚${cnt === 1 && !st.over ? ' <b style="color:var(--lose)">あと1枚</b>' : ''}</span>${p.cpu ? '' : `<span class="ck" data-seat="${s2}"></span>`}</div></div>`; }).join('')}</div>`;
+    ocBoard(d);
+    if (st.over) $('#rmBoard').insertAdjacentHTML('beforeend', mFinal(d));
+  } else {
+    $('#rmPlayers').innerHTML = '';
+    mjBoard(d);
+  }
+  roomClock();
+  // ことば
+  let msg = '';
+  const auto = mp && mp.auto;
+  if (d.status === 'waiting') msg = d.mine_host ? 'みんなが入るのを待っています。「コンピューターを入れて始める」こともできます。' : me != null ? '始まるのを待っています…' : '';
+  else if (d.status === 'playing') {
+    if (auto) msg = '時間切れ（または抜けた）なので、コンピューターが代わりに打っています';
+    else if (d.game === 'onecard') {
+      msg = me == null ? `観戦中・${esc(mName(d, st.turn))}の番` : st.turn === me ? `<b>あなたの番です</b>${st.drew ? '（引いたカードを出すか、パス）' : st.legal.length ? '' : '（出せるカードがないので「引く」）'}` : `${esc(mName(d, st.turn))}の番…`;
+      if (st.uno != null) msg += st.uno === me ? '<br><b style="color:var(--lose)">「ワンカード！」を言っていません（指摘される前に押す）</b>' : `<br>${esc(mName(d, st.uno))}が「ワンカード」を言っていません`;
+    } else {
+      const o = st.opts || {};
+      msg = st.phase === 'end' ? '局が終わりました' : o.act ? (RM.riichi ? '<b>リーチ：</b>光っている牌を2回押すと、その牌を捨ててリーチ' : '<b>あなたの番です</b>（捨てる牌を2回押す）')
+        : o.call ? '<b>鳴く・ロンするか、「しない」を押してください</b>' : st.phase === 'act' ? `${esc(mName(d, st.turn))}の番…` : '考えています…';
+      if (me == null) msg = '観戦中・' + msg;
+    }
+  } else if (d.status === 'finished') {
+    const f = st.final; const rk = f && me != null ? f.rank.indexOf(me) + 1 : 0;
+    msg = `<b>終わり</b>（${esc(d.reason || '')}）${rk ? `　あなたは <b>${rk}位</b>` : ''}`;
+  } else if (d.status === 'canceled') msg = 'この部屋はなくなりました';
+  $('#rmMsg').innerHTML = msg;
+  // ボタン
+  let b = '';
+  if (d.status === 'waiting') {
+    if (d.mine_host) b = `<button class="btn main s" data-start="1">コンピューターを入れて始める</button>${d.game === 'onecard' && d.players.length >= 2 ? '<button class="btn s" data-start="0">いまの人数で始める</button>' : ''}<button class="btn s" id="rmLeave">部屋をやめる</button>`;
+    else if (me != null) b = '<button class="btn s" id="rmLeave">部屋を出る</button>';
+    else b = `<button class="btn main s" id="rmJoin">この部屋に入る${d.stake > 0 ? `（賭け金 ${fmt(d.stake)} X）` : ''}</button>`;
+  } else if (d.status === 'playing' && me != null && !auto) {
+    if (d.game === 'onecard') {
+      const my = st.turn === me;
+      if (my && !st.drew) b += '<button class="btn s" data-oc=\'{"a":"draw"}\'>引く</button>';
+      if (my && st.drew) b += '<button class="btn s" data-oc=\'{"a":"pass"}\'>パス（出さない）</button>';
+      if ((my && st.hand.length === 2 && st.said !== me) || st.uno === me) b += '<button class="btn main s" data-oc=\'{"a":"uno"}\'>ワンカード！</button>';
+      if (my && st.said === me) b += '<span class="small" style="color:var(--win)">ワンカード！と言いました</span>';
+      if (st.uno != null && st.uno !== me) b += `<button class="btn main s" data-oc='{"a":"catch"}'>指摘する</button>`;
+    } else b += mjButtons(d);
+    b += '<button class="btn s" id="rmQuit">抜ける</button>';
+  }
+  $('#rmBtns').innerHTML = b;
+  $$('#rmBtns [data-oc]').forEach(x => x.onclick = () => sendMove(d, JSON.parse(x.dataset.oc)));
+  $$('#rmBtns [data-mj]').forEach(x => x.onclick = () => sendMove(d, JSON.parse(x.dataset.mj)));
+  const rr = $('#rmBtns [data-mjr]'); if (rr) rr.onclick = () => { RM.riichi = !RM.riichi; RM.mjSel = null; roomRender(); };
+  $$('#rmBtns [data-start]').forEach(x => x.onclick = async () => {
+    try { RM.data = await call('room_start', { p_room: d.id, p_cpu: x.dataset.start === '1' }); RM.data.got = Date.now(); setBal(RM.data.balance); roomRender(); } catch (e) { toast(e.message); }
+  });
+  const lv = $('#rmLeave'); if (lv) lv.onclick = async () => {
+    if (!confirm(d.mine_host ? 'この部屋をやめますか？（賭け金は全員に返ります）' : 'この部屋を出ますか？（賭け金は返ります）')) return;
+    try { await call('room_leave', { p_room: d.id }); call('my_profile').then(p => setBal(p.balance)).catch(() => {}); go('vLobby'); } catch (e) { toast(e.message); }
+  };
+  const jn = $('#rmJoin'); if (jn) jn.onclick = async () => {
+    if (d.stake > 0 && !confirm(`賭け金 ${fmt(d.stake)} X をはらって入りますか？（始まる前に出れば返ります）`)) return;
+    try { RM.data = await call('room_join', { p_room: d.id }); RM.data.got = Date.now(); setBal(RM.data.balance); roomRender(); } catch (e) { toast(e.message); }
+  };
+  const qt = $('#rmQuit'); if (qt) qt.onclick = async () => {
+    if (!confirm('抜けますか？　このあとはコンピューターが代わりに打ちます（もどれません。賭けはそのまま）')) return;
+    try { RM.data = await call('room_quit', { p_room: d.id }); RM.data.got = Date.now(); roomRender(); } catch (e) { toast(e.message); }
+  };
+  // 賭け金
+  const done = d.stakes.some(k => k.payout != null);
+  $('#rmBetCard').innerHTML = `<h3 style="margin-top:0">賭け金</h3><p class="small" style="margin:0">${d.stake > 0 ? `1人 ${fmt(d.stake)} X・${d.stake_mode === 'points' ? '点数で分ける' : '1位の総取り'}（国庫がもうけの5%。コンピューターは賭けません）` : 'この部屋は賭けなしです'}</p>
+    ${d.stakes.length ? `<div class="kv" style="margin-top:6px">${d.stakes.map(k => `<span>${esc(k.nickname)}${k.me ? '（あなた）' : ''}</span><b>${fmt(k.amount)} X${k.payout != null ? ` → ${fmt(k.payout)} X` : ''}</b>`).join('')}</div>` : ''}
+    ${done && d.status === 'finished' ? '<p class="small muted" style="margin:6px 0 0">精算しました。もうけ（受け取り − 賭け金）は所得になります。</p>' : ''}`;
+  if (d.status === 'finished') { const mine = d.stakes.find(k => k.me); if (mine && !RM.balDone) { RM.balDone = true; setBal(d.balance, true); } }
 }
 
 $('#rmBack').onclick = () => { LB.game = RM.data ? RM.data.game : LB.game; go('vLobby'); };
@@ -2983,7 +3338,7 @@ async function pubEditor(id) {
 }
 
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', pub_buy: '新聞・本を買った', pub_sale: '本の売上', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て' };
+const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て' };
 async function moreLoad() {
   try {
     const [hs, me] = await Promise.all([call('my_history'), call('my_profile')]);
