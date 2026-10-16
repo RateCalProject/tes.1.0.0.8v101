@@ -407,7 +407,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   <p class="links small"><a href="battle/">付属ゲーム：市区町村バトル（ログインなしで遊べます）</a></p>
 </section>
 
-<!-- 賭博：ゲームの一覧 -->
+<!-- 遊戯：ゲームの一覧 -->
 <section id="vGameList" class="view hidden">
   <div class="card" style="padding:6px 16px"><div id="gameList"></div></div>
   <p class="muted small" style="margin:8px 4px">勝ち負けはすべてサーバーで決まります。もうけ（払い戻し − 賭け金）は所得になり、税金の対象です。</p>
@@ -748,7 +748,7 @@ const GAMES = ['vGameList', 'vRace', 'vSlot', 'vBj', 'vRou', 'vHilo'];
 const MENU = [
   ['vInfo', '情報', 'i', [['cur', '通貨'], ['mkt', '相場'], ['tl', 'TL'], ['friend', 'フレンド'], ['jack', '競馬億万長者']]],
   ['vWork', '仕事', '✎', [['jobs', '仕事をえらぶ'], ['stat', '給料'], ['corp', '企業ページ'], ['mywork', '勤め先']]],
-  ['vGame', '賭博', '♠', [['vGameList', '≡ 一覧'], ['vRace', '🏇 競馬'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
+  ['vGame', '遊戯', '♠', [['vGameList', '≡ 一覧'], ['vRace', '🏇 競馬'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
   ['vCorp', '企業', '社', [['search', '会社検索'], ['pin', 'ピン留め'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所']]],
   ['vTax', '役所', '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['court', '訴え'], ['kokko', '国庫・番付']]],
   ['vMore', '設定', '⚙', [['prof', 'プロフィール'], ['hist', '記録'], ['rule', '規約']]],
@@ -784,7 +784,7 @@ function go(v, sub) {
   if (sec === 'vMore' && sub === 'admin') adminLoad();
 }
 $$('#tabs button').forEach(b => b.onclick = () => go(b.dataset.v, b.dataset.v === 'vGame' ? 'vGameList' : undefined));
-// 賭博の一覧
+// 遊戯の一覧
 const GAME_LIST = [
   ['vRace', '🏇', '競馬', '毎日16:30〜20:30（毎晩20:30はメインレース）。みんなで同じレースに賭ける、いちばんの目玉'],
   ['vSlot', '7', 'スロット', '絵柄を3つそろえて当たり'],
