@@ -2294,6 +2294,20 @@ begin
 end $$;
 
 -- 会社の見た目（だれでも見られる部分）
+-- 認証マーク：サイトの認証を受けた会社に、管理者がつける（1週間〜3ヶ月の期限つき）
+alter table public.companies add column if not exists cert_until timestamptz;   -- この時刻まで認証マーク
+alter table public.companies add column if not exists cert_note  text;          -- 管理者のメモ（認証の理由など）
+create table if not exists public.corp_cert_log (
+  id         bigserial primary key,
+  company_id int not null references public.companies(id) on delete cascade,
+  by_user    uuid references public.profiles(id) on delete set null,
+  until      timestamptz,                                  -- null は取り消し
+  note       text,
+  at         timestamptz not null default now()
+);
+alter table public.corp_cert_log enable row level security;
+revoke all on public.corp_cert_log from anon, authenticated;
+
 -- 企業の評価（くわしくは下の「企業の評価」）：評価の表と、会社の平均
 create table if not exists public.corp_reviews (
   company_id int not null references public.companies(id) on delete cascade,
@@ -2326,6 +2340,8 @@ language sql stable set search_path = public as $$
     'pinned', exists (select 1 from corp_pins where user_id = u and company_id = c.id),
     'closed_at', case when c.closed_at is null then null else _dlabel(c.closed_at) end,
     'rating', _corp_rating(c.id),
+    'cert', c.status = 'active' and coalesce(c.cert_until > _now(), false),
+    'cert_until', case when c.status = 'active' and c.cert_until > _now() then _dlabel(c.cert_until) end,
     'mine', c.owner = u)
 $$;
 
@@ -2523,6 +2539,8 @@ begin
       'cid', c.cid, 'cid_full', _cfull(c), 'name', c.name, 'form', c.form, 'kind', c.kind, 'description', c.description, 'status', c.status, 'reason', c.reason,
       'balance', c.balance, 'rate', c.rate, 'ca', c.ca, 'court_lock', c.court_lock,
       'closed_at', case when c.closed_at is null then null else _dlabel(c.closed_at) end,
+      'rating', _corp_rating(c.id),
+      'cert_until', case when c.status = 'active' and c.cert_until > _now() then _dlabel(c.cert_until) end,
       'owed', (select coalesce(sum(price), 0) from corp_orders where company_id = c.id and status = 'paid'),
       'items', (select coalesce(jsonb_agg(jsonb_build_object('id', i.id, 'name', i.name, 'price', i.price,
                   'description', i.description, 'active', i.active) order by i.id), '[]'::jsonb) from corp_items i where i.company_id = c.id),
@@ -2823,6 +2841,33 @@ begin
   return my_jobs();
 end $$;
 
+-- 管理者：認証マークをつける・のばす（p_days 7〜92日。3ヶ月まで）・取り消す（p_days = 0）
+create or replace function public.admin_corp_cert(p_cid text, p_days int, p_note text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies; untilv timestamptz; note text := nullif(left(btrim(coalesce(p_note, '')), 200), '');
+begin
+  if _role(u) is distinct from 'admin' then raise exception '認証マークをつけられるのは管理者だけです'; end if;
+  select * into c from companies where cid = _cid_norm(p_cid) for update;
+  if not found then raise exception '会社が見つかりません'; end if;
+  if coalesce(p_days, 0) = 0 then
+    if c.cert_until is null or c.cert_until <= _now() then raise exception 'この会社には認証マークがついていません'; end if;
+    update companies set cert_until = null, cert_note = null where id = c.id;
+    insert into corp_cert_log(company_id, by_user, until, note, at) values (c.id, u, null, note, _now());
+    perform _notice_l(c.owner, format('【認証】「%s」の認証マークは取り消されました。%s', c.name, case when note is not null then '理由：' || note else '' end),
+                      jsonb_build_object('go', 'corp', 'cid', c.cid), u);
+    return _corp_card(c, u) || jsonb_build_object('cert', false, 'cert_until', null);
+  end if;
+  if c.status <> 'active' then raise exception '認証マークは、営業中の会社だけにつけられます'; end if;
+  if p_days < 7 or p_days > 92 then raise exception '期間は1週間（7日）〜3ヶ月です'; end if;
+  untilv := least(_now() + make_interval(days => p_days), _now() + interval '3 months');
+  update companies set cert_until = untilv, cert_note = note where id = c.id;
+  insert into corp_cert_log(company_id, by_user, until, note, at) values (c.id, u, untilv, note, _now());
+  perform _notice_l(c.owner, format('【認証】「%s」がサイトの認証を受けました。認証マークは %s までつきます。%s', c.name, _dlabel(untilv),
+                    case when note is not null then '（' || note || '）' else '' end), jsonb_build_object('go', 'corp', 'cid', c.cid), u);
+  select * into c from companies where id = c.id;
+  return _corp_card(c, u);
+end $$;
+
 -- 管理者・副管理者：審査など（国のお金のようすは管理者だけ）
 create or replace function public.admin_state() returns jsonb
 language plpgsql security definer set search_path = public as $$
@@ -2836,6 +2881,7 @@ begin
                   from companies c join profiles p on p.id = c.owner where c.status = 'pending'),
     'active', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'cid_full', _cfull(c), 'name', c.name, 'form', c.form, 'kind', c.kind, 'owner', p.nickname,
                   'status', c.status, 'court_lock', c.court_lock,
+                  'cert_until', case when c.status = 'active' and c.cert_until > _now() then _dlabel(c.cert_until) end,
                   'balance', case when rl = 'admin' then c.balance end) order by c.name), '[]'::jsonb)
                   from companies c join profiles p on p.id = c.owner where c.status in ('active', 'suspended')),
     'fx_requests', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'kind', r.kind, 'amount', r.amount, 'contact', r.contact,
@@ -3818,7 +3864,7 @@ begin
   delete from corp_pins where company_id = c.id;
   update share_offers set status = 'canceled', done_at = _now() where company_id = c.id and status = 'open';
   update companies set status = case when how = 'closed' then 'closed' else 'bankrupt' end,
-         reason = left(coalesce(why, ''), 300), closed_at = _now(), court_lock = false
+         reason = left(coalesce(why, ''), 300), closed_at = _now(), court_lock = false, cert_until = null
    where id = c.id;
   perform _notice(c.owner, format('【%s】「%s」を%sしました。%s', label, c.name, label,
                   case when coalesce(why, '') <> '' then '（' || why || '）' else '' end));
@@ -7733,7 +7779,7 @@ begin
             '_is_multi','_mg_init','_mg_pending','_mg_act','_mg_cpu','_mg_view','_mg_delay','_mg_final','_room_cancel','_room_refund','_room_stake',
             '_mroom_hum','_mroom_start','_mroom_settle','_mroom_tick','_mroom_move','room_start','room_quit',
             '_notice_l','notice_list','notice_count','notice_read_all','_mention_ids','_mention_names','_mention_notify',
-            '_person_card','people_search','person_page','pub_delete','_week_start','_corp_rating','_corp_involved','review_state','review_submit',
+            '_person_card','people_search','person_page','pub_delete','admin_corp_cert','_week_start','_corp_rating','_corp_involved','review_state','review_submit',
             '_pub_mine','_pub_can_read','_pub_json','pub_list','news_list','pub_page','pub_read','pub_buy','pub_save','pub_item_save',
             'pub_item_delete','my_pubs','admin_pub_hide',
             '_kb_norm','_kb_gumbel','_kb_midx','_kb_jday','_kb_ms','_kb_agef','_kb_fit','_kb_name','_kb_new_horse',

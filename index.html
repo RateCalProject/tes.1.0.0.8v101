@@ -297,6 +297,7 @@ h3{font-size:15px;margin:16px 0 8px}
 .men-box button{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:4px 10px;font-size:13px}
 .plink{cursor:pointer}
 .stars{color:#E2A90C;letter-spacing:1px;white-space:nowrap}
+.cert{display:inline-flex;align-items:center;gap:2px;font-size:11px;font-weight:800;border-radius:4px;padding:1px 6px 1px 4px;background:#2B6FD6;color:#fff;margin-left:6px;white-space:nowrap;vertical-align:1px}
 .gtag{font-size:11px;font-weight:800;border-radius:4px;padding:1px 6px;background:#E3F1E9;color:#1F6B4F;margin-left:6px;white-space:nowrap}
 .gtag.gold{background:#FBEBC5;color:#8A5A12}
 .stag.dead{background:#E9E6E0;color:#5A574F}
@@ -1994,7 +1995,9 @@ $('#xSend').onclick = async () => {
 /* =================================================================
    企業（さがす・ピン留め・求人・銀行・買ったもの・会社のページ）
    ================================================================= */
-const kindTag = c => (c.official ? '<span class="offtag">公式</span>' : '') + (c.exchange ? '<span class="kindtag">取引所</span>' : c.kind === '銀行' ? '<span class="kindtag">銀行</span>' : c.kind === '証券' ? '<span class="kindtag">証券</span>' : '')
+const CERT_SVG = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+const certTag = c => c.cert || (c.cert_until && c.status === 'active') ? `<span class="cert" title="サイトの認証（${c.cert_until}まで）">${CERT_SVG}認証</span>` : '';
+const kindTag = c => (c.official ? '<span class="offtag">公式</span>' : '') + certTag(c) + (c.exchange ? '<span class="kindtag">取引所</span>' : c.kind === '銀行' ? '<span class="kindtag">銀行</span>' : c.kind === '証券' ? '<span class="kindtag">証券</span>' : '')
   + (c.status === 'suspended' ? '<span class="stag">休業中</span>' : c.status === 'bankrupt' ? '<span class="stag dead">倒産済み</span>' : c.status === 'closed' ? '<span class="stag dead">廃業済み</span>' : '')
   + (c.rating && c.rating.grade ? `<span class="gtag ${c.rating.grade === '優良企業' ? 'gold' : ''}">${c.rating.grade}</span>` : '');
 const starStr = n => '★'.repeat(n) + '☆'.repeat(5 - n);
@@ -2064,7 +2067,7 @@ async function jbSearch() {
 }
 $('#jbQ').oninput = () => { clearTimeout(jbT); jbT = setTimeout(() => jbSearch().catch(e => toast(e.message)), 300); };
 
-async function corpOpen(cid) {
+async function corpOpen(cid, ccOpen) {
   let c;
   try { c = await call('corp_page', { p_cid: cid }); setBal(c.balance); } catch (e) { return toast(e.message); }
   $$('.modal').forEach(m => m.remove());
@@ -2077,6 +2080,7 @@ async function corpOpen(cid) {
     ${dead ? `<p class="notice small" style="margin:6px 0">この会社は${c.closed_at ? c.closed_at + 'に' : ''}<b>${c.status === 'bankrupt' ? '倒産' : '廃業'}</b>しました（${c.status === 'bankrupt' ? '倒産済み' : '廃業済み'}）。もう取引はできません。</p>` : ''}
     ${c.status === 'suspended' ? '<p class="notice small" style="margin:6px 0">この会社はいま<b>休業中</b>です。買い物・送金・預け入れはできません（銀行の引き出しはできます）。</p>' : ''}
     ${c.description ? `<p style="white-space:pre-wrap;margin:8px 0">${esc(c.description)}</p>` : ''}
+    ${c.cert ? `<p class="small" style="margin:6px 0;color:#2B6FD6"><b>${CERT_SVG} サイトの認証を受けた会社です</b>（${c.cert_until}まで）</p>` : ''}
     <div class="small" style="margin:6px 0">評価：${ratingH(rt)}${rt.n ? `<span class="muted">　★5 ${rt.dist[4]}・★4 ${rt.dist[3]}・★3 ${rt.dist[2]}・★2 ${rt.dist[1]}・★1 ${rt.dist[0]}</span>` : ''}</div>
     ${dead ? '' : `<div class="row" style="margin:8px 0"><button class="btn s" data-pin>${c.pinned ? '📌 ピン留めをやめる' : '📌 ピン留め'}</button>
       ${c.mine || c.status !== 'active' ? '' : '<button class="btn s" data-send>この会社に送金</button>'}</div>`}
@@ -2101,10 +2105,22 @@ async function corpOpen(cid) {
         ${it.description ? `<p class="small muted" style="margin:4px 0;white-space:pre-wrap">${esc(it.description)}</p>` : ''}
         ${c.mine || c.status !== 'active' ? '' : `<button class="btn main s" data-buy="${it.id}" data-price="${it.price}" data-name="${esc(it.name)}">購入する</button>`}</div>`).join('')
       : '<p class="muted small">いまは商品がありません</p>'}
-    <p class="muted small">買うときは手数料（1%・最低1 X）がかかります。品物（マイクラのブロックなど）は会社がサイトの外で渡します。</p>`}</div>`;
+    <p class="muted small">買うときは手数料（1%・最低1 X）がかかります。品物（マイクラのブロックなど）は会社がサイトの外で渡します。</p>`}
+    ${ME.role === 'admin' && !dead ? `<details class="ed" style="margin-top:10px" ${ccOpen ? 'open' : ''}><summary>認証マーク（管理者）</summary>
+      <p class="small" style="margin:6px 0">${c.cert ? `いまは <b>${c.cert_until}</b> までついています。` : 'いまはついていません。'}</p>
+      ${c.status === 'active' ? `<div class="row"><span class="small" style="width:4.5em">期間</span><select class="inp grow" id="ctDays" style="margin:0"><option value="7">1週間</option><option value="14">2週間</option><option value="30">1ヶ月</option><option value="61">2ヶ月</option><option value="92" selected>3ヶ月</option></select></div>
+      <input class="inp" id="ctNote" maxlength="200" placeholder="メモ（社長に届きます。なくてもOK）">` : '<p class="muted small">休業中の会社にはつけられません。</p>'}
+      <div class="row">${c.status === 'active' ? `<button class="btn main s" data-cert="1">${c.cert ? 'いまから期間をつけなおす' : 'つける'}</button>` : ''}${c.cert ? '<button class="btn s" data-cert="0">取り消す</button>' : ''}</div>
+      <p class="muted small" style="margin:4px 0 0">サイトの認証を受けた会社に、いまから1週間〜3ヶ月の期限つきでつけます。期限がすぎると自動で消えます。</p></details>` : ''}</div>`;
   m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) m.remove(); };
   document.body.appendChild(m);
   const act = async (fn, args, msg) => { try { const r = await call(fn, args); if (msg) toast(msg); corpOpen(cid); return r; } catch (e) { toast(e.message); } };
+  m.querySelectorAll('[data-cert]').forEach(b => b.onclick = async () => {
+    const on = b.dataset.cert === '1', note = (m.querySelector('#ctNote') || {}).value || '';
+    if (!on && !confirm('認証マークを取り消しますか？（社長に届きます）')) return;
+    try { await call('admin_corp_cert', { p_cid: cid, p_days: on ? Number(m.querySelector('#ctDays').value) : 0, p_note: note }); toast(on ? '認証マークをつけました' : '取り消しました'); corpOpen(cid, true); }
+    catch (e) { toast(e.message); }
+  });
   const pinB = m.querySelector('[data-pin]'); if (pinB) pinB.onclick = () => act('corp_pin', { p_cid: cid, p_on: !c.pinned }, c.pinned ? 'ピン留めをやめました' : 'ピン留めしました');
   const sendB = m.querySelector('[data-send]');
   if (sendB) sendB.onclick = () => { m.remove(); go('vTax', 'xfer'); $('#xTo').value = cid; $('#xAmt').focus(); xferInput(); };
@@ -2168,6 +2184,14 @@ function ownSections(c) {
   const bank = c.kind === '銀行', cid = c.cid, sus = c.status === 'suspended';
   const waitOrders = c.orders.filter(o => o.status === 'paid').length;
   const S = [];
+  if (c.status === 'active' || c.status === 'suspended') {
+    const rt = c.rating || { n: 0 };
+    S.push(['cert', '評価・認証マーク', `${rt.n ? '★' + Number(rt.avg).toFixed(1) + (rt.grade ? '・' + rt.grade : '') : '評価なし'}${c.cert_until ? '・認証あり' : ''}`, 0, `
+      <div class="small">評価：${ratingH(rt)}${rt.n ? `<br><span class="muted">★5 ${rt.dist[4]}・★4 ${rt.dist[3]}・★3 ${rt.dist[2]}・★2 ${rt.dist[1]}・★1 ${rt.dist[0]}</span>` : ''}</div>
+      <p class="muted small" style="margin:4px 0 8px">その週に関わった人が★で評価します。3人以上で平均4.1以上は「良企業」、4.7以上は「優良企業」になります。</p>
+      <div class="small">認証マーク：${c.cert_until ? `<span class="cert">${CERT_SVG}認証</span> <b>${c.cert_until}</b>まで` : 'なし'}</div>
+      <p class="muted small" style="margin:4px 0 0">サイトの認証を受けた会社に、管理者が1週間〜3ヶ月の期限つきでつけます。</p>`]);
+  }
   S.push(['money', 'お金（送金・引き出し・給料）', `${fmt(c.balance)} X${c.ca > 0 ? `・${fmt(c.ca)} CA` : ''}`, 0, `
       <div class="kv"><span>会社のID</span><b style="user-select:all">${c.cid_full}</b><span class="muted">省略形（取引に使える）</span><b>${cid}</b><span>会社のお金</span><b>${fmt(c.balance)} X</b>
         ${bank ? `<span class="muted">あずかっている預金</span><b>${fmt(c.deposits)} X</b><span class="muted">口座の数</span><b>${c.accounts}</b>` : ''}
@@ -2238,7 +2262,7 @@ function ownRender() {
       const n = live ? ownSections(x).reduce((a, s2) => a + s2[3], 0) : 0;
       const st = { pending: '審査中', active: '営業中', suspended: x.court_lock ? '休業中（命令）' : '休業中', closed: '廃業', bankrupt: '倒産' }[x.status] || x.status;
       return `<div class="co-row" ${live ? `data-own-open="${x.cid}"` : ''} style="${live ? '' : 'cursor:default'}">
-        <span class="nm"><b>${esc(x.name)}${kindTag({ ...x, status: '' })}</b>
+        <span class="nm"><b>${esc(x.name)}${kindTag({ ...x, status: '', cert: !!x.cert_until })}</b>
         <small>${st}${live ? `・ID ${x.cid_full}・お金 ${fmt(x.balance)} X` : x.status === 'pending' ? '・管理者の確認待ち' : x.closed_at ? '・' + x.closed_at : ''}</small></span>${dot(n)}${live ? '<span class="go" style="color:var(--muted);font-size:20px">›</span>' : ''}</div>`;
     }).join('') || '<p class="muted small" style="margin:0">まだ会社はありません。下の「企業の申請」から作れます。</p>') + '</div>';
     if (OW.rejected.length) h += `<div class="card"><h3 style="margin-top:0">却下された申請</h3>${OW.rejected.map(r => `<p class="small" style="margin:4px 0">${esc(r.name)}${r.reason ? '：' + esc(r.reason) : ''}</p>`).join('')}</div>`;
@@ -2439,8 +2463,9 @@ async function adminLoad() {
       <p class="muted small" style="margin:4px 0 0">買った人の X と、売った人の CA から引いて、風の芽証券取引所に入ります。</p>
       <p class="small muted">副管理者（ID）：${esc(d.subadmins || 'なし')}</p>` : ''}
       <h3>活動中の企業</h3>
-      ${d.active.map(c => `<div class="line"><span class="grow">${esc(c.name)}${c.status === 'suspended' ? `<span class="stag">${c.court_lock ? '休業命令' : '休業中'}</span>` : ''}
-          <small>${esc(c.kind === '一般' ? c.form : c.kind)}・ID ${c.cid_full}・社長 ${esc(c.owner)}${adm ? `・お金 ${fmt(c.balance)} X` : ''}</small></span>
+      ${d.active.map(c => `<div class="line"><span class="grow">${esc(c.name)}${c.cert_until ? `<span class="cert">${CERT_SVG}認証</span>` : ''}${c.status === 'suspended' ? `<span class="stag">${c.court_lock ? '休業命令' : '休業中'}</span>` : ''}
+          <small>${esc(c.kind === '一般' ? c.form : c.kind)}・ID ${c.cid_full}・社長 ${esc(c.owner)}${adm ? `・お金 ${fmt(c.balance)} X` : ''}${c.cert_until ? `・認証 ${c.cert_until}まで` : ''}</small></span>
+          ${adm && c.status === 'active' ? `<button class="btn s" data-certopen="${c.cid}">認証マーク</button>` : ''}
           ${adm ? (c.status === 'suspended' ? `<button class="btn s" data-cact="resume" data-cid="${c.cid}">再開させる</button>` : `<button class="btn s" data-cact="suspend" data-cid="${c.cid}">休業命令</button>`)
             + `<button class="btn s" data-cact="bankrupt" data-cid="${c.cid}">倒産させる</button>` : ''}</div>`).join('') || '<p class="muted small">まだありません</p>'}`;
     $$('#adminBox [data-fxok], #adminBox [data-fxng]').forEach(b => b.onclick = async () => {
@@ -2460,6 +2485,7 @@ async function adminLoad() {
         toast(ok ? '認めました' : '棄却しました'); adminLoad();
       } catch (e) { toast(e.message); }
     });
+    $$('#adminBox [data-certopen]').forEach(b => b.onclick = () => corpOpen(b.dataset.certopen, true));
     $$('#adminBox [data-cact]').forEach(b => b.onclick = async () => {
       const a = b.dataset.cact, w = { suspend: '休業命令を出し', resume: '休業命令をとき', bankrupt: '倒産させ' }[a];
       const why = a === 'resume' ? '' : prompt(`${w}ます。理由（社長に届きます）`, ''); if (why === null) return;
@@ -3423,11 +3449,12 @@ const NT_GO = { フレンド: ['vInfo', 'friend'], メンション: ['vInfo', 't
   没収: ['vTax', 'tax'], 企業申請: ['vWork', 'corp'], 社長交代: ['vWork', 'corp'], 命令: ['vWork', 'corp'], 応募: ['vWork', 'corp'], 口座の申込: ['vWork', 'corp'],
   借入の申込: ['vWork', 'corp'], 返済: ['vWork', 'corp'], 採用: ['vWork', 'mywork'], 株: ['vCorp', 'stock'], 株の譲渡: ['vCorp', 'stock'], 配当: ['vCorp', 'stock'],
   口座: ['vCorp', 'bank'], 借入: ['vCorp', 'bank'], 交換: ['vCorp', 'invest'], 本: ['vInfo', 'pub'], '広報・書籍': ['vInfo', 'pub'], 対戦: ['vGame', 'vGameList'],
-  倒産: ['vMore', 'hist'], 廃業: ['vMore', 'hist'], お金: ['vMore', 'hist'] };
+  倒産: ['vMore', 'hist'], 廃業: ['vMore', 'hist'], お金: ['vMore', 'hist'], 認証: ['vWork', 'corp'] };
 function noticeGo(n) {
   const L = n.link || {}, b = n.body || '', tag = noticeTag(b);
   $$('.modal').forEach(m => m.remove());
   if (L.go === 'room' || (tag === '対戦' && /部屋 #(\d+)/.test(b))) { RM.id = Number(L.room || /部屋 #(\d+)/.exec(b)[1]); return go('vRoom'); }
+  if (L.go === 'corp' && L.cid) return corpOpen(L.cid);
   if (L.go === 'tl') { tlScope = 'mention'; $$('#tlScope button').forEach(x => x.classList.toggle('on', x.dataset.k === 'mention')); return go('vInfo', 'tl'); }
   if (tag === '注文') return go(/渡してください/.test(b) ? 'vWork' : 'vCorp', /渡してください/.test(b) ? 'corp' : 'order');
   const g = NT_GO[tag] || (/税|給付金|滞納|差し押さえ/.test(b) ? ['vTax', 'tax'] : null);
