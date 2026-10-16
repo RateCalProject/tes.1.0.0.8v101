@@ -860,7 +860,7 @@ end $$;
 create or replace function public._income(u uuid, m int) returns bigint
 language sql stable set search_path = public as $$
   select greatest(coalesce(sum(payout - bet), 0), 0)::bigint from tx_log
-   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend','liquidation','game_bet')
+   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend','liquidation','game_bet','pub_sale')
      and created_at >= _month_start(m) and created_at < _month_start(_next_month(m))
 $$;
 
@@ -4875,6 +4875,265 @@ begin
   return room_state(p_room);
 end $$;
 
+-- ---------------------------------------------------------------------
+-- 広報・書籍（情報タブ）
+--   新聞：会社が出す。記事を書き、購読料（期間ごと）を決める（0なら無料）。無料の記事は「ニュース」に出る
+--   本　：だれでも書ける（個人・会社）。値段を決める（0なら無料）。章ごとに書き、試し読み（無料の章）も作れる
+--   買う・購読する：代金（＋手数料1%・最低1 Xは国庫へ）。代金は書いた人（会社なら会社）に入る。個人の売上は所得
+--   管理者・副管理者は、ふさわしくないものを非公開にできる
+-- ---------------------------------------------------------------------
+create table if not exists public.pubs (
+  id          bigserial primary key,
+  kind        text not null check (kind in ('paper', 'book')),
+  author      uuid references public.profiles(id) on delete cascade,     -- 個人の本
+  company_id  int references public.companies(id) on delete cascade,     -- 会社の新聞・本
+  title       text not null,
+  description text not null default '',
+  price       bigint not null default 0 check (price >= 0),             -- 本：買う値段／新聞：購読料（1期間）
+  period_days int not null default 30,
+  status      text not null default 'active',                           -- active / hidden
+  reason      text,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+create table if not exists public.pub_items (
+  id         bigserial primary key,
+  pub_id     bigint not null references public.pubs(id) on delete cascade,
+  title      text not null,
+  body       text not null,
+  free       boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create index if not exists pub_items_pub_idx on public.pub_items(pub_id, id);
+create index if not exists pub_items_news_idx on public.pub_items(free, id desc);
+create table if not exists public.pub_access (
+  pub_id  bigint not null references public.pubs(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  until   timestamptz,                                  -- null＝ずっと（本）
+  primary key (pub_id, user_id)
+);
+alter table public.pubs enable row level security;
+alter table public.pub_items enable row level security;
+alter table public.pub_access enable row level security;
+revoke all on public.pubs, public.pub_items, public.pub_access from anon, authenticated;
+
+-- 書いた人・会社が自分か
+create or replace function public._pub_mine(p pubs, u uuid) returns boolean
+language sql stable set search_path = public as $$
+  select coalesce(p.author = u, false) or exists (select 1 from companies c where c.id = p.company_id and c.owner = u)
+$$;
+
+-- 読めるか（無料・買った・購読中・自分のもの）
+create or replace function public._pub_can_read(p pubs, u uuid) returns boolean
+language sql stable set search_path = public as $$
+  select coalesce(p.price = 0 or _pub_mine(p, u)
+      or exists (select 1 from pub_access a where a.pub_id = p.id and a.user_id = u and (a.until is null or a.until > _now())), false)
+$$;
+
+create or replace function public._pub_json(p pubs, u uuid) returns jsonb
+language sql stable set search_path = public as $$
+  select jsonb_build_object('id', p.id, 'kind', p.kind, 'title', p.title, 'description', p.description, 'price', p.price,
+    'period_days', p.period_days, 'status', p.status, 'reason', p.reason, 'updated', _dlabel(p.updated_at),
+    'by', coalesce((select name from companies where id = p.company_id), (select nickname from profiles where id = p.author)),
+    'by_company', p.company_id is not null, 'by_cid', (select cid from companies where id = p.company_id),
+    'by_badge', case when p.company_id is null then _badge(p.author) end,
+    'official', coalesce((select official from companies where id = p.company_id), false),
+    'items', (select count(*) from pub_items where pub_id = p.id),
+    'mine', _pub_mine(p, u), 'can_read', _pub_can_read(p, u),
+    'until', (select case when until is null then null else _dlabel(until) end from pub_access where pub_id = p.id and user_id = u and (until is null or until > _now())),
+    'owned', exists (select 1 from pub_access where pub_id = p.id and user_id = u and (until is null or until > _now())))
+$$;
+
+-- 一覧（新聞・本）
+create or replace function public.pub_list(p_kind text, p_q text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); q text := btrim(coalesce(p_q, ''));
+begin
+  return (select coalesce(jsonb_agg(_pub_json(p, u) order by p.updated_at desc), '[]'::jsonb) from (
+    select * from pubs p where p.kind = p_kind and (p.status = 'active' or _pub_mine(p, u))
+       and (p.company_id is null or exists (select 1 from companies c where c.id = p.company_id and c.status in ('active', 'suspended')))
+       and (q = '' or p.title ilike '%' || q || '%' or p.description ilike '%' || q || '%')
+     order by p.updated_at desc limit 50) p);
+end $$;
+
+-- ニュース（新聞の無料の記事）
+create or replace function public.news_list() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me();
+begin
+  return (select coalesce(jsonb_agg(jsonb_build_object('id', i.id, 'title', i.title, 'pub_id', p.id, 'paper', p.title,
+            'by', (select name from companies where id = p.company_id), 'official', coalesce((select official from companies where id = p.company_id), false),
+            'at', _dlabel(i.created_at), 'head', left(regexp_replace(i.body, '\s+', ' ', 'g'), 60)) order by i.id desc), '[]'::jsonb)
+    from (select * from pub_items where free order by id desc limit 200) i join pubs p on p.id = i.pub_id
+   where p.kind = 'paper' and p.status = 'active'
+     and exists (select 1 from companies c where c.id = p.company_id and c.status in ('active', 'suspended')));
+end $$;
+
+-- 新聞・本のページ（記事・章の一覧）
+create or replace function public.pub_page(p_id bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); p pubs; rd boolean;
+begin
+  select * into p from pubs where id = p_id;
+  if not found or (p.status <> 'active' and not _pub_mine(p, u) and not _is_staff(u)) then raise exception '見つかりません'; end if;
+  rd := _pub_can_read(p, u);
+  return _pub_json(p, u) || jsonb_build_object('staff', _is_staff(u),
+    'list', (select coalesce(jsonb_agg(jsonb_build_object('id', i.id, 'title', i.title, 'free', i.free, 'at', _dlabel(i.created_at),
+               'chars', char_length(i.body), 'readable', rd or i.free) order by case when p.kind = 'paper' then -i.id else i.id end), '[]'::jsonb)
+             from pub_items i where i.pub_id = p.id),
+    'balance', _bal(u));
+end $$;
+
+-- 読む
+create or replace function public.pub_read(p_item bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); i pub_items; p pubs;
+begin
+  select * into i from pub_items where id = p_item;
+  if not found then raise exception '見つかりません'; end if;
+  select * into p from pubs where id = i.pub_id;
+  if p.status <> 'active' and not _pub_mine(p, u) and not _is_staff(u) then raise exception '見つかりません'; end if;
+  if not i.free and not _pub_can_read(p, u) and not _is_staff(u) then
+    raise exception '%', case when p.kind = 'paper' then '購読すると読めます' else '買うと読めます' end;
+  end if;
+  return jsonb_build_object('id', i.id, 'title', i.title, 'body', i.body, 'at', _dlabel(i.created_at), 'free', i.free,
+    'pub', _pub_json(p, u),
+    'prev', (select id from pub_items where pub_id = p.id and id < i.id order by id desc limit 1),
+    'next', (select id from pub_items where pub_id = p.id and id > i.id order by id limit 1));
+end $$;
+
+-- 買う（本）・購読する（新聞。期間をのばす）
+create or replace function public.pub_buy(p_id bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); p pubs; me profiles; fee bigint; c companies; cur timestamptz;
+begin
+  select * into p from pubs where id = p_id and status = 'active';
+  if not found then raise exception '見つかりません'; end if;
+  if _pub_mine(p, u) then raise exception '自分のものは買えません'; end if;
+  if p.price = 0 then raise exception '無料なので、そのまま読めます'; end if;
+  if p.kind = 'book' and exists (select 1 from pub_access where pub_id = p.id and user_id = u) then raise exception 'もう買っています'; end if;
+  select * into me from profiles where id = u for update;
+  if _now() < me.created_at + interval '7 days' then raise exception '登録から7日たつまで、買い物はできません'; end if;
+  if _debt(u) > 0 then raise exception '税金の滞納があるので買えません'; end if;
+  if p.company_id is not null then
+    select * into c from companies where id = p.company_id and status = 'active';
+    if not found then raise exception 'この会社はいま営業していません'; end if;
+  end if;
+  fee := _xfer_fee(p.price);
+  if me.balance < p.price + fee then raise exception 'AiliNaXが足りません（手数料 % X をふくめて % X 必要です）', fee, p.price + fee; end if;
+  update profiles set balance = balance - (p.price + fee) where id = u;
+  update treasury set balance = balance + fee, fee_total = fee_total + fee where id = 1;
+  perform _log(u, 'pub_buy', p.price + fee, 0, jsonb_build_object('pub', p.id, 'title', p.title));
+  if p.company_id is not null then
+    perform _corp_move(p.company_id, p.price, 'pub', format('「%s」の%s（%s さん）', p.title, case when p.kind = 'paper' then '購読料' else '売上' end, me.nickname));
+  else
+    perform _give(p.author, p.price);
+    perform _log(p.author, 'pub_sale', 0, p.price, jsonb_build_object('pub', p.id, 'title', p.title));
+    perform _notice(p.author, format('【本】%s さんが「%s」を %s X で買いました。', me.nickname, p.title, _fmt(p.price)));
+  end if;
+  if p.kind = 'book' then
+    insert into pub_access(pub_id, user_id, until) values (p.id, u, null);
+  else
+    select until into cur from pub_access where pub_id = p.id and user_id = u;
+    insert into pub_access(pub_id, user_id, until) values (p.id, u, greatest(coalesce(cur, _now()), _now()) + make_interval(days => p.period_days))
+    on conflict (pub_id, user_id) do update set until = excluded.until;
+  end if;
+  return pub_page(p.id);
+end $$;
+
+-- 書く：新聞・本を作る／変える（p_cid：会社として出すときの会社ID。新聞は会社だけ）
+create or replace function public.pub_save(p_id bigint, p_kind text, p_cid text, p_title text, p_desc text, p_price bigint, p_period int) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); p pubs; c companies; t text := btrim(coalesce(p_title, '')); nid bigint;
+begin
+  if char_length(t) < 1 or char_length(t) > 40 then raise exception '名前（タイトル）は1〜40文字です'; end if;
+  if p_price is null or p_price < 0 or p_price > 1000000000 then raise exception '値段は0〜10億 X です'; end if;
+  if p_id is null then
+    if p_kind not in ('paper', 'book') then raise exception '新聞か本をえらんでください'; end if;
+    if coalesce(btrim(p_cid), '') <> '' then
+      c := _my_corp(u, p_cid);
+      if c.status not in ('active', 'suspended') then raise exception 'この会社はいま動かせません'; end if;
+    elsif p_kind = 'paper' then raise exception '新聞は会社から出します（会社をえらんでください）';
+    end if;
+    if p_kind = 'paper' and (select count(*) from pubs where company_id = c.id and kind = 'paper') >= 3 then raise exception '新聞は1社3つまでです'; end if;
+    if p_kind = 'book' and (select count(*) from pubs where author = u) >= 30 then raise exception '本は30冊までです'; end if;
+    insert into pubs(kind, author, company_id, title, description, price, period_days, created_at, updated_at)
+    values (p_kind, case when c.id is null then u end, c.id, t, left(coalesce(p_desc, ''), 1000), p_price,
+            greatest(1, least(coalesce(p_period, 30), 365)), _now(), _now()) returning id into nid;
+    return pub_page(nid);
+  end if;
+  select * into p from pubs where id = p_id;
+  if not found or not _pub_mine(p, u) then raise exception '自分のものではありません'; end if;
+  update pubs set title = t, description = left(coalesce(p_desc, ''), 1000), price = p_price,
+         period_days = greatest(1, least(coalesce(p_period, period_days), 365)), updated_at = _now()
+   where id = p.id;
+  return pub_page(p.id);
+end $$;
+
+-- 書く：記事・章（10秒に1回）
+create or replace function public.pub_item_save(p_pub bigint, p_item bigint, p_title text, p_body text, p_free boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); p pubs; t text := btrim(coalesce(p_title, '')); b text := coalesce(p_body, '');
+begin
+  select * into p from pubs where id = p_pub;
+  if not found or not _pub_mine(p, u) then raise exception '自分のものではありません'; end if;
+  if char_length(t) < 1 or char_length(t) > 60 then raise exception 'タイトルは1〜60文字です'; end if;
+  if char_length(btrim(b)) < 1 then raise exception '本文を書いてください'; end if;
+  if char_length(b) > 20000 then raise exception '本文は2万文字までです（長いときは分けてください）'; end if;
+  if p_item is null then
+    if exists (select 1 from pub_items i join pubs x on x.id = i.pub_id where _pub_mine(x, u) and i.created_at > _now() - interval '10 seconds') then
+      raise exception '続けて出すのは10秒あけてください';
+    end if;
+    if (select count(*) from pub_items where pub_id = p.id) >= 500 then raise exception '記事・章は500までです'; end if;
+    insert into pub_items(pub_id, title, body, free, created_at) values (p.id, t, b, coalesce(p_free, false), _now());
+  else
+    update pub_items set title = t, body = b, free = coalesce(p_free, free) where id = p_item and pub_id = p.id;
+    if not found then raise exception '見つかりません'; end if;
+  end if;
+  update pubs set updated_at = _now() where id = p.id;
+  return pub_page(p.id);
+end $$;
+
+create or replace function public.pub_item_delete(p_item bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); i pub_items; p pubs;
+begin
+  select * into i from pub_items where id = p_item;
+  if not found then raise exception '見つかりません'; end if;
+  select * into p from pubs where id = i.pub_id;
+  if not _pub_mine(p, u) and not _is_staff(u) then raise exception '自分のものではありません'; end if;
+  delete from pub_items where id = i.id;
+  return pub_page(p.id);
+end $$;
+
+-- 自分の本棚（買った本・購読中の新聞）と、書いているもの
+create or replace function public.my_pubs() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me();
+begin
+  return jsonb_build_object(
+    'library', (select coalesce(jsonb_agg(_pub_json(p, u) order by p.updated_at desc), '[]'::jsonb)
+                  from pubs p join pub_access a on a.pub_id = p.id and a.user_id = u where a.until is null or a.until > _now()),
+    'mine', (select coalesce(jsonb_agg(_pub_json(p, u) order by p.updated_at desc), '[]'::jsonb) from pubs p where _pub_mine(p, u)),
+    'corps', (select coalesce(jsonb_agg(jsonb_build_object('cid', cid, 'name', name) order by id), '[]'::jsonb)
+                from companies where owner = u and status in ('active', 'suspended')));
+end $$;
+
+-- 管理者・副管理者：非公開にする・もどす
+create or replace function public.admin_pub_hide(p_id bigint, p_hide boolean, p_reason text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); p pubs; owner_u uuid;
+begin
+  if not _is_staff(u) then raise exception '管理者だけが使えます'; end if;
+  select * into p from pubs where id = p_id for update;
+  if not found then raise exception '見つかりません'; end if;
+  update pubs set status = case when p_hide then 'hidden' else 'active' end, reason = case when p_hide then left(coalesce(p_reason, ''), 200) end where id = p.id;
+  owner_u := coalesce(p.author, (select owner from companies where id = p.company_id));
+  perform _notice(owner_u, format('【広報・書籍】「%s」は管理者によって%s。%s', p.title, case when p_hide then '非公開になりました' else '公開にもどりました' end,
+                  case when p_hide and coalesce(p_reason, '') <> '' then '理由：' || p_reason else '' end));
+  return pub_page(p.id);
+end $$;
+
 -- 前の5けたの会社IDを、3けたの会社番号に変える（何度流しても同じ）
 do $$
 declare r record; nc text;
@@ -4923,6 +5182,8 @@ begin
             'my_loans','bank_acct_answer','bank_settings','loan_pack_save','loan_answer',
             '_rv_flips','_rv_legal','_rv_apply','_game_init','_game_legal','_game_apply','_game_name','_room_finish','_room_tick','_room_json',
             'room_list','room_create','room_join','room_leave','room_state','room_move','room_resign','room_bet','room_chat',
+            '_pub_mine','_pub_can_read','_pub_json','pub_list','news_list','pub_page','pub_read','pub_buy','pub_save','pub_item_save',
+            'pub_item_delete','my_pubs','admin_pub_hide',
             '_kb_norm','_kb_gumbel','_kb_midx','_kb_jday','_kb_ms','_kb_agef','_kb_fit','_kb_name','_kb_new_horse',
             '_kb_make_race','_kb_make_day','_kb_seq','_kb_prob','_kb_prob_trio','_kb_rate','_kb_odds','_kb_check_sel',
             '_kb_hit','_kb_settle','_kb_month','_kb_seed','_kb_tick','_kb_status',

@@ -218,6 +218,8 @@ h3{font-size:15px;margin:16px 0 8px}
 .chat .m{padding:4px 0;border-top:1px solid var(--line)}
 .chat .m:first-child{border-top:0}
 .howto ol,.howto ul{margin:6px 0;padding-left:20px}.howto li{margin:3px 0}
+.reader{white-space:pre-wrap;font-size:17px;line-height:1.95;word-break:break-word;margin:10px 0}
+.lock{color:var(--muted);font-size:12px}
 .co-row .nm b{display:block}
 .co-row .nm small{color:var(--muted);display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kindtag{font-size:11px;font-weight:800;border-radius:4px;padding:1px 6px;background:var(--soft);color:var(--accent);margin-left:6px}
@@ -295,6 +297,10 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   <div class="card" data-sub="jack">
     <h3 style="margin-top:0">今週の競馬億万長者 <span class="muted small" id="infoWeek">（今週の勝ちの合計）</span></h3>
     <ul class="rank" id="infoJack"></ul>
+  </div>
+  <div class="card" data-sub="pub">
+    <div class="seg" id="pbTabs" style="display:flex;overflow-x:auto"><button data-k="news" class="on">ニュース</button><button data-k="paper">新聞</button><button data-k="book">本</button><button data-k="lib">本棚</button><button data-k="write">書く</button></div>
+    <div id="pbBox" style="margin-top:10px"></div>
   </div>
   <div class="card" data-sub="mkt" id="mktFx"></div>
   <div class="card" data-sub="mkt" id="mktStock"></div>
@@ -803,7 +809,7 @@ const GAMES = ['vGameList', 'vRace', 'vSlot', 'vBj', 'vRou', 'vHilo', 'vLobby', 
 const HIDDEN_SUBS = ['vLobby', 'vRoom'];
 // メインメニュー（左から）とサブメニュー
 const MENU = [
-  ['vInfo', '情報', 'i', [['cur', '通貨'], ['mkt', '相場'], ['tl', 'TL'], ['friend', 'フレンド'], ['jack', '競馬億万長者']]],
+  ['vInfo', '情報', 'i', [['cur', '通貨'], ['pub', '広報・書籍'], ['mkt', '相場'], ['tl', 'TL'], ['friend', 'フレンド'], ['jack', '競馬億万長者']]],
   ['vWork', '仕事', '✎', [['jobs', '仕事をえらぶ'], ['stat', '給料'], ['corp', '企業ページ'], ['mywork', '勤め先']]],
   ['vGame', '遊戯', '♠', [['vGameList', '≡ 一覧'], ['vRace', '🏇 競馬'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
   ['vCorp', '企業', '社', [['search', '会社検索'], ['pin', 'ピン留め'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所']]],
@@ -829,7 +835,7 @@ function go(v, sub) {
   $('#subNav').innerHTML = subs.map(x => `<button data-s="${x[0]}" class="${x[0] === sub ? 'on' : ''}">${x[1]}</button>`).join('');
   $$('#subNav button').forEach(b => b.onclick = () => go(main, b.dataset.s));
   window.scrollTo(0, 0);
-  if (sec === 'vInfo') { infoLoad(); if (sub === 'tl') tlLoad(true); if (sub === 'mkt') mktLoad(); if (sub === 'friend') friendLoad(); }
+  if (sec === 'vInfo') { infoLoad(); if (sub === 'tl') tlLoad(true); if (sub === 'mkt') mktLoad(); if (sub === 'pub') pubLoad(); if (sub === 'friend') friendLoad(); }
   if (sec === 'vWork') workLoad();
   if (sec === 'vRace') kbLoad();
   if (sec === 'vLobby') lobbyLoad();
@@ -2679,8 +2685,155 @@ $('#rmChatSend').onclick = async () => {
 };
 $('#rmChatIn').onkeydown = ev => { if (ev.key === 'Enter') $('#rmChatSend').click(); };
 
+
+/* =================================================================
+   広報・書籍（ニュース・新聞・本）
+   ================================================================= */
+const PB = { tab: 'news', q: '', edit: null };
+const priceTxt = x => x.price === 0 ? '無料' : x.kind === 'paper' ? `${fmt(x.price)} X／${x.period_days}日` : `${fmt(x.price)} X`;
+const byTxt = x => `${esc(x.by)}${x.official ? '<span class="offtag">公式</span>' : ''}${badgeH(x.by_badge)}`;
+const pubRow = x => `<div class="co-row" data-pub="${x.id}"><span class="nm"><b>${esc(x.title)}${x.status === 'hidden' ? '<span class="stag">非公開</span>' : ''}</b>
+  <small>${x.kind === 'paper' ? '新聞' : '本'}・${byTxt(x)}・${priceTxt(x)}・${x.kind === 'paper' ? '記事' : '章'} ${x.items}${x.owned ? (x.until ? `・<b>${x.until}まで購読中</b>` : '・<b>買った</b>') : ''}</small></span><span style="color:var(--muted);font-size:20px">›</span></div>`;
+async function pubLoad() {
+  $$('#pbTabs button').forEach(b => b.classList.toggle('on', b.dataset.k === PB.tab));
+  const box = $('#pbBox');
+  try {
+    if (PB.tab === 'news') {
+      const d = await call('news_list');
+      box.innerHTML = d.map(n => `<div class="co-row" data-item="${n.id}"><span class="nm"><b>${esc(n.title)}</b>
+          <small>${esc(n.paper)}（${esc(n.by)}${n.official ? '<span class="offtag">公式</span>' : ''}）・${n.at}</small><small>${esc(n.head)}</small></span></div>`).join('')
+        || '<p class="muted small" style="margin:0">まだニュースはありません。会社が新聞を出し、無料の記事を書くとここに出ます。</p>';
+    } else if (PB.tab === 'paper' || PB.tab === 'book') {
+      const d = await call('pub_list', { p_kind: PB.tab, p_q: PB.q });
+      box.innerHTML = `<input class="inp" id="pbQ" placeholder="${PB.tab === 'paper' ? '新聞' : '本'}をさがす" value="${esc(PB.q)}">` + (d.map(pubRow).join('')
+        || `<p class="muted small" style="margin:6px 0 0">まだありません。${PB.tab === 'paper' ? '会社の社長は「書く」から新聞を出せます。' : '「書く」から、だれでも本を出せます（無料でもOK）。'}</p>`);
+      const q = $('#pbQ'); let t = null; q.oninput = () => { clearTimeout(t); t = setTimeout(() => { PB.q = q.value; pubLoad().then(() => { const n = $('#pbQ'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }); }, 400); };
+    } else if (PB.tab === 'lib') {
+      const d = await call('my_pubs');
+      box.innerHTML = d.library.map(pubRow).join('') || '<p class="muted small" style="margin:0">まだありません。買った本や購読中の新聞がここに並びます。</p>';
+    } else if (PB.tab === 'write') {
+      if (PB.edit) return pubEditor(PB.edit);
+      const d = await call('my_pubs');
+      box.innerHTML = `<h4 style="margin:0 0 4px">書いているもの</h4>${d.mine.map(x => pubRow(x).replace('data-pub=', 'data-pedit=')).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
+        <h4>新しく出す</h4>
+        <div class="item">
+          <div class="seg" id="pnKind"><button data-k="book" class="on">本</button><button data-k="paper">新聞</button></div>
+          <select class="inp" id="pnBy" style="margin-top:6px"><option value="">個人として（本だけ）</option>${d.corps.map(c => `<option value="${c.cid}">会社「${esc(c.name)}」として</option>`).join('')}</select>
+          <input class="inp" id="pnTitle" maxlength="40" placeholder="名前（タイトル）">
+          <textarea class="inp" id="pnDesc" rows="3" maxlength="1000" placeholder="紹介文"></textarea>
+          <div class="row"><span class="small" style="width:5em">値段</span><input class="inp grow" id="pnPrice" type="number" min="0" value="0" style="margin:0"><span class="small">X（0なら無料）</span></div>
+          <div class="row hidden" id="pnPer"><span class="small" style="width:5em">購読期間</span><input class="inp grow" id="pnPeriod" type="number" min="1" max="365" value="30" style="margin:0"><span class="small">日ごと</span></div>
+          <button class="btn main wide" id="pnSave" style="margin-top:6px">出す</button>
+          <p class="muted small" style="margin:6px 0 0">本は、だれでも出せます。新聞は会社から出します（購読料は会社に入ります）。代金には手数料1%（買う人が払う）がかかります。個人の本の売上は所得です。</p></div>`;
+      let kind = 'book';
+      $$('#pnKind button').forEach(b => b.onclick = () => { kind = b.dataset.k; $$('#pnKind button').forEach(x => x.classList.toggle('on', x === b)); $('#pnPer').classList.toggle('hidden', kind !== 'paper'); });
+      $('#pnSave').onclick = async () => {
+        try { const r = await call('pub_save', { p_id: null, p_kind: kind, p_cid: $('#pnBy').value, p_title: $('#pnTitle').value, p_desc: $('#pnDesc').value,
+          p_price: Math.max(0, Math.floor(Number($('#pnPrice').value) || 0)), p_period: Math.floor(Number($('#pnPeriod').value) || 30) }); toast('出しました。記事・章を書きましょう'); PB.edit = r.id; pubLoad(); }
+        catch (e) { toast(e.message); }
+      };
+    }
+  } catch (e) { toast(e.message); }
+}
+$$('#pbTabs button').forEach(b => b.onclick = () => { PB.tab = b.dataset.k; PB.edit = null; PB.q = ''; pubLoad(); });
+$('#pbBox').addEventListener('click', ev => {
+  const it = ev.target.closest('[data-item]'), pb = ev.target.closest('[data-pub]'), pe = ev.target.closest('[data-pedit]');
+  if (it) pubReader(Number(it.dataset.item));
+  else if (pb) pubOpen(Number(pb.dataset.pub));
+  else if (pe) { PB.edit = Number(pe.dataset.pedit); pubLoad(); }
+});
+async function pubOpen(id) {
+  let d; try { d = await call('pub_page', { p_id: id }); } catch (e) { return toast(e.message); }
+  $$('.modal').forEach(m => m.remove());
+  const m = document.createElement('div'); m.className = 'modal';
+  m.innerHTML = `<div class="sheet">
+    <div class="row"><b style="font-size:19px">${esc(d.title)}</b><button class="btn s" style="margin-left:auto" data-x>とじる</button></div>
+    <p class="muted small" style="margin:4px 0">${d.kind === 'paper' ? '新聞' : '本'}・${byTxt(d)}・${priceTxt(d)}${d.updated ? '・' + d.updated + '更新' : ''}</p>
+    ${d.status === 'hidden' ? `<p class="notice small">管理者によって非公開になっています。${d.reason ? '理由：' + esc(d.reason) : ''}</p>` : ''}
+    ${d.description ? `<p style="white-space:pre-wrap;margin:8px 0">${esc(d.description)}</p>` : ''}
+    ${d.mine ? '<p class="small muted">あなたが出しているものです（「書く」から編集できます）。</p>'
+      : d.price > 0 && (d.kind === 'paper' || !d.owned) ? `<button class="btn main wide" data-buy>${d.kind === 'paper' ? (d.owned ? `購読を${d.period_days}日のばす（${fmt(d.price)} X）` : `購読する（${d.period_days}日 ${fmt(d.price)} X）`) : `買う（${fmt(d.price)} X）`}</button>
+        <p class="muted small" style="margin:4px 0 0">手数料1%（最低1 X）がかかります。${d.owned && d.until ? d.until + 'まで購読中です。' : ''}</p>` : ''}
+    <h3>${d.kind === 'paper' ? '記事' : '目次'}</h3>
+    ${d.list.map(x => `<div class="co-row" ${x.readable ? `data-read="${x.id}"` : ''} style="${x.readable ? '' : 'cursor:default'}"><span class="nm"><b>${esc(x.title)}</b>
+        <small>${x.at}・${fmt(x.chars)}文字${x.free ? '・無料' : ''}</small></span>${x.readable ? '<span style="color:var(--muted);font-size:20px">›</span>' : '<span class="lock">🔒 ' + (d.kind === 'paper' ? '購読すると読める' : '買うと読める') + '</span>'}</div>`).join('')
+      || '<p class="muted small">まだありません</p>'}
+    ${d.staff ? `<div class="row" style="margin-top:10px"><button class="btn s" data-hide>${d.status === 'hidden' ? '公開にもどす（管理）' : '非公開にする（管理）'}</button></div>` : ''}</div>`;
+  m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) m.remove(); };
+  document.body.appendChild(m);
+  m.querySelectorAll('[data-read]').forEach(r => r.onclick = () => pubReader(Number(r.dataset.read)));
+  const by = m.querySelector('[data-buy]');
+  if (by) by.onclick = async () => {
+    if (!confirm(`${d.title} を${d.kind === 'paper' ? '購読' : '購入'}します（${fmt(d.price)} X＋手数料）。よろしいですか？`)) return;
+    try { const r = await call('pub_buy', { p_id: d.id }); setBal(r.balance); toast(d.kind === 'paper' ? '購読しました' : '買いました'); pubOpen(d.id); } catch (e) { toast(e.message); }
+  };
+  const hd = m.querySelector('[data-hide]');
+  if (hd) hd.onclick = async () => { const hide = d.status !== 'hidden'; const why = hide ? prompt('非公開にする理由（書いた人に届きます）', '') : ''; if (why === null) return;
+    try { await call('admin_pub_hide', { p_id: d.id, p_hide: hide, p_reason: why }); toast('できました'); pubOpen(d.id); } catch (e) { toast(e.message); } };
+}
+async function pubReader(id) {
+  let r; try { r = await call('pub_read', { p_item: id }); } catch (e) { return toast(e.message); }
+  $$('.modal').forEach(m => m.remove());
+  const m = document.createElement('div'); m.className = 'modal';
+  m.innerHTML = `<div class="sheet">
+    <div class="row"><button class="btn s" data-back>‹ ${esc(r.pub.title)}</button><button class="btn s" style="margin-left:auto" data-x>とじる</button></div>
+    <h2 style="margin:12px 0 2px;font-size:21px">${esc(r.title)}</h2>
+    <p class="muted small" style="margin:0">${byTxt(r.pub)}・${r.at}</p>
+    <div class="reader">${esc(r.body)}</div>
+    <div class="row" style="justify-content:space-between">${r.prev ? `<button class="btn s" data-go="${r.prev}">‹ 前へ</button>` : '<span></span>'}${r.next ? `<button class="btn main s" data-go="${r.next}">次へ ›</button>` : ''}</div></div>`;
+  m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) m.remove(); };
+  document.body.appendChild(m);
+  m.querySelector('[data-back]').onclick = () => pubOpen(r.pub.id);
+  m.querySelectorAll('[data-go]').forEach(b => b.onclick = () => pubReader(Number(b.dataset.go)));
+  m.querySelector('.sheet').scrollTop = 0;
+}
+async function pubEditor(id) {
+  let d; try { d = await call('pub_page', { p_id: id }); } catch (e) { PB.edit = null; return toast(e.message); }
+  const box = $('#pbBox');
+  const itemForm2 = x => `<div class="item" data-pit="${x ? x.id : ''}">
+    <input class="inp" data-f="title" maxlength="60" placeholder="${d.kind === 'paper' ? '記事のタイトル' : '章のタイトル（例：第1章 はじまり）'}" value="${x ? esc(x.title) : ''}">
+    <textarea class="inp" data-f="body" rows="${x ? 8 : 10}" maxlength="20000" placeholder="本文（2万文字まで）">${x ? esc(x.body) : ''}</textarea>
+    <div class="row"><label class="small"><input type="checkbox" data-f="free" ${x && x.free ? 'checked' : ''}> ${d.kind === 'paper' ? '無料の記事（ニュースにも出る）' : '試し読み（無料で読める）'}</label>
+      ${x ? `<button class="btn s" data-pdel="${x.id}" style="margin-left:auto">消す</button>` : ''}<button class="btn main s" data-psave style="${x ? '' : 'margin-left:auto'}">${x ? '保存' : '出す'}</button></div></div>`;
+  box.innerHTML = `<div class="row"><button class="btn s" data-pback>‹ 書いているもの</button><button class="btn s" data-popen="${d.id}" style="margin-left:auto">読者の見え方</button></div>
+    <h3 style="margin:10px 0 4px">${esc(d.title)}${d.status === 'hidden' ? '<span class="stag">非公開</span>' : ''}</h3>
+    <p class="muted small" style="margin:0 0 6px">${d.kind === 'paper' ? '新聞' : '本'}・${byTxt(d)}</p>
+    <details class="ed"><summary>設定（名前・紹介文・値段）</summary><div class="item">
+      <input class="inp" id="peTitle" maxlength="40" value="${esc(d.title)}">
+      <textarea class="inp" id="peDesc" rows="3" maxlength="1000">${esc(d.description)}</textarea>
+      <div class="row"><span class="small" style="width:5em">値段</span><input class="inp grow" id="pePrice" type="number" min="0" value="${d.price}" style="margin:0"><span class="small">X</span></div>
+      ${d.kind === 'paper' ? `<div class="row"><span class="small" style="width:5em">購読期間</span><input class="inp grow" id="pePeriod" type="number" min="1" max="365" value="${d.period_days}" style="margin:0"><span class="small">日ごと</span></div>` : ''}
+      <button class="btn main s" id="peSave">保存</button></div></details>
+    <h4>${d.kind === 'paper' ? '新しい記事' : '新しい章'}</h4>${itemForm2(null)}
+    <h4>${d.kind === 'paper' ? '記事' : '章'}（${d.list.length}）</h4>
+    ${d.list.map(x => `<div class="co-row" data-pedit-item="${x.id}"><span class="nm"><b>${esc(x.title)}</b><small>${x.at}・${fmt(x.chars)}文字${x.free ? '・無料' : ''}</small></span><span style="color:var(--muted)">直す ›</span></div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
+    <div id="peItem"></div>`;
+  box.querySelector('[data-pback]').onclick = () => { PB.edit = null; pubLoad(); };
+  box.querySelector('[data-popen]').onclick = () => pubOpen(d.id);
+  $('#peSave').onclick = async () => {
+    try { await call('pub_save', { p_id: d.id, p_kind: d.kind, p_cid: '', p_title: $('#peTitle').value, p_desc: $('#peDesc').value,
+      p_price: Math.max(0, Math.floor(Number($('#pePrice').value) || 0)), p_period: $('#pePeriod') ? Math.floor(Number($('#pePeriod').value) || 30) : 30 }); toast('保存しました'); pubEditor(d.id); }
+    catch (e) { toast(e.message); }
+  };
+  const bindForm = (el, itemId) => {
+    const f = k => el.querySelector(`[data-f="${k}"]`);
+    el.querySelector('[data-psave]').onclick = async () => {
+      try { await call('pub_item_save', { p_pub: d.id, p_item: itemId, p_title: f('title').value, p_body: f('body').value, p_free: f('free').checked }); toast(itemId ? '保存しました' : '出しました'); pubEditor(d.id); }
+      catch (e) { toast(e.message); }
+    };
+    const del = el.querySelector('[data-pdel]');
+    if (del) del.onclick = async () => { if (!confirm('この記事・章を消しますか？')) return; try { await call('pub_item_delete', { p_item: itemId }); toast('消しました'); pubEditor(d.id); } catch (e) { toast(e.message); } };
+  };
+  bindForm(box.querySelector('[data-pit=""]'), null);
+  box.querySelectorAll('[data-pedit-item]').forEach(r => r.onclick = async () => {
+    try { const it = await call('pub_read', { p_item: Number(r.dataset.peditItem) });
+      $('#peItem').innerHTML = `<h4>直す：${esc(it.title)}</h4>` + itemForm2(it); bindForm($('#peItem').querySelector('[data-pit]'), it.id); $('#peItem').scrollIntoView({ behavior: 'smooth' }); }
+    catch (e) { toast(e.message); }
+  });
+}
+
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て' };
+const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', pub_buy: '新聞・本を買った', pub_sale: '本の売上', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て' };
 async function moreLoad() {
   try {
     const [hs, me] = await Promise.all([call('my_history'), call('my_profile')]);
