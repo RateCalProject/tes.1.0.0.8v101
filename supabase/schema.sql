@@ -244,6 +244,19 @@ create unique index if not exists profiles_account_no_idx on public.profiles(acc
 alter table public.profiles add column if not exists banned_until timestamptz;
 alter table public.profiles add column if not exists mail_verified_at timestamptz;
 alter table public.profiles add column if not exists last_seen_at timestamptz;   -- 最後にサイトを開いた時刻（管理の「登録者」）
+-- 「登録から7日」の制限がなくなる時刻（null なら 登録＋7日）。2026年10月17日に登録していた人は、その時点で制限をなくした（1回だけ）
+alter table public.profiles add column if not exists ok7_at timestamptz;
+do $$
+begin
+  if not exists (select 1 from public.app_settings where key = 'ok7_migrated') then
+    update public.profiles set ok7_at = now() where created_at > now() - interval '7 days' and ok7_at is null;
+    insert into public.app_settings values ('ok7_migrated', now()::text);
+  end if;
+end $$;
+create or replace function public._ok7(u uuid) returns timestamptz
+language sql stable set search_path = public as $$
+  select coalesce(ok7_at, created_at + interval '7 days') from profiles where id = u
+$$;
 alter table public.treasury add column if not exists fee_total bigint not null default 0;
 
 -- 企業・銀行 ---------------------------------------------------------
@@ -518,9 +531,9 @@ create or replace function public.my_profile() returns jsonb
 language plpgsql security definer set search_path = public as $$
 begin
   return (select jsonb_build_object('nickname', nickname, 'balance', balance, 'account_no', account_no,
-            'send_ok', _now() >= created_at + interval '7 days', 'send_from', _dlabel(created_at + interval '7 days'),
+            'send_ok', _now() >= coalesce(ok7_at, created_at + interval '7 days'), 'send_from', _dlabel(coalesce(ok7_at, created_at + interval '7 days')),
             'is_admin', _is_admin(id), 'role', _role(id), 'badge', _badge(id),
-            'check', jsonb_build_object('days', _now() >= created_at + interval '7 days', 'days_from', _dlabel(created_at + interval '7 days'),
+            'check', jsonb_build_object('days', _now() >= coalesce(ok7_at, created_at + interval '7 days'), 'days_from', _dlabel(coalesce(ok7_at, created_at + interval '7 days')),
                        'debt', _debt(id), 'mail', mail_verified_at is not null and mail_verified_at >= _now() - interval '183 days',
                        'mail_at', case when mail_verified_at is null then null else _dlabel(mail_verified_at) end,
                        'mail_until', case when mail_verified_at is null then null else _dlabel(mail_verified_at + interval '183 days') end))
@@ -900,7 +913,7 @@ begin
   select * into p from profiles where id = u;
   if not found then return null; end if;
   return jsonb_build_object('role', _role(u),
-    'ok', _debt(u) = 0 and _now() >= p.created_at + interval '7 days'
+    'ok', _debt(u) = 0 and _now() >= coalesce(p.ok7_at, p.created_at + interval '7 days')
           and p.mail_verified_at is not null and p.mail_verified_at >= _now() - interval '183 days');
 end $$;
 
@@ -2091,7 +2104,7 @@ begin
   select * into t from _find_id(p_to);
   if src_comp is null then
     if t.rid = u then raise exception '自分には送れません'; end if;
-    okday := me.created_at + interval '7 days';
+    okday := coalesce(me.ok7_at, me.created_at + interval '7 days');
     if _now() < okday then raise exception '登録から7日たつまで送金できません（%から送れます）', _dlabel(okday); end if;
     if _debt(u) > 0 then raise exception '税金の滞納があるので送金できません'; end if;
     have := me.balance;
@@ -2101,7 +2114,7 @@ begin
     if t.rcomp = src_comp then raise exception '同じ会社には送れません'; end if;
     have := c.balance;
   end if;
-  if t.rid is not null and _now() < t.rcreated + interval '7 days' then
+  if t.rid is not null and _now() < _ok7(t.rid) then
     raise exception '相手は登録から7日たっていないので、まだ受け取れません';
   end if;
   fee := _xfer_fee(p_amount);
@@ -2543,7 +2556,7 @@ begin
   if not found then raise exception 'この会社はいま営業していません（休業中など）'; end if;
   if c.owner = u then raise exception '自分の会社の商品は買えません'; end if;
   select * into me from profiles where id = u for update;
-  okday := me.created_at + interval '7 days';
+  okday := coalesce(me.ok7_at, me.created_at + interval '7 days');
   if _now() < okday then raise exception '登録から7日たつまで買い物はできません（%から）', _dlabel(okday); end if;
   if _debt(u) > 0 then raise exception '税金の滞納があるので買えません'; end if;
   fee := _xfer_fee(it.price);
@@ -3731,7 +3744,7 @@ begin
   if xc.status <> 'active' then raise exception '取引所（%）がいま営業していないので、注文できません', xc.name; end if;
   pct := xc.fx_fee;
   select * into me from profiles where id = u for update;
-  okday := me.created_at + interval '7 days';
+  okday := coalesce(me.ok7_at, me.created_at + interval '7 days');
   if _now() < okday then raise exception '登録から7日たつまで取引所は使えません（%から）', _dlabel(okday); end if;
   if (select count(*) from fx_orders where user_id = u and status = 'open') >= 30 then raise exception '出せる注文は30件までです'; end if;
   if p_side = 'buy' then
@@ -4162,7 +4175,7 @@ begin
   if t.rid is null then raise exception '株をゆずれるのはユーザーだけです'; end if;
   if t.rid = u then raise exception '自分にはゆずれません'; end if;
   select * into me from profiles where id = u;
-  if _now() < me.created_at + interval '7 days' then raise exception '登録から7日たつまで、代金つきの譲渡はできません'; end if;
+  if _now() < coalesce(me.ok7_at, me.created_at + interval '7 days') then raise exception '登録から7日たつまで、代金つきの譲渡はできません'; end if;
   if (select count(*) from share_offers where from_user = u and status = 'open') >= 20 then raise exception '返事待ちの申し出は20件までです'; end if;
   insert into share_offers(company_id, from_user, to_user, shares, price, created_at) values (c.id, u, t.rid, p_shares, p_price, _now());
   perform _notice(t.rid, format('【株の譲渡】%s（ID %s）から「%s」の%s %s を %s X でゆずりたいという申し出が来ました。企業タブの「持ち株」から返事できます。',
@@ -4186,7 +4199,7 @@ begin
   end if;
   if c.status not in ('active', 'suspended') then raise exception 'この会社はもうありません'; end if;
   select * into me from profiles where id = u for update;
-  if _now() < me.created_at + interval '7 days' then raise exception '登録から7日たつまで、代金つきの譲渡は受けられません'; end if;
+  if _now() < coalesce(me.ok7_at, me.created_at + interval '7 days') then raise exception '登録から7日たつまで、代金つきの譲渡は受けられません'; end if;
   if _debt(u) > 0 then raise exception '税金の滞納があるので払えません'; end if;
   select shares into mine from corp_holders where company_id = c.id and user_id = o.from_user for update;
   if coalesce(mine, 0) < o.shares then raise exception '相手がもう、その数の株を持っていません'; end if;
@@ -4594,7 +4607,7 @@ begin
     raise exception 'この銀行で借りるには、オレンジのチェックが必要です';
   end if;
   select * into me from profiles where id = u;
-  if _now() < me.created_at + interval '7 days' then raise exception '登録から7日たつまで借りられません'; end if;
+  if _now() < coalesce(me.ok7_at, me.created_at + interval '7 days') then raise exception '登録から7日たつまで借りられません'; end if;
   if exists (select 1 from loans where user_id = u and pack_id = lp.id and status = 'pending') then raise exception 'このパックはもう申込中です'; end if;
   if (select count(*) from loans where user_id = u and pack_id = lp.id and status = 'active') >= lp.max_per_user then
     raise exception 'このパックで同時に借りられるのは %件までです', lp.max_per_user;
@@ -6855,7 +6868,7 @@ language plpgsql set search_path = public as $$
 declare made timestamptz;
 begin
   if r.stake <= 0 then return; end if;
-  select created_at into made from profiles where id = u;
+  select coalesce(ok7_at - interval '7 days', created_at) into made from profiles where id = u;
   if _now() < made + interval '7 days' then
     raise exception '賭けありの部屋は、登録から7日たってから入れます（%から）', _dlabel(made + interval '7 days');
   end if;
@@ -7395,7 +7408,7 @@ begin
   if p_seat not in (0, 1) then raise exception '賭ける側をえらんでください'; end if;
   if exists (select 1 from game_bets where room_id = r.id and user_id = u and seat <> p_seat) then raise exception '両方には賭けられません'; end if;
   if p_amount is null or p_amount < 1 then raise exception '1 X以上にしてください'; end if;
-  select created_at into made from profiles where id = u;
+  select coalesce(ok7_at - interval '7 days', created_at) into made from profiles where id = u;
   if _now() < made + interval '7 days' then raise exception '観戦の賭けは、登録から7日たってからです（%から）', _dlabel(made + interval '7 days'); end if;
   if _debt(u) > 0 then raise exception '税金の滞納があるので賭けられません'; end if;
   perform _take(u, p_amount);
@@ -7561,7 +7574,7 @@ begin
   if p.price = 0 then raise exception '無料なので、そのまま読めます'; end if;
   if p.kind = 'book' and exists (select 1 from pub_access where pub_id = p.id and user_id = u) then raise exception 'もう買っています'; end if;
   select * into me from profiles where id = u for update;
-  if _now() < me.created_at + interval '7 days' then raise exception '登録から7日たつまで、買い物はできません'; end if;
+  if _now() < coalesce(me.ok7_at, me.created_at + interval '7 days') then raise exception '登録から7日たつまで、買い物はできません'; end if;
   if _debt(u) > 0 then raise exception '税金の滞納があるので買えません'; end if;
   if p.company_id is not null then
     select * into c from companies where id = p.company_id and status = 'active';
@@ -7858,7 +7871,7 @@ create or replace function public.review_state() returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); wk date := _week_start(_now()); made timestamptz;
 begin
-  select created_at into made from profiles where id = u;
+  select coalesce(ok7_at - interval '7 days', created_at) into made from profiles where id = u;
   return jsonb_build_object('week', to_char(wk, 'FMMM"月"FMDD"日"') || '〜' || to_char(wk + 6, 'FMMM"月"FMDD"日"'),
     'reward', 500, 'done', exists (select 1 from review_rewards where user_id = u and week = wk),
     'can', _now() >= made + interval '7 days', 'can_from', _dlabel(made + interval '7 days'),
@@ -7874,7 +7887,7 @@ create or replace function public.review_submit(p_ratings jsonb) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); wk date := _week_start(_now()); e jsonb; c companies; st int; n int := 0; made timestamptz; amt bigint := 500; tb bigint;
 begin
-  select created_at into made from profiles where id = u for update;
+  select coalesce(ok7_at - interval '7 days', created_at) into made from profiles where id = u for update;
   if _now() < made + interval '7 days' then raise exception '評価できるのは、登録から7日たってからです（%から）', _dlabel(made + interval '7 days'); end if;
   if jsonb_typeof(p_ratings) <> 'array' or jsonb_array_length(p_ratings) = 0 then raise exception '評価する会社をえらんでください'; end if;
   if jsonb_array_length(p_ratings) > 50 then raise exception '一度に評価できるのは50社までです'; end if;
@@ -8444,7 +8457,7 @@ begin
     'last_sign_in', case when au->>'last_sign_in_at' is null then null
                          else to_char((au->>'last_sign_in_at')::timestamptz at time zone 'Asia/Tokyo', 'YYYY/MM/DD HH24:MI') end,
     'mail_ok', p.mail_verified_at is not null and p.mail_verified_at >= _now() - interval '183 days',
-    'send_ok', _now() >= p.created_at + interval '7 days',
+    'send_ok', _now() >= coalesce(p.ok7_at, p.created_at + interval '7 days'),
     'debt_amount', case when adm then _debt(p.id) end,
     'evasion', case when adm then (select count(*) from tax_returns where user_id = p.id and evasion) end,
     'companies', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'kind', c.kind, 'status', _cstat(c.status)) order by c.id), '[]'::jsonb)
@@ -8543,7 +8556,7 @@ begin
                  'status', status, 'at', _dlabel(created_at), 'time', to_char(created_at at time zone 'Asia/Tokyo', 'HH24:MI'))
                  order by (status = 'open') desc, id desc), '[]'::jsonb)
                from (select * from stock_orders where company_id = c.id and user_id = u order by (status = 'open') desc, id desc limit 30) z),
-    'ok_from', case when _now() < me.created_at + interval '7 days' then _dlabel(me.created_at + interval '7 days') end,
+    'ok_from', case when _now() < coalesce(me.ok7_at, me.created_at + interval '7 days') then _dlabel(coalesce(me.ok7_at, me.created_at + interval '7 days')) end,
     'debt', _debt(u) > 0,
     'balance', _bal(u));
 end $$;
@@ -8577,7 +8590,7 @@ begin
   if ex.id is null or ex.status <> 'active' then raise exception '取引所がいま開いていないので、注文できません'; end if;
   perform pg_advisory_xact_lock(7400, c.id);            -- 同じ株の注文は1つずつ
   select * into me from profiles where id = u for update;
-  if _now() < me.created_at + interval '7 days' then raise exception '登録から7日たつまで、株の売り買いはできません（%から）', _dlabel(me.created_at + interval '7 days'); end if;
+  if _now() < coalesce(me.ok7_at, me.created_at + interval '7 days') then raise exception '登録から7日たつまで、株の売り買いはできません（%から）', _dlabel(coalesce(me.ok7_at, me.created_at + interval '7 days')); end if;
   if (select count(*) from stock_orders where user_id = u and status = 'open') >= 30 then raise exception '出せる株の注文は30件までです'; end if;
   if p_side = 'buy' then
     if exists (select 1 from stock_orders where company_id = c.id and user_id = u and side = 'sell' and status = 'open' and price <= p_price) then
@@ -8765,7 +8778,7 @@ begin
             'roulette_spin','hilo_state','hilo_start','hilo_guess','hilo_cashout','bj_state',
             'bj_start','bj_hit','bj_stand','bj_double',
             '_now','_month_of','_month_start','_next_month','_prev_month','_jday','_dlabel','_fmt',
-            '_tax','_income','_notice','_debt','_pay_tax','_process_month','_tax_tick','_tax_badge','_assets',
+            '_tax','_income','_notice','_debt','_pay_tax','_process_month','_tax_tick','_tax_badge','_assets','_ok7',
             'tax_state','tax_file','tax_pay','_new_acct','_cfull','_cid_norm','_new_ccode','_xfer_fee','_xfer_check','transfer_preview','transfer_send','work_state','work_start','work_submit','info_state',
             '_find_id','_corp_move','_credit','_is_admin','_my_corp','_bank_accrue','_bank_accrue_all','_corp_card',
             'corp_search','corp_pins','corp_pin','corp_page','corp_buy','my_orders','bank_open','bank_deposit','bank_withdraw',
