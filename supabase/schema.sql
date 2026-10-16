@@ -237,6 +237,10 @@ create index if not exists notices_user_idx on public.notices(user_id, id desc);
 alter table public.tax_returns add column if not exists malicious   boolean not null default false;
 alter table public.tax_returns add column if not exists confiscated bigint  not null default 0;
 alter table public.treasury    add column if not exists confiscated_total bigint not null default 0;
+-- 送金（あとから足した列）
+alter table public.profiles add column if not exists account_no text;
+create unique index if not exists profiles_account_no_idx on public.profiles(account_no);
+alter table public.treasury add column if not exists fee_total bigint not null default 0;
 create index if not exists tx_log_user_time_idx on public.tx_log(user_id, created_at);
 
 -- 画面から直接テーブルを読み書きさせない（全部 下の関数を通す）
@@ -345,6 +349,7 @@ begin
   values (u, 'プレイヤー' || lpad(_rint(10000)::text, 4, '0'), 1000)
   on conflict (id) do nothing;
   if found then perform _log(u, 'start', 0, 1000, '{"note":"はじめての配布"}'); end if;
+  update profiles set account_no = _new_acct() where id = u and account_no is null;
   -- 締めの日を過ぎていたら、税の締め（調査・差し押さえ・給付金）をここで行う
   -- 万一失敗してもログインは止めない
   begin
@@ -352,14 +357,18 @@ begin
   exception when others then
     raise warning 'tax tick failed: %', sqlerrm;
   end;
-  return (select jsonb_build_object('nickname', nickname, 'balance', balance, 'tax', _tax_badge(u))
+  return (select jsonb_build_object('nickname', nickname, 'balance', balance, 'tax', _tax_badge(u), 'account_no', account_no)
             from profiles where id = u);
 end $$;
 
+drop function if exists public.my_profile();
 create or replace function public.my_profile() returns jsonb
-language sql security definer set search_path = public as $$
-  select jsonb_build_object('nickname', nickname, 'balance', balance) from profiles where id = _me()
-$$;
+language plpgsql security definer set search_path = public as $$
+begin
+  return (select jsonb_build_object('nickname', nickname, 'balance', balance, 'account_no', account_no,
+            'send_ok', _now() >= created_at + interval '7 days', 'send_from', _dlabel(created_at + interval '7 days'))
+            from profiles where id = _me());
+end $$;
 
 create or replace function public.set_nickname(p_name text) returns jsonb
 language plpgsql security definer set search_path = public as $$
@@ -698,7 +707,7 @@ end $$;
 create or replace function public._income(u uuid, m int) returns bigint
 language sql stable set search_path = public as $$
   select greatest(coalesce(sum(payout - bet), 0), 0)::bigint from tx_log
-   where user_id = u and game in ('slot','roulette','hilo','blackjack','race')
+   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work')
      and created_at >= _month_start(m) and created_at < _month_start(_next_month(m))
 $$;
 
@@ -949,7 +958,8 @@ begin
     'returns', rets, 'notices', notes,
     'treasury', jsonb_build_object('balance', coalesce(tr.balance, 0), 'casino', coalesce(tr.casino_total, 0),
                                    'tax', coalesce(tr.tax_total, 0), 'benefit', coalesce(tr.benefit_total, 0),
-                                   'confiscated', coalesce(tr.confiscated_total, 0)),
+                                   'confiscated', coalesce(tr.confiscated_total, 0), 'issued', coalesce(tr.issued_total, 0),
+                                   'wage', coalesce(tr.wage_total, 0), 'fee', coalesce(tr.fee_total, 0)),
     'top', top, 'top_month', topm,
     'balance', _bal(u));
 end $$;
@@ -1747,6 +1757,212 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
+-- 送金（口座番号で相手を指定。手数料1%・最低1 X は国庫へ。登録から7日たつまで送金も受け取りもできない）
+-- ---------------------------------------------------------------------
+create or replace function public._new_acct() returns text
+language plpgsql volatile set search_path = public as $$
+declare a text;
+begin
+  loop
+    a := (1000000 + floor(random() * 9000000))::int::text;
+    exit when not exists (select 1 from profiles where account_no = a);
+  end loop;
+  return a;
+end $$;
+
+do $$
+declare r record;
+begin
+  for r in select id from public.profiles where account_no is null loop
+    update public.profiles set account_no = public._new_acct() where id = r.id;
+  end loop;
+end $$;
+
+create or replace function public._xfer_fee(amt bigint) returns bigint
+language sql immutable as $$ select greatest(1, floor(amt * 0.01))::bigint $$;
+
+-- 送金できるか調べる（だめなら理由を出す）
+create or replace function public._xfer_check(u uuid, p_to text, p_amount bigint,
+  out rid uuid, out rnick text, out fee bigint)
+language plpgsql set search_path = public as $$
+declare me profiles; them profiles; okday timestamptz;
+begin
+  select * into me from profiles where id = u;
+  if p_amount is null or p_amount < 1 or p_amount > 1000000000000 then raise exception '送る額は1 X以上にしてください'; end if;
+  select * into them from profiles where account_no = btrim(coalesce(p_to, ''));
+  if not found then raise exception 'その口座番号の人は見つかりません'; end if;
+  if them.id = u then raise exception '自分には送れません'; end if;
+  okday := me.created_at + interval '7 days';
+  if _now() < okday then raise exception '登録から7日たつまで送金できません（%から送れます）', _dlabel(okday); end if;
+  if _now() < them.created_at + interval '7 days' then raise exception '相手は登録から7日たっていないので、まだ受け取れません'; end if;
+  if _debt(u) > 0 then raise exception '税金の滞納があるので送金できません'; end if;
+  fee := _xfer_fee(p_amount);
+  if me.balance < p_amount + fee then
+    raise exception 'AiliNaXが足りません（手数料 % X をふくめて % X 必要です）', fee, p_amount + fee;
+  end if;
+  rid := them.id; rnick := them.nickname;
+end $$;
+
+create or replace function public.transfer_preview(p_to text, p_amount bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare c record;
+begin
+  select * into c from _xfer_check(_me(), p_to, p_amount);
+  return jsonb_build_object('nickname', c.rnick, 'amount', p_amount, 'fee', c.fee, 'total', p_amount + c.fee);
+end $$;
+
+create or replace function public.transfer_send(p_to text, p_amount bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c record; me profiles;
+begin
+  select * into me from profiles where id = u for update;
+  select * into c from _xfer_check(u, p_to, p_amount);
+  update profiles set balance = balance - (p_amount + c.fee) where id = u;
+  update treasury set balance = balance + c.fee, fee_total = fee_total + c.fee where id = 1;
+  perform _log(u, 'send', p_amount + c.fee, 0, jsonb_build_object('to', c.rnick, 'account', btrim(p_to), 'amount', p_amount, 'fee', c.fee));
+  perform _give(c.rid, p_amount);
+  perform _log(c.rid, 'receive', 0, p_amount, jsonb_build_object('from', me.nickname, 'account', me.account_no));
+  perform _notice(c.rid, format('%s さん（口座 %s）から %s X が届きました。', me.nickname, me.account_no, _fmt(p_amount)));
+  return jsonb_build_object('nickname', c.rnick, 'amount', p_amount, 'fee', c.fee, 'balance', _bal(u));
+end $$;
+
+-- ---------------------------------------------------------------------
+-- 仕事（ミニゲーム。1日8回まで。給料は国庫から。給料は所得として税金の対象）
+--   1回5問。1問正解ごとに4 X、全問正解でボーナス5 X（最大25 X）
+-- ---------------------------------------------------------------------
+create table if not exists public.work_jobs (
+  id         bigserial primary key,
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  kind       text not null,
+  day        date not null,
+  started_at timestamptz not null default now(),
+  answers    jsonb not null,
+  done       boolean not null default false,
+  correct    int,
+  pay        bigint
+);
+create index if not exists work_jobs_user_idx on public.work_jobs(user_id, day);
+alter table public.work_jobs enable row level security;
+revoke all on public.work_jobs from anon, authenticated;
+alter table public.treasury add column if not exists wage_total bigint not null default 0;
+alter table public.treasury add column if not exists issued_total bigint not null default 0;
+-- 国庫に248億 X を発行（1回だけ）
+do $$
+begin
+  if not exists (select 1 from public.app_settings where key = 'issue_24800000000') then
+    update public.treasury set balance = balance + 24800000000, issued_total = issued_total + 24800000000 where id = 1;
+    insert into public.app_settings values ('issue_24800000000', now()::text);
+  end if;
+end $$;
+
+create or replace function public.work_state() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); today date := _kb_jday(_now());
+begin
+  return jsonb_build_object(
+    'limit', 8,
+    'used', (select count(*) from work_jobs where user_id = u and day = today),
+    'today_pay', (select coalesce(sum(pay), 0) from work_jobs where user_id = u and day = today and done),
+    'total_pay', (select coalesce(sum(pay), 0) from work_jobs where user_id = u and done),
+    'balance', _bal(u));
+end $$;
+
+-- 仕事をはじめる（問題を出す。答えはサーバーだけが持つ）
+create or replace function public.work_start(p_kind text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  u uuid := _me(); today date := _kb_jday(_now()); qs jsonb := '[]'; ans jsonb := '[]';
+  i int; a int; b int; op text; v int; items text[][]; pick int; grid text[]; target text; pool text[]; jid bigint; k int;
+begin
+  if (select count(*) from work_jobs where user_id = u and day = today) >= 8 then
+    raise exception 'きょうの仕事はおしまいです（1日8回まで）。また明日どうぞ';
+  end if;
+  if p_kind = 'calc' then
+    for i in 1..5 loop
+      op := (array['+','−','×'])[1 + floor(random() * 3)::int];
+      if op = '×' then a := 2 + floor(random() * 18)::int; b := 2 + floor(random() * 8)::int; v := a * b;
+      elsif op = '+' then a := 10 + floor(random() * 90)::int; b := 10 + floor(random() * 90)::int; v := a + b;
+      else a := 30 + floor(random() * 70)::int; b := 1 + floor(random() * (a - 1))::int; v := a - b; end if;
+      qs := qs || jsonb_build_object('q', format('%s %s %s', a, op, b));
+      ans := ans || to_jsonb(v);
+    end loop;
+  elsif p_kind = 'sort' then
+    -- 荷物を「食べもの」と「道具」に仕分ける
+    items := array[['🍎','食べもの'],['🍞','食べもの'],['🍙','食べもの'],['🥕','食べもの'],['🍣','食べもの'],['🧀','食べもの'],
+                   ['🍌','食べもの'],['🍇','食べもの'],['🔨','道具'],['🔧','道具'],['✂️','道具'],['🪛','道具'],
+                   ['📎','道具'],['🧹','道具'],['🪚','道具'],['📏','道具']];
+    for i in 1..5 loop
+      pick := 1 + floor(random() * 16)::int;
+      qs := qs || jsonb_build_object('q', items[pick][1]);
+      ans := ans || to_jsonb(items[pick][2]);
+    end loop;
+  elsif p_kind = 'count' then
+    -- 棚の中から、言われた品物がいくつあるか数える
+    pool := array['📦','🧴','🧻','🥫','🧃','🧽'];
+    for i in 1..5 loop
+      target := pool[1 + floor(random() * 6)::int];
+      grid := '{}'; v := 0;
+      for k in 1..20 loop
+        grid := grid || pool[1 + floor(random() * 6)::int];
+        if grid[k] = target then v := v + 1; end if;
+      end loop;
+      qs := qs || jsonb_build_object('q', target, 'grid', to_jsonb(grid));
+      ans := ans || to_jsonb(v);
+    end loop;
+  else
+    raise exception '知らない仕事です';
+  end if;
+  insert into work_jobs(user_id, kind, day, started_at, answers) values (u, p_kind, today, _now(), ans) returning id into jid;
+  return jsonb_build_object('id', jid, 'kind', p_kind, 'questions', qs, 'limit_sec', 120);
+end $$;
+
+-- 答えを出して給料をもらう
+create or replace function public.work_submit(p_job bigint, p_answers jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); j work_jobs; i int; c int := 0; wage bigint; secs numeric;
+begin
+  select * into j from work_jobs where id = p_job and user_id = u for update;
+  if not found then raise exception '仕事が見つかりません'; end if;
+  if j.done then raise exception 'この仕事はもう終わっています'; end if;
+  secs := extract(epoch from _now() - j.started_at);
+  for i in 0..4 loop
+    if p_answers -> i is not null and btrim(p_answers ->> i) = btrim(j.answers ->> i) then c := c + 1; end if;
+  end loop;
+  if secs > 120 then c := 0; end if;             -- 時間切れ
+  wage := c * 4 + case when c = 5 then 5 else 0 end;
+  update work_jobs set done = true, correct = c, pay = wage where id = j.id;
+  if wage > 0 then
+    update treasury set balance = balance - wage, wage_total = wage_total + wage where id = 1;
+    perform _give(u, wage);
+    perform _log(u, 'work', 0, wage, jsonb_build_object('kind', j.kind, 'correct', c));
+  end if;
+  return jsonb_build_object('correct', c, 'pay', wage, 'answers', j.answers, 'late', secs > 120) || work_state();
+end $$;
+
+-- ---------------------------------------------------------------------
+-- 情報（通貨のようす・最近の競馬の大当たり・お金持ちランキング）
+-- ---------------------------------------------------------------------
+create or replace function public.info_state() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); tr treasury;
+begin
+  select * into tr from treasury where id = 1;
+  return jsonb_build_object(
+    'supply', (select coalesce(sum(balance), 0) from profiles),
+    'players', (select count(*) from profiles),
+    'treasury', coalesce(tr.balance, 0),
+    'wage', coalesce(tr.wage_total, 0), 'fee', coalesce(tr.fee_total, 0),
+    'jackpots', (select coalesce(jsonb_agg(z order by z.payout desc), '[]'::jsonb) from (
+        select p.nickname, t.kind, t.sel, t.amount, t.payout, r.name race, r.grade, v.name venue, r.rnum, r.day
+          from keiba_tickets t join profiles p on p.id = t.user_id join keiba_races r on r.id = t.race_id
+          join keiba_venues v on v.id = r.venue
+         where t.payout > 0 and r.day >= _kb_jday(_now()) - 7
+         order by t.payout desc limit 10) z),
+    'rich', leaderboard(),
+    'balance', _bal(u));
+end $$;
+
+-- ---------------------------------------------------------------------
 -- 実行権限：内部用（_ではじまる）は画面から呼べないようにする
 -- ---------------------------------------------------------------------
 do $$
@@ -1763,7 +1979,7 @@ begin
             'bj_start','bj_hit','bj_stand','bj_double',
             '_now','_month_of','_month_start','_next_month','_prev_month','_jday','_dlabel','_fmt',
             '_tax','_income','_notice','_debt','_pay_tax','_process_month','_tax_tick','_tax_badge','_assets',
-            'tax_state','tax_file','tax_pay',
+            'tax_state','tax_file','tax_pay','_new_acct','_xfer_fee','_xfer_check','transfer_preview','transfer_send','work_state','work_start','work_submit','info_state',
             '_kb_norm','_kb_gumbel','_kb_midx','_kb_jday','_kb_ms','_kb_agef','_kb_fit','_kb_name','_kb_new_horse',
             '_kb_make_race','_kb_make_day','_kb_seq','_kb_prob','_kb_prob_trio','_kb_rate','_kb_odds','_kb_check_sel',
             '_kb_hit','_kb_settle','_kb_month','_kb_seed','_kb_tick','_kb_status',

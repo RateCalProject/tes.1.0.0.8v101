@@ -182,6 +182,22 @@ h3{font-size:15px;margin:16px 0 8px}
 .rank li .v{margin-left:auto;font-weight:700}
 .links a{color:var(--accent);font-weight:700}
 .terms{font-size:13px;line-height:1.8;color:var(--muted);padding-left:18px;margin:0}
+/* タブまわり・仕事・送金 */
+.subnav{margin:10px 0 0}
+.subhide{display:none!important}
+.inp{width:100%;font-size:16px;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);margin:4px 0;color:var(--ink)}
+.wk-pick{display:flex;flex-direction:column;gap:4px;width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer}
+.wk-pick b{font-size:16px}
+.wk-q{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
+.wk-q:first-of-type{border-top:0}
+.wk-q .qn{width:22px;color:var(--muted);font-weight:800}
+.wk-q .qt{font-size:20px;font-weight:800;flex:1}
+.wk-q input{width:96px;font-size:18px;padding:8px;border:1px solid var(--line);border-radius:8px;text-align:right;background:var(--bg);color:var(--ink)}
+.wk-q.ok{background:rgba(31,107,79,.08)} .wk-q.ng{background:rgba(196,58,49,.08)}
+.wk-grid{display:grid;grid-template-columns:repeat(10,1fr);gap:2px;font-size:20px;text-align:center;margin:4px 0}
+.seg2{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.seg2 button{border:0;background:var(--panel);padding:8px 12px;font-weight:700}
+.seg2 button.on{background:var(--accent);color:var(--accent-ink)}
 /* 役所 */
 nav.tabs button{position:relative}
 nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 10px);width:8px;height:8px;border-radius:50%;background:var(--red)}
@@ -206,10 +222,56 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 <body>
 <header><div class="wrap">
   <div class="logo">AiliNaX<small>カジノ</small></div>
-  <div class="bal hidden" id="bal"><b class="num" id="balNum">0</b><span>AiliNaX</span></div>
+  <div class="bal hidden" id="bal"><b class="num" id="balNum">0</b><span>X</span></div>
 </div></header>
 
 <main class="wrap">
+<div class="tabs-s subnav hidden" id="subNav"></div>
+
+<!-- 情報 -->
+<section id="vInfo" class="view hidden">
+  <div class="card" data-sub="cur">
+    <h3 style="margin-top:0">通貨 AiliNaX</h3>
+    <div class="kv" id="infoCur"></div>
+    <p class="muted small" style="margin:8px 0 0">単位は X。架空の通貨なので、現金などとは交換できません。</p>
+  </div>
+  <div class="card" data-sub="jack">
+    <h3 style="margin-top:0">最近の競馬億万長者 <span class="muted small">（この1週間の大当たり）</span></h3>
+    <ul class="rank" id="infoJack"></ul>
+  </div>
+  <div class="card" data-sub="rich"><h3 style="margin-top:0">お金持ちランキング</h3><ul class="rank" id="rank"></ul></div>
+</section>
+
+<!-- 仕事 -->
+<section id="vWork" class="view hidden">
+  <div class="card" data-sub="jobs stat">
+    <h3 style="margin-top:0">仕事</h3>
+    <p class="muted small" style="margin:0 0 8px">1回5問・制限時間2分。1問正解ごとに4 X、全問正解でボーナス5 X（最大25 X）。1日8回まで。給料は国庫から出て、所得として税金の対象になります。</p>
+    <div class="kv" id="wkStat"></div>
+  </div>
+  <div id="wkMenu" data-sub="jobs">
+    <button class="card wk-pick" data-k="calc"><b>🧮 経理の計算</b><span class="muted small">たし算・ひき算・かけ算を5問</span></button>
+    <button class="card wk-pick" data-k="sort"><b>📦 倉庫の仕分け</b><span class="muted small">荷物を「食べもの」と「道具」に分ける</span></button>
+    <button class="card wk-pick" data-k="count"><b>🛒 お店の棚卸し</b><span class="muted small">棚から言われた品物の数を数える</span></button>
+  </div>
+  <div class="card hidden" id="wkJob" data-sub="jobs"></div>
+  <div class="card" data-sub="stat"><h3 style="margin-top:0">給料のしくみ</h3>
+    <ul class="terms"><li>給料は国庫から出ます。</li><li>給料は所得になるので、毎月の確定申告で税金の対象になります。</li>
+    <li>税金の滞納があると、給料から差し押さえられます。</li></ul></div>
+</section>
+
+<!-- 企業（準備中） -->
+<section id="vCorp" class="view hidden">
+  <div class="card" data-sub="search">
+    <h3 style="margin-top:0">会社検索</h3>
+    <input class="inp" placeholder="会社名で検索（準備中）" disabled>
+    <p class="muted small" style="margin:8px 0 0">ここから企業のサービスを使えるようになります（準備中）：Discord連携の送金、マイクラなどでのブロック取引、借入。</p>
+  </div>
+  <div class="card" data-sub="pin">
+    <h3 style="margin-top:0">ピン留めした企業</h3>
+    <p class="muted small" style="margin:0">よく使う企業をピン留めすると、ここに並びます（準備中）。</p>
+  </div>
+</section>
 
 <!-- 設定がまだ -->
 <section id="vSetup" class="center hidden">
@@ -220,7 +282,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 <!-- ログイン -->
 <section id="vLogin" class="center hidden">
   <h1>AiliNaX カジノ</h1>
-  <p class="notice">架空通貨 <b>AiliNaX</b> で遊ぶカジノです。<br>メールアドレスでログインします（パスワードはいりません）。<br>はじめてログインした人に 1,000 AiliNaX を配ります（1回だけ）。</p>
+  <p class="notice">架空通貨 <b>AiliNaX</b>（単位 X）で遊ぶカジノです。<br>メールアドレスでログインします（パスワードはいりません）。<br>はじめてログインした人に 1,000 X を配ります（1回だけ）。</p>
   <form id="mailForm" class="mailform">
     <input type="email" id="mail" required autocomplete="email" placeholder="メールアドレス">
     <button class="btn main big" id="mailBtn" type="submit">ログイン用のメールを送る</button>
@@ -312,7 +374,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     </div>
     <div class="board" id="ruBoard"></div>
     <div class="row" style="margin-top:12px">
-      <span class="grow">合計 <b class="num" id="ruTotal">0</b> AiliNaX</span>
+      <span class="grow">合計 <b class="num" id="ruTotal">0</b> X</span>
       <button class="btn" id="ruClear">クリア</button>
       <button class="btn" id="ruAgain">同じ賭け</button>
     </div>
@@ -344,14 +406,23 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 
 <!-- 役所（税と給付金） -->
 <section id="vTax" class="view hidden">
-  <div id="txNotices"></div>
-  <div class="card" id="txFiling"></div>
-  <div class="card hidden" id="txDebt"></div>
-  <div class="card" id="txNow"></div>
-  <div class="card" id="txTreasury"></div>
-  <div class="card" id="txTop"></div>
-  <div class="card hist" id="txHist"></div>
-  <div class="card">
+  <div data-sub="tax" id="txNotices"></div>
+  <div data-sub="tax" class="card" id="txFiling"></div>
+  <div data-sub="tax" class="card hidden" id="txDebt"></div>
+  <div data-sub="tax" class="card" id="txNow"></div>
+  <div data-sub="xfer" class="card" id="xferCard">
+    <h3 style="margin-top:0">送金</h3>
+    <div class="row"><span class="muted small grow">あなたの口座番号</span><b class="num" id="myAcct" style="font-size:18px;letter-spacing:.08em">-------</b><button class="btn" id="acctCopy" style="padding:6px 10px;font-size:13px">コピー</button></div>
+    <p class="muted small" id="xferNote" style="margin:6px 0 8px">手数料は送る額の1%（最低1 X）で、国庫に入ります。登録から7日たつと送金・受け取りができます。</p>
+    <input class="inp" id="xTo" inputmode="numeric" maxlength="7" placeholder="相手の口座番号（7けた）">
+    <input class="inp" id="xAmt" type="number" inputmode="numeric" min="1" step="1" placeholder="送る額（X）">
+    <p class="small" id="xPrev" style="min-height:20px;margin:6px 0"></p>
+    <button class="btn main big wide" id="xSend" disabled>送る</button>
+  </div>
+  <div data-sub="kokko" class="card" id="txTreasury"></div>
+  <div data-sub="kokko" class="card" id="txTop"></div>
+  <div data-sub="tax" class="card hist" id="txHist"></div>
+  <div class="card" data-sub="tax">
     <h3 style="margin-top:0">税のきまり</h3>
     <ul class="terms">
       <li>1年＝1か月（日本時間）。毎月1日〜15日に、前の月の分を申告します。</li>
@@ -368,44 +439,38 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   </div>
 </section>
 
-<!-- その他 -->
+<!-- 設定 -->
 <section id="vMore" class="view hidden">
-  <div class="card">
+  <div class="card" data-sub="prof">
     <h3 style="margin-top:0">ニックネーム</h3>
     <div class="row"><input id="nick" maxlength="12" class="grow" style="padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg)"><button class="btn main" id="nickSave">変える</button></div>
     <p class="muted small" style="margin:6px 0 0">ランキングなどで、みんなに見えます。本名やメールアドレスは入れないでください。</p>
   </div>
-  <div class="card"><h3 style="margin-top:0">ランキング</h3><ul class="rank" id="rank"></ul></div>
-  <div class="card"><h3 style="margin-top:0">自分の記録</h3><ul class="rank" id="hist"></ul></div>
-  <div class="card links">
+  <div class="card" data-sub="hist"><h3 style="margin-top:0">自分の記録</h3><ul class="rank" id="hist"></ul></div>
+  <div class="card links" data-sub="rule">
     <h3 style="margin-top:0">付属ゲーム</h3>
     <a href="battle/">市区町村バトル</a><span class="muted small"> — 日本全国の市区町村の地図で遊ぶ陣取り将棋</span>
   </div>
-  <div class="card">
+  <div class="card" data-sub="rule">
     <h3 style="margin-top:0">利用規約</h3>
     <ul class="terms">
       <li><b>AiliNaX は架空の通貨です。現金・物・他の通貨・電子マネー・ポイント・ゲーム内アイテムなど、どんなものとも交換できません。</b></li>
       <li>AiliNaX の売買、交換の持ちかけ、AiliNaX を賭けの対象にしたお金のやりとりは禁止です。</li>
-      <li>はじめてログインしたときに 1,000 AiliNaX を配ります。追加の配布はありません。</li>
+      <li>はじめてログインしたときに 1,000 X を配ります。</li>
+      <li>送金には手数料（送る額の1%・最低1 X）がかかります。AiliNaXを現金などで売り買いするための送金は禁止です。</li>
       <li>勝ち負けはサーバーで決めています。残高は予告なくリセット・調整することがあります。</li>
       <li>ほかの人がいやな気持ちになるニックネームはやめましょう。</li>
       <li>このサイトを使って起きたトラブルや損害について、制作者は責任を負いません。内容は予告なく変わることがあります。</li>
     </ul>
     <p class="small muted" style="margin:10px 0 0">制作：<a href="https://x.com/Airln_7" target="_blank" rel="noopener">@Airln_7</a></p>
   </div>
-  <button class="btn wide" id="logout">ログアウト</button>
+  <button class="btn wide" id="logout" data-sub="prof">ログアウト</button>
 </section>
 
 </main>
 
 <nav class="tabs hidden" id="tabs"><div class="wrap">
-  <button data-v="vRace"><b>🏇</b>競馬</button>
-  <button data-v="vSlot" class="on"><b>7</b>スロット</button>
-  <button data-v="vBj"><b>♠</b>BJ</button>
-  <button data-v="vRou"><b>◎</b>ルーレット</button>
-  <button data-v="vHilo"><b>↕</b>ハイロー</button>
-  <button data-v="vTax"><b>税</b>役所</button>
-  <button data-v="vMore"><b>≡</b>その他</button>
+
 </div></nav>
 
 <script src="config.js"></script>
@@ -445,7 +510,7 @@ function show(id) { $$('main > section').forEach(s => s.classList.toggle('hidden
 
 /* ---------------- 賭け金入力 ---------------- */
 function betBox(el, def) {
-  el.innerHTML = `<div class="bet"><div class="in"><span class="muted small">賭け金</span><input type="number" inputmode="numeric" min="1" step="1" value="${def}"><span class="unit">AiliNaX</span></div>
+  el.innerHTML = `<div class="bet"><div class="in"><span class="muted small">賭け金</span><input type="number" inputmode="numeric" min="1" step="1" value="${def}"><span class="unit">X</span></div>
   <div class="chips"><button data-a="x">クリア</button><button data-a="10">+10</button><button data-a="50">+50</button><button data-a="100">+100</button><button data-a="500">+500</button><button data-a="half">½</button><button data-a="all">全部</button></div></div>`;
   const inp = el.querySelector('input');
   el.querySelectorAll('.chips button').forEach(b => b.onclick = () => {
@@ -484,22 +549,46 @@ async function enter() {
   } catch (e) { toast(e.message); show('vLogin'); entered = false; return; }
   if (location.hash.includes('access_token')) history.replaceState(null, '', location.pathname);
   $('#bal').classList.remove('hidden'); $('#tabs').classList.remove('hidden');
-  go(sessionStorageGet('view') || (RACE_ON ? 'vRace' : 'vSlot'));
+  go(sessionStorageGet('view') || 'vInfo');
 }
 function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
-function go(v) {
-  if (v === 'vRace' && !RACE_ON) v = 'vSlot';
-  view = v; try { sessionStorage.setItem('view', v); } catch (e) {}
-  show(v); $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+const GAMES = ['vRace', 'vSlot', 'vBj', 'vRou', 'vHilo'];
+// メインメニュー（左から）とサブメニュー
+const MENU = [
+  ['vInfo', '情報', 'i', [['cur', '通貨'], ['jack', '競馬億万長者'], ['rich', 'ランキング']]],
+  ['vWork', '仕事', '✎', [['jobs', '仕事をえらぶ'], ['stat', '給料']]],
+  ['vGame', '賭博', '♠', [['vRace', '🏇 競馬'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
+  ['vCorp', '企業', '社', [['search', '会社検索'], ['pin', 'ピン留め']]],
+  ['vTax', '役所', '税', [['tax', '税金'], ['xfer', '送金'], ['kokko', '国庫・番付']]],
+  ['vMore', '設定', '⚙', [['prof', 'プロフィール'], ['hist', '記録'], ['rule', '規約']]],
+];
+const MENU_OF = Object.fromEntries(MENU.map(m => [m[0], m]));
+$('#tabs .wrap').innerHTML = MENU.map(m => `<button data-v="${m[0]}"><b>${m[2]}</b>${m[1]}</button>`).join('');
+function go(v, sub) {
+  const main = GAMES.includes(v) ? 'vGame' : (MENU_OF[v] ? v : 'vInfo');
+  const subs = MENU_OF[main][3].filter(x => x[0] !== 'vRace' || RACE_ON);
+  if (main === 'vGame' && GAMES.includes(v)) sub = v;
+  sub = sub || sessionStorageGet('sub:' + main);
+  if (!subs.some(x => x[0] === sub)) sub = subs[0][0];
+  try { sessionStorage.setItem('view', main); sessionStorage.setItem('sub:' + main, sub); } catch (e) {}
+  const sec = main === 'vGame' ? sub : main;
+  view = sec;
+  show(sec);
+  $$(`#${main} [data-sub]`).forEach(el => el.classList.toggle('subhide', !el.dataset.sub.split(' ').includes(sub)));
+  $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === main));
+  $('#subNav').classList.remove('hidden');
+  $('#subNav').innerHTML = subs.map(x => `<button data-s="${x[0]}" class="${x[0] === sub ? 'on' : ''}">${x[1]}</button>`).join('');
+  $$('#subNav button').forEach(b => b.onclick = () => go(main, b.dataset.s));
   window.scrollTo(0, 0);
-  if (v === 'vRace') kbLoad();
-  if (v === 'vBj') bjLoad();
-  if (v === 'vHilo') hiloLoad();
-  if (v === 'vMore') moreLoad();
-  if (v === 'vTax') taxLoad();
+  if (sec === 'vInfo') infoLoad();
+  if (sec === 'vWork') workLoad();
+  if (sec === 'vRace') kbLoad();
+  if (sec === 'vBj') bjLoad();
+  if (sec === 'vHilo') hiloLoad();
+  if (sec === 'vMore') moreLoad();
+  if (sec === 'vTax') taxLoad();
 }
 $$('#tabs button').forEach(b => b.onclick = () => go(b.dataset.v));
-if (!RACE_ON) $('#tabs button[data-v=vRace]').classList.add('hidden');
 $('#logout').onclick = async () => { if (sb) await sb.auth.signOut(); location.reload(); };
 
 /* =================================================================
@@ -1046,7 +1135,7 @@ $('#sSpin').onclick = async () => {
     for (let i = 0; i < 3; i++) { await sleep(320); spinning[i] = false; reels[i].classList.remove('spin'); reels[i].innerHTML = SYM[d.reels[i]]; }
     setBal(d.balance, d.payout > 0);
     $('#sMsg').className = 'msg ' + (d.payout > 0 ? 'win' : 'lose');
-    $('#sMsg').textContent = d.payout > 0 ? `×${d.mult}　+${fmt(d.payout)} AiliNaX` : 'はずれ';
+    $('#sMsg').textContent = d.payout > 0 ? `×${d.mult}　+${fmt(d.payout)} X` : 'はずれ';
   } catch (e) { toast(e.message); reels.forEach(r => r.classList.remove('spin')); }
   clearInterval(iv); btn.disabled = false;
 };
@@ -1073,7 +1162,7 @@ function bjRender(s, anim) {
   $('#bjDouble').disabled = !s.canDouble;
   const R = { win: '勝ち！', blackjack: 'ブラックジャック！', push: '引き分け', lose: '負け', bust: 'バースト（21をこえた）' };
   $('#bjMsg').className = 'msg ' + (s.payout > (s.bet || 0) ? 'win' : s.result && s.result !== 'push' ? 'lose' : '');
-  $('#bjMsg').textContent = s.result ? (s.result === 'win' && s.dtotal > 21 ? 'ディーラーがバースト！勝ち' : R[s.result]) + (s.payout > 0 ? `　${fmt(s.payout)} AiliNaX` : '') : s.active ? `賭け金 ${fmt(s.bet)}` : '';
+  $('#bjMsg').textContent = s.result ? (s.result === 'win' && s.dtotal > 21 ? 'ディーラーがバースト！勝ち' : R[s.result]) + (s.payout > 0 ? `　${fmt(s.payout)} X` : '') : s.active ? `賭け金 ${fmt(s.bet)}` : '';
   setBal(s.balance, s.payout > 0);
 }
 async function bjLoad() { try { const s = await call('bj_state'); bjPrev = { p: 0, d: 0 }; bjRender(s, false); } catch (e) { toast(e.message); } }
@@ -1102,12 +1191,12 @@ function hiloRender(s) {
   if (s.active) {
     $('#hUp').textContent = s.up ? `▲ 上　×${s.up.toFixed(2)}` : '▲ 上（なし）'; $('#hUp').disabled = !s.up;
     $('#hDown').textContent = s.down ? `▼ 下　×${s.down.toFixed(2)}` : '▼ 下（なし）'; $('#hDown').disabled = !s.down;
-    $('#hCash').textContent = s.steps ? `受け取る　${fmt(s.cashout)} AiliNaX` : '1回当てると受け取れます'; $('#hCash').disabled = !s.steps;
+    $('#hCash').textContent = s.steps ? `受け取る　${fmt(s.cashout)} X` : '1回当てると受け取れます'; $('#hCash').disabled = !s.steps;
     $('#hMsg').className = 'msg ' + (s.result === 'win' ? 'win' : '');
     $('#hMsg').textContent = `${s.result === 'win' ? '当たり！　' : ''}倍率 ×${Number(s.mult).toFixed(2)}（${s.steps}連続）`;
   } else {
     $('#hMsg').className = 'msg ' + (s.result === 'lose' ? 'lose' : s.result === 'cashout' ? 'win' : '');
-    $('#hMsg').textContent = s.result === 'lose' ? 'はずれ…' : s.result === 'cashout' ? `+${fmt(s.payout)} AiliNaX 受け取りました` : '';
+    $('#hMsg').textContent = s.result === 'lose' ? 'はずれ…' : s.result === 'cashout' ? `+${fmt(s.payout)} X 受け取りました` : '';
   }
   setBal(s.balance, s.result === 'cashout');
 }
@@ -1196,6 +1285,7 @@ function setTaxDot(b) {
 }
 let TX = null;
 async function taxLoad() {
+  xferLoad();
   try { TX = await call('tax_state'); taxRender(); }
   catch (e) { toast(e.message); }
 }
@@ -1219,8 +1309,8 @@ function taxRender() {
         <span class="muted small">期限内なら出し直せます</span></div>` : ''}
       <div class="row" style="margin-bottom:8px"><span class="muted small grow">記録上の${mlab(F.month)}のもうけ</span><b class="num">${fmt(F.recorded)}</b>
         <button class="btn" id="txRec" style="padding:6px 10px;font-size:13px">この額を書く</button></div>
-      <div class="bet"><div class="in"><span class="muted small">所得</span><input id="txIn" type="number" inputmode="numeric" min="0" step="1" value="${F.filed ? F.declared : F.recorded}"><span class="unit">AiliNaX</span></div></div>
-      <p style="margin:10px 0">税額：<b class="num" id="txCalc"></b> AiliNaX</p>
+      <div class="bet"><div class="in"><span class="muted small">所得</span><input id="txIn" type="number" inputmode="numeric" min="0" step="1" value="${F.filed ? F.declared : F.recorded}"><span class="unit">X</span></div></div>
+      <p style="margin:10px 0">税額：<b class="num" id="txCalc"></b> X</p>
       <button class="btn main big wide" id="txFile">${F.filed ? 'この額で出し直す' : '申告する'}</button>
       ${owe > 0 ? `<button class="btn big wide" id="txPay" style="margin-top:8px">納める（${fmt(owe)}）</button>` : ''}
       <p class="muted small" style="margin:10px 0 0">少なく書くこともできますが、16日の税務調査で見つかると不足分＋重加算税35%。悪質なら残高の7割を没収します。期限内に申告して期限までに納めた人には、16日に給付金 500 が入ります（所持金5,000以下の人）。</p>`;
@@ -1243,7 +1333,7 @@ function taxRender() {
   // 滞納
   $('#txDebt').classList.toggle('hidden', !(T.debt > 0));
   if (T.debt > 0) {
-    $('#txDebt').innerHTML = `<div class="warnbox"><b>滞納 ${fmt(T.debt)} AiliNaX</b><br>当たりが出ると自動で差し押さえられます。給付金ももらえません。</div>
+    $('#txDebt').innerHTML = `<div class="warnbox"><b>滞納 ${fmt(T.debt)} X</b><br>当たりが出ると自動で差し押さえられます。給付金ももらえません。</div>
       <button class="btn main big wide" id="txPay2" style="margin-top:10px">いま納める</button>`;
     $('#txPay2').onclick = taxPay;
   }
@@ -1259,7 +1349,10 @@ function taxRender() {
     <div class="kv"><span>${tb >= 0 ? '残高' : '国債（国の借金）'}</span><b style="color:${tb >= 0 ? 'inherit' : 'var(--lose)'}">${fmt(Math.abs(tb))}</b>
     <span class="muted">カジノのもうけ（累計）</span><b>${fmt(T.treasury.casino)}</b>
     <span class="muted">税収（累計）</span><b>${fmt(T.treasury.tax)}</b>
+    <span class="muted">発行</span><b>${fmt(T.treasury.issued)}</b>
     <span class="muted">没収（累計）</span><b>${fmt(T.treasury.confiscated)}</b>
+    <span class="muted">送金の手数料（累計）</span><b>${fmt(T.treasury.fee)}</b>
+    <span class="muted">給料（累計）</span><b>${fmt(T.treasury.wage)}</b>
     <span class="muted">給付金（累計）</span><b>${fmt(T.treasury.benefit)}</b></div>`;
 
   // 高額納税者番付
@@ -1287,13 +1380,141 @@ async function taxPay() {
   catch (e) { toast(e.message); $$('#vTax .btn').forEach(b => b.disabled = false); }
 }
 
+/* =================================================================
+   情報
+   ================================================================= */
+async function infoLoad() {
+  try {
+    const d = await call('info_state');
+    setBal(d.balance);
+    const tb = Number(d.treasury);
+    $('#infoCur').innerHTML = `<span>みんなの持っている合計</span><b>${fmt(d.supply)} X</b>
+      <span>プレイヤー</span><b>${fmt(d.players)}人</b>
+      <span>${tb >= 0 ? '国庫' : '国債（国の借金）'}</span><b>${fmt(Math.abs(tb))} X</b>
+      <span class="muted">給料として出た額（累計）</span><b>${fmt(d.wage)} X</b>
+      <span class="muted">送金の手数料（累計）</span><b>${fmt(d.fee)} X</b>`;
+    $('#infoJack').innerHTML = d.jackpots.length ? d.jackpots.map((j, i) => `<li><b>${i + 1}</b>
+      <span class="grow">${esc(j.nickname)}<small class="muted" style="display:block;font-size:11px">${esc(j.venue)}${j.rnum}R ${esc(j.race)}${j.grade ? '（' + j.grade + '）' : ''}・${KIND[j.kind].label} ${selText(j.kind, j.sel)}・${fmt(j.amount)}賭け</small></span>
+      <span class="v" style="color:var(--win)">+${fmt(j.payout)}</span></li>`).join('')
+      : '<li class="muted">まだ大当たりはありません</li>';
+    $('#rank').innerHTML = d.rich.map((r, i) => `<li><b>${i + 1}</b><span>${esc(r.nickname)}</span><span class="v">${fmt(r.balance)} X</span></li>`).join('') || '<li class="muted">まだいません</li>';
+  } catch (e) { toast(e.message); }
+}
+
+/* =================================================================
+   仕事
+   ================================================================= */
+let WK = null, wkTimer = null;
+async function workLoad() {
+  if (WK) return;
+  try { wkStat(await call('work_state')); } catch (e) { toast(e.message); }
+}
+function wkStat(d) {
+  setBal(d.balance);
+  $('#wkStat').innerHTML = `<span>きょう働いた回数</span><b>${d.used} / ${d.limit}</b><span>きょうの給料</span><b>${fmt(d.today_pay)} X</b><span class="muted">これまでの給料</span><b>${fmt(d.total_pay)} X</b>`;
+  $$('.wk-pick').forEach(b => b.disabled = d.used >= d.limit);
+}
+$$('.wk-pick').forEach(b => b.onclick = async () => {
+  try { WK = await call('work_start', { p_kind: b.dataset.k }); WK.t0 = Date.now(); WK.ans = WK.questions.map(() => ''); wkRender(); }
+  catch (e) { toast(e.message); }
+});
+function wkRender(result) {
+  const J = WK, el = $('#wkJob');
+  $('#wkMenu').classList.add('hidden'); el.classList.remove('hidden');
+  const title = { calc: '🧮 経理の計算', sort: '📦 倉庫の仕分け', count: '🛒 お店の棚卸し' }[J.kind];
+  let h = `<div class="row"><b style="font-size:17px">${title}</b><span class="grow"></span><b class="num" id="wkClock"></b></div>`;
+  J.questions.forEach((q, i) => {
+    const mark = result ? (String(result.answers[i]) === String(J.ans[i]).trim() ? 'ok' : 'ng') : '';
+    const right = result && mark === 'ng' ? `<small class="muted">正解 ${esc(String(result.answers[i]))}</small>` : '';
+    if (J.kind === 'calc') {
+      h += `<div class="wk-q ${mark}"><span class="qn">${i + 1}</span><span class="qt">${esc(q.q)} =</span>
+        <input data-i="${i}" inputmode="numeric" value="${esc(J.ans[i])}" ${result ? 'disabled' : ''}>${right}</div>`;
+    } else if (J.kind === 'sort') {
+      h += `<div class="wk-q ${mark}"><span class="qn">${i + 1}</span><span class="qt" style="font-size:30px">${q.q}</span>
+        <span class="seg2">${['食べもの', '道具'].map(c => `<button data-i="${i}" data-c="${c}" class="${J.ans[i] === c ? 'on' : ''}" ${result ? 'disabled' : ''}>${c}</button>`).join('')}</span>${right}</div>`;
+    } else {
+      h += `<div class="wk-q ${mark}" style="flex-wrap:wrap"><span class="qn">${i + 1}</span><span class="qt">${q.q} はいくつ？</span>
+        <input data-i="${i}" inputmode="numeric" value="${esc(J.ans[i])}" ${result ? 'disabled' : ''}>${right}
+        <div class="wk-grid" style="width:100%">${q.grid.map(x => `<span>${x}</span>`).join('')}</div></div>`;
+    }
+  });
+  if (result) {
+    h += `<div class="msg ${result.pay > 0 ? 'win' : 'lose'}">${result.late ? '時間切れ…' : `5問中${result.correct}問正解`}　${result.pay > 0 ? `+${fmt(result.pay)} X` : '給料なし'}</div>
+      <button class="btn main big wide" id="wkBack">仕事えらびにもどる</button>`;
+  } else {
+    h += `<button class="btn main big wide" id="wkSubmit" style="margin-top:12px">提出する</button>`;
+  }
+  el.innerHTML = h;
+  $$('#wkJob input').forEach(inp => inp.oninput = () => { J.ans[Number(inp.dataset.i)] = inp.value; });
+  $$('#wkJob .seg2 button').forEach(b => b.onclick = () => { J.ans[Number(b.dataset.i)] = b.dataset.c; wkRender(); });
+  if (result) {
+    clearInterval(wkTimer);
+    $('#wkBack').onclick = () => { WK = null; el.classList.add('hidden'); $('#wkMenu').classList.remove('hidden'); workLoad(); };
+    return;
+  }
+  $('#wkSubmit').onclick = wkSubmit;
+  clearInterval(wkTimer);
+  const tick = () => { const left = J.limit_sec - (Date.now() - J.t0) / 1000; const c = $('#wkClock'); if (c) c.textContent = `のこり ${mmss(left)}`; };
+  tick(); wkTimer = setInterval(tick, 500);
+}
+async function wkSubmit() {
+  $('#wkSubmit').disabled = true;
+  try {
+    const r = await call('work_submit', { p_job: WK.id, p_answers: WK.ans.map(a => String(a).trim()) });
+    wkRender(r); wkStat(r);
+    if (r.pay > 0) setBal(r.balance, true);
+  } catch (e) { toast(e.message); $('#wkSubmit').disabled = false; }
+}
+
+/* =================================================================
+   送金（役所）
+   ================================================================= */
+let xferReq = 0, xferOk = null, xferT = null;
+async function xferLoad() {
+  try {
+    const me = await call('my_profile');
+    $('#myAcct').textContent = me.account_no || '-------';
+    $('#xferNote').textContent = `手数料は送る額の1%（最低1 X）で、国庫に入ります。` +
+      (me.send_ok ? '登録から7日たっているので送金できます。' : `${me.send_from}から送金・受け取りができます。`);
+  } catch (e) {}
+}
+$('#acctCopy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('#myAcct').textContent); toast('口座番号をコピーしました'); } catch (e) { toast('コピーできませんでした'); }
+};
+function xferInput() {
+  clearTimeout(xferT); xferOk = null; $('#xSend').disabled = true;
+  const to = $('#xTo').value.trim(), amt = Math.floor(Number($('#xAmt').value) || 0);
+  if (!/^\d{7}$/.test(to) || amt < 1) { $('#xPrev').innerHTML = '<span class="muted">口座番号（7けた）と額を入れてください</span>'; return; }
+  const req = ++xferReq;
+  xferT = setTimeout(async () => {
+    try {
+      const d = await call('transfer_preview', { p_to: to, p_amount: amt });
+      if (req !== xferReq) return;
+      xferOk = { to, amt, ...d };
+      $('#xPrev').innerHTML = `相手：<b>${esc(d.nickname)}</b>　手数料 ${fmt(d.fee)} X　合計 <b>${fmt(d.total)} X</b>`;
+      $('#xSend').disabled = false;
+    } catch (e) { if (req === xferReq) $('#xPrev').innerHTML = `<span style="color:var(--lose)">${esc(e.message)}</span>`; }
+  }, 350);
+}
+$('#xTo').oninput = xferInput; $('#xAmt').oninput = xferInput;
+$('#xSend').onclick = async () => {
+  if (!xferOk) return;
+  if (!confirm(`${xferOk.nickname} さんに ${fmt(xferOk.amt)} X を送ります（手数料 ${fmt(xferOk.fee)} X）。よろしいですか？`)) return;
+  $('#xSend').disabled = true;
+  try {
+    const d = await call('transfer_send', { p_to: xferOk.to, p_amount: xferOk.amt });
+    setBal(d.balance);
+    toast(`${d.nickname} さんに ${fmt(d.amount)} X 送りました`);
+    $('#xTo').value = ''; $('#xAmt').value = ''; xferInput();
+  } catch (e) { toast(e.message); $('#xSend').disabled = false; }
+};
+
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収' };
+const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事' };
 async function moreLoad() {
   try {
-    const [rk, hs, me] = await Promise.all([call('leaderboard'), call('my_history'), call('my_profile')]);
+    const [hs, me] = await Promise.all([call('my_history'), call('my_profile')]);
     setBal(me.balance);
-    $('#rank').innerHTML = rk.map((r, i) => `<li><b>${i + 1}</b><span>${esc(r.nickname)}</span><span class="v">${fmt(r.balance)}</span></li>`).join('') || '<li class="muted">まだいません</li>';
     $('#hist').innerHTML = hs.map(h => { const net = h.payout - h.bet; return `<li><span>${GAME[h.game] || h.game}</span><span class="v" style="color:${net > 0 ? 'var(--win)' : net < 0 ? 'var(--lose)' : 'inherit'}">${net > 0 ? '+' : ''}${fmt(net)}</span></li>`; }).join('') || '<li class="muted">まだありません</li>';
   } catch (e) { toast(e.message); }
 }
