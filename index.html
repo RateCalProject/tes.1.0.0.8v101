@@ -306,7 +306,7 @@ canvas#track{width:100%;display:block;border-radius:10px;background:#3E7A5A;touc
   <div class="card">
     <h3 style="margin-top:0">ニックネーム</h3>
     <div class="row"><input id="nick" maxlength="12" class="grow" style="padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg)"><button class="btn main" id="nickSave">変える</button></div>
-    <p class="muted small" style="margin:6px 0 0">ランキングや競馬の投票で、みんなに見えます。本名やメールアドレスは入れないでください。</p>
+    <p class="muted small" style="margin:6px 0 0">ランキングなどで、みんなに見えます。本名やメールアドレスは入れないでください。</p>
   </div>
   <div class="card"><h3 style="margin-top:0">ランキング</h3><ul class="rank" id="rank"></ul></div>
   <div class="card"><h3 style="margin-top:0">自分の記録</h3><ul class="rank" id="hist"></ul></div>
@@ -332,8 +332,8 @@ canvas#track{width:100%;display:block;border-radius:10px;background:#3E7A5A;touc
 </main>
 
 <nav class="tabs hidden" id="tabs"><div class="wrap">
-  <button data-v="vRace" class="on"><b>🏇</b>競馬</button>
-  <button data-v="vSlot"><b>7</b>スロット</button>
+  <button data-v="vRace"><b>🏇</b>競馬</button>
+  <button data-v="vSlot" class="on"><b>7</b>スロット</button>
   <button data-v="vBj"><b>♠</b>BJ</button>
   <button data-v="vRou"><b>◎</b>ルーレット</button>
   <button data-v="vHilo"><b>↕</b>ハイロー</button>
@@ -349,7 +349,9 @@ const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const fmt = n => Number(n || 0).toLocaleString('ja-JP');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-let sb = null, balance = 0, view = 'vRace';
+// 競馬を公開するときは true に（supabase/schema.sql の race_open も true にして SQL を Run）
+const RACE_ON = false;
+let sb = null, balance = 0, view = RACE_ON ? 'vRace' : 'vSlot';
 
 /* ---------------- サーバーとのやりとり ---------------- */
 async function call(fn, args = {}) {
@@ -414,10 +416,11 @@ async function enter() {
   } catch (e) { toast(e.message); show('vLogin'); entered = false; return; }
   if (location.hash.includes('access_token')) history.replaceState(null, '', location.pathname);
   $('#bal').classList.remove('hidden'); $('#tabs').classList.remove('hidden');
-  go(sessionStorageGet('view') || 'vRace');
+  go(sessionStorageGet('view') || (RACE_ON ? 'vRace' : 'vSlot'));
 }
 function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
 function go(v) {
+  if (v === 'vRace' && !RACE_ON) v = 'vSlot';
   view = v; try { sessionStorage.setItem('view', v); } catch (e) {}
   show(v); $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
   window.scrollTo(0, 0);
@@ -427,6 +430,7 @@ function go(v) {
   if (v === 'vMore') moreLoad();
 }
 $$('#tabs button').forEach(b => b.onclick = () => go(b.dataset.v));
+if (!RACE_ON) $('#tabs button[data-v=vRace]').classList.add('hidden');
 $('#logout').onclick = async () => { if (sb) await sb.auth.signOut(); location.reload(); };
 
 /* =================================================================

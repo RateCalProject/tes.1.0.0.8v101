@@ -599,7 +599,9 @@ end $$;
 -- 実行権限：内部用（_ではじまる）は画面から呼べないようにする
 -- ---------------------------------------------------------------------
 do $$
-declare f record;
+declare
+  f record;
+  race_open constant boolean := false;  -- 競馬を公開するときは true にして Run（index.html の RACE_ON も true に）
 begin
   for f in select p.oid::regprocedure sig, p.proname from pg_proc p
            join pg_namespace n on n.oid = p.pronamespace
@@ -610,7 +612,7 @@ begin
             'roulette_spin','hilo_state','hilo_start','hilo_guess','hilo_cashout','bj_state',
             'bj_start','bj_hit','bj_stand','bj_double','race_bet','race_state') loop
     execute format('revoke all on function %s from public, anon', f.sig);
-    if left(f.proname, 1) = '_' then
+    if left(f.proname, 1) = '_' or (not race_open and f.proname in ('race_bet', 'race_state')) then
       execute format('revoke all on function %s from authenticated', f.sig);
     else
       execute format('grant execute on function %s to authenticated', f.sig);
