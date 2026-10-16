@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="author" content="Airln_7 (https://x.com/Airln_7)">
-<title>AiliNaX カジノ</title>
+<title>風の芽経済組</title>
 <style>
 :root{
   --bg:#F6F5F1; --panel:#FFFFFF; --ink:#1C1C1A; --muted:#6B6A64; --line:#E2E0D8;
@@ -237,7 +237,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 </head>
 <body>
 <header><div class="wrap">
-  <div class="logo">AiliNaX<small>カジノ</small></div>
+  <div class="logo">風の芽<small>経済組</small></div>
   <div class="bal hidden" id="bal"><b class="num" id="balNum">0</b><span>X</span></div>
 </div></header>
 
@@ -252,10 +252,27 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <p class="muted small" style="margin:8px 0 0">単位は X。架空の通貨なので、現金などとは交換できません（ゲーム内アイテムとの取引はOK）。</p>
   </div>
   <div class="card" data-sub="jack">
-    <h3 style="margin-top:0">最近の競馬億万長者 <span class="muted small">（この1週間の大当たり）</span></h3>
+    <h3 style="margin-top:0">今週の競馬億万長者 <span class="muted small" id="infoWeek">（今週の勝ちの合計）</span></h3>
     <ul class="rank" id="infoJack"></ul>
   </div>
   <div class="card" data-sub="rich"><h3 style="margin-top:0">お金持ちランキング</h3><ul class="rank" id="rank"></ul></div>
+  <div class="card" data-sub="tl">
+    <textarea class="inp" id="tlBody" rows="3" maxlength="140" placeholder="いまどうしてる？（140文字まで）"></textarea>
+    <div class="row"><span class="muted small grow" id="tlCount">0 / 140</span><button class="btn main s" id="tlSend">投稿</button></div>
+  </div>
+  <div class="card" data-sub="tl">
+    <div class="seg" id="tlScope" style="margin-bottom:8px"><button data-k="friends" class="on">フレンド</button><button data-k="all">みんな</button></div>
+    <div id="tlList"></div>
+    <button class="btn wide hidden" id="tlMore" style="margin-top:8px">もっと見る</button>
+  </div>
+  <div class="card" data-sub="friend">
+    <h3 style="margin-top:0">フレンド申請</h3>
+    <div class="row"><input class="inp grow" id="frTo" inputmode="numeric" maxlength="6" placeholder="相手のID（5けた）" style="margin:0"><button class="btn main s" id="frSend">申請</button></div>
+    <p class="muted small" style="margin:6px 0 0">あなたのID：<b id="frMe" style="user-select:all">-----</b>（TLの「＋フレンド」からも申請できます）</p>
+  </div>
+  <div class="card" data-sub="friend"><h3 style="margin-top:0">届いた申請</h3><div id="frIn"></div></div>
+  <div class="card" data-sub="friend"><h3 style="margin-top:0">フレンド</h3><div id="frList"></div></div>
+  <div class="card" data-sub="friend"><h3 style="margin-top:0">返事待ち</h3><div id="frOut"></div></div>
 </section>
 
 <!-- 仕事 -->
@@ -308,6 +325,13 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   <div class="card" data-sub="bank"><h3 style="margin-top:0">銀行口座</h3><div id="bkList"></div>
     <p class="muted small" style="margin:8px 0 0">銀行の会社を開くと口座を作れます。利息は銀行が決めた1日あたりの％で、毎日つきます。</p></div>
   <div class="card" data-sub="order"><h3 style="margin-top:0">買ったもの</h3><div id="odList"></div></div>
+  <div class="card" data-sub="invest" style="text-align:center;padding:32px 16px">
+    <div style="font-size:40px">📈</div>
+    <h3>株式投資（準備中）</h3>
+    <p class="muted small" style="margin:0">上場した株式会社の株を、値段を見ながら売り買いできるようにする予定です。<br>いまは「持ち株」から、株をゆずることができます。</p>
+  </div>
+  <div class="card" data-sub="stock"><h3 style="margin-top:0">持ち株</h3><div id="stList"></div>
+    <p class="muted small" style="margin:8px 0 0">株（有限会社・合同会社は出資）を持っていると、会社が配当を出したとき、持ち分に合わせてもらえます。ゆずるときの代金は「請求」や「送金」でやりとりしてください。</p></div>
   <p class="muted small" data-sub="search pin" style="margin:8px 4px">ブロックなどゲーム内アイテムは、会社の商品として売り買いできます。今後：Discord連携の送金・借入も企業から使えるようにする予定です。</p>
 </section>
 
@@ -319,8 +343,8 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 
 <!-- ログイン -->
 <section id="vLogin" class="center hidden">
-  <h1>AiliNaX カジノ</h1>
-  <p class="notice">架空通貨 <b>AiliNaX</b>（単位 X）で遊ぶカジノです。<br>メールアドレスでログインします（パスワードはいりません）。<br>はじめてログインした人に 1,000 X を配ります（1回だけ）。</p>
+  <h1>風の芽経済組</h1>
+  <p class="notice">架空通貨 <b>AiliNaX</b>（単位 X）で、働く・会社をつくる・競馬やカジノで遊ぶ経済ゲームです。<br>メールアドレスでログインします（パスワードはいりません）。<br>はじめてログインした人に 1,000 X を配ります（1回だけ）。</p>
   <form id="mailForm" class="mailform">
     <input type="email" id="mail" required autocomplete="email" placeholder="メールアドレス">
     <button class="btn main big" id="mailBtn" type="submit">ログイン用のメールを送る</button>
@@ -457,6 +481,17 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <p class="small" id="xPrev" style="min-height:20px;margin:6px 0"></p>
     <button class="btn main big wide" id="xSend" disabled>送る</button>
   </div>
+  <div data-sub="bill" class="card">
+    <h3 style="margin-top:0">請求する</h3>
+    <p class="muted small" style="margin:0 0 6px">相手のID（ユーザーか会社）に「〇X 払ってください」と送ります。相手が「払う」を押すと、送金と同じように届きます（手数料1%・最低1 Xは払う側）。</p>
+    <select class="inp" id="bFrom"><option value="">自分として</option></select>
+    <input class="inp" id="bTo" inputmode="numeric" maxlength="6" placeholder="相手のID（5けた）">
+    <input class="inp" id="bAmt" type="number" inputmode="numeric" min="1" step="1" placeholder="請求する額（X）">
+    <input class="inp" id="bMemo" maxlength="100" placeholder="なんのお金か（例：ダイヤ1スタック代）">
+    <button class="btn main big wide" id="bSend">請求する</button>
+  </div>
+  <div data-sub="bill" class="card"><h3 style="margin-top:0">届いた請求</h3><div id="bIn"></div></div>
+  <div data-sub="bill" class="card"><h3 style="margin-top:0">出した請求</h3><div id="bOut"></div></div>
   <div data-sub="kokko" class="card" id="txTreasury"></div>
   <div data-sub="kokko" class="card" id="txTop"></div>
   <div data-sub="tax" class="card hist" id="txHist"></div>
@@ -580,12 +615,12 @@ async function boot() {
   if (data.session) enter(); else show('vLogin');
   sb.auth.onAuthStateChange((ev, s) => { if (ev === 'SIGNED_IN' && !entered) enter(); if (ev === 'SIGNED_OUT') location.reload(); });
 }
-let entered = false;
+let entered = false, ME = {};
 async function enter() {
   entered = true;
   try {
     const p = await call('ensure_profile');
-    setBal(p.balance); $('#nick').value = p.nickname; setTaxDot(p.tax);
+    ME = p; setBal(p.balance); $('#nick').value = p.nickname; setTaxDot(p.tax);
     if (p.is_admin && !MENU_OF.vMore[3].some(x => x[0] === 'admin')) MENU_OF.vMore[3].push(['admin', '管理']);
   } catch (e) { toast(e.message); show('vLogin'); entered = false; return; }
   if (location.hash.includes('access_token')) history.replaceState(null, '', location.pathname);
@@ -596,11 +631,11 @@ function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch 
 const GAMES = ['vRace', 'vSlot', 'vBj', 'vRou', 'vHilo'];
 // メインメニュー（左から）とサブメニュー
 const MENU = [
-  ['vInfo', '情報', 'i', [['cur', '通貨'], ['jack', '競馬億万長者'], ['rich', 'ランキング']]],
+  ['vInfo', '情報', 'i', [['cur', '通貨'], ['tl', 'TL'], ['friend', 'フレンド'], ['jack', '競馬億万長者'], ['rich', 'ランキング']]],
   ['vWork', '仕事', '✎', [['jobs', '仕事をえらぶ'], ['stat', '給料'], ['corp', '企業ページ'], ['mywork', '勤め先']]],
   ['vGame', '賭博', '♠', [['vRace', '🏇 競馬'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
-  ['vCorp', '企業', '社', [['search', '会社検索'], ['pin', 'ピン留め'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの']]],
-  ['vTax', '役所', '税', [['tax', '税金'], ['xfer', '送金'], ['kokko', '国庫・番付']]],
+  ['vCorp', '企業', '社', [['search', '会社検索'], ['pin', 'ピン留め'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '株式投資']]],
+  ['vTax', '役所', '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['kokko', '国庫・番付']]],
   ['vMore', '設定', '⚙', [['prof', 'プロフィール'], ['hist', '記録'], ['rule', '規約']]],
 ];
 const MENU_OF = Object.fromEntries(MENU.map(m => [m[0], m]));
@@ -621,7 +656,7 @@ function go(v, sub) {
   $('#subNav').innerHTML = subs.map(x => `<button data-s="${x[0]}" class="${x[0] === sub ? 'on' : ''}">${x[1]}</button>`).join('');
   $$('#subNav button').forEach(b => b.onclick = () => go(main, b.dataset.s));
   window.scrollTo(0, 0);
-  if (sec === 'vInfo') infoLoad();
+  if (sec === 'vInfo') { infoLoad(); if (sub === 'tl') tlLoad(true); if (sub === 'friend') friendLoad(); }
   if (sec === 'vWork') workLoad();
   if (sec === 'vRace') kbLoad();
   if (sec === 'vBj') bjLoad();
@@ -1330,7 +1365,7 @@ function setTaxDot(b) {
 }
 let TX = null;
 async function taxLoad() {
-  xferLoad();
+  xferLoad(); billLoad();
   try { TX = await call('tax_state'); taxRender(); }
   catch (e) { toast(e.message); }
 }
@@ -1433,10 +1468,11 @@ async function infoLoad() {
       <span>活動中の企業</span><b>${fmt(d.companies)}社</b>
       <span class="muted">給料として出た額（累計）</span><b>${fmt(d.wage)} X</b>
       <span class="muted">送金の手数料（累計）</span><b>${fmt(d.fee)} X</b>`;
+    $('#infoWeek').textContent = `（${d.week_from}〜 の勝ちの合計。毎週月曜にリセット）`;
     $('#infoJack').innerHTML = d.jackpots.length ? d.jackpots.map((j, i) => `<li><b>${i + 1}</b>
-      <span class="grow">${esc(j.nickname)}<small class="muted" style="display:block;font-size:11px">${esc(j.venue)}${j.rnum}R ${esc(j.race)}${j.grade ? '（' + j.grade + '）' : ''}・${KIND[j.kind].label} ${selText(j.kind, j.sel)}・${fmt(j.amount)}賭け</small></span>
-      <span class="v" style="color:var(--win)">+${fmt(j.payout)}</span></li>`).join('')
-      : '<li class="muted">まだ大当たりはありません</li>';
+      <span class="grow">${esc(j.nickname)}<small class="muted" style="display:block;font-size:11px">的中 ${fmt(j.hits)}本・払戻 ${fmt(j.payout)}・賭け ${fmt(j.bet)}・最高 ${fmt(j.best)}</small></span>
+      <span class="v" style="color:var(--win)">+${fmt(j.net)}</span></li>`).join('')
+      : '<li class="muted">今週はまだ勝った人がいません</li>';
     $('#rank').innerHTML = d.rich.map((r, i) => `<li><b>${i + 1}</b><span>${esc(r.nickname)}</span><span class="v">${fmt(r.balance)} X</span></li>`).join('') || '<li class="muted">まだいません</li>';
   } catch (e) { toast(e.message); }
 }
@@ -1537,6 +1573,42 @@ function xferInput() {
   }, 350);
 }
 $('#xTo').oninput = xferInput; $('#xAmt').oninput = xferInput;
+
+/* ---------------- 請求 ---------------- */
+let BL = null;
+const B_ST = { open: '未払い', paid: '払いずみ', declined: '断られた', canceled: '取り消し' };
+const B_ST_IN = { open: '未払い', paid: '払った', declined: '断った', canceled: '取り消された' };
+async function billLoad() { try { BL = await call('invoice_list'); billRender(); } catch (e) { toast(e.message); } }
+function billRender() {
+  const keep = $('#bFrom').value;
+  $('#bFrom').innerHTML = '<option value="">自分として</option>' + BL.corps.map(c => `<option value="${c.cid}">会社「${esc(c.name)}」として</option>`).join('');
+  if ([...$('#bFrom').options].some(o => o.value === keep)) $('#bFrom').value = keep;
+  const line = (i, inc) => `<div class="item">
+    <div class="row" style="justify-content:space-between"><b>${inc ? esc(i.from_name) + '（ID ' + i.from_id + '）から' : esc(i.to_name) + '（ID ' + i.to_id + '）へ'}</b><b class="num" style="margin-left:auto;white-space:nowrap">${fmt(i.amount)} X</b></div>
+    <div class="small muted">#${i.id}・${i.at}${i.memo ? '・' + esc(i.memo) : ''}${inc && i.to_cid ? `・会社「${esc(i.to_name)}」あて（会社のお金で払います）` : ''}</div>
+    <div class="row" style="margin-top:6px">${i.status === 'open'
+      ? (inc ? `<button class="btn main s" data-bpay="${i.id}" data-amt="${i.amount}" data-fee="${i.fee}">払う（手数料 ${fmt(i.fee)} X）</button><button class="btn s" data-bclose="${i.id}">断る</button>`
+             : `<span class="tag">未払い</span><button class="btn s" data-bclose="${i.id}">取り消す</button>`)
+      : `<span class="tag ${i.status === 'paid' ? 'good' : ''}">${(inc ? B_ST_IN : B_ST)[i.status]}</span>`}</div></div>`;
+  $('#bIn').innerHTML = BL.incoming.map(i => line(i, true)).join('') || '<p class="muted small" style="margin:0">ありません</p>';
+  $('#bOut').innerHTML = BL.outgoing.map(i => line(i, false)).join('') || '<p class="muted small" style="margin:0">ありません</p>';
+  $$('[data-bpay]').forEach(b => b.onclick = async () => {
+    if (!confirm(`${fmt(b.dataset.amt)} X（手数料 ${fmt(b.dataset.fee)} X）を払います。よろしいですか？`)) return;
+    try { BL = await call('invoice_pay', { p_id: Number(b.dataset.bpay) }); setBal(BL.balance); billRender(); toast('払いました'); } catch (e) { toast(e.message); }
+  });
+  $$('[data-bclose]').forEach(b => b.onclick = async () => {
+    if (!confirm('この請求を終わりにしますか？')) return;
+    try { BL = await call('invoice_close', { p_id: Number(b.dataset.bclose) }); billRender(); toast('終わりにしました'); } catch (e) { toast(e.message); }
+  });
+}
+$('#bSend').onclick = async () => {
+  const to = $('#bTo').value.trim(), amt = Math.floor(Number($('#bAmt').value) || 0);
+  if (!/^\d{5,6}$/.test(to) || amt < 1) return toast('相手のID（5けた）と額を入れてください');
+  try {
+    BL = await call('invoice_create', { p_from_cid: $('#bFrom').value, p_to: to, p_amount: amt, p_memo: $('#bMemo').value });
+    billRender(); $('#bTo').value = ''; $('#bAmt').value = ''; $('#bMemo').value = ''; toast('請求しました');
+  } catch (e) { toast(e.message); }
+};
 $('#xSend').onclick = async () => {
   if (!xferOk) return;
   if (!confirm(`${xferOk.nickname} さんに ${fmt(xferOk.amt)} X を送ります（手数料 ${fmt(xferOk.fee)} X）。よろしいですか？`)) return;
@@ -1573,6 +1645,7 @@ async function corpLoad(sub) {
         : '<p class="muted small" style="margin:0">口座はまだありません</p>';
       bindRows($('#bkList'));
     }
+    if (sub === 'stock') await stockLoad();
     if (sub === 'order') {
       const d = await call('my_orders');
       $('#odList').innerHTML = d.length ? d.map(o => `<div class="co-row" data-cid="${o.cid}"><span class="nm"><b>${esc(o.item)}</b>
@@ -1627,8 +1700,10 @@ async function corpOpen(cid) {
       ${c.account ? `<div class="kv"><span>あなたの預金</span><b>${fmt(c.account.balance)} X</b><span class="muted">もらった利息</span><b>${fmt(c.account.interest_total)} X</b></div>
         <div class="row" style="margin-top:8px"><button class="btn main s" data-dep>預ける</button><button class="btn s" data-wd>引き出す</button></div>`
         : (c.mine ? '' : '<button class="btn main s" data-open-acct>口座を開く（無料）</button>')}` : ''}
+    <h3>${unitOf(c) === '株' ? '株主' : '出資者'}</h3>
+    <p class="small muted" style="margin:0 0 4px">発行 ${fmt(c.shares)} ${unitOf(c)}</p>${holdersHtml(c, 10)}
     <h3>商品</h3>
-    ${c.items.length ? c.items.map(it => `<div class="item"><div class="row" style="justify-content:space-between"><b>${esc(it.name)}</b><b class="num" style="white-space:nowrap">${fmt(it.price)} X</b></div>
+    ${c.items.length ? c.items.map(it => `<div class="item"><div class="row" style="justify-content:space-between"><b>${esc(it.name)}</b><b class="num" style="margin-left:auto;white-space:nowrap">${fmt(it.price)} X</b></div>
         ${it.description ? `<p class="small muted" style="margin:4px 0;white-space:pre-wrap">${esc(it.description)}</p>` : ''}
         ${c.mine ? '' : `<button class="btn main s" data-buy="${it.id}" data-price="${it.price}" data-name="${esc(it.name)}">購入する</button>`}</div>`).join('')
       : '<p class="muted small">いまは商品がありません</p>'}
@@ -1688,7 +1763,7 @@ function ownRender() {
       <div class="kv"><span>会社のID</span><b>${cid}</b><span>会社のお金</span><b>${fmt(c.balance)} X</b>
         ${bank ? `<span class="muted">あずかっている預金</span><b>${fmt(c.deposits)} X</b><span class="muted">口座の数</span><b>${c.accounts}</b>` : ''}</div>
       <div class="row" style="margin-top:8px;flex-wrap:wrap">
-        <button class="btn s" data-act="send">会社から送金</button><button class="btn s" data-act="withdraw">自分に引き出す</button>
+        <button class="btn s" data-act="send">会社から送金</button><button class="btn s" data-act="bill">請求する</button><button class="btn s" data-act="withdraw">自分に引き出す</button>
         <button class="btn s" data-act="fund">自分から入れる</button><button class="btn main s" data-act="payall">全員に給料</button></div>
       <p class="muted small" style="margin:6px 0 0">送金は手数料1%（最低1 X）。引き出しは社長の給料あつかいで、所得として税金の対象です。</p>
 
@@ -1697,6 +1772,12 @@ function ownRender() {
       ${bank ? `<div class="row"><span class="small">預金の金利 1日</span><input class="inp" style="width:90px" data-f="rate" type="number" step="0.01" min="0" max="1" value="${Number(c.rate)}"><span class="small">%（0〜1）</span></div>
         <p class="muted small" style="margin:0">利息は会社のお金から毎日払います。会社のお金が足りないと払えません。</p>` : ''}
       <button class="btn s" data-act="save">保存</button>
+
+      <h4>${unitOf(c) === '株' ? '株・株主' : '出資・出資者'}</h4>
+      <p class="small" style="margin:0 0 4px">発行 <b>${fmt(c.shares)} ${unitOf(c)}</b></p>${holdersHtml(c, 20)}
+      <div class="row" style="margin-top:6px;flex-wrap:wrap"><button class="btn s" data-act="sh_add">発行をふやす</button><button class="btn s" data-act="sh_sub">へらす</button>
+        <button class="btn main s" data-act="dividend">配当を出す</button><button class="btn s" data-act="owner">社長を交代</button></div>
+      <p class="muted small" style="margin:6px 0 0">ふやした分は社長のものになります。へらせるのは社長が持っている分だけ。株をほかの人にゆずるのは「企業 → 持ち株」から。配当は会社のお金から持ち分に合わせて配り、もらった人の所得になります。</p>
 
       <h4>商品（購入ボタン）</h4>
       ${c.items.map(it => itemForm(it)).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
@@ -1766,6 +1847,13 @@ $('#owCorp').onclick = async ev => {
     else if (a === 'fire') { if (!confirm('この社員にやめてもらいますか？')) return; r = await call('corp_member_set', { p_cid: cid, p_user: b.dataset.uid, p_salary: null, p_role: null, p_remove: true }); }
     else if (a === 'send') { const to = prompt('送り先のID（ユーザーか会社、5けた）', ''); if (!to) return; const n = num('送る額（X）。手数料1%（最低1 X）が会社のお金からかかります', ''); if (!n) return;
         r = await call('corp_send', { p_cid: cid, p_to: to, p_amount: n }); }
+    else if (a === 'sh_add' || a === 'sh_sub') { const n = num(a === 'sh_add' ? 'ふやす数' : 'へらす数', ''); if (!n) return;
+        r = await call('corp_shares_change', { p_cid: cid, p_delta: a === 'sh_add' ? n : -n }); }
+    else if (a === 'dividend') { const n = num('配当に使う額（X）。会社のお金から、株主の持ち分に合わせて配ります', ''); if (!n) return; r = await call('corp_dividend', { p_cid: cid, p_amount: n }); }
+    else if (a === 'owner') { const to = prompt('新しい社長のID（ユーザー・5けた）。交代すると、あなたはこの会社を動かせなくなります', ''); if (!to) return;
+        if (!confirm(`ID ${to} の人に社長を交代します。もとに戻すには新しい社長に頼む必要があります。よろしいですか？`)) return;
+        r = await call('corp_owner_set', { p_cid: cid, p_to: to.trim() }); }
+    else if (a === 'bill') { go('vTax', 'bill'); setTimeout(() => { $('#bFrom').value = cid; }, 600); return; }
     else if (a === 'withdraw') { const n = num('自分に引き出す額（X）', ''); if (!n) return; r = await call('corp_withdraw', { p_cid: cid, p_amount: n }); }
     else if (a === 'fund') { const n = num('会社に入れる額（X）', ''); if (!n) return; r = await call('corp_fund', { p_cid: cid, p_amount: n }); }
     if (r) { OW = r; ownRender(); setBal(r.balance); toast(r.paid ? `${r.people}人に合計 ${fmt(r.paid)} X 払いました` : 'できました'); }
@@ -1812,8 +1900,89 @@ async function adminLoad() {
   } catch (e) { toast(e.message); }
 }
 
+/* =================================================================
+   TL・フレンド
+   ================================================================= */
+let tlScope = 'friends', tlLast = null;
+const tlItem = x => `<div class="item" data-pid="${x.id}">
+  <div class="row"><b>${esc(x.nickname)}</b><span class="muted small">ID ${x.uid}</span>
+    ${!x.mine && !x.friend ? (x.asked ? '<span class="muted small">申請中</span>' : `<button class="btn s" data-fr="${x.uid}" style="padding:2px 8px">＋フレンド</button>`) : ''}
+    <span class="muted small" style="margin-left:auto">${x.at}</span></div>
+  <p style="margin:4px 0 0;white-space:pre-wrap;word-break:break-word">${esc(x.body)}</p>
+  ${x.mine || ME.is_admin ? `<div style="text-align:right"><button class="btn s" data-del="${x.id}" style="padding:2px 8px">消す</button></div>` : ''}</div>`;
+async function tlLoad(reset) {
+  try {
+    if (reset) tlLast = null;
+    const d = await call('tl_list', { p_scope: tlScope, p_before: tlLast });
+    const html = d.map(tlItem).join('');
+    if (reset) $('#tlList').innerHTML = html || `<p class="muted small" style="margin:0">${tlScope === 'friends' ? 'まだ投稿がありません。フレンドを作るか「みんな」を見てみましょう' : 'まだ投稿がありません'}</p>`;
+    else $('#tlList').insertAdjacentHTML('beforeend', html);
+    if (d.length) tlLast = d[d.length - 1].id;
+    $('#tlMore').classList.toggle('hidden', d.length < 30);
+  } catch (e) { toast(e.message); }
+}
+$$('#tlScope button').forEach(b => b.onclick = () => { tlScope = b.dataset.k; $$('#tlScope button').forEach(x => x.classList.toggle('on', x === b)); tlLoad(true); });
+$('#tlMore').onclick = () => tlLoad(false);
+$('#tlBody').oninput = () => { $('#tlCount').textContent = `${$('#tlBody').value.length} / 140`; };
+$('#tlSend').onclick = async () => {
+  const b = $('#tlBody').value.trim(); if (!b) return;
+  try { await call('tl_post', { p_body: b }); $('#tlBody').value = ''; $('#tlCount').textContent = '0 / 140'; tlLoad(true); } catch (e) { toast(e.message); }
+};
+$('#tlList').onclick = async ev => {
+  const f = ev.target.closest('[data-fr]'), d = ev.target.closest('[data-del]');
+  try {
+    if (f) { await call('friend_request', { p_to: f.dataset.fr }); toast('フレンド申請しました'); tlLoad(true); }
+    if (d) { if (!confirm('この投稿を消しますか？')) return; await call('tl_delete', { p_id: Number(d.dataset.del) }); d.closest('[data-pid]').remove(); }
+  } catch (e) { toast(e.message); }
+};
+async function friendLoad() { try { frRender(await call('friend_list')); } catch (e) { toast(e.message); } }
+function frRender(d) {
+  $('#frMe').textContent = ME.account_no || '-----';
+  const none = t => `<p class="muted small" style="margin:0">${t}</p>`;
+  $('#frIn').innerHTML = d.incoming.map(x => `<div class="line"><span class="grow">${esc(x.nickname)}（ID ${x.uid}）<small>${x.at}</small></span>
+    <button class="btn main s" data-ok="${x.uid}">受ける</button><button class="btn s" data-ng="${x.uid}">断る</button></div>`).join('') || none('ありません');
+  $('#frList').innerHTML = d.friends.map(x => `<div class="line"><span class="grow">${esc(x.nickname)}<small>ID ${x.uid}・${x.since}から</small></span>
+    <button class="btn s" data-send="${x.uid}">送金</button><button class="btn s" data-bill="${x.uid}">請求</button><button class="btn s" data-rm="${x.uid}">やめる</button></div>`).join('') || none('まだいません');
+  $('#frOut').innerHTML = d.outgoing.map(x => `<div class="line"><span class="grow">${esc(x.nickname)}（ID ${x.uid}）<small>${x.at}</small></span>
+    <button class="btn s" data-rm="${x.uid}">取り消す</button></div>`).join('') || none('ありません');
+}
+$('#frSend').onclick = async () => {
+  const to = $('#frTo').value.trim(); if (!/^\d{5,6}$/.test(to)) return toast('相手のID（5けた）を入れてください');
+  try { frRender(await call('friend_request', { p_to: to })); $('#frTo').value = ''; toast('申請しました'); } catch (e) { toast(e.message); }
+};
+$('#vInfo').addEventListener('click', async ev => {
+  const b = ev.target.closest('#frIn [data-ok], #frIn [data-ng], #vInfo [data-rm], #frList [data-send], #frList [data-bill]'); if (!b) return;
+  try {
+    if (b.dataset.ok) { frRender(await call('friend_answer', { p_from: b.dataset.ok, p_ok: true })); toast('フレンドになりました'); }
+    else if (b.dataset.ng) frRender(await call('friend_answer', { p_from: b.dataset.ng, p_ok: false }));
+    else if (b.dataset.rm) { if (!confirm('よろしいですか？')) return; frRender(await call('friend_remove', { p_uid: b.dataset.rm })); }
+    else if (b.dataset.send) { go('vTax', 'xfer'); $('#xTo').value = b.dataset.send; $('#xAmt').focus(); xferInput(); }
+    else if (b.dataset.bill) { go('vTax', 'bill'); $('#bTo').value = b.dataset.bill; $('#bAmt').focus(); }
+  } catch (e) { toast(e.message); }
+});
+
+/* ---------------- 株 ---------------- */
+const unitOf = c => c.form === '株式会社' ? '株' : '口';
+const holdersHtml = (c, n) => c.holders.slice(0, n).map(h => `<div class="line"><span class="grow">${esc(h.nickname)}<small>ID ${h.uid}</small></span>
+  <b class="num">${fmt(h.shares)} ${unitOf(c)}</b><span class="muted small" style="width:60px;text-align:right">${Number(h.pct)}%</span></div>`).join('');
+async function stockLoad() {
+  try {
+    const d = await call('my_stocks');
+    $('#stList').innerHTML = d.stocks.map(x => `<div class="item"><div class="row" style="justify-content:space-between"><b>${esc(x.name)}</b><b class="num" style="margin-left:auto;white-space:nowrap">${fmt(x.shares)} ${unitOf(x)}</b></div>
+      <div class="small muted">発行 ${fmt(x.total)} ${unitOf(x)} のうち ${Number(x.pct)}%・社長 ${esc(x.owner)}${x.mine ? '（あなた）' : ''}・もらった配当 ${fmt(x.dividend_total)} X</div>
+      <div class="row" style="margin-top:6px"><button class="btn s" data-give="${x.cid}" data-max="${x.shares}">ゆずる</button><button class="btn s" data-co="${x.cid}">会社を見る</button></div></div>`).join('')
+      || '<p class="muted small" style="margin:0">まだ持っていません</p>';
+    $$('#stList [data-co]').forEach(b => b.onclick = () => corpOpen(b.dataset.co));
+    $$('#stList [data-give]').forEach(b => b.onclick = async () => {
+      const to = prompt('ゆずる相手のID（ユーザー・5けた）', ''); if (!to) return;
+      const n = Math.floor(Number(prompt(`ゆずる数（持っているのは ${b.dataset.max}）`, '')) || 0); if (n < 1) return;
+      try { await call('share_give', { p_cid: b.dataset.give, p_to: to.trim(), p_shares: n }); toast('ゆずりました'); stockLoad(); } catch (e) { toast(e.message); }
+    });
+  } catch (e) { toast(e.message); }
+}
+
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給' };
+const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当' };
 async function moreLoad() {
   try {
     const [hs, me] = await Promise.all([call('my_history'), call('my_profile')]);
