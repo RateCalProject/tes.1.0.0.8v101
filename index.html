@@ -192,6 +192,8 @@ h3{font-size:15px;margin:16px 0 8px}
 .co-row .nm small{color:var(--muted);display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kindtag{font-size:11px;font-weight:800;border-radius:4px;padding:1px 6px;background:var(--soft);color:var(--accent);margin-left:6px}
 .item{border:1px solid var(--line);border-radius:10px;padding:10px;margin:8px 0}
+.item > .row > b:first-child{flex:1;min-width:0}
+.item > .row > b.num{flex:none;white-space:nowrap}
 .item .row b{flex:1}
 .own h4{margin:14px 0 6px;font-size:14px}
 .line{display:flex;gap:8px;align-items:center;padding:7px 0;border-top:1px solid var(--line);font-size:14px}
@@ -260,6 +262,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   <div class="card" data-sub="tl">
     <textarea class="inp" id="tlBody" rows="3" maxlength="140" placeholder="いまどうしてる？（140文字まで）"></textarea>
     <div class="row"><span class="muted small grow" id="tlCount">0 / 140</span><button class="btn main s" id="tlSend">投稿</button></div>
+    <p class="muted small" style="margin:6px 0 0">TLに残るのは、みんなの投稿の新しい256通までです（古い順に消えます）。</p>
   </div>
   <div class="card" data-sub="tl">
     <div class="seg" id="tlScope" style="margin-bottom:8px"><button data-k="friends" class="on">フレンド</button><button data-k="all">みんな</button></div>
@@ -501,7 +504,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <h3 style="margin-top:0">送金</h3>
     <div class="row"><span class="muted small grow">あなたのID</span><b class="num" id="myAcct" style="font-size:18px;letter-spacing:.08em">-------</b><button class="btn" id="acctCopy" style="padding:6px 10px;font-size:13px">コピー</button></div>
     <p class="muted small" id="xferNote" style="margin:6px 0 8px">手数料は送る額の1%（最低1 X）で、国庫に入ります。登録から7日たつと送金・受け取りができます。</p>
-    <input class="inp" id="xTo" inputmode="numeric" maxlength="6" placeholder="相手のID（5けた・ユーザーか会社）">
+    <input class="inp" id="xTo" inputmode="numeric" maxlength="11" placeholder="相手のID（ユーザー5けた・会社3けた）">
     <input class="inp" id="xAmt" type="number" inputmode="numeric" min="1" step="1" placeholder="送る額（X）">
     <p class="small" id="xPrev" style="min-height:20px;margin:6px 0"></p>
     <button class="btn main big wide" id="xSend" disabled>送る</button>
@@ -510,7 +513,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <h3 style="margin-top:0">請求する</h3>
     <p class="muted small" style="margin:0 0 6px">相手のID（ユーザーか会社）に「〇X 払ってください」と送ります。相手が「払う」を押すと、送金と同じように届きます（手数料1%・最低1 Xは払う側）。</p>
     <select class="inp" id="bFrom"><option value="">自分として</option></select>
-    <input class="inp" id="bTo" inputmode="numeric" maxlength="6" placeholder="相手のID（5けた）">
+    <input class="inp" id="bTo" inputmode="numeric" maxlength="11" placeholder="相手のID（ユーザー5けた・会社3けた）">
     <input class="inp" id="bAmt" type="number" inputmode="numeric" min="1" step="1" placeholder="請求する額（X）">
     <input class="inp" id="bMemo" maxlength="100" placeholder="なんのお金か（例：ダイヤ1スタック代）">
     <button class="btn main big wide" id="bSend">請求する</button>
@@ -1585,7 +1588,7 @@ $('#acctCopy').onclick = async () => {
 function xferInput() {
   clearTimeout(xferT); xferOk = null; $('#xSend').disabled = true;
   const to = $('#xTo').value.trim(), amt = Math.floor(Number($('#xAmt').value) || 0);
-  if (!/^\d{5,6}$/.test(to) || amt < 1) { $('#xPrev').innerHTML = '<span class="muted">相手のID（5けた）と額を入れてください</span>'; return; }
+  if (!/^(\d{5,6}|\d{3,4}(-\d{5,6})?)$/.test(to) || amt < 1) { $('#xPrev').innerHTML = '<span class="muted">相手のID（ユーザー5けた・会社3けた）と額を入れてください</span>'; return; }
   const req = ++xferReq;
   xferT = setTimeout(async () => {
     try {
@@ -1628,7 +1631,7 @@ function billRender() {
 }
 $('#bSend').onclick = async () => {
   const to = $('#bTo').value.trim(), amt = Math.floor(Number($('#bAmt').value) || 0);
-  if (!/^\d{5,6}$/.test(to) || amt < 1) return toast('相手のID（5けた）と額を入れてください');
+  if (!/^(\d{5,6}|\d{3,4}(-\d{5,6})?)$/.test(to) || amt < 1) return toast('相手のID（ユーザー5けた・会社3けた）と額を入れてください');
   try {
     BL = await call('invoice_create', { p_from_cid: $('#bFrom').value, p_to: to, p_amount: amt, p_memo: $('#bMemo').value });
     billRender(); $('#bTo').value = ''; $('#bAmt').value = ''; $('#bMemo').value = ''; toast('請求しました');
@@ -1651,7 +1654,7 @@ $('#xSend').onclick = async () => {
    ================================================================= */
 const kindTag = c => c.kind === '銀行' ? '<span class="kindtag">銀行</span>' : '';
 const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>${esc(c.name)}${kindTag(c)}</b>
-  <small>ID ${c.cid}・社長 ${esc(c.owner)}${c.description ? '・' + esc(c.description) : ''}</small></span>${c.pinned ? '📌' : ''}</div>`;
+  <small>ID ${c.cid_full || c.cid}・社長 ${esc(c.owner)}${c.description ? '・' + esc(c.description) : ''}</small></span>${c.pinned ? '📌' : ''}</div>`;
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 async function corpLoad(sub) {
@@ -1718,7 +1721,7 @@ async function corpOpen(cid) {
   const bank = c.kind === '銀行';
   m.innerHTML = `<div class="sheet">
     <div class="row"><b style="font-size:20px">${esc(c.name)}</b>${kindTag(c)}<button class="btn s" style="margin-left:auto" data-x>とじる</button></div>
-    <p class="muted small" style="margin:4px 0">ID <b style="user-select:all">${c.cid}</b>・社長 ${esc(c.owner)}</p>
+    <p class="muted small" style="margin:4px 0">ID <b style="user-select:all">${c.cid_full}</b>（${c.cid} だけでもOK）・社長 ${esc(c.owner)}</p>
     ${c.description ? `<p style="white-space:pre-wrap;margin:8px 0">${esc(c.description)}</p>` : ''}
     <div class="row" style="margin:8px 0"><button class="btn s" data-pin>${c.pinned ? '📌 ピン留めをやめる' : '📌 ピン留め'}</button>
       ${c.mine ? '' : '<button class="btn s" data-send>この会社に送金</button>'}</div>
@@ -1786,7 +1789,7 @@ function ownRender() {
     const bank = c.kind === '銀行', cid = c.cid;
     return `<div class="card own" data-co="${cid}">
       <h3 style="margin-top:0">${esc(c.name)}${kindTag(c)} <span class="tag good">活動中</span></h3>
-      <div class="kv"><span>会社のID</span><b>${cid}</b><span>会社のお金</span><b>${fmt(c.balance)} X</b>
+      <div class="kv"><span>会社のID</span><b style="user-select:all">${c.cid_full}</b><span class="muted">省略形（取引に使える）</span><b>${cid}</b><span>会社のお金</span><b>${fmt(c.balance)} X</b>
         ${bank ? `<span class="muted">あずかっている預金</span><b>${fmt(c.deposits)} X</b><span class="muted">口座の数</span><b>${c.accounts}</b>` : ''}</div>
       <div class="row" style="margin-top:8px;flex-wrap:wrap">
         <button class="btn s" data-act="send">会社から送金</button><button class="btn s" data-act="bill">請求する</button><button class="btn s" data-act="withdraw">自分に引き出す</button>
@@ -1871,7 +1874,7 @@ $('#owCorp').onclick = async ev => {
     else if (a === 'mset') { const s = num('1回の給料（X）', b.dataset.sal); if (s === null) return; const role = prompt('役職', b.dataset.role); if (role === null) return;
         r = await call('corp_member_set', { p_cid: cid, p_user: b.dataset.uid, p_salary: Number.isNaN(s) ? 0 : s, p_role: role, p_remove: false }); }
     else if (a === 'fire') { if (!confirm('この社員にやめてもらいますか？')) return; r = await call('corp_member_set', { p_cid: cid, p_user: b.dataset.uid, p_salary: null, p_role: null, p_remove: true }); }
-    else if (a === 'send') { const to = prompt('送り先のID（ユーザーか会社、5けた）', ''); if (!to) return; const n = num('送る額（X）。手数料1%（最低1 X）が会社のお金からかかります', ''); if (!n) return;
+    else if (a === 'send') { const to = prompt('送り先のID（ユーザー5けた・会社3けた）', ''); if (!to) return; const n = num('送る額（X）。手数料1%（最低1 X）が会社のお金からかかります', ''); if (!n) return;
         r = await call('corp_send', { p_cid: cid, p_to: to, p_amount: n }); }
     else if (a === 'sh_add' || a === 'sh_sub') { const n = num(a === 'sh_add' ? 'ふやす数' : 'へらす数', ''); if (!n) return;
         r = await call('corp_shares_change', { p_cid: cid, p_delta: a === 'sh_add' ? n : -n }); }
@@ -1907,7 +1910,7 @@ async function adminLoad() {
     const d = await call('admin_state'), t = d.treasury;
     $('#adminBox').innerHTML = `<h3 style="margin-top:0">企業の審査</h3>
       ${d.pending.length ? d.pending.map(c => `<div class="item"><div class="row"><b>${esc(c.name)}</b>${kindTag(c)}</div>
-          <p class="small muted" style="margin:4px 0">申請者 ${esc(c.owner)}（ID ${c.owner_id}）・${c.at}・会社ID ${c.cid}</p>
+          <p class="small muted" style="margin:4px 0">申請者 ${esc(c.owner)}（ID ${c.owner_id}）・${c.at}・会社ID ${c.cid_full}</p>
           ${c.description ? `<p class="small" style="white-space:pre-wrap;margin:4px 0">${esc(c.description)}</p>` : ''}
           <div class="row"><button class="btn main s" data-ok="${c.cid}">許可</button><button class="btn s" data-ng="${c.cid}">却下</button></div></div>`).join('')
         : '<p class="muted small" style="margin:0">審査待ちはありません</p>'}
@@ -1926,7 +1929,7 @@ async function adminLoad() {
           <div class="row"><button class="btn main s" data-fxok="${r.id}">処理した</button><button class="btn s" data-fxng="${r.id}">断る</button></div></div>`).join('')
         : '<p class="muted small" style="margin:0">処理待ちはありません</p>'}
       <h3>活動中の企業</h3>
-      ${d.active.map(c => `<p class="small" style="margin:4px 0">${esc(c.name)}（${esc(c.kind === '銀行' ? '銀行' : c.form)}・ID ${c.cid}・社長 ${esc(c.owner)}）お金 ${fmt(c.balance)} X</p>`).join('') || '<p class="muted small">まだありません</p>'}`;
+      ${d.active.map(c => `<p class="small" style="margin:4px 0">${esc(c.name)}（${esc(c.kind === '銀行' ? '銀行' : c.form)}・ID ${c.cid_full}・社長 ${esc(c.owner)}）お金 ${fmt(c.balance)} X</p>`).join('') || '<p class="muted small">まだありません</p>'}`;
     $$('#adminBox [data-fxok], #adminBox [data-fxng]').forEach(b => b.onclick = async () => {
       const ok = !!b.dataset.fxok, note = prompt(ok ? 'メモ（なくてもOK）' : '断る理由（申請者に届きます）', ''); if (note === null) return;
       try { await call('admin_fx_decide', { p_id: Number(b.dataset.fxok || b.dataset.fxng), p_ok: ok, p_note: note }); toast(ok ? '処理しました' : '断りました'); adminLoad(); } catch (e) { toast(e.message); }
