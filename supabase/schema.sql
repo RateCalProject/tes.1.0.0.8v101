@@ -310,8 +310,14 @@ end $$;
 alter table public.companies drop constraint if exists companies_form_chk;
 alter table public.companies add constraint companies_form_chk check (form in ('株式会社', '有限会社', '合同会社', '国営'));
 alter table public.companies add column if not exists official boolean not null default false;
--- 銀行の設定（銀行が決める）：口座開設は auto（すぐ）/ approve（銀行の許可制）
+-- 銀行の設定（銀行が決める）
+--   口座開設：off（受け付けない）/ auto（すぐ）/ approve（銀行の許可制）・オレンジのチェックが必要か
+--   借入（借りるボタン）：受け付けるか・この銀行の口座が必要か・オレンジのチェックが必要か
 alter table public.companies add column if not exists acct_mode text not null default 'approve';
+alter table public.companies add column if not exists acct_need_check boolean not null default false;
+alter table public.companies add column if not exists loan_on boolean not null default true;
+alter table public.companies add column if not exists loan_need_acct boolean not null default false;
+alter table public.companies add column if not exists loan_need_check boolean not null default false;
 create table if not exists public.corp_items (
   id          bigserial primary key,
   company_id  int not null references public.companies(id) on delete cascade,
@@ -854,7 +860,7 @@ end $$;
 create or replace function public._income(u uuid, m int) returns bigint
 language sql stable set search_path = public as $$
   select greatest(coalesce(sum(payout - bet), 0), 0)::bigint from tx_log
-   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend','liquidation')
+   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend','liquidation','game_bet')
      and created_at >= _month_start(m) and created_at < _month_start(_next_month(m))
 $$;
 
@@ -2294,6 +2300,7 @@ language sql stable set search_path = public as $$
   select jsonb_build_object('cid', c.cid, 'cid_full', _cfull(c), 'name', c.name, 'form', c.form, 'kind', c.kind, 'description', c.description,
     'owner', (select nickname from profiles where id = c.owner), 'owner_badge', _badge(c.owner), 'rate', c.rate, 'status', c.status,
     'exchange', c.cid = (select value from app_settings where key = 'exchange_cid'), 'official', c.official, 'acct_mode', c.acct_mode,
+    'acct_need_check', c.acct_need_check, 'loan_on', c.loan_on, 'loan_need_acct', c.loan_need_acct, 'loan_need_check', c.loan_need_check,
     'pinned', exists (select 1 from corp_pins where user_id = u and company_id = c.id),
     'mine', c.owner = u)
 $$;
@@ -2341,7 +2348,7 @@ begin
     'items', (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'name', name, 'price', price, 'description', description) order by id), '[]'::jsonb)
                 from corp_items where company_id = c.id and active),
     'account', case when acct.user_id is null then null else jsonb_build_object('balance', acct.balance, 'interest_total', acct.interest_total, 'status', acct.status) end,
-    'packs', (select coalesce(jsonb_agg(_pack_json(lp) order by lp.amount), '[]'::jsonb) from loan_packs lp where lp.company_id = c.id and lp.active),
+    'packs', (select coalesce(jsonb_agg(_pack_json(lp) order by lp.amount), '[]'::jsonb) from loan_packs lp where lp.company_id = c.id and lp.active and c.loan_on),
     'loans', (select coalesce(jsonb_agg(_loan_json(l) order by l.id desc), '[]'::jsonb) from loans l
                where l.company_id = c.id and l.user_id = u and l.status in ('pending', 'active')),
     'shares', c.shares, 'holders', _corp_holders(c.id),
@@ -2393,6 +2400,10 @@ begin
   select * into c from companies where cid = _cid_norm(p_cid) and status = 'active' and kind = '銀行';
   if not found then raise exception 'その銀行は見つかりません'; end if;
   if exists (select 1 from bank_accounts where company_id = c.id and user_id = u) then raise exception 'もう口座があります（申込中をふくむ）'; end if;
+  if c.acct_mode = 'off' and c.owner <> u then raise exception 'この銀行はいま口座の受付をしていません'; end if;
+  if c.acct_need_check and c.owner <> u and not coalesce((_badge(u)->>'ok')::boolean, false) then
+    raise exception 'この銀行で口座を開くには、オレンジのチェックが必要です';
+  end if;
   insert into bank_accounts(company_id, user_id, interest_day, status)
   values (c.id, u, _kb_jday(_now()), case when c.acct_mode = 'auto' or c.owner = u then 'active' else 'pending' end);
   if c.acct_mode <> 'auto' and c.owner <> u then
@@ -2503,6 +2514,7 @@ begin
       'deposits', (select coalesce(sum(balance), 0) from bank_accounts where company_id = c.id),
       'accounts', (select count(*) from bank_accounts where company_id = c.id and status = 'active'),
       'official', c.official, 'acct_mode', c.acct_mode, 'fx_pairs', c.fx_pairs, 'fx_fee', c.fx_fee,
+      'acct_need_check', c.acct_need_check, 'loan_on', c.loan_on, 'loan_need_acct', c.loan_need_acct, 'loan_need_check', c.loan_need_check,
       'fx_open_orders', (select count(*) from fx_orders where exch_id = c.id and status = 'open'),
       'acct_requests', (select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id))), '[]'::jsonb)
                  from bank_accounts a join profiles p on p.id = a.user_id where a.company_id = c.id and a.status = 'pending'),
@@ -4312,6 +4324,13 @@ begin
   select * into c from companies where id = lp.company_id and status = 'active' and kind = '銀行';
   if not found then raise exception 'この銀行はいま営業していません'; end if;
   if c.owner = u then raise exception '自分の銀行からは借りられません'; end if;
+  if not c.loan_on then raise exception 'この銀行はいま貸出の受付をしていません'; end if;
+  if c.loan_need_acct and not exists (select 1 from bank_accounts where company_id = c.id and user_id = u and status = 'active') then
+    raise exception 'この銀行で借りるには、先にこの銀行の口座が必要です';
+  end if;
+  if c.loan_need_check and not coalesce((_badge(u)->>'ok')::boolean, false) then
+    raise exception 'この銀行で借りるには、オレンジのチェックが必要です';
+  end if;
   select * into me from profiles where id = u;
   if _now() < me.created_at + interval '7 days' then raise exception '登録から7日たつまで借りられません'; end if;
   if exists (select 1 from loans where user_id = u and pack_id = lp.id and status = 'pending') then raise exception 'このパックはもう申込中です'; end if;
@@ -4414,15 +4433,18 @@ begin
   return my_corps();
 end $$;
 
--- 銀行（社長）：口座開設のしかたを決める（auto / approve）
-create or replace function public.bank_settings(p_cid text, p_acct_mode text) returns jsonb
+-- 銀行（社長）：口座開設と借入の受付を決める
+drop function if exists public.bank_settings(text, text);
+create or replace function public.bank_settings(p_cid text, p_acct_mode text, p_acct_check boolean, p_loan_on boolean, p_loan_acct boolean, p_loan_check boolean) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies;
 begin
   c := _my_corp(u, p_cid);
   if c.kind <> '銀行' then raise exception '銀行だけの設定です'; end if;
-  if p_acct_mode not in ('auto', 'approve') then raise exception '口座開設は「すぐ」か「許可制」です'; end if;
-  update companies set acct_mode = p_acct_mode where id = c.id;
+  if p_acct_mode not in ('off', 'auto', 'approve') then raise exception '口座開設は「受け付けない」「すぐ」「許可制」です'; end if;
+  update companies set acct_mode = p_acct_mode, acct_need_check = coalesce(p_acct_check, false), loan_on = coalesce(p_loan_on, true),
+         loan_need_acct = coalesce(p_loan_acct, false), loan_need_check = coalesce(p_loan_check, false)
+   where id = c.id;
   return my_corps();
 end $$;
 
@@ -4472,6 +4494,387 @@ begin
 end $$;
 
 
+-- ---------------------------------------------------------------------
+-- 対戦ゲーム（リバーシ・チェス・将棋…）
+--   部屋：主催が作る（ゲーム・持ち時間・招待・観戦の賭けあり／なし）。だれでも入れる部屋と、IDで招待した人だけの部屋
+--   ふたりそろうと始まる（先手・後手はランダム）。持ち時間は1人ずつ（最大3時間）。切れたら負け
+--   本人どうしは賭けない（無料）。観戦する人は、どちらが勝つかに賭けられる（山分け。国庫が5%）
+--     ・賭けられるのは10手目まで（それ以降は締め切り）・対局している本人は賭けられない
+--     ・引き分け・片方にしか賭けがないときは全部返す
+--   チャット：10秒に1回・100文字まで
+-- ---------------------------------------------------------------------
+create table if not exists public.game_rooms (
+  id          bigserial primary key,
+  game        text not null,                        -- reversi / chess / shogi
+  title       text not null default '',
+  host        uuid not null references public.profiles(id) on delete cascade,
+  invite      uuid references public.profiles(id) on delete set null,
+  seats       uuid[] not null default '{}',          -- 席0（先手・黒）, 席1（後手・白）
+  status      text not null default 'waiting',      -- waiting / playing / finished / canceled
+  time_ms     int not null default 600000,          -- 1人の持ち時間
+  clock_ms    int[] not null default '{}',          -- 残り時間（席ごと）
+  turn        int not null default 0,
+  turn_at     timestamptz,
+  move_no     int not null default 0,
+  state       jsonb not null default '{}',
+  bets_on     boolean not null default true,
+  winner      int,                                   -- 勝った席（引き分けは -1）
+  reason      text,
+  created_at  timestamptz not null default now(),
+  started_at  timestamptz,
+  finished_at timestamptz
+);
+create index if not exists game_rooms_status_idx on public.game_rooms(status, game, id desc);
+create table if not exists public.game_moves (
+  room_id bigint not null references public.game_rooms(id) on delete cascade,
+  n       int not null,
+  seat    int not null,
+  move    jsonb not null,
+  at      timestamptz not null default now(),
+  primary key (room_id, n)
+);
+create table if not exists public.game_bets (
+  id      bigserial primary key,
+  room_id bigint not null references public.game_rooms(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  seat    int not null,
+  amount  bigint not null check (amount > 0),
+  payout  bigint,
+  at      timestamptz not null default now()
+);
+create index if not exists game_bets_room_idx on public.game_bets(room_id);
+create table if not exists public.game_chat (
+  id      bigserial primary key,
+  room_id bigint not null references public.game_rooms(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  body    text not null,
+  at      timestamptz not null default now()
+);
+create index if not exists game_chat_room_idx on public.game_chat(room_id, id desc);
+alter table public.game_rooms enable row level security;
+alter table public.game_moves enable row level security;
+alter table public.game_bets  enable row level security;
+alter table public.game_chat  enable row level security;
+revoke all on public.game_rooms, public.game_moves, public.game_bets, public.game_chat from anon, authenticated;
+
+-- ---------- リバーシ（8×8。盤は64文字：. 空き / B 黒 / W 白。黒が先手＝席0） ----------
+create or replace function public._rv_flips(b text, pos int, me text) returns int[]
+language plpgsql immutable as $$
+declare op text := case me when 'B' then 'W' else 'B' end; r int := pos / 8; c int := pos % 8;
+  dr int; dc int; rr int; cc int; line int[]; res int[] := '{}';
+begin
+  if pos < 0 or pos > 63 or substr(b, pos + 1, 1) <> '.' then return '{}'; end if;
+  foreach dr in array array[-1, 0, 1] loop
+    foreach dc in array array[-1, 0, 1] loop
+      continue when dr = 0 and dc = 0;
+      line := '{}'; rr := r + dr; cc := c + dc;
+      while rr between 0 and 7 and cc between 0 and 7 and substr(b, rr * 8 + cc + 1, 1) = op loop
+        line := line || (rr * 8 + cc); rr := rr + dr; cc := cc + dc;
+      end loop;
+      if cardinality(line) > 0 and rr between 0 and 7 and cc between 0 and 7 and substr(b, rr * 8 + cc + 1, 1) = me then
+        res := res || line;
+      end if;
+    end loop;
+  end loop;
+  return res;
+end $$;
+
+create or replace function public._rv_legal(b text, me text) returns int[]
+language plpgsql immutable as $$
+declare i int; res int[] := '{}';
+begin
+  for i in 0..63 loop
+    if substr(b, i + 1, 1) = '.' and cardinality(_rv_flips(b, i, me)) > 0 then res := res || i; end if;
+  end loop;
+  return res;
+end $$;
+
+-- 手を打つ：新しい状態（next：次の席、over：終わり、winner：勝った席 / -1 引き分け）
+create or replace function public._rv_apply(st jsonb, seat int, mv jsonb) returns jsonb
+language plpgsql immutable as $$
+declare b text := st->>'board'; me text := case seat when 0 then 'B' else 'W' end; op text := case seat when 0 then 'W' else 'B' end;
+  pos int; fl int[]; i int; nb int; nw int; nxt int; passed boolean := false;
+begin
+  if jsonb_typeof(mv->'pos') <> 'number' then raise exception '置く場所をえらんでください'; end if;
+  pos := (mv->>'pos')::int;
+  fl := _rv_flips(b, pos, me);
+  if cardinality(fl) = 0 then raise exception 'そこには置けません'; end if;
+  b := overlay(b placing me from pos + 1 for 1);
+  foreach i in array fl loop b := overlay(b placing me from i + 1 for 1); end loop;
+  nb := length(b) - length(replace(b, 'B', '')); nw := length(b) - length(replace(b, 'W', ''));
+  if cardinality(_rv_legal(b, op)) > 0 then nxt := 1 - seat;
+  elsif cardinality(_rv_legal(b, me)) > 0 then nxt := seat; passed := true;   -- 相手は置けないのでパス
+  else
+    return jsonb_build_object('board', b, 'last', pos, 'flips', to_jsonb(fl), 'over', true, 'black', nb, 'white', nw,
+      'winner', case when nb > nw then 0 when nw > nb then 1 else -1 end, 'reason', format('黒 %s・白 %s', nb, nw));
+  end if;
+  return jsonb_build_object('board', b, 'last', pos, 'flips', to_jsonb(fl), 'next', nxt, 'pass', passed, 'over', false, 'black', nb, 'white', nw);
+end $$;
+
+-- ---------- ゲームごとの入り口 ----------
+create or replace function public._game_init(g text) returns jsonb
+language plpgsql immutable as $$
+begin
+  if g = 'reversi' then
+    return jsonb_build_object('board', repeat('.', 27) || 'WB' || repeat('.', 6) || 'BW' || repeat('.', 27), 'black', 2, 'white', 2);
+  end if;
+  raise exception 'そのゲームはまだ遊べません';
+end $$;
+
+create or replace function public._game_legal(g text, st jsonb, seat int) returns jsonb
+language plpgsql immutable as $$
+begin
+  if g = 'reversi' then return to_jsonb(_rv_legal(st->>'board', case seat when 0 then 'B' else 'W' end)); end if;
+  return '[]'::jsonb;
+end $$;
+
+create or replace function public._game_apply(g text, st jsonb, seat int, mv jsonb) returns jsonb
+language plpgsql immutable as $$
+begin
+  if g = 'reversi' then return _rv_apply(st, seat, mv); end if;
+  raise exception 'そのゲームはまだ遊べません';
+end $$;
+
+create or replace function public._game_name(g text) returns text
+language sql immutable as $$ select case g when 'reversi' then 'リバーシ' when 'chess' then 'チェス' when 'shogi' then '将棋' else g end $$;
+
+-- 終わり：賭けの精算（山分け・国庫5%）
+create or replace function public._room_finish(rid bigint, w int, why text) returns void
+language plpgsql set search_path = public as $$
+declare r game_rooms; pool bigint; win_pool bigint; cut bigint; b record; pay bigint; paid bigint := 0; last_id bigint;
+begin
+  select * into r from game_rooms where id = rid for update;
+  if r.status <> 'playing' then return; end if;
+  update game_rooms set status = 'finished', winner = w, reason = why, finished_at = _now() where id = rid;
+  pool := coalesce((select sum(amount) from game_bets where room_id = rid), 0);
+  win_pool := coalesce((select sum(amount) from game_bets where room_id = rid and seat = w), 0);
+  if pool = 0 then return; end if;
+  if w is null or w < 0 or win_pool = 0 or win_pool = pool then
+    -- 引き分け・勝った側に賭けがない・片方にしか賭けがない → 全部返す
+    for b in select * from game_bets where room_id = rid loop
+      update profiles set balance = balance + b.amount where id = b.user_id;
+      update game_bets set payout = b.amount where id = b.id;
+      perform _log(b.user_id, 'game_bet', b.amount, b.amount, jsonb_build_object('room', rid, 'refund', true));
+    end loop;
+    return;
+  end if;
+  cut := floor(pool * 0.05);
+  select max(id) into last_id from game_bets where room_id = rid and seat = w;
+  for b in select * from game_bets where room_id = rid order by id loop
+    if b.seat = w then
+      pay := floor((pool - cut)::numeric * b.amount / win_pool);
+      if b.id = last_id then pay := pay + (pool - cut - paid - pay); end if;   -- 端数は最後の人に
+      paid := paid + pay;
+      perform _give(b.user_id, pay);
+    else
+      pay := 0;
+    end if;
+    update game_bets set payout = pay where id = b.id;
+    perform _log(b.user_id, 'game_bet', b.amount, pay, jsonb_build_object('room', rid));
+  end loop;
+  update treasury set balance = balance + cut, casino_total = casino_total + cut where id = 1;
+end $$;
+
+-- 持ち時間が切れていないか見る（切れていたら負け）
+create or replace function public._room_tick(rid bigint) returns void
+language plpgsql set search_path = public as $$
+declare r game_rooms; used int;
+begin
+  select * into r from game_rooms where id = rid;
+  if r.status <> 'playing' or r.turn_at is null then return; end if;
+  used := floor(extract(epoch from (_now() - r.turn_at)) * 1000);
+  if used >= r.clock_ms[r.turn + 1] then
+    update game_rooms set clock_ms[r.turn + 1] = 0 where id = rid;
+    perform _room_finish(rid, 1 - r.turn, '時間切れ');
+  end if;
+end $$;
+
+create or replace function public._room_json(r game_rooms, u uuid) returns jsonb
+language plpgsql stable set search_path = public as $$
+declare me int; used int := 0; clocks int[] := r.clock_ms;
+begin
+  me := case when r.seats[1] = u then 0 when r.seats[2] = u then 1 else null end;
+  if r.status = 'playing' and r.turn_at is not null then
+    used := floor(extract(epoch from (_now() - r.turn_at)) * 1000);
+    clocks[r.turn + 1] := greatest(clocks[r.turn + 1] - used, 0);
+  end if;
+  return jsonb_build_object('id', r.id, 'game', r.game, 'game_name', _game_name(r.game), 'title', r.title, 'status', r.status,
+    'host', (select nickname from profiles where id = r.host), 'host_badge', _badge(r.host), 'mine_host', r.host = u,
+    'invite', (select account_no from profiles where id = r.invite), 'invited_me', r.invite = u,
+    'players', (select coalesce(jsonb_agg(jsonb_build_object('seat', s.n - 1, 'nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id)) order by s.n), '[]'::jsonb)
+                  from unnest(r.seats) with ordinality s(uid, n) join profiles p on p.id = s.uid),
+    'me', me, 'time_ms', r.time_ms, 'clock_ms', to_jsonb(clocks), 'turn', r.turn, 'move_no', r.move_no,
+    'state', r.state, 'winner', r.winner, 'reason', r.reason, 'bets_on', r.bets_on,
+    'bet_open', r.bets_on and r.status in ('waiting', 'playing') and r.move_no < 10,
+    'legal', case when r.status = 'playing' and me = r.turn then _game_legal(r.game, r.state, me) else '[]'::jsonb end,
+    'at', _dlabel(r.created_at));
+end $$;
+
+-- 部屋の一覧（えらんだゲーム。待っている部屋・対局中・自分の部屋）
+create or replace function public.room_list(p_game text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); r record;
+begin
+  -- 1日たっても始まらない部屋は片づける
+  update game_rooms set status = 'canceled', finished_at = _now() where status = 'waiting' and created_at < _now() - interval '1 day';
+  for r in select id from game_rooms where status = 'playing' and game = p_game loop perform _room_tick(r.id); end loop;
+  return jsonb_build_object(
+    'waiting', (select coalesce(jsonb_agg(_room_json(g, u) order by g.id desc), '[]'::jsonb) from (
+                 select * from game_rooms where game = p_game and status = 'waiting' and (invite is null or invite = u or host = u)
+                  order by id desc limit 30) g),
+    'playing', (select coalesce(jsonb_agg(_room_json(g, u) || jsonb_build_object(
+                   'pool', (select coalesce(sum(amount), 0) from game_bets where room_id = g.id)) order by g.id desc), '[]'::jsonb) from (
+                 select * from game_rooms where game = p_game and status = 'playing' order by id desc limit 30) g),
+    'finished', (select coalesce(jsonb_agg(_room_json(g, u) order by g.finished_at desc), '[]'::jsonb) from (
+                 select * from game_rooms where game = p_game and status = 'finished' and u = any(seats) order by finished_at desc limit 10) g));
+end $$;
+
+-- 部屋を作る
+create or replace function public.room_create(p_game text, p_title text, p_time_min int, p_invite text, p_bets boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); inv uuid; rid bigint;
+begin
+  if p_game not in ('reversi') then raise exception 'そのゲームはまだ遊べません'; end if;
+  if p_time_min is null or p_time_min < 1 or p_time_min > 180 then raise exception '持ち時間は1〜180分（3時間）です'; end if;
+  if (select count(*) from game_rooms where host = u and status = 'waiting') >= 3 then raise exception '待っている部屋は3つまでです'; end if;
+  if coalesce(btrim(p_invite), '') <> '' then
+    select id into inv from profiles where account_no = btrim(p_invite);
+    if inv is null then raise exception '招待する人のIDが見つかりません'; end if;
+    if inv = u then raise exception '自分は招待できません'; end if;
+  end if;
+  insert into game_rooms(game, title, host, invite, seats, time_ms, bets_on, created_at)
+  values (p_game, left(btrim(coalesce(p_title, '')), 30), u, inv, array[u], p_time_min * 60000, coalesce(p_bets, true), _now())
+  returning id into rid;
+  if inv is not null then
+    perform _notice(inv, format('【対戦】%s さんから%sの対戦に招待されました。遊戯タブの%sから入れます（部屋 #%s）。',
+                    (select nickname from profiles where id = u), _game_name(p_game), _game_name(p_game), rid));
+  end if;
+  return room_state(rid);
+end $$;
+
+-- 部屋に入る（ふたりそろったら始まる）
+create or replace function public.room_join(p_room bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); r game_rooms; s uuid[];
+begin
+  select * into r from game_rooms where id = p_room for update;
+  if not found or r.status <> 'waiting' then raise exception 'この部屋にはもう入れません'; end if;
+  if u = any(r.seats) then raise exception 'もう入っています'; end if;
+  if r.invite is not null and r.invite <> u then raise exception 'この部屋は招待された人だけです'; end if;
+  if exists (select 1 from game_bets where room_id = r.id and user_id = u) then raise exception 'この部屋に賭けているので、対局はできません'; end if;
+  s := r.seats || u;
+  if random() < 0.5 then s := array[s[2], s[1]]; end if;   -- 先手・後手はランダム
+  update game_rooms set seats = s, status = 'playing', started_at = _now(), turn = 0, turn_at = _now(), move_no = 0,
+         clock_ms = array[r.time_ms, r.time_ms], state = _game_init(r.game)
+   where id = r.id;
+  perform _notice(r.host, format('【対戦】%s さんが部屋 #%s に入りました。対局が始まります。', (select nickname from profiles where id = u), r.id));
+  return room_state(r.id);
+end $$;
+
+-- 部屋を出る（始まる前だけ。主催が出ると部屋はなくなる。賭けは返す）
+create or replace function public.room_leave(p_room bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); r game_rooms; b record;
+begin
+  select * into r from game_rooms where id = p_room and status = 'waiting' and host = u for update;
+  if not found then raise exception '出られる部屋が見つかりません（始まったあとは「投了」してください）'; end if;
+  update game_rooms set status = 'canceled', finished_at = _now() where id = r.id;
+  for b in select * from game_bets where room_id = r.id loop
+    update profiles set balance = balance + b.amount where id = b.user_id;
+    update game_bets set payout = b.amount where id = b.id;
+    perform _log(b.user_id, 'game_bet', b.amount, b.amount, jsonb_build_object('room', r.id, 'refund', true));
+  end loop;
+  return room_list(r.game);
+end $$;
+
+-- 部屋のようす（観戦もこれ）
+create or replace function public.room_state(p_room bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); r game_rooms;
+begin
+  perform _room_tick(p_room);
+  select * into r from game_rooms where id = p_room;
+  if not found then raise exception '部屋が見つかりません'; end if;
+  return _room_json(r, u) || jsonb_build_object(
+    'moves', (select coalesce(jsonb_agg(jsonb_build_object('n', n, 'seat', seat, 'move', move) order by n), '[]'::jsonb) from game_moves where room_id = r.id),
+    'pool', (select coalesce(jsonb_agg(jsonb_build_object('seat', seat, 'amount', a, 'people', c) order by seat), '[]'::jsonb) from (
+              select seat, sum(amount) a, count(distinct user_id) c from game_bets where room_id = r.id group by seat) z),
+    'my_bets', (select coalesce(jsonb_agg(jsonb_build_object('seat', seat, 'amount', amount, 'payout', payout) order by id), '[]'::jsonb)
+                  from game_bets where room_id = r.id and user_id = u),
+    'chat', (select coalesce(jsonb_agg(jsonb_build_object('id', z.id, 'nickname', p.nickname, 'badge', _badge(p.id), 'body', z.body,
+               'ts', _kb_ms(z.at), 'player', z.user_id = any(r.seats)) order by z.id), '[]'::jsonb) from (
+              select * from game_chat where room_id = r.id order by id desc limit 40) z join profiles p on p.id = z.user_id),
+    'now_ms', _kb_ms(_now()), 'balance', _bal(u));
+end $$;
+
+-- 手を指す
+create or replace function public.room_move(p_room bigint, p_move jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); r game_rooms; me int; used int; ns jsonb; left_ms int;
+begin
+  perform _room_tick(p_room);
+  select * into r from game_rooms where id = p_room for update;
+  if not found or r.status <> 'playing' then raise exception 'この対局はもう終わっています'; end if;
+  me := case when r.seats[1] = u then 0 when r.seats[2] = u then 1 else null end;
+  if me is null then raise exception 'あなたは対局していません'; end if;
+  if me <> r.turn then raise exception 'いまは相手の番です'; end if;
+  used := floor(extract(epoch from (_now() - r.turn_at)) * 1000);
+  left_ms := greatest(r.clock_ms[me + 1] - used, 0);
+  ns := _game_apply(r.game, r.state, me, p_move);
+  insert into game_moves(room_id, n, seat, move, at) values (r.id, r.move_no + 1, me, p_move, _now());
+  update game_rooms set state = ns, move_no = move_no + 1, clock_ms[me + 1] = left_ms,
+         turn = coalesce((ns->>'next')::int, turn), turn_at = _now()
+   where id = r.id;
+  if (ns->>'over')::boolean then perform _room_finish(r.id, (ns->>'winner')::int, ns->>'reason'); end if;
+  return room_state(r.id);
+end $$;
+
+-- 投了
+create or replace function public.room_resign(p_room bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); r game_rooms; me int;
+begin
+  select * into r from game_rooms where id = p_room for update;
+  if not found or r.status <> 'playing' then raise exception 'この対局はもう終わっています'; end if;
+  me := case when r.seats[1] = u then 0 when r.seats[2] = u then 1 else null end;
+  if me is null then raise exception 'あなたは対局していません'; end if;
+  perform _room_finish(r.id, 1 - me, '投了');
+  return room_state(r.id);
+end $$;
+
+-- 観戦して賭ける（勝つと思う席に）
+create or replace function public.room_bet(p_room bigint, p_seat int, p_amount bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); r game_rooms;
+begin
+  select * into r from game_rooms where id = p_room for update;
+  if not found or r.status not in ('waiting', 'playing') then raise exception 'この対局にはもう賭けられません'; end if;
+  if not r.bets_on then raise exception 'この部屋は賭けなしです'; end if;
+  if r.move_no >= 10 then raise exception '賭けは10手目までです'; end if;
+  if u = any(r.seats) then raise exception '対局している本人は賭けられません'; end if;
+  if r.status = 'waiting' then raise exception '対局が始まってから賭けられます（先手・後手が決まってから）'; end if;
+  if p_seat not in (0, 1) then raise exception '賭ける側をえらんでください'; end if;
+  if exists (select 1 from game_bets where room_id = r.id and user_id = u and seat <> p_seat) then raise exception '両方には賭けられません'; end if;
+  if p_amount is null or p_amount < 1 then raise exception '1 X以上にしてください'; end if;
+  if _debt(u) > 0 then raise exception '税金の滞納があるので賭けられません'; end if;
+  perform _take(u, p_amount);
+  insert into game_bets(room_id, user_id, seat, amount, at) values (r.id, u, p_seat, p_amount, _now());
+  return room_state(r.id);
+end $$;
+
+-- チャット（10秒に1回・100文字まで）
+create or replace function public.room_chat(p_room bigint, p_body text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); b text := btrim(coalesce(p_body, ''));
+begin
+  if not exists (select 1 from game_rooms where id = p_room) then raise exception '部屋が見つかりません'; end if;
+  if char_length(b) < 1 then raise exception '何か書いてください'; end if;
+  if char_length(b) > 100 then raise exception '100文字までです'; end if;
+  if exists (select 1 from game_chat where user_id = u and at > _now() - interval '10 seconds') then raise exception '送るのは10秒に1回までです'; end if;
+  insert into game_chat(room_id, user_id, body, at) values (p_room, u, b, _now());
+  return room_state(p_room);
+end $$;
+
 -- 前の5けたの会社IDを、3けたの会社番号に変える（何度流しても同じ）
 do $$
 declare r record; nc text;
@@ -4518,6 +4921,8 @@ begin
             '_court_collect_comp','admin_court_decide',
             '_pack_json','_loan_accrue','_loan_owed','_loan_json','_loan_start','loan_apply','loan_cancel','loan_repay','_loan_collect',
             'my_loans','bank_acct_answer','bank_settings','loan_pack_save','loan_answer',
+            '_rv_flips','_rv_legal','_rv_apply','_game_init','_game_legal','_game_apply','_game_name','_room_finish','_room_tick','_room_json',
+            'room_list','room_create','room_join','room_leave','room_state','room_move','room_resign','room_bet','room_chat',
             '_kb_norm','_kb_gumbel','_kb_midx','_kb_jday','_kb_ms','_kb_agef','_kb_fit','_kb_name','_kb_new_horse',
             '_kb_make_race','_kb_make_day','_kb_seq','_kb_prob','_kb_prob_trio','_kb_rate','_kb_odds','_kb_check_sel',
             '_kb_hit','_kb_settle','_kb_month','_kb_seed','_kb_tick','_kb_status',

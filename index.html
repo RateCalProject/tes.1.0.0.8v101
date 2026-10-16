@@ -195,6 +195,29 @@ h3{font-size:15px;margin:16px 0 8px}
 .game-row .nm b{font-size:17px}
 .game-row .nm small{display:block;color:var(--muted);margin-top:2px}
 .game-row .go{color:var(--muted);font-size:20px}
+.game-row.soon{opacity:.55;cursor:default}
+.rv{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;background:#0E4D2E;padding:4px;border-radius:10px;width:min(100%,420px);aspect-ratio:1}
+.rv .c{background:#1E7A4A;border-radius:3px;display:flex;align-items:center;justify-content:center;position:relative;cursor:default}
+.rv .c.can{cursor:pointer}
+.rv .c.can::after{content:'';width:26%;height:26%;border-radius:50%;background:rgba(255,255,255,.35)}
+.rv .c.last{box-shadow:inset 0 0 0 2px #F2C14E}
+.rv .d{width:82%;height:82%;border-radius:50%;box-shadow:0 2px 3px rgba(0,0,0,.35)}
+.rv .d.B{background:radial-gradient(circle at 35% 30%,#555,#111 70%)}
+.rv .d.W{background:radial-gradient(circle at 35% 30%,#fff,#d8d8d8 70%)}
+.rv .d.flip{animation:rvflip .35s ease}
+@keyframes rvflip{0%{transform:scaleX(1)}50%{transform:scaleX(.1)}100%{transform:scaleX(1)}}
+.pl-bar{display:flex;gap:8px}
+.pl{flex:1;border:1px solid var(--line);border-radius:10px;padding:8px;min-width:0}
+.pl.turn{border-color:var(--accent);box-shadow:0 0 0 2px var(--soft)}
+.pl .nm{font-weight:800;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pl .ck{font-variant-numeric:tabular-nums;font-size:20px;font-weight:900}
+.pl .ck.low{color:var(--lose)}
+.stone{display:inline-block;width:12px;height:12px;border-radius:50%;vertical-align:-1px;margin-right:4px;border:1px solid #888}
+.stone.B{background:#111}.stone.W{background:#fff}
+.chat{max-height:220px;overflow:auto;font-size:14px}
+.chat .m{padding:4px 0;border-top:1px solid var(--line)}
+.chat .m:first-child{border-top:0}
+.howto ol,.howto ul{margin:6px 0;padding-left:20px}.howto li{margin:3px 0}
 .co-row .nm b{display:block}
 .co-row .nm small{color:var(--muted);display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kindtag{font-size:11px;font-weight:800;border-radius:4px;padding:1px 6px;background:var(--soft);color:var(--accent);margin-left:6px}
@@ -312,7 +335,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <ul class="terms"><li>給料は国庫から出ます。</li><li>給料は所得になるので、毎月の確定申告で税金の対象になります。</li>
     <li>税金の滞納があると、給料から差し押さえられます。</li></ul></div>
   <div data-sub="corp" id="owCorp"></div>
-  <div class="card" data-sub="corp">
+  <div class="card" data-sub="corp" id="apCard">
     <h3 style="margin-top:0">企業の申請</h3>
     <p class="muted small" style="margin:0 0 6px">申請料 1,000 X（国庫へ）。管理者が審査して、許可されると企業として活動できます（却下なら申請料は戻ります）。1人3社まで。</p>
     <input class="inp" id="apName" maxlength="24" placeholder="会社名（24文字まで）">
@@ -411,6 +434,39 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 <section id="vGameList" class="view hidden">
   <div class="card" style="padding:6px 16px"><div id="gameList"></div></div>
   <p class="muted small" style="margin:8px 4px">勝ち負けはすべてサーバーで決まります。もうけ（払い戻し − 賭け金）は所得になり、税金の対象です。</p>
+</section>
+
+<!-- 対戦ゲーム：ロビー -->
+<section id="vLobby" class="view hidden">
+  <div class="card"><div class="row"><button class="btn s" id="lbBack">‹ 一覧</button><h3 style="margin:0 0 0 6px" id="lbTitle">リバーシ</h3></div>
+    <details class="ed howto" style="margin-top:8px"><summary>遊び方（はじめての人へ）</summary><div id="lbHow"></div></details></div>
+  <div class="card">
+    <h3 style="margin-top:0">部屋を作る</h3>
+    <input class="inp" id="lbName" maxlength="30" placeholder="部屋の名前（なくてもOK）">
+    <div class="row"><span class="small" style="width:5.5em">持ち時間</span>
+      <select class="inp grow" id="lbTime" style="margin:0"><option value="5">1人 5分</option><option value="10" selected>1人 10分</option><option value="30">1人 30分</option><option value="60">1人 1時間</option><option value="180">1人 3時間</option></select></div>
+    <input class="inp" id="lbInvite" inputmode="numeric" maxlength="6" placeholder="招待する人のID（なければ、だれでも入れる）">
+    <label class="small" style="display:block;margin:4px 0"><input type="checkbox" id="lbBets" checked> 観戦している人が、どちらが勝つかに賭けられるようにする</label>
+    <button class="btn main wide" id="lbCreate">部屋を作る</button>
+    <p class="muted small" style="margin:6px 0 0">対局する本人どうしは賭けません（無料）。ふたりそろうと始まり、先手・後手はランダムです。</p>
+  </div>
+  <div class="card"><h3 style="margin-top:0">相手を待っている部屋</h3><div id="lbWait"></div></div>
+  <div class="card"><h3 style="margin-top:0">対局中（観戦できます）</h3><div id="lbPlay"></div></div>
+  <div class="card"><h3 style="margin-top:0">自分の対局（終わったもの）</h3><div id="lbDone"></div></div>
+</section>
+
+<!-- 対戦ゲーム：部屋 -->
+<section id="vRoom" class="view hidden">
+  <div class="card" style="padding:12px">
+    <div class="row"><button class="btn s" id="rmBack">‹ 部屋の一覧</button><b id="rmTitle" style="margin-left:6px"></b><span class="muted small" id="rmNo" style="margin-left:auto"></span></div>
+    <div id="rmPlayers" style="margin-top:8px"></div>
+    <div id="rmBoard" style="margin:8px auto 0"></div>
+    <p class="small" id="rmMsg" style="text-align:center;margin:8px 0 0;min-height:20px"></p>
+    <div class="row" style="justify-content:center;margin-top:6px" id="rmBtns"></div>
+  </div>
+  <div class="card" id="rmBetCard"></div>
+  <div class="card"><h3 style="margin-top:0">チャット</h3><div id="rmChat" class="chat"></div>
+    <div class="row" style="margin-top:6px"><input class="inp grow" id="rmChatIn" maxlength="100" placeholder="ひとこと（10秒に1回）" style="margin:0"><button class="btn s" id="rmChatSend">送る</button></div></div>
 </section>
 
 <!-- 競馬 -->
@@ -743,7 +799,8 @@ async function enter() {
   go(sessionStorageGet('view') || 'vInfo');
 }
 function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
-const GAMES = ['vGameList', 'vRace', 'vSlot', 'vBj', 'vRou', 'vHilo'];
+const GAMES = ['vGameList', 'vRace', 'vSlot', 'vBj', 'vRou', 'vHilo', 'vLobby', 'vRoom'];
+const HIDDEN_SUBS = ['vLobby', 'vRoom'];
 // メインメニュー（左から）とサブメニュー
 const MENU = [
   ['vInfo', '情報', 'i', [['cur', '通貨'], ['mkt', '相場'], ['tl', 'TL'], ['friend', 'フレンド'], ['jack', '競馬億万長者']]],
@@ -760,7 +817,8 @@ function go(v, sub) {
   const subs = MENU_OF[main][3].filter(x => x[0] !== 'vRace' || RACE_ON);
   if (main === 'vGame' && GAMES.includes(v)) sub = v;
   sub = sub || sessionStorageGet('sub:' + main);
-  if (!subs.some(x => x[0] === sub)) sub = subs[0][0];
+  if (!subs.some(x => x[0] === sub) && !HIDDEN_SUBS.includes(sub)) sub = subs[0][0];
+  if (sub !== 'vRoom') roomStop();
   try { sessionStorage.setItem('view', main); sessionStorage.setItem('sub:' + main, sub); } catch (e) {}
   const sec = main === 'vGame' ? sub : main;
   view = sec;
@@ -774,6 +832,8 @@ function go(v, sub) {
   if (sec === 'vInfo') { infoLoad(); if (sub === 'tl') tlLoad(true); if (sub === 'mkt') mktLoad(); if (sub === 'friend') friendLoad(); }
   if (sec === 'vWork') workLoad();
   if (sec === 'vRace') kbLoad();
+  if (sec === 'vLobby') lobbyLoad();
+  if (sec === 'vRoom') roomStart();
   if (sec === 'vBj') bjLoad();
   if (sec === 'vHilo') hiloLoad();
   if (sec === 'vMore') moreLoad();
@@ -791,10 +851,23 @@ const GAME_LIST = [
   ['vBj', '♠', 'ブラックジャック', 'カードの合計を21に近づけて、ディーラーと勝負'],
   ['vRou', '◎', 'ルーレット', '数字や色に賭けて、玉の止まる場所を当てる'],
   ['vHilo', '↕', 'ハイ＆ロー', '次のカードが上か下か。当てるたびに倍率アップ、好きなときに受け取れる'],
+  ['reversi', '◐', 'リバーシ', 'ふたりで対戦。相手の石をはさんでひっくり返す。観戦して、勝つ人に賭けることもできる'],
+  ['chess', '♞', 'チェス', '準備中'],
+  ['shogi', '☗', '将棋', '準備中'],
+  ['onecard', '🃏', 'ワンカード', '準備中（UNOと同じ遊び方。本人どうしで賭ける）'],
+  ['mahjong', '🀄', '麻雀', '準備中（人数が足りないときはコンピューターが入る）'],
 ];
-$('#gameList').innerHTML = GAME_LIST.filter(g => g[0] !== 'vRace' || RACE_ON).map(g => `<div class="game-row" data-g="${g[0]}">
-  <span class="ic">${g[1]}</span><span class="nm"><b>${g[2]}</b><small>${g[3]}</small></span><span class="go">›</span></div>`).join('');
-$$('#gameList [data-g]').forEach(r => r.onclick = () => go(r.dataset.g));
+const BOARD_GAMES = { reversi: 'リバーシ' };
+$('#gameList').innerHTML = GAME_LIST.filter(g => g[0] !== 'vRace' || RACE_ON).map(g => {
+  const soon = g[3] === '準備中' || g[3].startsWith('準備中（');
+  return `<div class="game-row ${soon ? 'soon' : ''}" data-g="${g[0]}">
+  <span class="ic">${g[1]}</span><span class="nm"><b>${g[2]}</b><small>${g[3]}</small></span><span class="go">${soon ? '' : '›'}</span></div>`; }).join('');
+$$('#gameList [data-g]').forEach(r => r.onclick = () => {
+  const g = r.dataset.g;
+  if (g.startsWith('v')) return go(g);
+  if (!BOARD_GAMES[g]) return toast('準備中です。もうしばらくお待ちください');
+  LB.game = g; go('vLobby');
+});
 $('#passSave').onclick = async () => {
   const pw = $('#newPass').value; if (pw.length < 6) return toast('6文字以上にしてください');
   if (!sb) return toast('この画面ではパスワードを変えられません');
@@ -1882,18 +1955,19 @@ async function corpOpen(cid) {
     ${c.description ? `<p style="white-space:pre-wrap;margin:8px 0">${esc(c.description)}</p>` : ''}
     <div class="row" style="margin:8px 0"><button class="btn s" data-pin>${c.pinned ? '📌 ピン留めをやめる' : '📌 ピン留め'}</button>
       ${c.mine || c.status !== 'active' ? '' : '<button class="btn s" data-send>この会社に送金</button>'}</div>
-    ${bank ? `<h3>銀行</h3><p class="small" style="margin:0 0 6px">預金の金利：1日 <b>${Number(c.rate)}%</b>（毎日つきます）・口座開設：${c.acct_mode === 'auto' ? 'すぐ' : '銀行の許可制'}</p>
+    ${bank ? `<h3>銀行</h3><p class="small" style="margin:0 0 6px">預金の金利：1日 <b>${Number(c.rate)}%</b>（毎日つきます）・口座開設：${{ auto: 'すぐ', approve: '銀行の許可制', off: '受け付けていません' }[c.acct_mode]}${c.acct_need_check ? '（オレンジのチェックが必要）' : ''}</p>
       ${c.account ? (c.account.status === 'pending' ? '<p class="small"><span class="tag">口座は申込中（銀行の許可待ち）</span></p>'
         : `<div class="kv"><span>あなたの預金</span><b>${fmt(c.account.balance)} X</b><span class="muted">もらった利息</span><b>${fmt(c.account.interest_total)} X</b></div>
         <div class="row" style="margin-top:8px">${c.status === 'active' ? '<button class="btn main s" data-dep>預ける</button>' : ''}<button class="btn s" data-wd>引き出す</button></div>`)
-        : (c.mine || c.status !== 'active' ? '' : `<button class="btn main s" data-open-acct>${c.acct_mode === 'auto' ? '口座を開く（無料）' : '口座を申し込む（無料）'}</button>`)}
+        : (c.mine || c.status !== 'active' || c.acct_mode === 'off' ? '' : `<button class="btn main s" data-open-acct>${c.acct_mode === 'auto' ? '口座を開く（無料）' : '口座を申し込む（無料）'}</button>`)}
       <h3>借りる（貸出パック）</h3>
+      ${!c.loan_on ? '<p class="muted small" style="margin:0">この銀行はいま貸出をしていません</p>' : (c.loan_need_acct || c.loan_need_check) ? `<p class="small muted" style="margin:0 0 4px">借りられるのは：${[c.loan_need_acct ? 'この銀行に口座がある人' : '', c.loan_need_check ? 'オレンジのチェックがある人' : ''].filter(Boolean).join('・')}</p>` : ''}
       ${c.loans.map(l => loanRow(l, false)).join('')}
       ${c.packs.length ? c.packs.map(pk => `<div class="item"><div class="row"><b>${esc(pk.name)}</b><b class="num" style="margin-left:auto">${fmt(pk.amount)} X</b></div>
           <div class="small muted">${pk.days}日で <b>${fmt(pk.repay)} X</b> を返す（利息 ${fmtP(pk.rate)}%）・期限を過ぎると1日 ${fmtP(pk.late_rate)}%・${pk.auto ? 'すぐ借りられる' : '銀行の審査あり'}</div>
           ${pk.description ? `<p class="small" style="margin:4px 0;white-space:pre-wrap">${esc(pk.description)}</p>` : ''}
           ${c.mine || c.status !== 'active' ? '' : `<button class="btn main s" data-loan="${pk.id}" data-name="${esc(pk.name)}" data-amt="${pk.amount}" data-ret="${pk.repay}" data-days="${pk.days}" data-auto="${pk.auto ? 1 : 0}">申し込む</button>`}</div>`).join('')
-        : '<p class="muted small" style="margin:0">いまは貸出パックがありません</p>'}
+        : (c.loan_on ? '<p class="muted small" style="margin:0">いまは貸出パックがありません</p>' : '')}
       <p class="muted small">期限を過ぎると延滞の利息がつき、あなたにお金が入るたびに銀行が取り立てます。</p>` : ''}
     ${c.official ? '<p class="small muted">国営の会社です（株はありません）。</p>' : `<h3>${unitOf(c) === '株' ? '株主' : '出資者'}</h3>
     <p class="small muted" style="margin:0 0 4px">発行 ${fmt(c.shares)} ${unitOf(c)}</p>${holdersHtml(c, 10)}`}
@@ -1964,17 +2038,12 @@ $('#apSend').onclick = async () => {
 };
 async function ownLoad() { try { OW = await call('my_corps'); ownRender(); } catch (e) { toast(e.message); } }
 const ST_CO = { pending: '審査中', active: '活動中' };
-function ownRender() {
-  if (!OW) return;
-  const corps = OW.corps;
-  let h = corps.map(c => {
-    if (c.status === 'pending') return `<div class="card own"><h3 style="margin-top:0">${esc(c.name)}${kindTag(c)} <span class="tag">審査中</span></h3>
-      <p class="muted small" style="margin:0">管理者が確認するまでお待ちください。許可されると、お知らせが届きます。</p></div>`;
-    if (c.status === 'closed' || c.status === 'bankrupt') return `<div class="card own"><h3 style="margin-top:0">${esc(c.name)} <span class="tag">${c.status === 'closed' ? '廃業' : '倒産'}</span></h3>
-      <p class="muted small" style="margin:0">${c.closed_at || ''}に${c.status === 'closed' ? '廃業' : '倒産'}しました。${c.reason ? esc(c.reason) : ''}</p></div>`;
-    const bank = c.kind === '銀行', cid = c.cid, sus = c.status === 'suspended';
-    return `<div class="card own" data-co="${cid}">
-      <h3 style="margin-top:0">${esc(c.name)}${kindTag({ ...c, status: '' })} ${sus ? `<span class="stag">${c.court_lock ? '休業中（命令）' : '休業中'}</span>` : '<span class="tag good">営業中</span>'}</h3>
+let OWsel = null, OWsec = null;
+function ownSections(c) {
+  const bank = c.kind === '銀行', cid = c.cid, sus = c.status === 'suspended';
+  const waitOrders = c.orders.filter(o => o.status === 'paid').length;
+  const S = [];
+  S.push(['money', 'お金（送金・引き出し・給料）', `${fmt(c.balance)} X${c.ca > 0 ? `・${fmt(c.ca)} CA` : ''}`, 0, `
       <div class="kv"><span>会社のID</span><b style="user-select:all">${c.cid_full}</b><span class="muted">省略形（取引に使える）</span><b>${cid}</b><span>会社のお金</span><b>${fmt(c.balance)} X</b>
         ${bank ? `<span class="muted">あずかっている預金</span><b>${fmt(c.deposits)} X</b><span class="muted">口座の数</span><b>${c.accounts}</b>` : ''}
         ${c.ca > 0 ? `<span class="muted">会社の Cièlani-Alpićsk</span><b>${fmt(c.ca)} CA</b>` : ''}</div>
@@ -1982,64 +2051,97 @@ function ownRender() {
       <div class="row" style="margin-top:8px;flex-wrap:wrap">
         <button class="btn s" data-act="send">会社から送金</button><button class="btn s" data-act="bill">請求する</button><button class="btn s" data-act="withdraw">自分に引き出す</button>
         <button class="btn s" data-act="fund">自分から入れる</button><button class="btn main s" data-act="payall">全員に給料</button></div>
-      <p class="muted small" style="margin:6px 0 0">送金は手数料1%（最低1 X）。引き出しは社長の給料あつかいで、所得として税金の対象です。</p>
-
-      <h4>会社の説明${bank ? '・金利' : ''}</h4>
-      <textarea class="inp" rows="3" data-f="desc" maxlength="1000">${esc(c.description)}</textarea>
-      ${bank ? `<div class="row"><span class="small">預金の金利 1日</span><input class="inp" style="width:90px" data-f="rate" type="number" step="0.01" min="0" max="1" value="${Number(c.rate)}"><span class="small">%（0〜1）</span></div>
+      <p class="muted small" style="margin:6px 0 0">送金は手数料1%（最低1 X）。引き出しは社長の給料あつかいで、所得として税金の対象です。</p>`]);
+  S.push(['desc', '会社の説明' + (bank ? '・預金の金利' : ''), c.description ? esc(c.description.slice(0, 24)) + (c.description.length > 24 ? '…' : '') : 'まだ書いていません', 0, `
+      <textarea class="inp" rows="4" data-f="desc" maxlength="1000">${esc(c.description)}</textarea>
+      ${bank ? `<div class="row"><span class="small">預金の金利 1日</span><input class="inp" style="width:90px" data-f="rate" type="number" step="0.01" min="0" max="10" value="${Number(c.rate)}"><span class="small">%（0〜10）</span></div>
         <p class="muted small" style="margin:0">利息は会社のお金から毎日払います。会社のお金が足りないと払えません。</p>` : ''}
-      <button class="btn s" data-act="save">保存</button>
-
-      ${c.official ? '<h4>国営</h4><p class="muted small" style="margin:0">国営の会社なので、株はありません。</p>' : `<h4>${unitOf(c) === '株' ? '株・株主' : '出資・出資者'}</h4>
-      <p class="small" style="margin:0 0 4px">発行 <b>${fmt(c.shares)} ${unitOf(c)}</b></p>${holdersHtml(c, 20)}
-      <div class="row" style="margin-top:6px;flex-wrap:wrap"><button class="btn s" data-act="sh_add">発行をふやす</button><button class="btn s" data-act="sh_sub">へらす</button>
-        <button class="btn main s" data-act="dividend">配当を出す</button><button class="btn s" data-act="owner">社長を交代</button></div>
-      <p class="muted small" style="margin:6px 0 0">ふやした分は社長のものになります。へらせるのは社長が持っている分だけ。株をほかの人にゆずるのは「企業 → 持ち株」から。配当は会社のお金から持ち分に合わせて配り、もらった人の所得になります。</p>`}
-      ${c.kind === '証券' ? `<h4>取引所の設定</h4>
-      <label class="small" style="display:block;margin:4px 0"><input type="checkbox" data-f="pair_xca" ${c.fx_pairs.includes('X/CA') ? 'checked' : ''}> AiliNaX ⇄ Cièlani-Alpićsk を取り扱う（取引所を開く）</label>
-      <div class="row"><span class="small">手数料</span><input class="inp" style="width:90px;margin:0" data-f="fx_fee" type="number" step="0.01" min="0" max="10" value="${Number(c.fx_fee)}"><span class="small">%（0〜10）</span>
-        <button class="btn s" data-act="exch">保存</button></div>
-      <p class="muted small" style="margin:6px 0 0">手数料は、買った人の X と売った人の CA から引いて、この会社に入ります。取り扱いをやめると、出ている注文（いま ${c.fx_open_orders}件）は取り消して返します。</p>` : ''}
-      ${bank ? bankAdmin(c) : ''}
-
-      <h4>商品（購入ボタン）</h4>
+      <button class="btn main s" data-act="save">保存</button>`]);
+  S.push(['items', '商品（購入ボタン）', `${c.items.length}個`, 0, `
       ${c.items.map(it => itemForm(it)).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
-      <details class="ed"><summary>＋ 商品を追加</summary>${itemForm(null)}</details>
-
-      <h4>注文</h4>
+      <details class="ed"><summary>＋ 商品を追加</summary>${itemForm(null)}</details>`]);
+  S.push(['orders', '注文', waitOrders ? `渡していない ${waitOrders}件` : `${c.orders.length}件`, waitOrders, `
       ${c.orders.map(o => `<div class="line"><span class="grow">#${o.id} ${esc(o.item)}（${fmt(o.price)} X）<small>${esc(o.buyer)}（ID ${o.buyer_id}）・${o.at}${o.note ? '・' + esc(o.note) : ''}</small></span>
-        ${o.status === 'done' ? '<span class="tag good">渡しずみ</span>' : o.status === 'refunded' ? '<span class="tag">返金ずみ</span>' : `<button class="btn main s" data-act="done" data-id="${o.id}">渡した</button>`}</div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
-
-      <h4>求人</h4>
+        ${o.status === 'done' ? '<span class="tag good">渡しずみ</span>' : o.status === 'refunded' ? '<span class="tag">返金ずみ</span>' : `<button class="btn main s" data-act="done" data-id="${o.id}">渡した</button>`}</div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}`]);
+  S.push(['jobs', '求人・応募', `求人 ${c.jobs.filter(j => j.active).length}件・応募 ${c.applies.length}件`, c.applies.length, `
+      <h4 style="margin-top:0">求人</h4>
       ${c.jobs.map(j => jobForm(j)).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
       <details class="ed"><summary>＋ 求人を出す</summary>${jobForm(null)}</details>
-
       <h4>応募</h4>
       ${c.applies.map(a => `<div class="line"><span class="grow">${nameB(a.nickname, a.badge)}（ID ${a.uid}）→「${esc(a.title)}」<small>${a.at}${a.message ? '・' + esc(a.message) : ''}</small></span>
-        <button class="btn main s" data-act="hire" data-id="${a.id}">採用</button><button class="btn s" data-act="decline" data-id="${a.id}">見送り</button></div>`).join('') || '<p class="muted small" style="margin:0">いまはありません</p>'}
-
-      <h4>社員</h4>
+        <button class="btn main s" data-act="hire" data-id="${a.id}">採用</button><button class="btn s" data-act="decline" data-id="${a.id}">見送り</button></div>`).join('') || '<p class="muted small" style="margin:0">いまはありません</p>'}`]);
+  S.push(['members', '社員', `${c.members.length}人`, 0, `
       ${c.members.map(mb => `<div class="line"><span class="grow">${nameB(mb.nickname, mb.badge)}（ID ${mb.uid}）・${esc(mb.role)}<small>給料 ${fmt(mb.salary)} X／これまで ${fmt(mb.paid_total)} X</small></span>
         <button class="btn main s" data-act="pay" data-uid="${mb.uid}">払う</button><button class="btn s" data-act="mset" data-uid="${mb.uid}" data-sal="${mb.salary}" data-role="${esc(mb.role)}">設定</button>
         <button class="btn s" data-act="fire" data-uid="${mb.uid}">やめてもらう</button></div>`).join('') || '<p class="muted small" style="margin:0">まだいません。求人を出してみましょう</p>'}
-
-      <h4>会社の状態</h4>
+      ${c.members.length ? '<button class="btn main s" data-act="payall" style="margin-top:8px">全員に給料を払う</button>' : ''}`]);
+  if (!c.official) S.push(['shares', unitOf(c) === '株' ? '株・株主' : '出資・出資者', `発行 ${fmt(c.shares)} ${unitOf(c)}・${c.holders.length}人`, 0, `
+      <p class="small" style="margin:0 0 4px">発行 <b>${fmt(c.shares)} ${unitOf(c)}</b></p>${holdersHtml(c, 30)}
+      <div class="row" style="margin-top:6px;flex-wrap:wrap"><button class="btn s" data-act="sh_add">発行をふやす</button><button class="btn s" data-act="sh_sub">へらす</button>
+        <button class="btn main s" data-act="dividend">配当を出す</button><button class="btn s" data-act="owner">社長を交代</button></div>
+      <p class="muted small" style="margin:6px 0 0">ふやした分は社長のものになります。へらせるのは社長が持っている分だけ。株をほかの人にゆずるのは「企業 → 持ち株」から。配当は会社のお金から持ち分に合わせて配り、もらった人の所得になります。</p>`]);
+  if (bank) S.push(['bank', '銀行（口座・貸出パック）', `口座の申込 ${c.acct_requests.length}件・借入の申込 ${c.loan_requests.length}件`, c.acct_requests.length + c.loan_requests.length, bankAdmin(c)]);
+  if (c.kind === '証券') S.push(['exch', '取引所の設定', `${c.fx_pairs.includes('X/CA') ? '開いている' : '閉じている'}・手数料 ${fmtP(c.fx_fee)}%`, 0, `
+      <label class="small" style="display:block;margin:4px 0"><input type="checkbox" data-f="pair_xca" ${c.fx_pairs.includes('X/CA') ? 'checked' : ''}> AiliNaX ⇄ Cièlani-Alpićsk を取り扱う（取引所を開く）</label>
+      <div class="row"><span class="small">手数料</span><input class="inp" style="width:90px;margin:0" data-f="fx_fee" type="number" step="0.01" min="0" max="10" value="${Number(c.fx_fee)}"><span class="small">%（0〜10）</span>
+        <button class="btn main s" data-act="exch">保存</button></div>
+      <p class="muted small" style="margin:6px 0 0">手数料は、買った人の X と売った人の CA から引いて、この会社に入ります。取り扱いをやめると、出ている注文（いま ${c.fx_open_orders}件）は取り消して返します。</p>`]);
+  S.push(['state', '会社の状態（休業・廃業・倒産）', sus ? (c.court_lock ? '休業中（命令）' : '休業中') : '営業中', 0, `
       <div class="row" style="flex-wrap:wrap">
         ${sus ? (c.court_lock ? '<span class="muted small">役所（管理者）の命令で休業中です。自分では再開できません。</span>' : '<button class="btn main s" data-act="resume">営業を再開する</button>')
               : '<button class="btn s" data-act="suspend">休業する</button>'}
         <button class="btn s" data-act="close">廃業する</button><button class="btn s" data-act="bankrupt">倒産する</button></div>
       <p class="muted small" style="margin:6px 0 0">休業中は、買い物・送金・請求を受けられず、求人も出ません（あとで再開できます）。
         廃業・倒産すると、銀行の預金はみんなに返し、渡していない注文の代金を返して、残ったお金を株主に持ち株の割合で分けます。
-        渡していない注文の代金は <b>${fmt(c.owed)} X</b>。会社のお金が足りれば「廃業」、足りなければ「倒産」です（倒産では代金を割合で返し、株は消えます）。</p>
-
-      <h4>会社のお金の出入り</h4>
+        渡していない注文の代金は <b>${fmt(c.owed)} X</b>。会社のお金が足りれば「廃業」、足りなければ「倒産」です（倒産では代金を割合で返し、株は消えます）。</p>`]);
+  S.push(['ledger', 'お金の出入り', c.ledger.length ? esc((c.ledger[0].memo || c.ledger[0].kind).slice(0, 20)) : 'まだありません', 0, `
       ${c.ledger.map(l => `<div class="line"><span class="grow">${esc(l.memo || l.kind)}<small>${l.at}・残り ${fmt(l.balance_after)} X</small></span>
-        <b class="num" style="color:${l.amount >= 0 ? 'var(--win)' : 'var(--lose)'}">${l.amount >= 0 ? '+' : ''}${fmt(l.amount)}</b></div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
-    </div>`;
-  }).join('');
-  if (OW.rejected.length) h += `<div class="card"><h3 style="margin-top:0">却下された申請</h3>${OW.rejected.map(r => `<p class="small" style="margin:4px 0">${esc(r.name)}${r.reason ? '：' + esc(r.reason) : ''}</p>`).join('')}</div>`;
-  $('#owCorp').innerHTML = h;
+        <b class="num" style="color:${l.amount >= 0 ? 'var(--win)' : 'var(--lose)'}">${l.amount >= 0 ? '+' : ''}${fmt(l.amount)}</b></div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}`]);
+  return S;
 }
+const dot = n => n > 0 ? `<span class="tag" style="background:#F8D7D0;color:#9A2A14;margin-left:6px">${n}</span>` : '';
+function ownRender() {
+  if (!OW) return;
+  const corps = OW.corps;
+  let c = corps.find(x => x.cid === OWsel && (x.status === 'active' || x.status === 'suspended'));
+  if (!c) { OWsel = null; OWsec = null; }
+  let h;
+  if (!c) {
+    // 会社の一覧
+    h = `<div class="card"><h3 style="margin-top:0">自分の会社</h3>` + (corps.map(x => {
+      const live = x.status === 'active' || x.status === 'suspended';
+      const n = live ? ownSections(x).reduce((a, s2) => a + s2[3], 0) : 0;
+      const st = { pending: '審査中', active: '営業中', suspended: x.court_lock ? '休業中（命令）' : '休業中', closed: '廃業', bankrupt: '倒産' }[x.status] || x.status;
+      return `<div class="co-row" ${live ? `data-own-open="${x.cid}"` : ''} style="${live ? '' : 'cursor:default'}">
+        <span class="nm"><b>${esc(x.name)}${kindTag({ ...x, status: '' })}</b>
+        <small>${st}${live ? `・ID ${x.cid_full}・お金 ${fmt(x.balance)} X` : x.status === 'pending' ? '・管理者の確認待ち' : x.closed_at ? '・' + x.closed_at : ''}</small></span>${dot(n)}${live ? '<span class="go" style="color:var(--muted);font-size:20px">›</span>' : ''}</div>`;
+    }).join('') || '<p class="muted small" style="margin:0">まだ会社はありません。下の「企業の申請」から作れます。</p>') + '</div>';
+    if (OW.rejected.length) h += `<div class="card"><h3 style="margin-top:0">却下された申請</h3>${OW.rejected.map(r => `<p class="small" style="margin:4px 0">${esc(r.name)}${r.reason ? '：' + esc(r.reason) : ''}</p>`).join('')}</div>`;
+  } else {
+    const S = ownSections(c), sec = S.find(x => x[0] === OWsec);
+    const sus = c.status === 'suspended';
+    if (!sec) {
+      // 会社のメニュー
+      h = `<div class="card own" data-co="${c.cid}">
+        <div class="row"><button class="btn s" data-own-back="list">‹ 会社の一覧</button></div>
+        <h3 style="margin:10px 0 4px">${esc(c.name)}${kindTag({ ...c, status: '' })} ${sus ? `<span class="stag">${c.court_lock ? '休業中（命令）' : '休業中'}</span>` : '<span class="tag good">営業中</span>'}</h3>
+        <p class="muted small" style="margin:0 0 6px">ID ${c.cid_full}・会社のお金 <b>${fmt(c.balance)} X</b></p>
+        ${S.map(s2 => `<div class="co-row" data-own-sec="${s2[0]}"><span class="nm"><b>${s2[1]}</b><small>${s2[2]}</small></span>${dot(s2[3])}<span style="color:var(--muted);font-size:20px">›</span></div>`).join('')}</div>`;
+    } else {
+      h = `<div class="card own" data-co="${c.cid}">
+        <div class="row"><button class="btn s" data-own-back="corp">‹ ${esc(c.name)}</button></div>
+        <h3 style="margin:10px 0 8px">${sec[1]}</h3>${sec[4]}</div>`;
+    }
+  }
+  $('#owCorp').innerHTML = h;
+  $('#apCard').classList.toggle('hidden', !!c);
+}
+$('#owCorp').addEventListener('click', ev => {
+  const o = ev.target.closest('[data-own-open]'), sc = ev.target.closest('[data-own-sec]'), bk = ev.target.closest('[data-own-back]');
+  if (o) { OWsel = o.dataset.ownOpen; OWsec = null; ownRender(); window.scrollTo(0, 0); }
+  else if (sc) { OWsec = sc.dataset.ownSec; ownRender(); window.scrollTo(0, 0); }
+  else if (bk) { if (bk.dataset.ownBack === 'list') OWsel = null; OWsec = null; ownRender(); window.scrollTo(0, 0); }
+});
 function bankAdmin(c) {
   const packForm = pk => `<div class="item" data-form="pack" data-id="${pk ? pk.id : ''}">
     <input class="inp" data-f="name" maxlength="40" placeholder="パックの名前（例：はじめての1000 X）" value="${pk ? esc(pk.name) : ''}">
@@ -2053,9 +2155,19 @@ function bankAdmin(c) {
       <label class="small"><input type="checkbox" data-f="active" ${!pk || pk.active ? 'checked' : ''}> 受付中</label>
       <button class="btn main s" data-act="pack" style="margin-left:auto">${pk ? '保存' : '作る'}</button></div></div>`;
   const hist = h => `これまで：返した ${h.repaid}件・借りている ${h.active}件${h.overdue ? `・<b style="color:var(--lose)">延滞 ${h.overdue}件</b>` : ''}${h.forgiven ? `・帳消し ${h.forgiven}件` : ''}`;
-  return `<h4>銀行の設定</h4>
-    <div class="row"><span class="small">口座開設</span>
-      <div class="seg"><button data-act="acct_mode" data-v="auto" class="${c.acct_mode === 'auto' ? 'on' : ''}">すぐ開ける</button><button data-act="acct_mode" data-v="approve" class="${c.acct_mode !== 'auto' ? 'on' : ''}">許可制</button></div></div>
+  return `<h4 style="margin-top:0">銀行の設定</h4>
+    <div class="item" data-form="bset">
+      <div class="small" style="margin-bottom:4px"><b>口座開設</b></div>
+      <select class="inp" data-f="acct_mode" style="margin:0 0 4px">
+        <option value="approve" ${c.acct_mode === 'approve' ? 'selected' : ''}>許可制（申込を銀行が許可）</option>
+        <option value="auto" ${c.acct_mode === 'auto' ? 'selected' : ''}>すぐ開ける</option>
+        <option value="off" ${c.acct_mode === 'off' ? 'selected' : ''}>受け付けない</option></select>
+      <label class="small" style="display:block"><input type="checkbox" data-f="acct_check" ${c.acct_need_check ? 'checked' : ''}> オレンジのチェックがある人だけ</label>
+      <div class="small" style="margin:8px 0 4px"><b>借入（「借りる」ボタン）</b></div>
+      <label class="small" style="display:block"><input type="checkbox" data-f="loan_on" ${c.loan_on ? 'checked' : ''}> 貸出を受け付ける（貸出パックを見せる）</label>
+      <label class="small" style="display:block"><input type="checkbox" data-f="loan_acct" ${c.loan_need_acct ? 'checked' : ''}> この銀行に口座がある人だけ</label>
+      <label class="small" style="display:block"><input type="checkbox" data-f="loan_check" ${c.loan_need_check ? 'checked' : ''}> オレンジのチェックがある人だけ</label>
+      <button class="btn main s" data-act="bset" style="margin-top:6px">保存</button></div>
     <h4>口座の申込</h4>
     ${c.acct_requests.map(a => `<div class="line"><span class="grow">${nameB(a.nickname, a.badge)}（ID ${a.uid}）</span>
       <button class="btn main s" data-act="acct_ok" data-uid="${a.uid}">許可</button><button class="btn s" data-act="acct_ng" data-uid="${a.uid}">断る</button></div>`).join('') || '<p class="muted small" style="margin:0">いまはありません</p>'}
@@ -2116,7 +2228,8 @@ $('#owCorp').onclick = async ev => {
         if (!confirm(`ID ${to} の人に社長を交代します。もとに戻すには新しい社長に頼む必要があります。よろしいですか？`)) return;
         r = await call('corp_owner_set', { p_cid: cid, p_to: to.trim() }); }
     else if (a === 'exch') r = await call('exch_settings', { p_cid: cid, p_pairs: f(card, 'pair_xca') ? ['X/CA'] : [], p_fee: Number(f(card, 'fx_fee')) });
-    else if (a === 'acct_mode') r = await call('bank_settings', { p_cid: cid, p_acct_mode: b.dataset.v });
+    else if (a === 'bset') { const box = b.closest('[data-form]'); r = await call('bank_settings', { p_cid: cid, p_acct_mode: f(box, 'acct_mode'), p_acct_check: f(box, 'acct_check'),
+        p_loan_on: f(box, 'loan_on'), p_loan_acct: f(box, 'loan_acct'), p_loan_check: f(box, 'loan_check') }); }
     else if (a === 'acct_ok' || a === 'acct_ng') r = await call('bank_acct_answer', { p_cid: cid, p_user: b.dataset.uid, p_ok: a === 'acct_ok' });
     else if (a === 'pack') { const box = b.closest('[data-form]'); r = await call('loan_pack_save', { p_cid: cid, p_pack: box.dataset.id ? Number(box.dataset.id) : null,
         p_name: f(box, 'name'), p_amount: Math.floor(Number(f(box, 'amount')) || 0), p_days: Math.floor(Number(f(box, 'days')) || 0), p_rate: Number(f(box, 'rate')) || 0,
@@ -2427,8 +2540,147 @@ async function stockLoad() {
   } catch (e) { toast(e.message); }
 }
 
+
+/* =================================================================
+   対戦ゲーム（ロビー・部屋）
+   ================================================================= */
+const LB = { game: 'reversi' }, RM = { id: null, timer: null, data: null, sending: false, lastMoves: 0 };
+const HOWTO = {
+  reversi: `<ol>
+    <li>黒と白にわかれて、<b>交互に石を置きます</b>（黒が先）。</li>
+    <li>相手の石を、自分の石で<b>はさむように</b>置きます。たて・よこ・ななめ、どの向きでもOK。</li>
+    <li>はさんだ相手の石は、全部<b>自分の色にひっくり返ります</b>。</li>
+    <li>ひっくり返せない場所には置けません。置ける場所は、盤の上に白い点で出ます。</li>
+    <li>置ける場所がないときは、自動で<b>パス</b>（相手の番）になります。</li>
+    <li>ふたりとも置けなくなったら終わり。<b>石の多いほうが勝ち</b>です。</li>
+  </ol>
+  <p class="small"><b>コツ</b>：四すみ（かど）は二度とひっくり返されないので、とても強い場所です。かどのとなりに置くと、相手にかどを取られやすいので気をつけましょう。</p>`,
+};
+const ROOM_RULES = `<p class="small muted" style="margin:6px 0 0">
+  ・持ち時間は1人ずつ。自分の番のあいだだけ減り、0になると負けです。<br>
+  ・「投了」すると負けを認めて終わります。<br>
+  ・観戦している人は、10手目まで、勝つと思う人に賭けられます（対局している本人は賭けられません）。勝った側に賭けた人で賭け金を山分けします（国庫が5%）。引き分けや、片方にしか賭けがないときは全部返します。もうけは所得になります。</p>`;
+const clockTxt = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s2 = t % 60;
+  return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s2).padStart(2, '0'); };
+async function lobbyLoad() {
+  $('#lbTitle').textContent = BOARD_GAMES[LB.game] || '';
+  $('#lbHow').innerHTML = (HOWTO[LB.game] || '') + ROOM_RULES;
+  try {
+    const d = await call('room_list', { p_game: LB.game });
+    const pl = r => r.players.map(p => nameB(p.nickname, p.badge)).join(' 対 ');
+    $('#lbWait').innerHTML = d.waiting.map(r => `<div class="line"><span class="grow">#${r.id} ${esc(r.title || '（名前なし）')}
+        <small>主催 ${nameB(r.host, r.host_badge)}・1人 ${Math.round(r.time_ms / 60000)}分${r.invite ? '・招待：ID ' + r.invite : ''}${r.bets_on ? '・観戦の賭けあり' : ''}</small></span>
+        ${r.mine_host ? `<button class="btn s" data-lbopen="${r.id}">見る</button><button class="btn s" data-lbleave="${r.id}">やめる</button>` : `<button class="btn main s" data-lbjoin="${r.id}">入る</button>`}</div>`).join('')
+      || '<p class="muted small" style="margin:0">いまはありません。部屋を作って待ちましょう</p>';
+    $('#lbPlay').innerHTML = d.playing.map(r => `<div class="line"><span class="grow">#${r.id} ${pl(r)}
+        <small>${r.move_no}手目${r.bets_on ? `・賭け ${fmt(r.pool)} X${r.bet_open ? '（受付中）' : ''}` : ''}</small></span>
+        <button class="btn ${r.me != null ? 'main' : ''} s" data-lbopen="${r.id}">${r.me != null ? '対局へ' : '観戦'}</button></div>`).join('')
+      || '<p class="muted small" style="margin:0">いまはありません</p>';
+    $('#lbDone').innerHTML = d.finished.map(r => `<div class="line"><span class="grow">#${r.id} ${pl(r)}
+        <small>${r.winner === -1 ? '引き分け' : r.winner === r.me ? '<b style="color:var(--win)">勝ち</b>' : '負け'}・${esc(r.reason || '')}</small></span>
+        <button class="btn s" data-lbopen="${r.id}">見る</button></div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>';
+  } catch (e) { toast(e.message); }
+}
+$('#lbBack').onclick = () => go('vGameList');
+$('#lbCreate').onclick = async () => {
+  try {
+    const r = await call('room_create', { p_game: LB.game, p_title: $('#lbName').value, p_time_min: Number($('#lbTime').value),
+      p_invite: $('#lbInvite').value.trim() || null, p_bets: $('#lbBets').checked });
+    $('#lbName').value = ''; $('#lbInvite').value = ''; RM.id = r.id; toast('部屋を作りました。相手を待ちましょう'); go('vRoom');
+  } catch (e) { toast(e.message); }
+};
+$('#vLobby').addEventListener('click', async ev => {
+  const j = ev.target.closest('[data-lbjoin]'), o = ev.target.closest('[data-lbopen]'), l = ev.target.closest('[data-lbleave]');
+  try {
+    if (j) { const r = await call('room_join', { p_room: Number(j.dataset.lbjoin) }); RM.id = r.id; go('vRoom'); }
+    if (o) { RM.id = Number(o.dataset.lbopen); go('vRoom'); }
+    if (l) { if (!confirm('この部屋をやめますか？')) return; await call('room_leave', { p_room: Number(l.dataset.lbleave) }); lobbyLoad(); }
+  } catch (e) { toast(e.message); }
+});
+function roomStop() { if (RM.timer) clearInterval(RM.timer); RM.timer = null; }
+function roomStart() {
+  roomStop(); RM.data = null; RM.lastMoves = 0; $('#rmBoard').innerHTML = ''; $('#rmChat').innerHTML = '';
+  roomPoll(); RM.timer = setInterval(() => { if (view === 'vRoom') roomPoll(); else roomStop(); }, 1500);
+}
+async function roomPoll() {
+  if (!RM.id || RM.sending) return;
+  try { RM.data = await call('room_state', { p_room: RM.id }); RM.data.got = Date.now(); roomRender(); } catch (e) { toast(e.message); roomStop(); }
+}
+function roomClock() {
+  const d = RM.data; if (!d) return;
+  const el = Date.now() - d.got;
+  $$('#rmPlayers .ck').forEach(c => { const seat = Number(c.dataset.seat); let ms = d.clock_ms[seat];
+    if (d.status === 'playing' && d.turn === seat) ms -= el; c.textContent = clockTxt(ms); c.classList.toggle('low', ms < 60000); });
+}
+setInterval(() => { if (view === 'vRoom') roomClock(); }, 250);
+function roomRender() {
+  const d = RM.data, st = d.state || {};
+  $('#rmTitle').textContent = `${d.game_name}${d.title ? '・' + d.title : ''}`;
+  $('#rmNo').textContent = `部屋 #${d.id}`;
+  const col = ['B', 'W'], colName = ['黒（先手）', '白（後手）'];
+  $('#rmPlayers').innerHTML = d.status === 'waiting' ? `<p class="small" style="margin:0">主催 ${nameB(d.host, d.host_badge)}。相手が入るのを待っています…${d.invite ? `（招待：ID ${d.invite}）` : ''}</p>`
+    : `<div class="pl-bar">${[0, 1].map(seat => { const p = d.players.find(x => x.seat === seat) || {};
+        return `<div class="pl ${d.status === 'playing' && d.turn === seat ? 'turn' : ''}"><div class="small muted"><span class="stone ${col[seat]}"></span>${colName[seat]}${d.me === seat ? '（あなた）' : ''}</div>
+          <div class="nm">${nameB(p.nickname || '', p.badge)}</div><div class="row" style="justify-content:space-between"><span class="ck" data-seat="${seat}"></span>
+          <b>${seat === 0 ? (st.black ?? 2) : (st.white ?? 2)}</b></div></div>`; }).join('')}</div>`;
+  roomClock();
+  if (d.status !== 'waiting') rvBoard(d);
+  let msg = '';
+  if (d.status === 'waiting') msg = d.mine_host ? '相手が入るのを待っています。' : '';
+  else if (d.status === 'playing') msg = d.me == null ? `観戦中・${d.move_no}手目・${colName[d.turn]}の番` : d.me === d.turn ? '<b>あなたの番です</b>' + (st.pass ? '（相手はパスしました）' : '') : '相手の番です…';
+  else if (d.status === 'finished') msg = `<b>${d.winner === -1 ? '引き分け' : colName[d.winner] + 'の勝ち'}</b>（${esc(d.reason || '')}）` + (d.me != null && d.winner !== -1 ? (d.me === d.winner ? '　あなたの勝ち！' : '　あなたの負け') : '');
+  else if (d.status === 'canceled') msg = 'この部屋はなくなりました';
+  $('#rmMsg').innerHTML = msg;
+  $('#rmBtns').innerHTML = d.status === 'playing' && d.me != null ? '<button class="btn s" id="rmResign">投了する</button>'
+    : d.status === 'waiting' && d.mine_host ? '<button class="btn s" id="rmLeave">部屋をやめる</button>'
+    : d.status === 'waiting' && d.me == null ? '<button class="btn main s" id="rmJoin">この部屋に入る</button>' : '';
+  const rs = $('#rmResign'); if (rs) rs.onclick = async () => { if (!confirm('投了しますか？（負けになります）')) return; try { RM.data = await call('room_resign', { p_room: d.id }); RM.data.got = Date.now(); roomRender(); } catch (e) { toast(e.message); } };
+  const lv = $('#rmLeave'); if (lv) lv.onclick = async () => { if (!confirm('この部屋をやめますか？')) return; try { await call('room_leave', { p_room: d.id }); go('vLobby'); } catch (e) { toast(e.message); } };
+  const jn = $('#rmJoin'); if (jn) jn.onclick = async () => { try { RM.data = await call('room_join', { p_room: d.id }); RM.data.got = Date.now(); roomRender(); } catch (e) { toast(e.message); } };
+  // 賭け
+  const pool = s2 => (d.pool.find(x => x.seat === s2) || { amount: 0, people: 0 });
+  const myb = d.my_bets.reduce((a, b) => a + b.amount, 0), mySeat = d.my_bets.length ? d.my_bets[0].seat : null, myPay = d.my_bets.reduce((a, b) => a + (b.payout || 0), 0);
+  $('#rmBetCard').classList.toggle('hidden', !d.bets_on);
+  if (d.bets_on) $('#rmBetCard').innerHTML = `<h3 style="margin-top:0">観戦の賭け</h3>
+    <div class="kv"><span><span class="stone B"></span>黒に</span><b>${fmt(pool(0).amount)} X（${pool(0).people}人）</b><span><span class="stone W"></span>白に</span><b>${fmt(pool(1).amount)} X（${pool(1).people}人）</b>
+      ${myb ? `<span>あなた</span><b>${mySeat === 0 ? '黒' : '白'}に ${fmt(myb)} X${d.status === 'finished' ? `→ ${fmt(myPay)} X` : ''}</b>` : ''}</div>
+    ${d.bet_open && d.me == null && d.status === 'playing' ? `<div class="row" style="margin-top:8px"><input class="inp grow" id="rmBetAmt" type="number" min="1" placeholder="賭ける額（X）" style="margin:0">
+        ${mySeat !== 1 ? '<button class="btn s" data-bseat="0">黒に賭ける</button>' : ''}${mySeat !== 0 ? '<button class="btn s" data-bseat="1">白に賭ける</button>' : ''}</div>
+        <p class="muted small" style="margin:4px 0 0">10手目まで賭けられます（いま ${d.move_no}手目）。勝った側に賭けた人で山分け（国庫5%）。</p>`
+      : `<p class="muted small" style="margin:6px 0 0">${d.status === 'waiting' ? '対局が始まると賭けられます。' : d.me != null ? '対局している本人は賭けられません。' : d.status === 'playing' ? '賭けは締め切りました（10手目まで）。' : ''}</p>`}`;
+  $$('#rmBetCard [data-bseat]').forEach(b => b.onclick = async () => {
+    const a = Math.floor(Number($('#rmBetAmt').value) || 0); if (a < 1) return toast('額を入れてください');
+    try { RM.data = await call('room_bet', { p_room: d.id, p_seat: Number(b.dataset.bseat), p_amount: a }); RM.data.got = Date.now(); setBal(RM.data.balance); roomRender(); toast('賭けました'); } catch (e) { toast(e.message); }
+  });
+  // チャット
+  const ch = $('#rmChat'), atBottom = ch.scrollHeight - ch.scrollTop - ch.clientHeight < 30;
+  ch.innerHTML = d.chat.map(m => `<div class="m"><b>${nameB(m.nickname, m.badge)}</b>${m.player ? '<span class="muted small">（対局者）</span>' : ''}：${esc(m.body)}</div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>';
+  if (atBottom) ch.scrollTop = ch.scrollHeight;
+}
+function rvBoard(d) {
+  const st = d.state, b = st.board || '', legal = new Set(d.legal || []), flips = new Set(st.flips || []);
+  const fresh = d.move_no !== RM.lastMoves; RM.lastMoves = d.move_no;
+  let h = '<div class="rv">';
+  for (let i = 0; i < 64; i++) {
+    const c = b[i], can = legal.has(i);
+    h += `<div class="c ${can ? 'can' : ''} ${st.last === i ? 'last' : ''}" data-i="${i}">${c !== '.' ? `<div class="d ${c} ${fresh && flips.has(i) ? 'flip' : ''}"></div>` : ''}</div>`;
+  }
+  $('#rmBoard').innerHTML = h + '</div>';
+  $$('#rmBoard .c.can').forEach(el => el.onclick = async () => {
+    if (RM.sending) return; RM.sending = true;
+    try { RM.data = await call('room_move', { p_room: d.id, p_move: { pos: Number(el.dataset.i) } }); RM.data.got = Date.now(); RM.sending = false; roomRender(); }
+    catch (e) { RM.sending = false; toast(e.message); }
+  });
+}
+$('#rmBack').onclick = () => { LB.game = RM.data ? RM.data.game : LB.game; go('vLobby'); };
+$('#rmChatSend').onclick = async () => {
+  const t = $('#rmChatIn').value.trim(); if (!t || !RM.id) return;
+  try { RM.data = await call('room_chat', { p_room: RM.id, p_body: t }); RM.data.got = Date.now(); $('#rmChatIn').value = ''; roomRender(); } catch (e) { toast(e.message); }
+};
+$('#rmChatIn').onkeydown = ev => { if (ev.key === 'Enter') $('#rmChatSend').click(); };
+
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て' };
+const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て' };
 async function moreLoad() {
   try {
     const [hs, me] = await Promise.all([call('my_history'), call('my_profile')]);
