@@ -667,7 +667,9 @@ async function boot() {
       const password = $('#pass').value;
       const { error } = await sb.auth.signInWithPassword({ email, password });
       $('#mailBtn').disabled = false;
-      if (error) lgMsg(/invalid/i.test(error.message)
+      if (error) lgMsg(/confirm/i.test(error.message)
+        ? 'メールの確認がまだです。登録のときに届いたメールのリンクを押してください（届いていなければ迷惑メールフォルダも見てください）。'
+        : /invalid/i.test(error.message)
         ? 'メールアドレスかパスワードがちがいます。<br>前に「メールのリンク」で入った人は、まだパスワードがありません。一度「メールのリンク」で入って、設定 → プロフィールでパスワードを決めてください。'
         : 'エラー：' + esc(error.message));
       return;
@@ -682,12 +684,14 @@ async function boot() {
     const email = $('#mail').value.trim(), password = $('#pass').value;
     if (!email || password.length < 6) return lgMsg('メールアドレスと、6文字以上のパスワードを入れてください。');
     $('#signupBtn').disabled = true;
-    const { data, error } = await sb.auth.signUp({ email, password });
+    const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: location.origin + location.pathname } });
     $('#signupBtn').disabled = false;
     if (error) return lgMsg(/already|registered|exists/i.test(error.message)
       ? 'このメールアドレスはもう登録されています。「ログイン」を押してください。<br>パスワードを決めていない人は、「メールのリンク」で入ってから、設定 → プロフィールで決めてください。'
+      : /rate|limit|seconds/i.test(error.message)
+      ? '確認メールを送りすぎています（サイト全体で1時間に2通まで）。少し時間をおいてから、もう一度「登録する」を押してください。'
       : 'エラー：' + esc(error.message));
-    if (!data.session) lgMsg('登録しました。「ログイン」を押してください。');
+    if (!data.session) lgMsg(`<b>${esc(email)}</b> に確認のメールを送りました（英語のメールです）。<br>メールの中のリンクを押すと登録が終わり、この画面にもどってきます。<br>次からは、メールアドレスとパスワードでログインできます。`);
   };
   const { data } = await sb.auth.getSession();
   if (data.session) enter(); else show('vLogin');
