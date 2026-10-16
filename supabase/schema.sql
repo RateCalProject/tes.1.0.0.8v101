@@ -243,6 +243,7 @@ create unique index if not exists profiles_account_no_idx on public.profiles(acc
 -- 利用停止（役所の判決）・メール認証（オレンジのチェック用）
 alter table public.profiles add column if not exists banned_until timestamptz;
 alter table public.profiles add column if not exists mail_verified_at timestamptz;
+alter table public.profiles add column if not exists last_seen_at timestamptz;   -- 最後にサイトを開いた時刻（管理の「登録者」）
 alter table public.treasury add column if not exists fee_total bigint not null default 0;
 
 -- 企業・銀行 ---------------------------------------------------------
@@ -498,6 +499,7 @@ begin
   on conflict (id) do nothing;
   if found then perform _log(u, 'start', 0, 1000, '{"note":"はじめての配布"}'); end if;
   update profiles set account_no = _new_acct() where id = u and account_no is null;
+  update profiles set last_seen_at = _now() where id = u;
   perform _mail_seen(u);
   -- 締めの日を過ぎていたら、税の締め（調査・差し押さえ・給付金）をここで行う
   -- 万一失敗してもログインは止めない
@@ -1210,6 +1212,7 @@ end $$;
 -- 競馬
 --   ふだんのレース：毎日 16:30・17:30・18:30・19:30 から7レースずつ（8分おき）。回ごとに競馬場が変わる
 --   メインレース：毎日 20:30（平日オープン特別・土曜G2/G3・日曜G1）
+--   深夜競馬：メインのあと 20:42 中京・21:42 京都から7レースずつ（22:30の最終レースは曜日ごとの特別）
 --   同じ馬が走りつづける。勝つとクラスが上がる。1年＝1か月で年をとり、8歳で引退
 --   オッズは買った時点で決まる固定オッズ。人気は「みんなの見立て」で、調子・ペース・馬体重の増減は入っていない
 --   払戻率：ふだん 単複75% 枠連・馬連・ワイド72.5% 馬単・3連複70% 3連単67.5%
@@ -1585,10 +1588,57 @@ begin
   end if;
   posttime := make_timestamptz(extract(year from d)::int, extract(month from d)::int, extract(day from d)::int, 20, 30, 0, 'Asia/Tokyo');
   perform _kb_make_race(d, 29, coalesce(nr.venue, 5), 11, posttime, nr.name, nr.grade, null, nr.cond, nr.surface, nr.dist,
-                        case when nr.surface = '芝' then gt[5] else gd[5] end, wth[5],
+                        case when nr.surface = '芝' then gt[coalesce(nr.venue, 5)] else gd[coalesce(nr.venue, 5)] end, wth[coalesce(nr.venue, 5)],
                         case when nr.grade = 'G1' then 'g1' else 'graded' end, nr.handicap,
                         case nr.grade when 'G1' then 16 when 'G2' then 12 when 'G3' then 12 else 10 end,
                         case nr.grade when 'G1' then 18 when 'G2' then 16 when 'G3' then 16 else 14 end);
+end $$;
+
+-- 深夜競馬（メインのあと 20:42〜 中京・21:42〜 京都で7Rずつ、8分おき。22:30の最終レースは曜日ごとの特別）
+--   番号は30〜43。天気と馬場は、その日の同じ競馬場のふだんのレースと同じ。番組をつくった時点で締め切りの近いレースはつくらない
+create or replace function public._kb_make_night(d date) returns void
+language plpgsql volatile set search_path = public as $$
+declare
+  dow int := extract(isodow from d)::int;
+  fin text[] := array['月見草特別', '夜霧特別', '銀河特別', '星明かり特別', '真夜中特別', '夜想曲特別', '月光特別'];
+  s int; k int; vid int; v keiba_venues; posttime timestamptz; sf text; ds int; cls int; cond text; nm text;
+  wth text; gt text; gd text; x numeric;
+begin
+  perform pg_advisory_xact_lock(4242);
+  if exists (select 1 from keiba_races where day = d and no >= 30) then return; end if;
+  for s in 0..1 loop
+    vid := case s when 0 then 1 else 2 end;
+    select * into v from keiba_venues where id = vid;
+    select r.weather into wth from keiba_races r where r.day = d and r.venue = vid and r.no <= 28 order by r.no limit 1;
+    select r.going into gt from keiba_races r where r.day = d and r.venue = vid and r.no <= 28 and r.surface = '芝' order by r.no desc limit 1;
+    select r.going into gd from keiba_races r where r.day = d and r.venue = vid and r.no <= 28 and r.surface = 'ダ' order by r.no desc limit 1;
+    if wth is null then
+      x := random();
+      wth := case when x < 0.5 then '晴' when x < 0.8 then '曇' when x < 0.9 then '小雨' else '雨' end;
+    end if;
+    gt := coalesce(gt, case wth when '晴' then '良' when '曇' then '良' when '小雨' then '稍重' else '重' end);
+    gd := coalesce(gd, case wth when '晴' then '良' when '曇' then '良' when '小雨' then '稍重' else '重' end);
+    for k in 1..7 loop
+      posttime := make_timestamptz(extract(year from d)::int, extract(month from d)::int, extract(day from d)::int,
+                                   20 + s, 42, 0, 'Asia/Tokyo') + (k - 1) * interval '8 minutes';
+      continue when posttime < _now() + interval '2 minutes';   -- もう締め切ったレースはつくらない
+      sf := case when random() < 0.55 then '芝' else 'ダ' end;
+      ds := case when sf = '芝' then v.turf_d[1 + floor(random() * array_length(v.turf_d, 1))::int]
+                 else v.dirt_d[1 + floor(random() * array_length(v.dirt_d, 1))::int] end;
+      case k
+        when 1 then cls := 0; cond := case when s = 0 then '2yo_new' else '2yo' end;
+        when 2 then cls := 0; cond := '3yo';
+        when 3, 4 then cls := 1; cond := '3up';
+        when 5, 6 then cls := 2; cond := '3up';
+        else cls := 3; cond := '3up';
+      end case;
+      nm := case when s = 1 and k = 7 then fin[dow]
+                 else case cond when '2yo_new' then '2歳新馬' when '2yo' then '2歳未勝利' when '3yo' then '3歳未勝利'
+                                else '3歳以上' || cls || '勝クラス' end end;
+      perform _kb_make_race(d, 30 + s * 7 + (k - 1), vid, k, posttime, nm, null, cls, cond, sf, ds,
+                            case when sf = '芝' then gt else gd end, wth, 'normal', false, 8, 12);
+    end loop;
+  end loop;
 end $$;
 
 -- 順番つきの確率（PL式）：a→b→c…の順に入る確率
@@ -1805,7 +1855,11 @@ begin
   elsif last < cur then
     perform _kb_month(cur);
   end if;
-  if not exists (select 1 from keiba_races where day = today) then perform _kb_make_day(today); end if;
+  -- 今日の番組（ふだん・メイン）と、深夜競馬（つぎの呼び出しでつくる。1回の待ち時間を短くするため。最終レースの時刻をすぎていたらつくらない）
+  if not exists (select 1 from keiba_races where day = today) then perform _kb_make_day(today);
+  elsif _now() < make_timestamptz(extract(year from today)::int, extract(month from today)::int, extract(day from today)::int, 22, 30, 0, 'Asia/Tokyo')
+        and not exists (select 1 from keiba_races where day = today and no >= 30) then perform _kb_make_night(today);
+  end if;
 end $$;
 
 -- 発売の状態
@@ -1832,6 +1886,8 @@ begin
         'id', r.id, 'no', r.no, 'rnum', r.rnum, 'post_ms', _kb_ms(r.post), 'venue', v.name,
         'name', r.name, 'grade', r.grade, 'surface', r.surface, 'dist', r.dist, 'going', r.going,
         'weather', r.weather, 'status', _kb_status(r),
+        'part', case when r.no = 29 then 'main' when r.no >= 30 then 'night' else 'day' end,
+        'sess', case when r.no <= 28 then (r.no - 1) / 7 when r.no = 29 then 4 else 5 + (r.no - 30) / 7 end,
         'n', (select count(*) from keiba_entries e where e.race_id = r.id),
         'winner', case when r.settled then (select jsonb_build_object('uma', e.uma, 'name', h.name, 'ninki', e.ninki)
                                               from keiba_entries e join keiba_horses h on h.id = e.horse_id
@@ -2307,6 +2363,11 @@ create table if not exists public.corp_cert_log (
 );
 alter table public.corp_cert_log enable row level security;
 revoke all on public.corp_cert_log from anon, authenticated;
+-- 業種（日本標準産業分類の中分類）・ゲーム／Discordのサーバー・窓口（くわしくは下の「業種」「ゲーム・Discordのサーバー」「窓口」）
+alter table public.companies add column if not exists industries text[]  not null default '{}';          -- 中分類のコード（5つまで）
+alter table public.companies add column if not exists servers    jsonb   not null default '[]'::jsonb;  -- ゲーム・Discordのサーバー（5つまで）
+alter table public.companies add column if not exists desk_on    boolean not null default true;         -- 窓口で相談を受け付ける
+alter table public.companies add column if not exists desk_note  text    not null default '';           -- 窓口の案内（受付時間など）
 
 -- 企業の評価（くわしくは下の「企業の評価」）：評価の表と、会社の平均
 create table if not exists public.corp_reviews (
@@ -2342,19 +2403,29 @@ language sql stable set search_path = public as $$
     'rating', _corp_rating(c.id),
     'cert', c.status = 'active' and coalesce(c.cert_until > _now(), false),
     'cert_until', case when c.status = 'active' and c.cert_until > _now() then _dlabel(c.cert_until) end,
+    'industries', c.industries,
+    'servers', case when c.status in ('active', 'suspended') then c.servers else '[]'::jsonb end,
+    'desk_on', c.desk_on and c.status in ('active', 'suspended'),
+    'desk_note', case when c.status in ('active', 'suspended') then c.desk_note else '' end,
     'mine', c.owner = u)
 $$;
 
--- 会社をさがす（名前の一部かID）
-create or replace function public.corp_search(p_q text) returns jsonb
+-- 会社をさがす（名前の一部・ID・説明・業種の名前・サーバーの名前）。p_ind：業種でしぼる（大分類 A〜T か中分類 01〜99）
+drop function if exists public.corp_search(text);
+create or replace function public.corp_search(p_q text, p_ind text default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); q text := btrim(coalesce(p_q, ''));
+declare u uuid := _me(); q text := btrim(coalesce(p_q, '')); ind text := upper(btrim(coalesce(p_ind, '')));
 begin
   return (select coalesce(jsonb_agg(_corp_card(c, u) order by (c.status in ('active', 'suspended')) desc, c.name), '[]'::jsonb) from (
-    select * from companies
-     where status in ('active', 'suspended', 'closed', 'bankrupt')
-       and (q = '' or name ilike '%' || q || '%' or cid = split_part(q, '-', 1) or description ilike '%' || q || '%')
-     order by (status in ('active', 'suspended')) desc, name limit 50) c);
+    select * from companies x
+     where x.status in ('active', 'suspended', 'closed', 'bankrupt')
+       and (q = '' or x.name ilike '%' || q || '%' or x.cid = split_part(q, '-', 1) or x.description ilike '%' || q || '%'
+            or exists (select 1 from industry_codes ic where ic.code = any(x.industries) and ic.name ilike '%' || q || '%')
+            or (x.status in ('active', 'suspended') and exists (select 1 from jsonb_array_elements(x.servers) sv
+                                                                 where sv->>'name' ilike '%' || q || '%' or sv->>'game' ilike '%' || q || '%')))
+       and (ind = '' or ind = any(x.industries)
+            or (ind ~ '^[A-T]$' and exists (select 1 from industry_codes ic where ic.code = any(x.industries) and ic.major = ind)))
+     order by (x.status in ('active', 'suspended')) desc, x.name limit 50) c);
 end $$;
 
 create or replace function public.corp_pins() returns jsonb
@@ -2397,6 +2468,8 @@ begin
     'loans', (select coalesce(jsonb_agg(_loan_json(l) order by l.id desc), '[]'::jsonb) from loans l
                where l.company_id = c.id and l.user_id = u and l.status in ('pending', 'active')),
     'shares', c.shares, 'holders', _corp_holders(c.id),
+    'desk_mine', (select count(*) from desk_threads t where t.company_id = c.id and t.user_id = u),
+    'desk_staff', _desk_staff(c.id, u),
     'balance', _bal(u));
 end $$;
 
@@ -2505,9 +2578,10 @@ end $$;
 
 -- 企業の申請
 drop function if exists public.corp_apply(text, text, text);
-create or replace function public.corp_apply(p_name text, p_form text, p_pre boolean, p_kind text, p_desc text) returns jsonb
+drop function if exists public.corp_apply(text, text, boolean, text, text);
+create or replace function public.corp_apply(p_name text, p_form text, p_pre boolean, p_kind text, p_desc text, p_inds text[] default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); base text := btrim(coalesce(p_name, '')); nm text;
+declare u uuid := _me(); base text := btrim(coalesce(p_name, '')); nm text; inds text[];
 begin
   if char_length(base) < 1 or char_length(base) > 24 then raise exception '会社名は1〜24文字です'; end if;
   if p_form not in ('株式会社', '有限会社', '合同会社') then raise exception '会社の形（株式会社・有限会社・合同会社）をえらんでください'; end if;
@@ -2515,6 +2589,8 @@ begin
   if p_kind not in ('一般', '銀行', '証券') then raise exception '会社の種類をえらんでください'; end if;
   if p_kind = '銀行' and p_form <> '株式会社' then raise exception '銀行は株式会社だけです'; end if;
   if p_kind = '証券' and p_form <> '株式会社' then raise exception '証券会社は株式会社だけです'; end if;
+  inds := _ind_norm(p_inds, p_kind, false);
+  if p_inds is not null and cardinality(inds) = 0 then raise exception '業種を1つ以上えらんでください'; end if;
   nm := case when coalesce(p_pre, true) then p_form || base else base || p_form end;
   if (select count(*) from companies where owner = u and status in ('pending', 'active', 'suspended') and not official) >= 3 then
     raise exception '会社は1人3つまでです';
@@ -2525,8 +2601,8 @@ begin
   perform _take(u, 1000);
   update treasury set balance = balance + 1000, fee_total = fee_total + 1000 where id = 1;
   perform _log(u, 'corp_fee', 1000, 0, jsonb_build_object('company', nm));
-  insert into companies(cid, owner, name, form, kind, description, fee_paid)
-  values (_new_ccode(), u, nm, p_form, p_kind, left(coalesce(p_desc, ''), 1000), 1000);
+  insert into companies(cid, owner, name, form, kind, description, fee_paid, industries)
+  values (_new_ccode(), u, nm, p_form, p_kind, left(coalesce(p_desc, ''), 1000), 1000, inds);
   return my_corps();
 end $$;
 
@@ -2541,6 +2617,8 @@ begin
       'closed_at', case when c.closed_at is null then null else _dlabel(c.closed_at) end,
       'rating', _corp_rating(c.id),
       'cert_until', case when c.status = 'active' and c.cert_until > _now() then _dlabel(c.cert_until) end,
+      'industries', c.industries, 'servers', c.servers, 'desk_on', c.desk_on, 'desk_note', c.desk_note,
+      'desk_unread', _desk_unread(c.id), 'desk_open', (select count(*) from desk_threads t where t.company_id = c.id and t.status = 'open'),
       'owed', (select coalesce(sum(price), 0) from corp_orders where company_id = c.id and status = 'paid'),
       'items', (select coalesce(jsonb_agg(jsonb_build_object('id', i.id, 'name', i.name, 'price', i.price,
                   'description', i.description, 'active', i.active) order by i.id), '[]'::jsonb) from corp_items i where i.company_id = c.id),
@@ -2556,7 +2634,7 @@ begin
                  from corp_applies a join corp_jobs j on j.id = a.job_id join profiles p on p.id = a.user_id
                  where j.company_id = c.id and a.status = 'waiting'),
       'members', (select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id), 'role', m.role,
-                 'salary', m.salary, 'paid_total', m.paid_total) order by m.joined_at), '[]'::jsonb)
+                 'salary', m.salary, 'paid_total', m.paid_total, 'desk', m.desk) order by m.joined_at), '[]'::jsonb)
                  from corp_members m join profiles p on p.id = m.user_id where m.company_id = c.id),
       'deposits', (select coalesce(sum(balance), 0) from bank_accounts where company_id = c.id),
       'accounts', (select count(*) from bank_accounts where company_id = c.id and status = 'active'),
@@ -2823,7 +2901,8 @@ declare u uuid := _me();
 begin
   return jsonb_build_object(
     'members', (select coalesce(jsonb_agg(jsonb_build_object('company', c.name, 'cid', c.cid, 'role', m.role, 'salary', m.salary,
-                  'paid_total', m.paid_total, 'since', _dlabel(m.joined_at)) order by m.joined_at), '[]'::jsonb)
+                  'paid_total', m.paid_total, 'since', _dlabel(m.joined_at), 'status', c.status,
+                  'desk', m.desk, 'desk_unread', case when m.desk then _desk_unread(c.id) else 0 end) order by m.joined_at), '[]'::jsonb)
                   from corp_members m join companies c on c.id = m.company_id where m.user_id = u),
     'applies', (select coalesce(jsonb_agg(jsonb_build_object('company', c.name, 'title', j.title, 'status', a.status,
                   'at', _dlabel(a.created_at)) order by a.id desc), '[]'::jsonb)
@@ -2877,10 +2956,10 @@ begin
   select * into tr from treasury where id = 1;
   r := jsonb_build_object('role', rl,
     'pending', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'cid_full', _cfull(c), 'name', c.name, 'form', c.form, 'kind', c.kind, 'description', c.description,
-                  'owner', p.nickname, 'owner_id', p.account_no, 'owner_badge', _badge(p.id), 'mine', c.owner = u, 'at', _dlabel(c.created_at)) order by c.id), '[]'::jsonb)
+                  'industries', c.industries, 'owner', p.nickname, 'owner_id', p.account_no, 'owner_badge', _badge(p.id), 'mine', c.owner = u, 'at', _dlabel(c.created_at)) order by c.id), '[]'::jsonb)
                   from companies c join profiles p on p.id = c.owner where c.status = 'pending'),
     'active', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'cid_full', _cfull(c), 'name', c.name, 'form', c.form, 'kind', c.kind, 'owner', p.nickname,
-                  'status', c.status, 'court_lock', c.court_lock,
+                  'status', c.status, 'court_lock', c.court_lock, 'industries', c.industries, 'servers', jsonb_array_length(c.servers),
                   'cert_until', case when c.status = 'active' and c.cert_until > _now() then _dlabel(c.cert_until) end,
                   'balance', case when rl = 'admin' then c.balance end) order by c.name), '[]'::jsonb)
                   from companies c join profiles p on p.id = c.owner where c.status in ('active', 'suspended')),
@@ -3764,6 +3843,10 @@ begin
   select * into c from companies where id = cid_int for update;
   if not found or c.status not in ('active', 'suspended') then raise exception 'この会社はもう活動していません'; end if;
   label := case when how = 'closed' then '廃業' else '倒産' end;
+  for r in select * from desk_threads where company_id = c.id and status = 'open' loop
+    update desk_threads set status = 'closed', closed_by = 'gone' where id = r.id;
+    perform _notice_l(r.user_id, format('【窓口】「%s」が%sしたため、相談「%s」は終わりました', c.name, label, r.subject), jsonb_build_object('go', 'desk', 't', r.id), null);
+  end loop;
   if c.kind = '銀行' then
     perform _bank_accrue_all(c.id);
     select * into c from companies where id = cid_int;
@@ -7732,6 +7815,551 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
+-- 業種（日本標準産業分類・令和5年7月改定の中分類）
+--   会社ごとに5つまで。銀行は「62 銀行業」、証券は「65 金融商品取引業、商品先物取引業」を必ずふくむ（62・65 はその会社だけ）
+--   「97 国家公務」「98 地方公務」は国営の会社だけ
+-- ---------------------------------------------------------------------
+create table if not exists public.industry_majors (
+  major text primary key,        -- 大分類 A〜T
+  name  text not null
+);
+create table if not exists public.industry_codes (
+  code  text primary key,        -- 中分類 01〜99
+  major text not null references public.industry_majors(major),
+  name  text not null
+);
+alter table public.industry_majors enable row level security;
+alter table public.industry_codes enable row level security;
+revoke all on public.industry_majors, public.industry_codes from anon, authenticated;
+insert into public.industry_majors(major, name) values
+  ('A', '農業、林業'),
+  ('B', '漁業'),
+  ('C', '鉱業、採石業、砂利採取業'),
+  ('D', '建設業'),
+  ('E', '製造業'),
+  ('F', '電気・ガス・熱供給・水道業'),
+  ('G', '情報通信業'),
+  ('H', '運輸業、郵便業'),
+  ('I', '卸売業、小売業'),
+  ('J', '金融業、保険業'),
+  ('K', '不動産業、物品賃貸業'),
+  ('L', '学術研究、専門・技術サービス業'),
+  ('M', '宿泊業、飲食サービス業'),
+  ('N', '生活関連サービス業、娯楽業'),
+  ('O', '教育、学習支援業'),
+  ('P', '医療、福祉'),
+  ('Q', '複合サービス事業'),
+  ('R', 'サービス業（他に分類されないもの）'),
+  ('S', '公務（他に分類されるものを除く）'),
+  ('T', '分類不能の産業')
+on conflict (major) do update set name = excluded.name;
+insert into public.industry_codes(code, major, name) values
+  ('01', 'A', '農業'),
+  ('02', 'A', '林業'),
+  ('03', 'B', '漁業（水産養殖業を除く）'),
+  ('04', 'B', '水産養殖業'),
+  ('05', 'C', '鉱業、採石業、砂利採取業'),
+  ('06', 'D', '総合工事業'),
+  ('07', 'D', '職別工事業（設備工事業を除く）'),
+  ('08', 'D', '設備工事業'),
+  ('09', 'E', '食料品製造業'),
+  ('10', 'E', '飲料・たばこ・飼料製造業'),
+  ('11', 'E', '繊維工業'),
+  ('12', 'E', '木材・木製品製造業（家具を除く）'),
+  ('13', 'E', '家具・装備品製造業'),
+  ('14', 'E', 'パルプ・紙・紙加工品製造業'),
+  ('15', 'E', '印刷・同関連業'),
+  ('16', 'E', '化学工業'),
+  ('17', 'E', '石油製品・石炭製品製造業'),
+  ('18', 'E', 'プラスチック製品製造業（別掲を除く）'),
+  ('19', 'E', 'ゴム製品製造業'),
+  ('20', 'E', 'なめし革・同製品・毛皮製造業'),
+  ('21', 'E', '窯業・土石製品製造業'),
+  ('22', 'E', '鉄鋼業'),
+  ('23', 'E', '非鉄金属製造業'),
+  ('24', 'E', '金属製品製造業'),
+  ('25', 'E', 'はん用機械器具製造業'),
+  ('26', 'E', '生産用機械器具製造業'),
+  ('27', 'E', '業務用機械器具製造業'),
+  ('28', 'E', '電子部品・デバイス・電子回路製造業'),
+  ('29', 'E', '電気機械器具製造業'),
+  ('30', 'E', '情報通信機械器具製造業'),
+  ('31', 'E', '輸送用機械器具製造業'),
+  ('32', 'E', 'その他の製造業'),
+  ('33', 'F', '電気業'),
+  ('34', 'F', 'ガス業'),
+  ('35', 'F', '熱供給業'),
+  ('36', 'F', '水道業'),
+  ('37', 'G', '通信業'),
+  ('38', 'G', '放送業'),
+  ('39', 'G', '情報サービス業'),
+  ('40', 'G', 'インターネット附随サービス業'),
+  ('41', 'G', '映像・音声・文字情報制作業'),
+  ('42', 'H', '鉄道業'),
+  ('43', 'H', '道路旅客運送業'),
+  ('44', 'H', '道路貨物運送業'),
+  ('45', 'H', '水運業'),
+  ('46', 'H', '航空運輸業'),
+  ('47', 'H', '倉庫業'),
+  ('48', 'H', '運輸に附帯するサービス業'),
+  ('49', 'H', '郵便業（信書便事業を含む）'),
+  ('50', 'I', '各種商品卸売業'),
+  ('51', 'I', '繊維・衣服等卸売業'),
+  ('52', 'I', '飲食料品卸売業'),
+  ('53', 'I', '建築材料、鉱物・金属材料等卸売業'),
+  ('54', 'I', '機械器具卸売業'),
+  ('55', 'I', 'その他の卸売業'),
+  ('56', 'I', '各種商品小売業'),
+  ('57', 'I', '織物・衣服・身の回り品小売業'),
+  ('58', 'I', '飲食料品小売業'),
+  ('59', 'I', '機械器具小売業'),
+  ('60', 'I', 'その他の小売業'),
+  ('61', 'I', '無店舗小売業'),
+  ('62', 'J', '銀行業'),
+  ('63', 'J', '協同組織金融業'),
+  ('64', 'J', '貸金業、クレジットカード業等非預金信用機関'),
+  ('65', 'J', '金融商品取引業、商品先物取引業'),
+  ('66', 'J', '補助的金融業等'),
+  ('67', 'J', '保険業（保険媒介代理業、保険サービス業を含む）'),
+  ('68', 'K', '不動産取引業'),
+  ('69', 'K', '不動産賃貸業・管理業'),
+  ('70', 'K', '物品賃貸業'),
+  ('71', 'L', '学術・開発研究機関'),
+  ('72', 'L', '専門サービス業（他に分類されないもの）'),
+  ('73', 'L', '広告業'),
+  ('74', 'L', '技術サービス業（他に分類されないもの）'),
+  ('75', 'M', '宿泊業'),
+  ('76', 'M', '飲食店'),
+  ('77', 'M', '持ち帰り・配達飲食サービス業'),
+  ('78', 'N', '洗濯・理容・美容・浴場業'),
+  ('79', 'N', 'その他の生活関連サービス業'),
+  ('80', 'N', '娯楽業'),
+  ('81', 'O', '学校教育'),
+  ('82', 'O', 'その他の教育、学習支援業'),
+  ('83', 'P', '医療業'),
+  ('84', 'P', '保健衛生'),
+  ('85', 'P', '社会保険・社会福祉・介護事業'),
+  ('86', 'Q', '郵便局'),
+  ('87', 'Q', '協同組合（他に分類されないもの）'),
+  ('88', 'R', '廃棄物処理業'),
+  ('89', 'R', '自動車整備業'),
+  ('90', 'R', '機械等修理業（別掲を除く）'),
+  ('91', 'R', '職業紹介・労働者派遣業'),
+  ('92', 'R', 'その他の事業サービス業'),
+  ('93', 'R', '政治・経済・文化団体'),
+  ('94', 'R', '宗教'),
+  ('95', 'R', 'その他のサービス業'),
+  ('96', 'R', '外国公務'),
+  ('97', 'S', '国家公務'),
+  ('98', 'S', '地方公務'),
+  ('99', 'T', '分類不能の産業')
+on conflict (code) do update set major = excluded.major, name = excluded.name;
+-- 前からある銀行・証券会社には、その業種を入れておく
+update public.companies set industries = '{62}' where kind = '銀行' and industries = '{}';
+update public.companies set industries = '{65}' where kind = '証券' and industries = '{}';
+
+-- 業種のコードをそろえる（重ならない・小さい順・5つまで。銀行・証券は必ずふくむ）
+create or replace function public._ind_norm(p text[], knd text, offi boolean) returns text[]
+language plpgsql stable set search_path = public as $$
+declare r text[]; x text; must text := case knd when '銀行' then '62' when '証券' then '65' end;
+begin
+  select coalesce(array_agg(distinct btrim(z)), '{}') into r from unnest(coalesce(p, '{}'::text[])) z where btrim(coalesce(z, '')) <> '';
+  if must is not null and not (must = any(r)) then r := r || must; end if;
+  select coalesce(array_agg(z order by z), '{}') into r from unnest(r) z;
+  foreach x in array r loop
+    if not exists (select 1 from industry_codes where code = x) then raise exception '業種「%」は日本標準産業分類（中分類）にありません', x; end if;
+    if x in ('97', '98') and not coalesce(offi, false) then raise exception '「公務」は国営の会社だけがえらべます'; end if;
+    if x = '62' and knd is distinct from '銀行' and not coalesce(offi, false) then raise exception '「銀行業」は銀行の会社だけがえらべます'; end if;
+    if x = '65' and knd is distinct from '証券' and not coalesce(offi, false) then raise exception '「金融商品取引業、商品先物取引業」は証券の会社だけがえらべます'; end if;
+  end loop;
+  if cardinality(r) > 5 then raise exception '業種は5つまでです'; end if;
+  return r;
+end $$;
+
+-- 社長：業種を変える
+create or replace function public.corp_set_industries(p_cid text, p_inds text[]) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies; inds text[];
+begin
+  c := _my_corp(u, p_cid);
+  if c.status not in ('pending', 'active', 'suspended') then raise exception 'この会社はいま変えられません'; end if;
+  inds := _ind_norm(p_inds, c.kind, c.official);
+  if cardinality(inds) = 0 then raise exception '業種を1つ以上えらんでください'; end if;
+  update companies set industries = inds where id = c.id;
+  return my_corps();
+end $$;
+
+-- ---------------------------------------------------------------------
+-- ゲーム・Discordのサーバー（どの会社でも5つまで）
+--   kind：discord / minecraft / game（ほかのゲーム。ゲームの名前も書く）
+--   link：Discordは招待リンクだけ。ほかは https のリンクか、サーバーのアドレス（例 play.example.jp:25565）
+-- ---------------------------------------------------------------------
+create or replace function public._srv_norm(p jsonb) returns jsonb
+language plpgsql immutable as $$
+declare r jsonb := '[]'::jsonb; e jsonb; k text; g text; nm text; lk text; nt text; i int := 0;
+begin
+  if p is null or jsonb_typeof(p) = 'null' then return '[]'::jsonb; end if;
+  if jsonb_typeof(p) <> 'array' then raise exception 'サーバーの書き方がちがいます'; end if;
+  if jsonb_array_length(p) > 5 then raise exception 'サーバーは5つまでです'; end if;
+  for e in select x from jsonb_array_elements(p) x loop
+    i := i + 1;
+    if jsonb_typeof(e) <> 'object' then raise exception 'サーバーの書き方がちがいます'; end if;
+    k := coalesce(e->>'kind', '');
+    if k not in ('discord', 'minecraft', 'game') then raise exception '%つめ：種類（Discord・マイクラ・ほかのゲーム）をえらんでください', i; end if;
+    g  := btrim(regexp_replace(coalesce(e->>'game', ''), '[[:cntrl:]]', ' ', 'g'));
+    nm := btrim(regexp_replace(coalesce(e->>'name', ''), '[[:cntrl:]]', ' ', 'g'));
+    lk := btrim(regexp_replace(coalesce(e->>'link', ''), '[[:cntrl:][:space:]]', '', 'g'));
+    nt := btrim(regexp_replace(coalesce(e->>'note', ''), '[[:cntrl:]]', ' ', 'g'));
+    if char_length(nm) < 1 or char_length(nm) > 40 then raise exception '%つめ：サーバー名は1〜40文字です', i; end if;
+    if k = 'game' and (char_length(g) < 1 or char_length(g) > 30) then raise exception '%つめ：ゲームの名前を入れてください（30文字まで）', i; end if;
+    if char_length(lk) > 200 then raise exception '%つめ：リンク・アドレスは200文字までです', i; end if;
+    if char_length(nt) > 100 then raise exception '%つめ：ひとことは100文字までです', i; end if;
+    if k = 'discord' and lk <> '' and lk !~* '^https://(discord\.gg|(www\.)?discord\.com/invite|discordapp\.com/invite)/[A-Za-z0-9-]{2,64}/?$' then
+      raise exception '%つめ：Discordは招待リンク（https://discord.gg/… など）を入れてください', i;
+    end if;
+    if lk ~* '^(javascript|data|vbscript|file|about|blob):' then raise exception '%つめ：そのリンクは使えません', i; end if;
+    if lk ~* '^http:' then raise exception '%つめ：リンクは https:// ではじまるものにしてください', i; end if;
+    if lk ~* '^https:' and lk !~* '^https://[^/?#\s<>"''`]+([/?#][^\s<>"''`]*)?$' then raise exception '%つめ：リンクの形がちがいます', i; end if;
+    if lk !~* '^https://' and lk <> '' and lk !~ '^[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?$' then
+      raise exception '%つめ：リンクは https:// ではじまるものか、サーバーのアドレス（例 play.example.jp:25565）にしてください', i;
+    end if;
+    r := r || jsonb_build_object('kind', k, 'game', case when k = 'game' then g else '' end, 'name', nm, 'link', lk, 'note', nt);
+  end loop;
+  return r;
+end $$;
+
+-- 社長：サーバーの一覧を保存する（全部まとめて書きかえ）
+create or replace function public.corp_set_servers(p_cid text, p_servers jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies;
+begin
+  c := _my_corp(u, p_cid);
+  if c.status not in ('active', 'suspended') then raise exception 'この会社はいま変えられません'; end if;
+  update companies set servers = _srv_norm(p_servers) where id = c.id;
+  return my_corps();
+end $$;
+
+-- 管理者・副管理者：サーバー欄を消す（RMT のリンクなど）。社長に通知
+create or replace function public.admin_corp_servers_clear(p_cid text, p_reason text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies; why text := nullif(left(btrim(coalesce(p_reason, '')), 200), '');
+begin
+  if not _is_staff(u) then raise exception '管理者だけが使えます'; end if;
+  select * into c from companies where cid = _cid_norm(p_cid) for update;
+  if not found then raise exception '会社が見つかりません'; end if;
+  if c.servers = '[]'::jsonb then raise exception 'この会社のサーバー欄は空です'; end if;
+  update companies set servers = '[]'::jsonb where id = c.id;
+  perform _notice_l(c.owner, format('【サーバー】「%s」のゲーム・Discordのサーバー欄を、管理者が消しました。%s', c.name,
+                    case when why is not null then '理由：' || why else '' end), jsonb_build_object('go', 'corp', 'cid', c.cid), u);
+  return corp_page(c.cid);
+end $$;
+
+-- ---------------------------------------------------------------------
+-- 窓口（会社への相談）
+--   だれでも会社に相談できる（件名と内容）。会社は社長と「窓口担当」の社員が返事する
+--   相談した人と会社だけが見られる。どちらからでも「解決済み」にできる（そのあとは読むだけ）
+--   受付中の相談は1社に3件まで。新しい相談は1日10件まで
+-- ---------------------------------------------------------------------
+alter table public.corp_members add column if not exists desk boolean not null default false;   -- 窓口担当
+create table if not exists public.desk_threads (
+  id         bigserial primary key,
+  company_id int not null references public.companies(id) on delete cascade,
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  subject    text not null,
+  status     text not null default 'open' check (status in ('open', 'closed')),
+  closed_by  text,                                   -- user / corp
+  user_seen  bigint not null default 0,              -- 相談した人が読んだ最後のメッセージ
+  corp_seen  bigint not null default 0,              -- 会社が読んだ最後のメッセージ
+  last_at    timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+create index if not exists desk_threads_corp_idx on public.desk_threads(company_id, last_at desc);
+create index if not exists desk_threads_user_idx on public.desk_threads(user_id, last_at desc);
+create table if not exists public.desk_msgs (
+  id         bigserial primary key,
+  thread_id  bigint not null references public.desk_threads(id) on delete cascade,
+  from_corp  boolean not null,
+  author     uuid references public.profiles(id) on delete set null,
+  body       text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists desk_msgs_thread_idx on public.desk_msgs(thread_id, id);
+create index if not exists desk_msgs_author_idx on public.desk_msgs(author, created_at);
+alter table public.desk_threads enable row level security;
+alter table public.desk_msgs enable row level security;
+revoke all on public.desk_threads, public.desk_msgs from anon, authenticated;
+
+-- 会社の窓口の人（社長か窓口担当の社員）
+create or replace function public._desk_staff(cid_int int, u uuid) returns boolean
+language sql stable set search_path = public as $$
+  select exists (select 1 from companies where id = cid_int and owner = u)
+      or exists (select 1 from corp_members where company_id = cid_int and user_id = u and desk)
+$$;
+
+-- 相談の一覧の1行（side = user：相談した人から見る／corp：会社から見る）
+create or replace function public._desk_json(t public.desk_threads, side text) returns jsonb
+language sql stable set search_path = public as $$
+  select jsonb_build_object('id', t.id, 'subject', t.subject, 'status', t.status, 'closed_by', t.closed_by,
+    'company', c.name, 'cid', c.cid, 'corp_status', c.status,
+    'user', case when side = 'corp' then jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id)) end,
+    'unread', exists (select 1 from desk_msgs m where m.thread_id = t.id and m.from_corp = (side = 'user')
+                         and m.id > case when side = 'user' then t.user_seen else t.corp_seen end),
+    'last', (select left(m.body, 60) from desk_msgs m where m.thread_id = t.id order by m.id desc limit 1),
+    'last_corp', (select m.from_corp from desk_msgs m where m.thread_id = t.id order by m.id desc limit 1),
+    'n', (select count(*) from desk_msgs m where m.thread_id = t.id),
+    'at', _dlabel(t.last_at), 'time', to_char(t.last_at at time zone 'Asia/Tokyo', 'HH24:MI'))
+  from companies c, profiles p where c.id = t.company_id and p.id = t.user_id
+$$;
+
+-- 会社の窓口の人たち（通知を送る相手）
+create or replace function public._desk_people(cid_int int) returns setof uuid
+language sql stable set search_path = public as $$
+  select owner from companies where id = cid_int
+  union
+  select user_id from corp_members where company_id = cid_int and desk
+$$;
+
+-- 相談のやりとり（開くと既読になる）
+create or replace function public.desk_thread(p_thread bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); t desk_threads; side text; c companies; mx bigint;
+begin
+  select * into t from desk_threads where id = p_thread;
+  if not found then raise exception '相談が見つかりません'; end if;
+  side := case when t.user_id = u then 'user' when _desk_staff(t.company_id, u) then 'corp' end;
+  if side is null then raise exception '相談が見つかりません'; end if;
+  select * into c from companies where id = t.company_id;
+  select max(id) into mx from desk_msgs where thread_id = t.id;
+  if side = 'user' and coalesce(mx, 0) > t.user_seen then update desk_threads set user_seen = mx where id = t.id;
+  elsif side = 'corp' and coalesce(mx, 0) > t.corp_seen then update desk_threads set corp_seen = mx where id = t.id; end if;
+  select * into t from desk_threads where id = p_thread;
+  return _desk_json(t, side) || jsonb_build_object('side', side,
+    'can_send', t.status = 'open' and c.status in ('active', 'suspended'),
+    'desk_note', c.desk_note,
+    'msgs', (select coalesce(jsonb_agg(jsonb_build_object('id', m.id, 'corp', m.from_corp, 'body', m.body,
+               'who', case when m.from_corp then (select nickname from profiles where id = m.author) end,
+               'mine', m.author = u, 'at', _dlabel(m.created_at), 'time', to_char(m.created_at at time zone 'Asia/Tokyo', 'HH24:MI')) order by m.id), '[]'::jsonb)
+             from desk_msgs m where m.thread_id = t.id));
+end $$;
+
+-- 相談する（新しい相談）
+create or replace function public.desk_open(p_cid text, p_subject text, p_body text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies; me profiles; tid bigint; mid bigint; who uuid;
+  sj text := btrim(regexp_replace(coalesce(p_subject, ''), '[[:cntrl:]]', ' ', 'g'));
+  bd text := btrim(coalesce(p_body, ''));
+begin
+  select * into c from companies where cid = _cid_norm(p_cid) and status in ('active', 'suspended');
+  if not found then raise exception '会社が見つかりません（廃業・倒産した会社には相談できません）'; end if;
+  if not c.desk_on then raise exception 'この会社はいま窓口の相談を受け付けていません'; end if;
+  if _desk_staff(c.id, u) then raise exception '自分の会社（担当している窓口）には相談できません'; end if;
+  if char_length(sj) < 1 or char_length(sj) > 40 then raise exception '件名は1〜40文字です'; end if;
+  if char_length(bd) < 1 or char_length(bd) > 1000 then raise exception '内容は1〜1000文字です'; end if;
+  perform pg_advisory_xact_lock(7300, hashtext(u::text));
+  if (select count(*) from desk_threads where company_id = c.id and user_id = u and status = 'open') >= 3 then
+    raise exception 'この会社への相談は、受付中のものが3件までです（解決済みにすると、新しく相談できます）';
+  end if;
+  if (select count(*) from desk_threads where user_id = u and created_at > _now() - interval '1 day') >= 10 then
+    raise exception '新しい相談は1日10件までです';
+  end if;
+  select * into me from profiles where id = u;
+  insert into desk_threads(company_id, user_id, subject, last_at, created_at) values (c.id, u, sj, _now(), _now()) returning id into tid;
+  insert into desk_msgs(thread_id, from_corp, author, body, created_at) values (tid, false, u, bd, _now()) returning id into mid;
+  update desk_threads set user_seen = mid where id = tid;
+  for who in select * from _desk_people(c.id) loop
+    perform _notice_l(who, format('【窓口】%s さん（ID %s）から「%s」に相談が届きました：%s', me.nickname, me.account_no, c.name, sj),
+                      jsonb_build_object('go', 'desk', 't', tid), u);
+  end loop;
+  return desk_thread(tid);
+end $$;
+
+-- 返事を書く（相談した人も会社も）
+create or replace function public.desk_send(p_thread bigint, p_body text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); t desk_threads; side text; c companies; me profiles; mid bigint; who uuid; quiet boolean;
+  bd text := btrim(coalesce(p_body, ''));
+begin
+  select * into t from desk_threads where id = p_thread for update;
+  if not found then raise exception '相談が見つかりません'; end if;
+  side := case when t.user_id = u then 'user' when _desk_staff(t.company_id, u) then 'corp' end;
+  if side is null then raise exception '相談が見つかりません'; end if;
+  select * into c from companies where id = t.company_id;
+  if t.status <> 'open' then raise exception 'この相談は解決済みです（つづきは新しく相談してください）'; end if;
+  if c.status not in ('active', 'suspended') then raise exception 'この会社はもう活動していません'; end if;
+  if char_length(bd) < 1 or char_length(bd) > 1000 then raise exception '内容は1〜1000文字です'; end if;
+  if (select count(*) from desk_msgs where thread_id = t.id) >= 300 then raise exception 'この相談はやりとりが多くなりました（つづきは新しく相談してください）'; end if;
+  if (select count(*) from desk_msgs where author = u and created_at > _now() - interval '1 hour') >= 60 then
+    raise exception '少し時間をおいてください（1時間に60通まで）';
+  end if;
+  -- 相手がまだ読んでいないものがあれば、通知はもう届いているので送らない
+  quiet := exists (select 1 from desk_msgs m where m.thread_id = t.id and m.from_corp = (side = 'corp')
+                     and m.id > case when side = 'corp' then t.user_seen else t.corp_seen end);
+  insert into desk_msgs(thread_id, from_corp, author, body, created_at) values (t.id, side = 'corp', u, bd, _now()) returning id into mid;
+  update desk_threads set last_at = _now(),
+         user_seen = case when side = 'user' then mid else user_seen end,
+         corp_seen = case when side = 'corp' then mid else corp_seen end
+   where id = t.id;
+  if quiet then
+    null;
+  elsif side = 'corp' then
+    perform _notice_l(t.user_id, format('【窓口】「%s」から返事が届きました：%s', c.name, t.subject), jsonb_build_object('go', 'desk', 't', t.id), null);
+  else
+    select * into me from profiles where id = u;
+    for who in select * from _desk_people(c.id) loop
+      perform _notice_l(who, format('【窓口】%s さんから「%s」への相談に返事が届きました：%s', me.nickname, c.name, t.subject),
+                        jsonb_build_object('go', 'desk', 't', t.id), u);
+    end loop;
+  end if;
+  return desk_thread(t.id);
+end $$;
+
+-- 解決済みにする（どちらからでも）
+create or replace function public.desk_close(p_thread bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); t desk_threads; side text; c companies; who uuid;
+begin
+  select * into t from desk_threads where id = p_thread for update;
+  if not found then raise exception '相談が見つかりません'; end if;
+  side := case when t.user_id = u then 'user' when _desk_staff(t.company_id, u) then 'corp' end;
+  if side is null then raise exception '相談が見つかりません'; end if;
+  if t.status <> 'open' then raise exception 'この相談はもう解決済みです'; end if;
+  select * into c from companies where id = t.company_id;
+  update desk_threads set status = 'closed', closed_by = side where id = t.id;
+  if side = 'corp' then
+    perform _notice_l(t.user_id, format('【窓口】「%s」への相談「%s」は、会社が解決済みにしました', c.name, t.subject), jsonb_build_object('go', 'desk', 't', t.id), null);
+  else
+    for who in select * from _desk_people(c.id) loop
+      perform _notice_l(who, format('【窓口】「%s」への相談「%s」は、相談した人が解決済みにしました', c.name, t.subject), jsonb_build_object('go', 'desk', 't', t.id), u);
+    end loop;
+  end if;
+  return desk_thread(t.id);
+end $$;
+
+-- 相談の一覧（p_cid が空なら自分が出した相談、会社のIDなら会社の窓口）
+create or replace function public.desk_list(p_cid text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies;
+begin
+  if btrim(coalesce(p_cid, '')) = '' then
+    return jsonb_build_object('side', 'user',
+      'threads', (select coalesce(jsonb_agg(_desk_json(t, 'user') order by (t.status = 'open') desc, t.last_at desc, t.id desc), '[]'::jsonb)
+                    from (select * from desk_threads where user_id = u order by (status = 'open') desc, last_at desc, id desc limit 100) t));
+  end if;
+  select * into c from companies where cid = _cid_norm(p_cid);
+  if not found or not _desk_staff(c.id, u) then raise exception 'この会社の窓口の担当ではありません'; end if;
+  return jsonb_build_object('side', 'corp', 'cid', c.cid, 'company', c.name, 'status', c.status, 'desk_on', c.desk_on, 'desk_note', c.desk_note, 'owner', c.owner = u,
+    'threads', (select coalesce(jsonb_agg(_desk_json(t, 'corp') order by (t.status = 'open') desc, t.last_at desc, t.id desc), '[]'::jsonb)
+                  from (select * from desk_threads where company_id = c.id order by (status = 'open') desc, last_at desc, id desc limit 100) t));
+end $$;
+
+-- 会社の窓口で、まだ読んでいない相談の数
+create or replace function public._desk_unread(cid_int int) returns int
+language sql stable set search_path = public as $$
+  select count(*)::int from desk_threads t
+   where t.company_id = cid_int and exists (select 1 from desk_msgs m where m.thread_id = t.id and not m.from_corp and m.id > t.corp_seen)
+$$;
+
+-- 社長：窓口の受付と案内
+create or replace function public.desk_settings(p_cid text, p_on boolean, p_note text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies;
+begin
+  c := _my_corp(u, p_cid);
+  if c.status not in ('active', 'suspended') then raise exception 'この会社はいま変えられません'; end if;
+  update companies set desk_on = coalesce(p_on, desk_on), desk_note = left(btrim(coalesce(p_note, desk_note)), 300) where id = c.id;
+  return my_corps();
+end $$;
+
+-- 社長：社員を窓口担当にする・はずす
+create or replace function public.corp_member_desk(p_cid text, p_user text, p_on boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies; m uuid;
+begin
+  c := _my_corp(u, p_cid);
+  select id into m from profiles where account_no = btrim(coalesce(p_user, ''));
+  if not found or not exists (select 1 from corp_members where company_id = c.id and user_id = m) then raise exception 'その社員はいません'; end if;
+  if (select desk from corp_members where company_id = c.id and user_id = m) = coalesce(p_on, false) then return my_corps(); end if;
+  update corp_members set desk = coalesce(p_on, false) where company_id = c.id and user_id = m;
+  perform _notice_l(m, case when p_on then format('【窓口】「%s」の窓口担当になりました。「仕事 → 勤め先」から相談に返事できます。', c.name)
+                            else format('【窓口】「%s」の窓口担当からはずれました。', c.name) end,
+                    jsonb_build_object('go', 'mywork'), u);
+  return my_corps();
+end $$;
+
+-- ---------------------------------------------------------------------
+-- 管理：登録した人の一覧（管理者・副管理者）
+--   所持金は出さない。メールアドレス・税の滞納・脱税は管理者だけ
+-- ---------------------------------------------------------------------
+
+create or replace function public._user_row(p public.profiles, adm boolean) returns jsonb
+language sql stable set search_path = public as $$
+  select jsonb_build_object('uid', p.account_no, 'nickname', p.nickname, 'badge', _badge(p.id),
+    'joined', to_char(p.created_at at time zone 'Asia/Tokyo', 'YYYY/MM/DD HH24:MI'),
+    'seen', case when p.last_seen_at is null then null else to_char(p.last_seen_at at time zone 'Asia/Tokyo', 'YYYY/MM/DD HH24:MI') end,
+    'mail_at', case when p.mail_verified_at is null then null else to_char(p.mail_verified_at at time zone 'Asia/Tokyo', 'YYYY/MM/DD') end,
+    'email', case when adm then (select to_jsonb(a)->>'email' from auth.users a where a.id = p.id) end,
+    'banned_until', case when p.banned_until > _now() then to_char(p.banned_until at time zone 'Asia/Tokyo', 'YYYY/MM/DD HH24:MI') end,
+    'debt', case when adm then _debt(p.id) > 0 end,
+    'new', _now() < p.created_at + interval '7 days',
+    'corps', (select count(*) from companies c where c.owner = p.id and c.status in ('pending', 'active', 'suspended')))
+$$;
+
+create or replace function public.admin_users(p_q text, p_filter text, p_offset int) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); rl text := _role(u); adm boolean := _role(u) = 'admin';
+  q text := btrim(coalesce(p_q, '')); f text := coalesce(p_filter, ''); ofs int := greatest(coalesce(p_offset, 0), 0);
+  ids uuid[]; n int;
+begin
+  if rl is null then raise exception '管理者だけが使えます'; end if;
+  if f = 'debt' and not adm then raise exception '税の滞納でしぼれるのは管理者だけです'; end if;
+  select array_agg(z.id order by z.created_at desc, z.id), count(*) into ids, n from (
+    select p.id, p.created_at from profiles p
+     where (q = '' or p.account_no = q or p.nickname ilike '%' || q || '%'
+            or (adm and q like '%@%' and exists (select 1 from auth.users a where a.id = p.id and to_jsonb(a)->>'email' ilike '%' || q || '%')))
+       and case f when 'new' then p.created_at > _now() - interval '7 days'
+                  when 'banned' then coalesce(p.banned_until > _now(), false)
+                  when 'debt' then _debt(p.id) > 0
+                  when 'staff' then _role(p.id) is not null
+                  else true end) z;
+  return jsonb_build_object('total', n, 'more', ofs + 50 < n,
+    'items', (select coalesce(jsonb_agg(_user_row(p, adm) order by array_position(ids, p.id)), '[]'::jsonb)
+                from profiles p where p.id = any(coalesce(ids[ofs + 1 : ofs + 50], '{}'::uuid[]))),
+    'all', (select count(*) from profiles),
+    'today', (select count(*) from profiles where created_at >= (date_trunc('day', _now() at time zone 'Asia/Tokyo') at time zone 'Asia/Tokyo')),
+    'week', (select count(*) from profiles where created_at > _now() - interval '7 days'),
+    'active7', (select count(*) from profiles where last_seen_at > _now() - interval '7 days'));
+end $$;
+
+create or replace function public.admin_user(p_uid text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); rl text := _role(u); adm boolean := _role(u) = 'admin'; p profiles; au jsonb;
+begin
+  if rl is null then raise exception '管理者だけが使えます'; end if;
+  select * into p from profiles where account_no = btrim(coalesce(p_uid, ''));
+  if not found then raise exception 'その人は見つかりません'; end if;
+  if adm then select to_jsonb(a) into au from auth.users a where a.id = p.id; end if;
+  return _user_row(p, adm) || jsonb_build_object(
+    'role', _role(p.id),
+    'last_sign_in', case when au->>'last_sign_in_at' is null then null
+                         else to_char((au->>'last_sign_in_at')::timestamptz at time zone 'Asia/Tokyo', 'YYYY/MM/DD HH24:MI') end,
+    'mail_ok', p.mail_verified_at is not null and p.mail_verified_at >= _now() - interval '183 days',
+    'send_ok', _now() >= p.created_at + interval '7 days',
+    'debt_amount', case when adm then _debt(p.id) end,
+    'evasion', case when adm then (select count(*) from tax_returns where user_id = p.id and evasion) end,
+    'companies', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'kind', c.kind, 'status', _cstat(c.status)) order by c.id), '[]'::jsonb)
+                    from companies c where c.owner = p.id and c.status <> 'rejected'),
+    'jobs', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'role', m.role, 'desk', m.desk) order by m.joined_at), '[]'::jsonb)
+               from corp_members m join companies c on c.id = m.company_id where m.user_id = p.id),
+    'cases_filed', (select count(*) from court_cases where plaintiff = p.id),
+    'cases_against', (select count(*) from court_cases where defendant_user = p.id),
+    'friends', (select count(*) from friends where status = 'ok' and (from_user = p.id or to_user = p.id)),
+    'posts', (select count(*) from posts where user_id = p.id),
+    'pubs', (select count(*) from pubs where author = p.id and status <> 'deleted'),
+    'desk', (select count(*) from desk_threads where user_id = p.id),
+    'last_play', (select to_char(max(created_at) at time zone 'Asia/Tokyo', 'YYYY/MM/DD HH24:MI') from tx_log where user_id = p.id));
+end $$;
+
+-- ---------------------------------------------------------------------
 -- 実行権限：内部用（_ではじまる）は画面から呼べないようにする
 -- ---------------------------------------------------------------------
 do $$
@@ -7783,8 +8411,11 @@ begin
             '_pub_mine','_pub_can_read','_pub_json','pub_list','news_list','pub_page','pub_read','pub_buy','pub_save','pub_item_save',
             'pub_item_delete','my_pubs','admin_pub_hide',
             '_kb_norm','_kb_gumbel','_kb_midx','_kb_jday','_kb_ms','_kb_agef','_kb_fit','_kb_name','_kb_new_horse',
-            '_kb_make_race','_kb_make_day','_kb_seq','_kb_prob','_kb_prob_trio','_kb_rate','_kb_odds','_kb_check_sel',
+            '_kb_make_race','_kb_make_day','_kb_make_night','_kb_seq','_kb_prob','_kb_prob_trio','_kb_rate','_kb_odds','_kb_check_sel',
             '_kb_hit','_kb_settle','_kb_month','_kb_seed','_kb_tick','_kb_status',
+            '_ind_norm','corp_set_industries','_srv_norm','corp_set_servers','admin_corp_servers_clear',
+            '_desk_staff','_desk_json','_desk_people','_desk_unread','desk_thread','desk_open','desk_send','desk_close','desk_list',
+            'desk_settings','corp_member_desk','_user_row','admin_users','admin_user',
             'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then

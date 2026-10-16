@@ -9,14 +9,14 @@
 :root{
   --bg:#F6F5F1; --panel:#FFFFFF; --ink:#1C1C1A; --muted:#6B6A64; --line:#E2E0D8;
   --accent:#1F6B4F; --accent-ink:#FFFFFF; --soft:#EEF4F0; --red:#C43A31; --black:#22221F;
-  --win:#1F6B4F; --lose:#C43A31; --felt:#2E6B52;
+  --win:#1F6B4F; --lose:#C43A31; --felt:#2E6B52; --night:#4A55A2;
   --radius:12px;
   --font:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic",sans-serif;
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
     --bg:#151614; --panel:#1F201E; --ink:#ECEBE6; --muted:#9C9B94; --line:#33342F;
-    --accent:#4FB98E; --accent-ink:#0F1F18; --soft:#1E2B25; --black:#0E0E0D;
+    --accent:#4FB98E; --accent-ink:#0F1F18; --soft:#1E2B25; --black:#0E0E0D; --night:#9AA6F0;
   }
 }
 *{box-sizing:border-box}
@@ -83,7 +83,7 @@ h3{font-size:15px;margin:16px 0 8px}
 .kb-focus{cursor:pointer}
 .kb-focus .clock{margin-left:auto;font-size:24px;font-weight:800;font-variant-numeric:tabular-nums}
 .kb-sess{margin:16px 0 4px;font-weight:800;font-size:14px;display:flex;gap:8px;align-items:baseline}
-.kb-sess span{font-weight:700;color:var(--accent);font-size:12px}
+.kb-sess span{font-weight:700;color:var(--accent);font-size:12px}.kb-sess span.night{color:var(--night)}
 .kb-row{display:flex;align-items:center;gap:8px;padding:9px 10px;background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:6px 0;cursor:pointer}
 .kb-row .t{font-variant-numeric:tabular-nums;font-weight:700;width:40px;font-size:13px}
 .kb-row .r{font-weight:800;width:28px;color:var(--muted);font-size:13px}
@@ -310,6 +310,33 @@ h3{font-size:15px;margin:16px 0 8px}
 .howto ol,.howto ul{margin:6px 0;padding-left:20px}.howto li{margin:3px 0}
 .reader{white-space:pre-wrap;font-size:17px;line-height:1.95;word-break:break-word;margin:10px 0}
 .lock{color:var(--muted);font-size:12px}
+.ind{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:2px 9px;border-radius:999px;background:var(--soft);border:1px solid var(--line);margin:2px 4px 2px 0;line-height:1.5}
+.ind[data-ind]{cursor:pointer}
+.ind button{border:0;background:none;padding:0 0 0 2px;font-weight:900;color:var(--muted);line-height:1}
+.ip-sel{display:flex;flex-wrap:wrap;align-items:center;gap:2px;min-height:30px;margin:4px 0}
+.ip-list{max-height:330px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:2px 10px;margin:4px 0 8px}
+.ip-g summary{cursor:pointer;padding:9px 2px;font-size:14px}
+.ip-g summary b{display:inline-block;width:1.5em;color:var(--accent)}
+.ip-k{display:inline-block;min-width:18px;font-size:11px;font-weight:800;text-align:center;border-radius:999px;background:var(--accent);color:var(--accent-ink);padding:0 5px;margin-left:6px}
+.ip-o{display:flex;gap:8px;align-items:baseline;width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:none;padding:9px 4px;font-size:14px}
+.ip-list > .ip-o:first-child{border-top:0}
+.ip-o .cd{flex:none;width:2em;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.ip-o.on{color:var(--accent);font-weight:800}
+.ip-o.on::after{content:'✓';margin-left:auto}
+.ip-o:disabled{opacity:.4;cursor:default}
+.srv{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--line)}
+.srv:first-of-type{border-top:0}
+.srv-ic{flex:none;width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;background:var(--soft);color:var(--accent)}
+.srv a{color:var(--accent);font-weight:700}
+.srvtag{display:inline-block;font-size:11px;font-weight:800;border-radius:4px;padding:0 6px;background:var(--soft);border:1px solid var(--line);margin-right:4px}
+.dk-msgs{display:flex;flex-direction:column;gap:6px;margin:10px 0}
+.dk-m{max-width:86%;align-self:flex-start;padding:8px 11px;border-radius:14px;white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.6;border:1px solid var(--line);background:var(--bg)}
+.dk-m.me{align-self:flex-end;background:var(--soft);border-color:transparent}
+.dk-m small{display:block;font-size:11px;color:var(--muted);margin-top:2px;white-space:normal}
+.dk-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--red);margin-right:6px;vertical-align:1px}
+.au-tag{display:inline-block;font-size:11px;font-weight:800;border-radius:4px;padding:0 6px;margin-right:4px;background:var(--soft);border:1px solid var(--line)}
+.au-tag.bad{background:#F8D7D0;color:#9A2A14;border-color:transparent}
+.seg.sm button{padding:7px 10px;font-size:13px}
 .co-row .nm b{display:block}
 .co-row .nm small{color:var(--muted);display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kindtag{font-size:11px;font-weight:800;border-radius:4px;padding:1px 6px;background:var(--soft);color:var(--accent);margin-left:6px}
@@ -446,9 +473,12 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <div class="seg" id="apForm"><button data-k="株式会社" class="on">株式会社</button><button data-k="有限会社">有限会社</button><button data-k="合同会社">合同会社</button></div>
     <div class="small muted" style="margin:6px 0 2px">「株式会社」などをつける場所（例：株式会社〇〇／〇〇株式会社）</div>
     <div class="seg" id="apPos"><button data-k="1" class="on">前につける</button><button data-k="0">後につける</button></div>
-    <div class="small muted" style="margin:6px 0 2px">業種</div>
+    <div class="small muted" style="margin:6px 0 2px">会社の種類</div>
     <div class="seg" id="apKind" style="margin:0 0 4px"><button data-k="一般" class="on">ふつうの会社</button><button data-k="銀行">銀行</button><button data-k="証券">証券</button></div>
     <p class="muted small" style="margin:0 0 4px">銀行・証券会社は株式会社だけです。</p>
+    <div class="small muted" style="margin:10px 0 2px">業種（日本標準産業分類の中分類から5つまで）</div>
+    <div id="apInd"></div>
+    <p class="muted small" style="margin:0 0 4px">ゲーム・Discordのサーバーや、窓口の案内は、許可されたあと企業ページで書けます。</p>
     <p class="small" id="apPrev" style="margin:4px 0">申請する名前：<b>—</b></p>
     <textarea class="inp" id="apDesc" rows="3" maxlength="1000" placeholder="どんな会社か（企業ページに出ます）"></textarea>
     <button class="btn main wide" id="apSend">申請する（1,000 X）</button>
@@ -460,7 +490,8 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 <section id="vCorp" class="view hidden">
   <div class="card" data-sub="search">
     <h3 style="margin-top:0">会社検索</h3>
-    <input class="inp" id="coQ" placeholder="会社名・ID・説明で検索">
+    <input class="inp" id="coQ" placeholder="会社名・ID・業種・サーバー名などで検索">
+    <select class="inp" id="coInd"><option value="">業種でしぼる（すべて）</option></select>
     <div id="coList"></div>
   </div>
   <div class="card" data-sub="review">
@@ -471,6 +502,8 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <p class="muted small" style="margin:8px 0 0">会社の平均は、1人1社につき最新の評価で計算します。評価が3人以上ついて、平均4.1以上は「良企業」、4.7以上は「優良企業」になります。自分の会社は評価できません。登録から7日たつと評価できます。500 Xは国庫から出て、所得になります。</p>
   </div>
   <div class="card" data-sub="pin"><h3 style="margin-top:0">ピン留めした企業</h3><div id="coPins"></div></div>
+  <div class="card" data-sub="desk"><h3 style="margin-top:0">窓口の相談</h3><div id="dkList"></div>
+    <p class="muted small" style="margin:8px 0 0">会社のページの「💬 窓口で相談」から、会社に相談できます。相談はあなたと会社（社長と窓口担当の社員）だけが見られます。返事が来ると通知が届きます。</p></div>
   <div class="card" data-sub="job">
     <h3 style="margin-top:0">求人</h3>
     <input class="inp" id="jbQ" placeholder="仕事・会社名で検索">
@@ -798,6 +831,15 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   </div>
   <button class="btn wide" id="logout" data-sub="prof">ログアウト</button>
   <div class="card" data-sub="admin" id="adminBox"></div>
+  <div class="card" data-sub="users">
+    <h3 style="margin-top:0">登録した人</h3>
+    <p class="small" id="auSum" style="margin:0 0 6px"></p>
+    <input class="inp" id="auQ" placeholder="ID・ニックネームで検索">
+    <div class="seg sm" id="auF" style="margin:4px 0 6px"><button data-k="" class="on">全員</button><button data-k="new">新しい人</button><button data-k="banned">利用停止</button><button data-k="debt">滞納</button><button data-k="staff">管理</button></div>
+    <div id="auList"></div>
+    <button class="btn wide hidden" id="auMore" style="margin-top:8px">もっと見る</button>
+    <p class="muted small" style="margin:8px 0 0">所持金は出しません。メールアドレスと税の滞納は管理者だけに見えます。「新しい人」は登録から7日以内です。</p>
+  </div>
 </section>
 
 </main>
@@ -911,7 +953,8 @@ async function enter() {
   try {
     const p = await call('ensure_profile');
     ME = p; setBal(p.balance); $('#nick').value = p.nickname; setTaxDot(p.tax);
-    if (p.role && !MENU_OF.vMore[3].some(x => x[0] === 'admin')) MENU_OF.vMore[3].push(['admin', '管理']);
+    if (p.role && !MENU_OF.vMore[3].some(x => x[0] === 'admin')) MENU_OF.vMore[3].push(['admin', '管理'], ['users', '登録者']);
+    if (p.role === 'admin') $('#auQ').placeholder = 'ID・ニックネーム・メールで検索'; else { const db = $('#auF [data-k="debt"]'); if (db) db.remove(); }
   } catch (e) { toast(e.message); show('vLogin'); entered = false; return; }
   if (location.hash.includes('access_token')) history.replaceState(null, '', location.pathname);
   $('#bal').classList.remove('hidden'); $('#tabs').classList.remove('hidden'); $('#bell').classList.remove('hidden'); bellPoll();
@@ -925,7 +968,7 @@ const MENU = [
   ['vInfo', '情報', 'i', [['cur', '通貨'], ['pub', '広報・書籍'], ['mkt', '相場'], ['tl', 'TL'], ['friend', 'フレンド'], ['people', '人をさがす'], ['jack', '競馬億万長者']]],
   ['vWork', '仕事', '✎', [['jobs', '仕事をえらぶ'], ['stat', '給料'], ['corp', '企業ページ'], ['mywork', '勤め先']]],
   ['vGame', '遊戯', '♠', [['vGameList', '≡ 一覧'], ['vRace', '🏇 競馬'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
-  ['vCorp', '企業', '社', [['search', '会社検索'], ['review', '評価（500 X）'], ['pin', 'ピン留め'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所']]],
+  ['vCorp', '企業', '社', [['search', '会社検索'], ['review', '評価（500 X）'], ['pin', 'ピン留め'], ['desk', '相談'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所']]],
   ['vTax', '役所', '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['court', '訴え'], ['kokko', '国庫・番付']]],
   ['vMore', '設定', '⚙', [['prof', 'プロフィール'], ['hist', '記録'], ['rule', '規約']]],
 ];
@@ -961,11 +1004,12 @@ function go(v, sub) {
   if (sec === 'vWork' && sub === 'corp') ownLoad();
   if (sec === 'vWork' && sub === 'mywork') myWorkLoad();
   if (sec === 'vMore' && sub === 'admin') adminLoad();
+  if (sec === 'vMore' && sub === 'users') auLoad(true);
 }
 $$('#tabs button').forEach(b => b.onclick = () => go(b.dataset.v, b.dataset.v === 'vGame' ? 'vGameList' : undefined));
 // 遊戯の一覧
 const GAME_LIST = [
-  ['vRace', '🏇', '競馬', '毎日16:30〜20:30（毎晩20:30はメインレース）。みんなで同じレースに賭ける、いちばんの目玉'],
+  ['vRace', '🏇', '競馬', '毎日16:30〜22:30（20:30はメインレース、そのあと深夜競馬）。みんなで同じレースに賭ける、いちばんの目玉'],
   ['vSlot', '7', 'スロット', '絵柄を3つそろえて当たり'],
   ['vBj', '♠', 'ブラックジャック', 'カードの合計を21に近づけて、ディーラーと勝負'],
   ['vRou', '◎', 'ルーレット', '数字や色に賭けて、玉の止まる場所を当てる'],
@@ -1053,7 +1097,7 @@ function kbRenderList() {
   const focus = rs.find(r => ['closed', 'running', 'judging'].includes(kbStatus(r))) || rs.find(r => kbStatus(r) === 'sale');
   const dd = new Date(KD.day + 'T12:00:00+09:00');
   let h = `<h2 style="margin-bottom:2px">${dd.getMonth() + 1}月${dd.getDate()}日（${'日月火水木金土'[dd.getDay()]}）の開催</h2>
-    <p class="muted small" style="margin:0 0 6px">ふだんのレースは16:30・17:30・18:30・19:30から7Rずつ。メインレースは20:30</p>`;
+    <p class="muted small" style="margin:0 0 6px">ふだんのレースは16:30・17:30・18:30・19:30から7Rずつ。メインレースは20:30。深夜競馬は20:42・21:42から7Rずつ（22:30の最終レースまで）</p>`;
   if (focus) {
     const s = kbStatus(focus), left = (focus.post_ms - kbNow()) / 1000;
     h += `<div class="card kb-focus" data-id="${focus.id}">
@@ -1068,10 +1112,10 @@ function kbRenderList() {
   }
   let last = null;
   for (const r of rs) {
-    const key = r.venue + (r.no === 29 ? 'main' : '');
+    const key = r.sess != null ? 's' + r.sess : r.venue + (r.no === 29 ? 'main' : '');
     if (key !== last) {
       last = key;
-      h += `<div class="kb-sess">${hhmm(r.post_ms)}〜 ${r.venue}競馬場${r.no === 29 ? '<span>メインレース</span>' : ''}</div>`;
+      h += `<div class="kb-sess">${hhmm(r.post_ms)}〜 ${r.venue}競馬場${r.no === 29 ? '<span>メインレース</span>' : r.part === 'night' ? '<span class="night">🌙 深夜競馬</span>' : ''}</div>`;
     }
     const s = kbStatus(r);
     const chip = s === 'final' && r.winner
@@ -1997,6 +2041,69 @@ $('#xSend').onclick = async () => {
    ================================================================= */
 const CERT_SVG = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
 const certTag = c => c.cert || (c.cert_until && c.status === 'active') ? `<span class="cert" title="サイトの認証（${c.cert_until}まで）">${CERT_SVG}認証</span>` : '';
+/* ---------- 業種（日本標準産業分類・令和5年7月改定の中分類） ---------- */
+const JSIC = [["A","農業、林業",[["01","農業"],["02","林業"]]],["B","漁業",[["03","漁業（水産養殖業を除く）"],["04","水産養殖業"]]],["C","鉱業、採石業、砂利採取業",[["05","鉱業、採石業、砂利採取業"]]],["D","建設業",[["06","総合工事業"],["07","職別工事業（設備工事業を除く）"],["08","設備工事業"]]],["E","製造業",[["09","食料品製造業"],["10","飲料・たばこ・飼料製造業"],["11","繊維工業"],["12","木材・木製品製造業（家具を除く）"],["13","家具・装備品製造業"],["14","パルプ・紙・紙加工品製造業"],["15","印刷・同関連業"],["16","化学工業"],["17","石油製品・石炭製品製造業"],["18","プラスチック製品製造業（別掲を除く）"],["19","ゴム製品製造業"],["20","なめし革・同製品・毛皮製造業"],["21","窯業・土石製品製造業"],["22","鉄鋼業"],["23","非鉄金属製造業"],["24","金属製品製造業"],["25","はん用機械器具製造業"],["26","生産用機械器具製造業"],["27","業務用機械器具製造業"],["28","電子部品・デバイス・電子回路製造業"],["29","電気機械器具製造業"],["30","情報通信機械器具製造業"],["31","輸送用機械器具製造業"],["32","その他の製造業"]]],["F","電気・ガス・熱供給・水道業",[["33","電気業"],["34","ガス業"],["35","熱供給業"],["36","水道業"]]],["G","情報通信業",[["37","通信業"],["38","放送業"],["39","情報サービス業"],["40","インターネット附随サービス業"],["41","映像・音声・文字情報制作業"]]],["H","運輸業、郵便業",[["42","鉄道業"],["43","道路旅客運送業"],["44","道路貨物運送業"],["45","水運業"],["46","航空運輸業"],["47","倉庫業"],["48","運輸に附帯するサービス業"],["49","郵便業（信書便事業を含む）"]]],["I","卸売業、小売業",[["50","各種商品卸売業"],["51","繊維・衣服等卸売業"],["52","飲食料品卸売業"],["53","建築材料、鉱物・金属材料等卸売業"],["54","機械器具卸売業"],["55","その他の卸売業"],["56","各種商品小売業"],["57","織物・衣服・身の回り品小売業"],["58","飲食料品小売業"],["59","機械器具小売業"],["60","その他の小売業"],["61","無店舗小売業"]]],["J","金融業、保険業",[["62","銀行業"],["63","協同組織金融業"],["64","貸金業、クレジットカード業等非預金信用機関"],["65","金融商品取引業、商品先物取引業"],["66","補助的金融業等"],["67","保険業（保険媒介代理業、保険サービス業を含む）"]]],["K","不動産業、物品賃貸業",[["68","不動産取引業"],["69","不動産賃貸業・管理業"],["70","物品賃貸業"]]],["L","学術研究、専門・技術サービス業",[["71","学術・開発研究機関"],["72","専門サービス業（他に分類されないもの）"],["73","広告業"],["74","技術サービス業（他に分類されないもの）"]]],["M","宿泊業、飲食サービス業",[["75","宿泊業"],["76","飲食店"],["77","持ち帰り・配達飲食サービス業"]]],["N","生活関連サービス業、娯楽業",[["78","洗濯・理容・美容・浴場業"],["79","その他の生活関連サービス業"],["80","娯楽業"]]],["O","教育、学習支援業",[["81","学校教育"],["82","その他の教育、学習支援業"]]],["P","医療、福祉",[["83","医療業"],["84","保健衛生"],["85","社会保険・社会福祉・介護事業"]]],["Q","複合サービス事業",[["86","郵便局"],["87","協同組合（他に分類されないもの）"]]],["R","サービス業（他に分類されないもの）",[["88","廃棄物処理業"],["89","自動車整備業"],["90","機械等修理業（別掲を除く）"],["91","職業紹介・労働者派遣業"],["92","その他の事業サービス業"],["93","政治・経済・文化団体"],["94","宗教"],["95","その他のサービス業"],["96","外国公務"]]],["S","公務（他に分類されるものを除く）",[["97","国家公務"],["98","地方公務"]]],["T","分類不能の産業",[["99","分類不能の産業"]]]];
+const IND = {}; JSIC.forEach(m => m[2].forEach(c => { IND[c[0]] = { n: c[1], m: m[0], mn: m[1] }; }));
+const indName = c => IND[c] ? IND[c].n : c;
+const indChips = (codes, click) => (codes || []).map(c => `<span class="ind" ${click ? `data-ind="${c}"` : ''}>${esc(indName(c))}</span>`).join('');
+const indLock = kind => kind === '銀行' ? '62' : kind === '証券' ? '65' : null;
+// 業種をえらぶ部品（大分類ごとに中分類を並べる・名前でさがせる・5つまで）
+function indPicker(box, init, opt) {
+  opt = opt || {};
+  const P = { sel: [...new Set(init || [])], lock: opt.lock || null, official: !!opt.official, q: '', open: new Set() };
+  box.innerHTML = '<div class="ip-sel"></div><input class="inp ip-q" placeholder="業種をさがす（例：飲食・情報）"><div class="ip-list"></div>';
+  const selEl = box.querySelector('.ip-sel'), qEl = box.querySelector('.ip-q'), listEl = box.querySelector('.ip-list');
+  const can = c => P.official || (c !== '97' && c !== '98' && (c !== '62' || P.lock === '62') && (c !== '65' || P.lock === '65'));
+  const norm = () => { if (P.lock && !P.sel.includes(P.lock)) P.sel.push(P.lock); P.sel.sort(); };
+  const one = (c, n) => { const on = P.sel.includes(c), dis = on ? c === P.lock : (P.sel.length >= 5 || !can(c));
+    return `<button type="button" class="ip-o ${on ? 'on' : ''}" data-c="${c}" ${dis ? 'disabled' : ''}><span class="cd">${c}</span><span>${esc(n)}</span></button>`; };
+  function draw() {
+    norm();
+    selEl.innerHTML = (P.sel.length ? P.sel.map(c => `<span class="ind">${esc(indName(c))}${c === P.lock ? '' : `<button type="button" data-x="${c}" aria-label="はずす">×</button>`}</span>`).join('')
+      : '<span class="muted small">まだえらんでいません</span>') + `<span class="muted small" style="margin-left:auto">${P.sel.length}/5</span>`;
+    const q = P.q.trim();
+    listEl.innerHTML = q
+      ? (JSIC.flatMap(m => m[2].filter(c => c[1].includes(q) || m[1].includes(q) || c[0] === q || m[0] === q.toUpperCase()).map(c => one(c[0], c[1]))).join('')
+         || '<p class="muted small" style="margin:8px 0">見つかりません</p>')
+      : JSIC.map(m => { const k = m[2].filter(c => P.sel.includes(c[0])).length;
+          return `<details class="ip-g" data-m="${m[0]}" ${P.open.has(m[0]) ? 'open' : ''}><summary><b>${m[0]}</b>${esc(m[1])}${k ? `<span class="ip-k">${k}</span>` : ''}${m[0] === 'S' && !P.official ? '<span class="muted small">（国営の会社だけ）</span>' : ''}${m[0] === 'J' && !P.official ? '<span class="muted small">（62は銀行・65は証券の会社だけ）</span>' : ''}</summary>${m[2].map(c => one(c[0], c[1])).join('')}</details>`; }).join('');
+  }
+  box.addEventListener('click', ev => {
+    const o = ev.target.closest('[data-c]'), x = ev.target.closest('[data-x]');
+    if (o && !o.disabled) { const c = o.dataset.c; P.sel = P.sel.includes(c) ? P.sel.filter(y => y !== c) : P.sel.concat(c); draw(); }
+    else if (x) { P.sel = P.sel.filter(y => y !== x.dataset.x); draw(); }
+  });
+  box.addEventListener('toggle', ev => { const d = ev.target; if (d.dataset && d.dataset.m) { if (d.open) P.open.add(d.dataset.m); else P.open.delete(d.dataset.m); } }, true);
+  qEl.oninput = () => { P.q = qEl.value; draw(); };
+  draw();
+  return {
+    get: () => { norm(); return P.sel.slice(); },
+    set: codes => { P.sel = [...new Set(codes || [])]; P.q = ''; qEl.value = ''; draw(); },
+    setLock: c => { if (c === P.lock) return; if (P.lock) P.sel = P.sel.filter(y => y !== P.lock); P.lock = c; draw(); },
+  };
+}
+// ゲーム・Discordのサーバー
+const SRV_KIND = { discord: 'Discord', minecraft: 'マインクラフト', game: 'ほかのゲーム' };
+const SVG0 = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+const SRV_IC = {
+  discord: SVG0 + '<path d="M21 11.5a8.4 8.4 0 0 1-12.3 7.4L3 20.5l1.6-5A8.4 8.4 0 1 1 21 11.5z"/><path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01"/></svg>',
+  minecraft: SVG0 + '<path d="M12 2.8l8.2 4.6v9.2L12 21.2l-8.2-4.6V7.4z"/><path d="M12 12l8.2-4.6M12 12v9.2M12 12L3.8 7.4"/></svg>',
+  game: SVG0 + '<rect x="2.5" y="7" width="19" height="11" rx="5"/><path d="M7.5 10.5v4M5.5 12.5h4"/><path d="M15.5 11.5h.01M17.5 13.5h.01"/></svg>',
+};
+const isUrl = u => /^https?:\/\/[^\s<>"'`]+$/i.test(u || '');
+const hostOf = u => { try { return new URL(u).host; } catch (e) { return ''; } };
+const srvRow = sv => `<div class="srv"><span class="srv-ic">${SRV_IC[sv.kind] || SRV_IC.game}</span><div class="grow" style="min-width:0">
+  <b>${esc(sv.name)}</b> <span class="muted small">${sv.kind === 'game' ? esc(sv.game) : SRV_KIND[sv.kind]}</span>
+  ${sv.link ? (isUrl(sv.link) ? `<div class="small"><a href="${esc(sv.link)}" target="_blank" rel="noopener noreferrer nofollow ugc">${sv.kind === 'discord' ? 'Discordの招待リンクをひらく' : 'リンクをひらく'}</a> <span class="muted">${esc(hostOf(sv.link))}</span></div>`
+    : `<div class="small">アドレス <b style="user-select:all;word-break:break-all">${esc(sv.link)}</b> <button class="btn s" data-copy="${esc(sv.link)}" style="padding:2px 8px">コピー</button></div>`) : ''}
+  ${sv.note ? `<div class="small muted">${esc(sv.note)}</div>` : ''}</div></div>`;
+const srvTags = list => [...new Set((list || []).map(sv => sv.kind))].map(k => `<span class="srvtag">${k === 'discord' ? 'Discord' : k === 'minecraft' ? 'マイクラ' : 'ゲーム'}</span>`).join('');
+document.addEventListener('click', ev => {
+  const b = ev.target.closest('[data-copy]'); if (!b) return;
+  ev.stopPropagation();
+  const t = b.dataset.copy, done = () => toast('コピーしました');
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, () => toast(t)); else toast(t);
+}, true);
 const kindTag = c => (c.official ? '<span class="offtag">公式</span>' : '') + certTag(c) + (c.exchange ? '<span class="kindtag">取引所</span>' : c.kind === '銀行' ? '<span class="kindtag">銀行</span>' : c.kind === '証券' ? '<span class="kindtag">証券</span>' : '')
   + (c.status === 'suspended' ? '<span class="stag">休業中</span>' : c.status === 'bankrupt' ? '<span class="stag dead">倒産済み</span>' : c.status === 'closed' ? '<span class="stag dead">廃業済み</span>' : '')
   + (c.rating && c.rating.grade ? `<span class="gtag ${c.rating.grade === '優良企業' ? 'gold' : ''}">${c.rating.grade}</span>` : '');
@@ -2004,6 +2111,7 @@ const starStr = n => '★'.repeat(n) + '☆'.repeat(5 - n);
 const ratingH = r => r && r.n ? `<span class="stars">${starStr(Math.round(Number(r.avg)))}</span> <strong>${Number(r.avg).toFixed(1)}</strong><span class="muted">（${r.n}人）</span>` : '<span class="muted">まだ評価なし</span>';
 const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>${esc(c.name)}${kindTag(c)}</b>
   <small>ID ${c.cid_full || c.cid}・社長 ${nameB(c.owner, c.owner_badge)}${c.status === 'bankrupt' || c.status === 'closed' ? `・${c.closed_at || ''}${c.status === 'bankrupt' ? '倒産' : '廃業'}` : ''}${c.description ? '・' + esc(c.description) : ''}</small>
+  ${(c.industries && c.industries.length) || (c.servers && c.servers.length) ? `<small>${srvTags(c.servers)}${(c.industries || []).slice(0, 2).map(indName).map(esc).join('・')}${(c.industries || []).length > 2 ? ` ほか${c.industries.length - 2}` : ''}</small>` : ''}
   ${c.rating && c.rating.n ? `<small>${ratingH(c.rating)}</small>` : ''}</span>${c.pinned ? '📌' : ''}</div>`;
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
@@ -2011,6 +2119,7 @@ async function corpLoad(sub) {
   try {
     if (sub === 'search') await coSearch();
     if (sub === 'review') await reviewLoad();
+    if (sub === 'desk') await deskMyLoad();
     if (sub === 'pin') {
       const d = await call('corp_pins');
       $('#coPins').innerHTML = d.length ? d.map(coRow).join('') : '<p class="muted small" style="margin:0">まだありません。会社のページで「ピン留め」すると、ここに並びます。</p>';
@@ -2040,11 +2149,13 @@ async function corpLoad(sub) {
   } catch (e) { toast(e.message); }
 }
 async function coSearch() {
-  const d = await call('corp_search', { p_q: $('#coQ').value });
+  const d = await call('corp_search', { p_q: $('#coQ').value, p_ind: $('#coInd').value || null });
   $('#coList').innerHTML = d.length ? d.map(coRow).join('') : '<p class="muted small" style="margin:8px 0 0">見つかりません</p>';
   bindRows($('#coList'));
 }
 $('#coQ').oninput = () => { clearTimeout(coT); coT = setTimeout(() => coSearch().catch(e => toast(e.message)), 300); };
+$('#coInd').innerHTML += JSIC.map(m => `<optgroup label="${m[0]} ${esc(m[1])}"><option value="${m[0]}">${m[0]} ${esc(m[1])}（ぜんぶ）</option>${m[2].map(c => `<option value="${c[0]}">${c[0]} ${esc(c[1])}</option>`).join('')}</optgroup>`).join('');
+$('#coInd').onchange = () => coSearch().catch(e => toast(e.message));
 async function jbSearch() {
   const d = await call('job_list', { p_q: $('#jbQ').value });
   $('#jbList').innerHTML = d.length ? d.map(j => `<div class="item">
@@ -2077,13 +2188,21 @@ async function corpOpen(cid, ccOpen) {
   m.innerHTML = `<div class="sheet">
     <div class="row"><b style="font-size:20px">${esc(c.name)}</b>${kindTag(c)}<button class="btn s" style="margin-left:auto" data-x>とじる</button></div>
     <p class="muted small" style="margin:4px 0">ID <b style="user-select:all">${c.cid_full}</b>（${c.cid} だけでもOK）・社長 ${nameB(c.owner, c.owner_badge)}</p>
+    ${c.industries && c.industries.length ? `<div style="margin:2px 0 4px">${indChips(c.industries, true)}</div>` : ''}
     ${dead ? `<p class="notice small" style="margin:6px 0">この会社は${c.closed_at ? c.closed_at + 'に' : ''}<b>${c.status === 'bankrupt' ? '倒産' : '廃業'}</b>しました（${c.status === 'bankrupt' ? '倒産済み' : '廃業済み'}）。もう取引はできません。</p>` : ''}
     ${c.status === 'suspended' ? '<p class="notice small" style="margin:6px 0">この会社はいま<b>休業中</b>です。買い物・送金・預け入れはできません（銀行の引き出しはできます）。</p>' : ''}
     ${c.description ? `<p style="white-space:pre-wrap;margin:8px 0">${esc(c.description)}</p>` : ''}
     ${c.cert ? `<p class="small" style="margin:6px 0;color:#2B6FD6"><b>${CERT_SVG} サイトの認証を受けた会社です</b>（${c.cert_until}まで）</p>` : ''}
     <div class="small" style="margin:6px 0">評価：${ratingH(rt)}${rt.n ? `<span class="muted">　★5 ${rt.dist[4]}・★4 ${rt.dist[3]}・★3 ${rt.dist[2]}・★2 ${rt.dist[1]}・★1 ${rt.dist[0]}</span>` : ''}</div>
     ${dead ? '' : `<div class="row" style="margin:8px 0"><button class="btn s" data-pin>${c.pinned ? '📌 ピン留めをやめる' : '📌 ピン留め'}</button>
-      ${c.mine || c.status !== 'active' ? '' : '<button class="btn s" data-send>この会社に送金</button>'}</div>`}
+      ${c.mine || c.status !== 'active' ? '' : '<button class="btn s" data-send>この会社に送金</button>'}
+      ${c.desk_staff ? '<button class="btn s" data-dkinbox>💬 窓口をひらく（担当）</button>' : c.desk_on ? '<button class="btn main s" data-dknew>💬 窓口で相談</button>' : ''}</div>
+      ${!c.desk_staff && !c.desk_on ? '<p class="small muted" style="margin:0 0 6px">いまは窓口の相談を受け付けていません。</p>' : ''}
+      ${c.desk_note ? `<p class="small muted" style="margin:0 0 6px;white-space:pre-wrap">窓口の案内：${esc(c.desk_note)}</p>` : ''}`}
+    ${c.desk_mine ? `<p class="small" style="margin:0 0 6px"><a class="men" data-dkmine>この会社との相談（${c.desk_mine}件）を見る</a></p>` : ''}
+    ${!dead && c.servers && c.servers.length ? `<h3>ゲーム・Discord</h3>${c.servers.map(srvRow).join('')}
+      <p class="muted small" style="margin:4px 0 0">リンク先はこのサイトの外です。現金やギフト券などとの交換（RMT）には応じないでください。</p>
+      ${ME.role ? '<button class="btn s" data-srvclear style="margin-top:6px">サーバー欄を消す（管理）</button>' : ''}` : ''}
     ${bank ? `<h3>銀行</h3><p class="small" style="margin:0 0 6px">預金の金利：1日 <b>${Number(c.rate)}%</b>（毎日つきます）・口座開設：${{ auto: 'すぐ', approve: '銀行の許可制', off: '受け付けていません' }[c.acct_mode]}${c.acct_need_check ? '（オレンジのチェックが必要）' : ''}</p>
       ${c.account ? (c.account.status === 'pending' ? '<p class="small"><span class="tag">口座は申込中（銀行の許可待ち）</span></p>'
         : `<div class="kv"><span>あなたの預金</span><b>${fmt(c.account.balance)} X</b><span class="muted">もらった利息</span><b>${fmt(c.account.interest_total)} X</b></div>
@@ -2122,6 +2241,16 @@ async function corpOpen(cid, ccOpen) {
     catch (e) { toast(e.message); }
   });
   const pinB = m.querySelector('[data-pin]'); if (pinB) pinB.onclick = () => act('corp_pin', { p_cid: cid, p_on: !c.pinned }, c.pinned ? 'ピン留めをやめました' : 'ピン留めしました');
+  const dkN = m.querySelector('[data-dknew]'); if (dkN) dkN.onclick = () => deskNew(c.cid, c.name, c.desk_note);
+  const dkI = m.querySelector('[data-dkinbox]');
+  if (dkI) dkI.onclick = () => { if (c.mine) { m.remove(); OWsel = c.cid; OWsec = 'desk'; go('vWork', 'corp'); } else deskInbox(c.cid); };
+  const dkM = m.querySelector('[data-dkmine]'); if (dkM) dkM.onclick = () => { m.remove(); go('vCorp', 'desk'); };
+  m.querySelectorAll('[data-ind]').forEach(x => x.onclick = () => { m.remove(); $('#coQ').value = ''; $('#coInd').value = x.dataset.ind; go('vCorp', 'search'); });
+  const scB = m.querySelector('[data-srvclear]');
+  if (scB) scB.onclick = async () => {
+    const why = prompt('サーバー欄を消す理由（社長に届きます）', ''); if (why === null) return;
+    try { await call('admin_corp_servers_clear', { p_cid: cid, p_reason: why }); toast('サーバー欄を消しました'); corpOpen(cid); } catch (e) { toast(e.message); }
+  };
   const sendB = m.querySelector('[data-send]');
   if (sendB) sendB.onclick = () => { m.remove(); go('vTax', 'xfer'); $('#xTo').value = cid; $('#xAmt').focus(); xferInput(); };
   const oa = m.querySelector('[data-open-acct]'); if (oa) oa.onclick = () => act('bank_open', { p_cid: cid }, c.acct_mode === 'auto' ? '口座を開きました' : '口座を申し込みました。銀行の許可を待ちましょう');
@@ -2158,13 +2287,15 @@ async function loanRepay(id, owed) {
 /* =================================================================
    企業ページ（自分の会社の運営）・勤め先
    ================================================================= */
-let OW = null, apKind = '一般', apForm = '株式会社', apPre = true;
+let OW = null, apKind = '一般', apForm = '株式会社', apPre = true, OWip = null, OWsrv = null;
+const apIP = indPicker($('#apInd'), []);
 const apName = () => { const n = $('#apName').value.trim(); return n ? (apPre ? apForm + n : n + apForm) : ''; };
 function apUpd() {
   if ((apKind === '銀行' || apKind === '証券') && apForm !== '株式会社') apForm = '株式会社';
   $$('#apKind button').forEach(x => x.classList.toggle('on', x.dataset.k === apKind));
   $$('#apForm button').forEach(x => x.classList.toggle('on', x.dataset.k === apForm));
   $$('#apPos button').forEach(x => x.classList.toggle('on', (x.dataset.k === '1') === apPre));
+  apIP.setLock(indLock(apKind));
   $('#apPrev').innerHTML = `申請する名前：<b>${esc(apName()) || '—'}</b>`;
 }
 $$('#apKind button').forEach(b => b.onclick = () => { apKind = b.dataset.k; apUpd(); });
@@ -2173,8 +2304,9 @@ $$('#apPos button').forEach(b => b.onclick = () => { apPre = b.dataset.k === '1'
 $('#apName').oninput = apUpd;
 $('#apSend').onclick = async () => {
   const name = apName(); if (!name) return toast('会社名を入れてください');
+  const inds = apIP.get(); if (!inds.length) return toast('業種を1つ以上えらんでください');
   if (!confirm(`「${name}」（${apKind === '一般' ? apForm : apKind === '銀行' ? '銀行' : '証券会社'}）を申請します。申請料 1,000 X がかかります。よろしいですか？`)) return;
-  try { OW = await call('corp_apply', { p_name: $('#apName').value.trim(), p_form: apForm, p_pre: apPre, p_kind: apKind, p_desc: $('#apDesc').value }); toast('申請しました。審査をお待ちください'); $('#apName').value = ''; $('#apDesc').value = ''; apUpd(); ownRender(); setBal(OW.balance); }
+  try { OW = await call('corp_apply', { p_name: $('#apName').value.trim(), p_form: apForm, p_pre: apPre, p_kind: apKind, p_desc: $('#apDesc').value, p_inds: inds }); toast('申請しました。審査をお待ちください'); $('#apName').value = ''; $('#apDesc').value = ''; apIP.set([]); apUpd(); ownRender(); setBal(OW.balance); }
   catch (e) { toast(e.message); }
 };
 async function ownLoad() { try { OW = await call('my_corps'); ownRender(); } catch (e) { toast(e.message); } }
@@ -2206,6 +2338,20 @@ function ownSections(c) {
       ${bank ? `<div class="row"><span class="small">預金の金利 1日</span><input class="inp" style="width:90px" data-f="rate" type="number" step="0.01" min="0" max="10" value="${Number(c.rate)}"><span class="small">%（0〜10）</span></div>
         <p class="muted small" style="margin:0">利息は会社のお金から毎日払います。会社のお金が足りないと払えません。</p>` : ''}
       <button class="btn main s" data-act="save">保存</button>`]);
+  S.push(['ind', '業種（日本標準産業分類）', c.industries.length ? esc(c.industries.map(indName).join('・')) : '未設定（えらんでください）', c.industries.length ? 0 : 1, `
+      <p class="muted small" style="margin:0 0 6px">中分類から5つまでえらべます。会社のページと会社検索に出て、業種でさがせるようになります。${indLock(c.kind) ? `${c.kind === '銀行' ? '銀行' : '証券会社'}は「${indName(indLock(c.kind))}」が必ず入ります。` : ''}</p>
+      <div id="owInd"></div><button class="btn main s" data-act="ind">保存</button>`]);
+  S.push(['srv', 'ゲーム・Discordのサーバー', c.servers.length ? esc(c.servers.map(sv => sv.name).join('・')) : 'なし', 0, `
+      <p class="muted small" style="margin:0 0 6px">ゲームやDiscordに関係する会社は、サーバーの名前とリンク（アドレス）を5つまでのせられます。会社のページに出て、サーバー名でもさがせるようになります。</p>
+      <div id="owSrv"></div>
+      <div class="row" style="margin-top:6px"><button class="btn s" data-act="srv_add">＋ サーバーを追加</button><button class="btn main s" data-act="srv_save" style="margin-left:auto">保存</button></div>
+      <p class="muted small" style="margin:6px 0 0">Discordは招待リンク（https://discord.gg/…）。マイクラなどは、サーバーのアドレス（例 play.example.jp:25565）か https のリンク。現金などとの交換（RMT）につながるものはのせないでください（管理者が消すことがあります）。</p>`]);
+  S.push(['desk', '窓口（相談）', c.desk_on ? `受付中の相談 ${c.desk_open}件${c.desk_unread ? `・未読 ${c.desk_unread}` : ''}` : '受付を止めています', c.desk_unread, `
+      <label class="small" style="display:block;margin:0 0 4px"><input type="checkbox" data-f="desk_on" ${c.desk_on ? 'checked' : ''}> 窓口で相談を受け付ける</label>
+      <textarea class="inp" rows="2" data-f="desk_note" maxlength="300" placeholder="窓口の案内（例：返事は夜になります。注文番号を書いてください）">${esc(c.desk_note)}</textarea>
+      <button class="btn main s" data-act="desk_set">保存</button>
+      <h4>相談</h4><div id="owDesk"><p class="muted small" style="margin:0">読みこみ中…</p></div>
+      <p class="muted small" style="margin:6px 0 0">相談は、相談した人と会社（社長と窓口担当の社員）だけが見られます。社員を窓口担当にするのは「社員」から。受付を止めても、受付中の相談のやりとりは続けられます。</p>`]);
   S.push(['items', '商品（購入ボタン）', `${c.items.length}個`, 0, `
       ${c.items.map(it => itemForm(it)).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
       <details class="ed"><summary>＋ 商品を追加</summary>${itemForm(null)}</details>`]);
@@ -2220,9 +2366,10 @@ function ownSections(c) {
       ${c.applies.map(a => `<div class="line"><span class="grow">${nameB(a.nickname, a.badge)}（ID ${a.uid}）→「${esc(a.title)}」<small>${a.at}${a.message ? '・' + esc(a.message) : ''}</small></span>
         <button class="btn main s" data-act="hire" data-id="${a.id}">採用</button><button class="btn s" data-act="decline" data-id="${a.id}">見送り</button></div>`).join('') || '<p class="muted small" style="margin:0">いまはありません</p>'}`]);
   S.push(['members', '社員', `${c.members.length}人`, 0, `
-      ${c.members.map(mb => `<div class="line"><span class="grow">${nameB(mb.nickname, mb.badge)}（ID ${mb.uid}）・${esc(mb.role)}<small>給料 ${fmt(mb.salary)} X／これまで ${fmt(mb.paid_total)} X</small></span>
-        <button class="btn main s" data-act="pay" data-uid="${mb.uid}">払う</button><button class="btn s" data-act="mset" data-uid="${mb.uid}" data-sal="${mb.salary}" data-role="${esc(mb.role)}">設定</button>
-        <button class="btn s" data-act="fire" data-uid="${mb.uid}">やめてもらう</button></div>`).join('') || '<p class="muted small" style="margin:0">まだいません。求人を出してみましょう</p>'}
+      ${c.members.map(mb => `<div class="line" style="display:block"><span class="grow" style="display:block">${nameB(mb.nickname, mb.badge)}（ID ${mb.uid}）・${esc(mb.role)}${mb.desk ? '<span class="tag">窓口担当</span>' : ''}<small>給料 ${fmt(mb.salary)} X／これまで ${fmt(mb.paid_total)} X</small></span>
+        <div class="row" style="margin-top:6px"><button class="btn main s" data-act="pay" data-uid="${mb.uid}">払う</button><button class="btn s" data-act="mset" data-uid="${mb.uid}" data-sal="${mb.salary}" data-role="${esc(mb.role)}">設定</button>
+        <button class="btn s" data-act="mdesk" data-uid="${mb.uid}" data-on="${mb.desk ? 0 : 1}">${mb.desk ? '窓口担当をはずす' : '窓口担当にする'}</button>
+        <button class="btn s" data-act="fire" data-uid="${mb.uid}">やめてもらう</button></div></div>`).join('') || '<p class="muted small" style="margin:0">まだいません。求人を出してみましょう</p>'}
       ${c.members.length ? '<button class="btn main s" data-act="payall" style="margin-top:8px">全員に給料を払う</button>' : ''}`]);
   if (!c.official) S.push(['shares', unitOf(c) === '株' ? '株・株主' : '出資・出資者', `発行 ${fmt(c.shares)} ${unitOf(c)}・${c.holders.length}人`, 0, `
       <p class="small" style="margin:0 0 4px">発行 <b>${fmt(c.shares)} ${unitOf(c)}</b></p>${holdersHtml(c, 30)}
@@ -2284,7 +2431,27 @@ function ownRender() {
   }
   $('#owCorp').innerHTML = h;
   $('#apCard').classList.toggle('hidden', !!c);
+  if (c && OWsec === 'ind') OWip = indPicker($('#owInd'), c.industries, { lock: indLock(c.kind), official: c.official });
+  if (c && OWsec === 'srv') { OWsrv = { cid: c.cid, list: c.servers.map(sv => ({ ...sv })) }; srvEdDraw(); }
+  if (c && OWsec === 'desk') deskCorpList(c.cid, $('#owDesk'));
 }
+// サーバー欄の編集（保存するまで手元で持つ）
+function srvEdDraw() {
+  const box = $('#owSrv'); if (!box || !OWsrv) return;
+  box.innerHTML = OWsrv.list.map((sv, i) => `<div class="item" data-srv="${i}">
+    <div class="row"><select class="inp grow" data-k="kind" style="margin:0">${Object.entries(SRV_KIND).map(([k, v]) => `<option value="${k}" ${sv.kind === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+      <button class="btn s" data-act="srv_del" data-i="${i}">消す</button></div>
+    <div class="${sv.kind === 'game' ? '' : 'hidden'}"><div class="small muted" style="margin:6px 0 0">ゲームの名前</div><input class="inp" data-k="game" maxlength="30" placeholder="例：ぷよぷよ" value="${esc(sv.game || '')}"></div>
+    <div class="small muted" style="margin:6px 0 0">サーバー名</div><input class="inp" data-k="name" maxlength="40" placeholder="例：ほまれ鉱山" value="${esc(sv.name || '')}">
+    <div class="small muted" style="margin:6px 0 0">${sv.kind === 'discord' ? '招待リンク' : 'アドレス・リンク'}</div><input class="inp" data-k="link" maxlength="200" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="${sv.kind === 'discord' ? 'https://discord.gg/…' : '例：play.example.jp:25565'}" value="${esc(sv.link || '')}">
+    <div class="small muted" style="margin:6px 0 0">ひとこと（なくてもOK）</div><input class="inp" data-k="note" maxlength="100" placeholder="例：Java版・だれでもどうぞ" value="${esc(sv.note || '')}"></div>`).join('')
+    || '<p class="muted small" style="margin:0">まだありません。「＋ サーバーを追加」から書けます。</p>';
+}
+function srvEdRead() {
+  if (!OWsrv) return;
+  $$('#owSrv [data-srv]').forEach(el => { const sv = OWsrv.list[Number(el.dataset.srv)]; if (sv) el.querySelectorAll('[data-k]').forEach(x => { sv[x.dataset.k] = x.value; }); });
+}
+$('#owCorp').addEventListener('change', ev => { if (ev.target.matches('#owSrv select[data-k="kind"]')) { srvEdRead(); srvEdDraw(); } });
 $('#owCorp').addEventListener('click', ev => {
   const o = ev.target.closest('[data-own-open]'), sc = ev.target.closest('[data-own-sec]'), bk = ev.target.closest('[data-own-back]');
   if (o) { OWsel = o.dataset.ownOpen; OWsec = null; ownRender(); window.scrollTo(0, 0); }
@@ -2356,6 +2523,12 @@ $('#owCorp').onclick = async ev => {
   let r = null;
   try {
     if (a === 'save') r = await call('corp_update', { p_cid: cid, p_desc: f(card, 'desc'), p_rate: f(card, 'rate') === null ? null : Number(f(card, 'rate')) });
+    else if (a === 'ind') { if (!OWip) return; const v = OWip.get(); if (!v.length) return toast('業種を1つ以上えらんでください'); r = await call('corp_set_industries', { p_cid: cid, p_inds: v }); }
+    else if (a === 'srv_add') { srvEdRead(); if (OWsrv.list.length >= 5) return toast('サーバーは5つまでです'); OWsrv.list.push({ kind: 'discord', game: '', name: '', link: '', note: '' }); srvEdDraw(); return; }
+    else if (a === 'srv_del') { srvEdRead(); OWsrv.list.splice(Number(b.dataset.i), 1); srvEdDraw(); return; }
+    else if (a === 'srv_save') { srvEdRead(); r = await call('corp_set_servers', { p_cid: cid, p_servers: OWsrv.list }); }
+    else if (a === 'desk_set') r = await call('desk_settings', { p_cid: cid, p_on: f(card, 'desk_on'), p_note: f(card, 'desk_note') });
+    else if (a === 'mdesk') r = await call('corp_member_desk', { p_cid: cid, p_user: b.dataset.uid, p_on: b.dataset.on === '1' });
     else if (a === 'item') { const box = b.closest('[data-form]'); r = await call('corp_item_save', { p_cid: cid, p_item: box.dataset.id ? Number(box.dataset.id) : null,
         p_name: f(box, 'name'), p_price: Math.floor(Number(f(box, 'price')) || 0), p_desc: f(box, 'desc'), p_active: f(box, 'active') }); }
     else if (a === 'job') { const box = b.closest('[data-form]'); r = await call('corp_job_save', { p_cid: cid, p_job: box.dataset.id ? Number(box.dataset.id) : null,
@@ -2402,9 +2575,11 @@ async function myWorkLoad() {
   try {
     const d = await call('my_jobs');
     $('#myWork').innerHTML = (d.members.length ? d.members.map(m => `<div class="co-row"><span class="nm"><b>${esc(m.company)}・${esc(m.role)}</b>
-        <small>給料 ${fmt(m.salary)} X／これまで ${fmt(m.paid_total)} X／${m.since}から</small></span><button class="btn s" data-quit="${m.cid}">やめる</button></div>`).join('')
+        <small>給料 ${fmt(m.salary)} X／これまで ${fmt(m.paid_total)} X／${m.since}から${m.desk ? '・窓口担当' : ''}</small></span>
+        ${m.desk ? `<button class="btn ${m.desk_unread ? 'main ' : ''}s" data-dkinbox="${m.cid}">窓口${m.desk_unread ? `（未読 ${m.desk_unread}）` : ''}</button>` : ''}<button class="btn s" data-quit="${m.cid}">やめる</button></div>`).join('')
       : '<p class="muted small" style="margin:0">まだどこにも勤めていません。企業タブの「求人」から応募できます。</p>')
       + (d.applies.length ? `<h4 style="margin:12px 0 4px">応募したもの</h4>` + d.applies.map(a => `<p class="small" style="margin:4px 0">${esc(a.company)}「${esc(a.title)}」：${{ waiting: '返事待ち', hired: '採用', declined: '見送り' }[a.status]}（${a.at}）</p>`).join('') : '');
+    $$('#myWork [data-dkinbox]').forEach(b => b.onclick = () => deskInbox(b.dataset.dkinbox));
     $$('#myWork [data-quit]').forEach(b => b.onclick = async () => {
       if (!confirm('この会社をやめますか？')) return;
       try { await call('job_quit', { p_cid: b.dataset.quit }); toast('やめました'); myWorkLoad(); } catch (e) { toast(e.message); }
@@ -2439,6 +2614,7 @@ async function adminLoad() {
       <h3 style="margin-top:0">企業の審査</h3>
       ${d.pending.length ? d.pending.map(c => `<div class="item"><div class="row"><b>${esc(c.name)}</b>${kindTag(c)}</div>
           <p class="small muted" style="margin:4px 0">申請者 ${nameB(c.owner, c.owner_badge)}（ID ${c.owner_id}）・${c.at}・会社ID ${c.cid_full}</p>
+          <div>${c.industries && c.industries.length ? indChips(c.industries) : '<span class="muted small">業種：未設定</span>'}</div>
           ${c.description ? `<p class="small" style="white-space:pre-wrap;margin:4px 0">${esc(c.description)}</p>` : ''}
           <div class="row"><button class="btn main s" data-ok="${c.cid}">許可</button><button class="btn s" data-ng="${c.cid}">却下</button></div></div>`).join('')
         : '<p class="muted small" style="margin:0">審査待ちはありません</p>'}
@@ -2464,7 +2640,8 @@ async function adminLoad() {
       <p class="small muted">副管理者（ID）：${esc(d.subadmins || 'なし')}</p>` : ''}
       <h3>活動中の企業</h3>
       ${d.active.map(c => `<div class="line"><span class="grow">${esc(c.name)}${c.cert_until ? `<span class="cert">${CERT_SVG}認証</span>` : ''}${c.status === 'suspended' ? `<span class="stag">${c.court_lock ? '休業命令' : '休業中'}</span>` : ''}
-          <small>${esc(c.kind === '一般' ? c.form : c.kind)}・ID ${c.cid_full}・社長 ${esc(c.owner)}${adm ? `・お金 ${fmt(c.balance)} X` : ''}${c.cert_until ? `・認証 ${c.cert_until}まで` : ''}</small></span>
+          <small>${esc(c.kind === '一般' ? c.form : c.kind)}・ID ${c.cid_full}・社長 ${esc(c.owner)}${adm ? `・お金 ${fmt(c.balance)} X` : ''}${c.cert_until ? `・認証 ${c.cert_until}まで` : ''}</small>
+          <small>${c.industries && c.industries.length ? esc(c.industries.map(indName).join('・')) : '業種：未設定'}${c.servers ? `・サーバー ${c.servers}件` : ''}</small></span>
           ${adm && c.status === 'active' ? `<button class="btn s" data-certopen="${c.cid}">認証マーク</button>` : ''}
           ${adm ? (c.status === 'suspended' ? `<button class="btn s" data-cact="resume" data-cid="${c.cid}">再開させる</button>` : `<button class="btn s" data-cact="suspend" data-cid="${c.cid}">休業命令</button>`)
             + `<button class="btn s" data-cact="bankrupt" data-cid="${c.cid}">倒産させる</button>` : ''}</div>`).join('') || '<p class="muted small">まだありません</p>'}`;
@@ -3417,6 +3594,173 @@ async function pubEditor(id) {
 }
 
 /* =================================================================
+   窓口（会社への相談）
+   ================================================================= */
+const DK = { id: null, timer: null };
+const dkRow = (t, corp) => `<div class="co-row" data-dk="${t.id}"><span class="nm"><b>${t.unread ? '<span class="dk-dot"></span>' : ''}${esc(t.subject)}</b>
+  <small>${corp ? `${nameB(t.user.nickname, t.user.badge)}（ID ${t.user.uid}）` : esc(t.company)}・${t.status === 'open' ? '受付中' : '解決済み'}・${t.at} ${t.time}</small>
+  ${t.last ? `<small>${t.last_corp ? (corp ? 'こちら：' : '会社：') : (corp ? '' : 'あなた：')}${esc(t.last)}</small>` : ''}</span><span style="color:var(--muted);font-size:20px">›</span></div>`;
+document.addEventListener('click', ev => {
+  const r = ev.target.closest('[data-dk]'); if (!r) return;
+  ev.stopPropagation(); deskOpen(Number(r.dataset.dk));
+}, true);
+async function deskMyLoad() {
+  try {
+    const d = await call('desk_list', { p_cid: '' });
+    $('#dkList').innerHTML = d.threads.length ? d.threads.map(t => dkRow(t, false)).join('') : '<p class="muted small" style="margin:0">まだ相談はありません。</p>';
+  } catch (e) { toast(e.message); }
+}
+async function deskCorpList(cid, box) {
+  if (!box) return;
+  try {
+    const d = await call('desk_list', { p_cid: cid });
+    box.innerHTML = d.threads.length ? d.threads.map(t => dkRow(t, true)).join('') : '<p class="muted small" style="margin:0">まだ相談はありません</p>';
+  } catch (e) { box.innerHTML = `<p class="muted small" style="margin:0">${esc(e.message)}</p>`; }
+}
+function deskSheet(html) {
+  $$('.modal').forEach(m => m.remove()); clearTimeout(DK.timer); DK.id = null;
+  const m = document.createElement('div'); m.className = 'modal';
+  m.innerHTML = `<div class="sheet">${html}</div>`;
+  m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) { m.remove(); deskAfter(); } };
+  document.body.appendChild(m);
+  return m;
+}
+// 閉じたあと、見えている一覧を新しくする
+function deskAfter() {
+  clearTimeout(DK.timer); DK.id = null;
+  if (view === 'vCorp' && sessionStorageGet('sub:vCorp') === 'desk') deskMyLoad();
+  if ($('#owDesk') && OWsel) deskCorpList(OWsel, $('#owDesk'));
+  if (view === 'vWork' && sessionStorageGet('sub:vWork') === 'mywork') myWorkLoad();
+}
+// 会社の窓口の一覧（窓口担当の社員）
+async function deskInbox(cid) {
+  let d; try { d = await call('desk_list', { p_cid: cid }); } catch (e) { return toast(e.message); }
+  deskSheet(`<div class="row"><b style="font-size:19px" class="grow">${esc(d.company)}の窓口</b><button class="btn s" data-x>とじる</button></div>
+    ${d.desk_on ? '' : '<p class="small muted" style="margin:6px 0">いまは新しい相談の受付を止めています（社長の設定）。</p>'}
+    <div style="margin-top:6px">${d.threads.map(t => dkRow(t, true)).join('') || '<p class="muted small">まだ相談はありません</p>'}</div>`);
+}
+// 新しく相談する
+function deskNew(cid, name, note) {
+  const m = deskSheet(`<div class="row"><b style="font-size:19px" class="grow">窓口で相談する</b><button class="btn s" data-x>とじる</button></div>
+    <p class="small" style="margin:6px 0">あて先：<b>${esc(name)}</b></p>
+    ${note ? `<p class="small muted" style="margin:0 0 6px;white-space:pre-wrap">窓口の案内：${esc(note)}</p>` : ''}
+    <input class="inp" id="dkSub" maxlength="40" placeholder="件名（例：注文 #12 について）">
+    <textarea class="inp" id="dkBody" rows="5" maxlength="1000" placeholder="相談したいこと"></textarea>
+    <button class="btn main wide" id="dkGo">送る</button>
+    <p class="muted small" style="margin:8px 0 0">相談は、あなたと会社（社長と窓口担当の社員）だけが見られます。返事が来ると通知が届きます。</p>`);
+  m.querySelector('#dkGo').onclick = async ev => {
+    ev.target.disabled = true;
+    try { const t = await call('desk_open', { p_cid: cid, p_subject: m.querySelector('#dkSub').value, p_body: m.querySelector('#dkBody').value }); toast('相談を送りました'); deskShow(t); }
+    catch (e) { toast(e.message); ev.target.disabled = false; }
+  };
+}
+async function deskOpen(id) {
+  try { deskShow(await call('desk_thread', { p_thread: id })); } catch (e) { toast(e.message); }
+}
+function deskShow(t) {
+  const corp = t.side === 'corp';
+  const who = x => x.corp ? esc(t.company) + (x.who ? `（担当 ${esc(x.who)}）` : '') : corp ? esc(t.user.nickname) : 'あなた';
+  const msgs = t => t.msgs.map(x => `<div class="dk-m ${x.corp === corp ? 'me' : ''}">${esc(x.body)}<small>${who(x)}・${x.at} ${x.time}</small></div>`).join('');
+  const m = deskSheet(`<div class="row"><b style="font-size:18px;word-break:break-word" class="grow">${esc(t.subject)}</b><button class="btn s" data-x>とじる</button></div>
+    <p class="small muted" style="margin:4px 0">${corp ? `${nameB(t.user.nickname, t.user.badge)}（ID ${t.user.uid}）からの相談・${esc(t.company)}の窓口` : `あて先：<a class="men" data-cid2="${t.cid}">${esc(t.company)}</a>`}
+      <span class="tag ${t.status === 'open' ? 'good' : ''}">${t.status === 'open' ? '受付中' : '解決済み'}</span></p>
+    ${!corp && t.desk_note ? `<p class="small muted" style="margin:4px 0;white-space:pre-wrap">窓口の案内：${esc(t.desk_note)}</p>` : ''}
+    <div class="dk-msgs">${msgs(t)}</div>
+    ${t.can_send ? `<textarea class="inp" id="dkMsg" rows="3" maxlength="1000" placeholder="${corp ? '会社として返事を書く' : 'つづきを書く'}"></textarea>
+      <div class="row"><button class="btn main" id="dkSend">送る</button><button class="btn s" id="dkClose" style="margin-left:auto">解決済みにする</button></div>
+      ${corp ? '<p class="muted small" style="margin:6px 0 0">返事は会社の名前で届きます（担当として、あなたの名前もつきます）。</p>' : ''}`
+      : `<p class="muted small" style="margin:6px 0 0">${t.status === 'open' ? 'この会社はもう活動していないので、書きこめません。'
+          : t.closed_by === 'gone' ? 'この会社は廃業・倒産したので、相談は終わりました。'
+          : `この相談は${t.closed_by === 'corp' ? '会社が' : t.closed_by === 'user' ? (corp ? '相談した人が' : 'あなたが') : ''}解決済みにしました。${corp ? '' : 'つづきは、会社のページからもう一度相談してください。'}`}</p>`}`);
+  DK.id = t.id;
+  const cl = m.querySelector('[data-cid2]'); if (cl) cl.onclick = () => corpOpen(t.cid);
+  const send = m.querySelector('#dkSend');
+  if (send) send.onclick = async () => {
+    const v = m.querySelector('#dkMsg').value; if (!v.trim()) return toast('内容を書いてください');
+    send.disabled = true;
+    try { deskShow(await call('desk_send', { p_thread: t.id, p_body: v })); } catch (e) { toast(e.message); send.disabled = false; }
+  };
+  const clo = m.querySelector('#dkClose');
+  if (clo) clo.onclick = async () => {
+    if (!confirm('この相談を「解決済み」にしますか？（そのあとは読むだけになります）')) return;
+    try { deskShow(await call('desk_close', { p_thread: t.id })); toast('解決済みにしました'); } catch (e) { toast(e.message); }
+  };
+  const box = m.querySelector('.dk-msgs'); m.querySelector('.sheet').scrollTop = box.scrollHeight;
+  // 開いているあいだは、新しい返事を8秒ごとに見る
+  const poll = async () => {
+    if (DK.id !== t.id || !document.body.contains(m)) return;
+    if (!document.hidden) {
+      try {
+        const n = await call('desk_thread', { p_thread: t.id });
+        if (DK.id !== t.id || !document.body.contains(m)) return;
+        if (n.status !== t.status || n.can_send !== t.can_send) { const draft = (m.querySelector('#dkMsg') || {}).value || ''; deskShow(n); const tx = $('#dkMsg'); if (tx) tx.value = draft; return; }
+        if (n.msgs.length !== t.msgs.length) { t = n; box.innerHTML = msgs(n); box.lastElementChild && box.lastElementChild.scrollIntoView({ block: 'nearest' }); }
+      } catch (e) {}
+    }
+    DK.timer = setTimeout(poll, 8000);
+  };
+  DK.timer = setTimeout(poll, 8000);
+}
+
+/* =================================================================
+   管理：登録した人
+   ================================================================= */
+const AU = { q: '', f: '', off: 0, items: [], t: null };
+const auRow = x => `<div class="co-row" data-au="${x.uid}"><span class="nm"><b>${nameB(x.nickname, x.badge)}</b>
+  <small>ID ${x.uid}・登録 ${x.joined.slice(0, 10)}・最後に来た ${x.seen ? x.seen.slice(5, 16) : '—'}</small>${x.email ? `<small>${esc(x.email)}</small>` : ''}
+  ${x.new || x.banned_until || x.debt || x.corps ? `<small>${x.new ? '<span class="au-tag">新しい人</span>' : ''}${x.banned_until ? `<span class="au-tag bad">利用停止 ${x.banned_until.slice(5, 10)}まで</span>` : ''}${x.debt ? '<span class="au-tag bad">税の滞納</span>' : ''}${x.corps ? `<span class="au-tag">会社 ${x.corps}</span>` : ''}</small>` : ''}</span>
+  <span style="color:var(--muted);font-size:20px">›</span></div>`;
+async function auLoad(reset) {
+  if (reset) { AU.off = 0; AU.items = []; }
+  try {
+    const d = await call('admin_users', { p_q: AU.q, p_filter: AU.f, p_offset: AU.off });
+    AU.items = AU.items.concat(d.items); AU.off = AU.items.length;
+    $('#auSum').innerHTML = `全員 <b>${fmt(d.all)}</b>人・今日 +${d.today}・7日以内 +${d.week}・7日以内に来た人 ${d.active7}${AU.q || AU.f ? `<br>見つかった人 <b>${fmt(d.total)}</b>人` : ''}`;
+    $('#auList').innerHTML = AU.items.map(auRow).join('') || '<p class="muted small" style="margin:0">見つかりません</p>';
+    $('#auMore').classList.toggle('hidden', !d.more);
+  } catch (e) { toast(e.message); }
+}
+$('#auQ').oninput = () => { clearTimeout(AU.t); AU.t = setTimeout(() => { AU.q = $('#auQ').value.trim(); auLoad(true); }, 300); };
+$$('#auF button').forEach(b => b.onclick = () => { AU.f = b.dataset.k; $$('#auF button').forEach(x => x.classList.toggle('on', x === b)); auLoad(true); });
+$('#auMore').onclick = () => auLoad(false);
+$('#auList').onclick = ev => { const r = ev.target.closest('[data-au]'); if (r) auOpen(r.dataset.au); };
+async function auOpen(uid) {
+  let d; try { d = await call('admin_user', { p_uid: uid }); } catch (e) { return toast(e.message); }
+  $$('.modal').forEach(m => m.remove());
+  const m = document.createElement('div'); m.className = 'modal';
+  const adm = ME.role === 'admin';
+  m.innerHTML = `<div class="sheet"><div class="row"><b style="font-size:20px" class="grow">${nameB(d.nickname, d.badge)}</b><button class="btn s" data-x>とじる</button></div>
+    <div class="kv" style="margin-top:10px">
+      <span>ID</span><b style="user-select:all">${d.uid}</b>
+      <span>役割</span><b>${d.role === 'admin' ? '管理者' : d.role === 'sub' ? '副管理者' : 'ふつう'}</b>
+      <span>登録</span><b>${d.joined}</b>
+      <span>最後にサイトを開いた</span><b>${d.seen || '—'}</b>
+      ${adm ? `<span>メール</span><b style="user-select:all;word-break:break-all">${esc(d.email || '—')}</b><span>最後のログイン</span><b>${d.last_sign_in || '—'}</b>` : ''}
+      <span>メールの認証</span><b>${d.mail_at ? d.mail_at + (d.mail_ok ? '' : '（期限切れ）') : 'まだ'}</b>
+      <span>オレンジのチェック</span><b>${d.badge && d.badge.ok ? 'あり' : 'なし'}</b>
+      <span>送金・買い物</span><b>${d.send_ok ? 'できる' : '登録から7日たつまでできない'}</b>
+      <span>利用停止</span><b>${d.banned_until ? d.banned_until + 'まで' : 'なし'}</b>
+      ${d.debt_amount != null ? `<span>税の滞納</span><b>${d.debt_amount ? fmt(d.debt_amount) + ' X' : 'なし'}</b>
+      <span>脱税と判定された回数</span><b>${d.evasion}回</b>` : ''}
+      <span>訴えた／訴えられた</span><b>${d.cases_filed}件／${d.cases_against}件</b>
+      <span>フレンド</span><b>${d.friends}人</b>
+      <span>TLの投稿</span><b>${d.posts}件</b>
+      <span>書いた本</span><b>${d.pubs}冊</b>
+      <span>窓口に出した相談</span><b>${d.desk}件</b>
+      <span>最後に遊んだ・お金が動いた</span><b>${d.last_play || '—'}</b>
+    </div>
+    <h4 style="margin:14px 0 4px">会社（社長）</h4>
+    ${d.companies.map(c => `<div class="line" data-cid3="${c.cid}" style="cursor:pointer"><span class="grow">${esc(c.name)}<small>${esc(c.kind === '一般' ? '' : c.kind + '・')}${esc(c.status)}・ID ${c.cid}</small></span></div>`).join('') || '<p class="muted small" style="margin:0">なし</p>'}
+    <h4 style="margin:14px 0 4px">勤め先</h4>
+    ${d.jobs.map(j => `<div class="line"><span class="grow">${esc(j.name)}・${esc(j.role)}${j.desk ? '（窓口担当）' : ''}</span></div>`).join('') || '<p class="muted small" style="margin:0">なし</p>'}
+    <div class="row" style="margin-top:12px"><button class="btn s" data-person="${d.uid}">この人のページ</button></div>
+    <p class="muted small" style="margin:8px 0 0">所持金は出しません${adm ? '' : '。メールアドレスと税のことは管理者だけに見えます'}。</p></div>`;
+  m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) m.remove(); };
+  document.body.appendChild(m);
+  m.querySelectorAll('[data-cid3]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid3));
+}
+
+/* =================================================================
    通知（ベル）
    ================================================================= */
 const NT = { unread: 0, latest: null, timer: null, more: null };
@@ -3449,12 +3793,14 @@ const NT_GO = { フレンド: ['vInfo', 'friend'], メンション: ['vInfo', 't
   没収: ['vTax', 'tax'], 企業申請: ['vWork', 'corp'], 社長交代: ['vWork', 'corp'], 命令: ['vWork', 'corp'], 応募: ['vWork', 'corp'], 口座の申込: ['vWork', 'corp'],
   借入の申込: ['vWork', 'corp'], 返済: ['vWork', 'corp'], 採用: ['vWork', 'mywork'], 株: ['vCorp', 'stock'], 株の譲渡: ['vCorp', 'stock'], 配当: ['vCorp', 'stock'],
   口座: ['vCorp', 'bank'], 借入: ['vCorp', 'bank'], 交換: ['vCorp', 'invest'], 本: ['vInfo', 'pub'], '広報・書籍': ['vInfo', 'pub'], 対戦: ['vGame', 'vGameList'],
-  倒産: ['vMore', 'hist'], 廃業: ['vMore', 'hist'], お金: ['vMore', 'hist'], 認証: ['vWork', 'corp'] };
+  倒産: ['vMore', 'hist'], 廃業: ['vMore', 'hist'], お金: ['vMore', 'hist'], 認証: ['vWork', 'corp'], 窓口: ['vCorp', 'desk'], サーバー: ['vWork', 'corp'] };
 function noticeGo(n) {
   const L = n.link || {}, b = n.body || '', tag = noticeTag(b);
   $$('.modal').forEach(m => m.remove());
   if (L.go === 'room' || (tag === '対戦' && /部屋 #(\d+)/.test(b))) { RM.id = Number(L.room || /部屋 #(\d+)/.exec(b)[1]); return go('vRoom'); }
   if (L.go === 'corp' && L.cid) return corpOpen(L.cid);
+  if (L.go === 'desk' && L.t) return deskOpen(Number(L.t));
+  if (L.go === 'mywork') return go('vWork', 'mywork');
   if (L.go === 'tl') { tlScope = 'mention'; $$('#tlScope button').forEach(x => x.classList.toggle('on', x.dataset.k === 'mention')); return go('vInfo', 'tl'); }
   if (tag === '注文') return go(/渡してください/.test(b) ? 'vWork' : 'vCorp', /渡してください/.test(b) ? 'corp' : 'order');
   const g = NT_GO[tag] || (/税|給付金|滞納|差し押さえ/.test(b) ? ['vTax', 'tax'] : null);
