@@ -8340,6 +8340,7 @@ begin
   if adm then select to_jsonb(a) into au from auth.users a where a.id = p.id; end if;
   return _user_row(p, adm) || jsonb_build_object(
     'role', _role(p.id),
+    'providers', case when adm then coalesce(au->'raw_app_meta_data'->'providers', '[]'::jsonb) end,
     'last_sign_in', case when au->>'last_sign_in_at' is null then null
                          else to_char((au->>'last_sign_in_at')::timestamptz at time zone 'Asia/Tokyo', 'YYYY/MM/DD HH24:MI') end,
     'mail_ok', p.mail_verified_at is not null and p.mail_verified_at >= _now() - interval '183 days',

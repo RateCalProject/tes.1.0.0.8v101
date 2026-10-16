@@ -77,6 +77,8 @@ h3{font-size:15px;margin:16px 0 8px}
 .notice{font-size:13px;color:var(--muted);line-height:1.7;max-width:420px}
 .mailform{display:flex;flex-direction:column;gap:10px;width:100%;max-width:340px}
 .mailform input{font-size:16px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.oauth-or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;margin:2px 0}
+.oauth-or::before,.oauth-or::after{content:'';flex:1;border-top:1px solid var(--line)}
 
 /* 競馬 */
 .waku{display:inline-flex;min-width:22px;height:22px;border-radius:5px;align-items:center;justify-content:center;font-weight:800;font-size:12px;border:1px solid rgba(0,0,0,.25);padding:0 3px;box-sizing:border-box}
@@ -561,6 +563,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 <section id="vLogin" class="center hidden">
   <h1>風の芽経済組</h1>
   <p class="notice">架空通貨 <b>AiliNaX</b>（単位 X）で、働く・会社をつくる・競馬やカジノで遊ぶ経済ゲームです。<br>はじめてログインした人に 1,000 X を配ります（1回だけ）。</p>
+  <div class="mailform hidden" id="oauthBox"></div>
   <div class="seg" id="lgMode"><button type="button" data-k="pw" class="on">パスワード</button><button type="button" data-k="link">メールのリンク</button></div>
   <form id="mailForm" class="mailform">
     <input type="email" id="mail" required autocomplete="email" placeholder="メールアドレス">
@@ -804,6 +807,11 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <button class="btn wide" id="mailVerify" style="margin-top:8px">メールで認証する（リンクが届きます）</button>
     <p class="muted small" style="margin:6px 0 0">3つの条件がそろうと、名前の横にオレンジのチェックがつきます。メールの認証は半年ごとに必要です。認証のメールはサイト全体で1時間に2通までなので、届かないときは時間をおいてください。</p>
   </div>
+  <div class="card hidden" data-sub="prof" id="idCard">
+    <h3 style="margin-top:0">ログインのしかた</h3>
+    <div id="idList"></div>
+    <p class="muted small" style="margin:6px 0 0">Google や Discord をつなぐと、そのアカウントでもこの登録（ID・所持金）に入れます。登録と同じメールアドレスなら、つながなくても自動で同じ登録になります。オレンジのチェックのメール認証は、メールのリンクで行います。</p>
+  </div>
   <div class="card" data-sub="prof" id="pwCard">
     <h3 style="margin-top:0">パスワード</h3>
     <div class="row"><input id="newPass" type="password" autocomplete="new-password" minlength="6" placeholder="新しいパスワード（6文字以上）" class="grow" style="padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg)"><button class="btn main" id="passSave">決める</button></div>
@@ -899,6 +907,7 @@ function betBox(el, def) {
 async function boot() {
   if (CFG.devApi) return enter();
   if (!CFG.url || !CFG.anonKey || !window.supabase) return show('vSetup');
+  const oauthErr = authUrlError();
   sb = supabase.createClient(CFG.url, CFG.anonKey);
   let lgMode = 'pw';
   const lgSet = k => {
@@ -943,11 +952,68 @@ async function boot() {
       : 'エラー：' + esc(error.message));
     if (!data.session) lgMsg(`<b>${esc(email)}</b> に確認のメールを送りました（英語のメールです）。<br>メールの中のリンクを押すと登録が終わり、この画面にもどってきます。<br>次からは、メールアドレスとパスワードでログインできます。`);
   };
+  authSettings().then(st => {
+    const on = OAUTH.filter(([k]) => st.external && st.external[k]);
+    const box = $('#oauthBox');
+    box.innerHTML = on.map(([k, n]) => `<button class="btn big" type="button" data-oauth="${k}">${n}でログイン</button>`).join('') + (on.length ? '<div class="oauth-or">または、メールアドレスで</div>' : '');
+    box.classList.toggle('hidden', !on.length);
+    box.querySelectorAll('[data-oauth]').forEach(b => b.onclick = async () => {
+      b.disabled = true;
+      const { error } = await sb.auth.signInWithOAuth({ provider: b.dataset.oauth, options: { redirectTo: location.origin + location.pathname } });
+      if (error) { b.disabled = false; lgMsg('エラー：' + esc(error.message)); }
+    });
+  });
   const { data } = await sb.auth.getSession();
   if (data.session) enter(); else show('vLogin');
+  if (oauthErr) { if (data.session) setTimeout(() => toast(oauthErr), 1200); else lgMsg(esc(oauthErr)); }
   sb.auth.onAuthStateChange((ev, s) => { if (ev === 'SIGNED_IN' && !entered) enter(); if (ev === 'SIGNED_OUT') location.reload(); });
 }
 let entered = false, ME = {};
+/* ---------- Google・Discord でログイン ---------- */
+const OAUTH = [['google', 'Google'], ['discord', 'Discord']];
+let AUTHSET = null;
+async function authSettings() {
+  if (AUTHSET) return AUTHSET;
+  try { const r = await fetch(CFG.url + '/auth/v1/settings', { headers: { apikey: CFG.anonKey } }); AUTHSET = r.ok ? await r.json() : {}; } catch (e) { AUTHSET = {}; }
+  return AUTHSET;
+}
+// Google・Discord からもどってきたときのエラー（URLの #error_description など）を読んで、URLをきれいにする
+function authUrlError() {
+  const h = new URLSearchParams(location.hash.replace(/^#/, '')), q = new URLSearchParams(location.search);
+  const d = h.get('error_description') || q.get('error_description'); if (!d) return null;
+  history.replaceState(null, '', location.pathname);
+  const m = d.replace(/\+/g, ' ');
+  if (/already linked|already exists|identity_already_exists/i.test(m)) return 'そのアカウントは、ほかの登録につながっています（同じ人の登録を2つは持てません）';
+  if (/cancel|denied|access_denied/i.test(m)) return 'ログインを取りやめました';
+  if (/email/i.test(m) && /verif|confirm/i.test(m)) return 'メールアドレスが確認されていないアカウントでは入れません。Google や Discord の設定でメールを確認してください';
+  return 'ログインできませんでした（' + m + '）';
+}
+// 設定：つながっているログインのしかた
+async function idLoad() {
+  const card = $('#idCard'); if (!sb || !card) return;
+  const st = await authSettings();
+  const on = OAUTH.filter(([k]) => st.external && st.external[k]);
+  if (!on.length) { card.classList.add('hidden'); return; }
+  let ids = [];
+  try { const { data, error } = await sb.auth.getUserIdentities(); if (error) throw error; ids = (data && data.identities) || []; } catch (e) { card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  const has = k => ids.find(i => i.provider === k);
+  const mail = i => i && i.identity_data && i.identity_data.email ? `（${esc(i.identity_data.email)}）` : '';
+  $('#idList').innerHTML = [['email', 'メール']].concat(on).map(([k, n]) => { const i = has(k);
+    return `<div class="line"><span class="grow">${n}${k === 'email' ? '（パスワード・メールのリンク）' : ''}<small>${i ? 'つながっています' + mail(i) : k === 'email' ? 'パスワードを決めると、メールアドレスとパスワードでも入れます' : 'つながっていません'}</small></span>
+      ${k === 'email' ? '' : i ? (ids.length > 1 ? `<button class="btn s" data-unlink="${k}">はずす</button>` : '') : `<button class="btn main s" data-link="${k}">つなぐ</button>`}</div>`; }).join('');
+  $$('#idList [data-link]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    const { error } = await sb.auth.linkIdentity({ provider: b.dataset.link, options: { redirectTo: location.origin + location.pathname } });
+    if (error) { b.disabled = false; toast('つなげませんでした：' + error.message); }
+  });
+  $$('#idList [data-unlink]').forEach(b => b.onclick = async () => {
+    const i = has(b.dataset.unlink); if (!i) return;
+    if (!confirm(`${OAUTH.find(o => o[0] === i.provider)[1]} のつながりをはずしますか？（ほかのしかたで入れるようにしておいてください）`)) return;
+    const { error } = await sb.auth.unlinkIdentity(i);
+    if (error) toast('はずせませんでした：' + error.message); else { toast('はずしました'); idLoad(); }
+  });
+}
 async function enter() {
   entered = true;
   try {
@@ -3735,7 +3801,8 @@ async function auOpen(uid) {
       <span>役割</span><b>${d.role === 'admin' ? '管理者' : d.role === 'sub' ? '副管理者' : 'ふつう'}</b>
       <span>登録</span><b>${d.joined}</b>
       <span>最後にサイトを開いた</span><b>${d.seen || '—'}</b>
-      ${adm ? `<span>メール</span><b style="user-select:all;word-break:break-all">${esc(d.email || '—')}</b><span>最後のログイン</span><b>${d.last_sign_in || '—'}</b>` : ''}
+      ${adm ? `<span>メール</span><b style="user-select:all;word-break:break-all">${esc(d.email || '—')}</b><span>最後のログイン</span><b>${d.last_sign_in || '—'}</b>
+        <span>ログインのしかた</span><b>${(d.providers || []).map(x => ({ email: 'メール', google: 'Google', discord: 'Discord' }[x] || esc(x))).join('・') || '—'}</b>` : ''}
       <span>メールの認証</span><b>${d.mail_at ? d.mail_at + (d.mail_ok ? '' : '（期限切れ）') : 'まだ'}</b>
       <span>オレンジのチェック</span><b>${d.badge && d.badge.ok ? 'あり' : 'なし'}</b>
       <span>送金・買い物</span><b>${d.send_ok ? 'できる' : '登録から7日たつまでできない'}</b>
@@ -3947,6 +4014,7 @@ $('#rvSend').onclick = async () => {
 /* ---------------- その他 ---------------- */
 const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て' };
 async function moreLoad() {
+  idLoad();
   try {
     const [hs, me] = await Promise.all([call('my_history'), call('my_profile')]);
     setBal(me.balance);
