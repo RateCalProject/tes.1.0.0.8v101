@@ -188,6 +188,13 @@ h3{font-size:15px;margin:16px 0 8px}
 .co-row{display:flex;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--line);cursor:pointer}
 .co-row:first-child{border-top:0}
 .co-row .nm{flex:1;min-width:0}
+.game-row{display:flex;gap:14px;align-items:center;padding:14px 0;border-top:1px solid var(--line);cursor:pointer}
+.game-row:first-child{border-top:0}
+.game-row .ic{width:48px;height:48px;border-radius:12px;background:var(--accent);color:var(--accent-ink);display:flex;align-items:center;justify-content:center;font-size:24px;flex:none}
+.game-row .nm{flex:1;min-width:0}
+.game-row .nm b{font-size:17px}
+.game-row .nm small{display:block;color:var(--muted);margin-top:2px}
+.game-row .go{color:var(--muted);font-size:20px}
 .co-row .nm b{display:block}
 .co-row .nm small{color:var(--muted);display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kindtag{font-size:11px;font-weight:800;border-radius:4px;padding:1px 6px;background:var(--soft);color:var(--accent);margin-left:6px}
@@ -372,14 +379,23 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 <!-- ログイン -->
 <section id="vLogin" class="center hidden">
   <h1>風の芽経済組</h1>
-  <p class="notice">架空通貨 <b>AiliNaX</b>（単位 X）で、働く・会社をつくる・競馬やカジノで遊ぶ経済ゲームです。<br>メールアドレスでログインします（パスワードはいりません）。<br>はじめてログインした人に 1,000 X を配ります（1回だけ）。</p>
+  <p class="notice">架空通貨 <b>AiliNaX</b>（単位 X）で、働く・会社をつくる・競馬やカジノで遊ぶ経済ゲームです。<br>はじめてログインした人に 1,000 X を配ります（1回だけ）。</p>
+  <div class="seg" id="lgMode"><button type="button" data-k="pw" class="on">パスワード</button><button type="button" data-k="link">メールのリンク</button></div>
   <form id="mailForm" class="mailform">
     <input type="email" id="mail" required autocomplete="email" placeholder="メールアドレス">
-    <button class="btn main big" id="mailBtn" type="submit">ログイン用のメールを送る</button>
+    <input type="password" id="pass" autocomplete="current-password" placeholder="パスワード（6文字以上）">
+    <button class="btn main big" id="mailBtn" type="submit">ログイン</button>
+    <button class="btn" id="signupBtn" type="button">はじめての人：このメールとパスワードで登録する</button>
   </form>
   <p class="notice small hidden" id="mailSent"></p>
   <p class="notice small"><b>AiliNaX は現金・物・電子マネーなどと交換できません。</b>現金での売買や、その持ちかけも禁止です。ゲーム内アイテム（マイクラのブロックなど）との取引はOKです。</p>
   <p class="links small"><a href="battle/">付属ゲーム：市区町村バトル（ログインなしで遊べます）</a></p>
+</section>
+
+<!-- 賭博：ゲームの一覧 -->
+<section id="vGameList" class="view hidden">
+  <div class="card" style="padding:6px 16px"><div id="gameList"></div></div>
+  <p class="muted small" style="margin:8px 4px">勝ち負けはすべてサーバーで決まります。もうけ（払い戻し − 賭け金）は所得になり、税金の対象です。</p>
 </section>
 
 <!-- 競馬 -->
@@ -547,6 +563,11 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <div class="row"><input id="nick" maxlength="12" class="grow" style="padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg)"><button class="btn main" id="nickSave">変える</button></div>
     <p class="muted small" style="margin:6px 0 0">TLや競馬億万長者などで、みんなに見えます（所持金は自分にしか見えません）。本名やメールアドレスは入れないでください。</p>
   </div>
+  <div class="card" data-sub="prof" id="pwCard">
+    <h3 style="margin-top:0">パスワード</h3>
+    <div class="row"><input id="newPass" type="password" autocomplete="new-password" minlength="6" placeholder="新しいパスワード（6文字以上）" class="grow" style="padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg)"><button class="btn main" id="passSave">決める</button></div>
+    <p class="muted small" style="margin:6px 0 0">パスワードを決めると、次からはメールを待たずにログインできます。</p>
+  </div>
   <div class="card" data-sub="hist"><h3 style="margin-top:0">自分の記録</h3><ul class="rank" id="hist"></ul></div>
   <div class="card links" data-sub="rule">
     <h3 style="margin-top:0">付属ゲーム</h3>
@@ -629,16 +650,44 @@ async function boot() {
   if (CFG.devApi) return enter();
   if (!CFG.url || !CFG.anonKey || !window.supabase) return show('vSetup');
   sb = supabase.createClient(CFG.url, CFG.anonKey);
+  let lgMode = 'pw';
+  const lgSet = k => {
+    lgMode = k; $$('#lgMode button').forEach(b => b.classList.toggle('on', b.dataset.k === k));
+    $('#pass').classList.toggle('hidden', k !== 'pw'); $('#signupBtn').classList.toggle('hidden', k !== 'pw');
+    $('#mailBtn').textContent = k === 'pw' ? 'ログイン' : 'ログイン用のメールを送る';
+    $('#mailSent').classList.add('hidden');
+  };
+  $$('#lgMode button').forEach(b => b.onclick = () => lgSet(b.dataset.k));
+  const lgMsg = h => { const m = $('#mailSent'); m.classList.remove('hidden'); m.innerHTML = h; };
   $('#mailForm').onsubmit = async ev => {
     ev.preventDefault();
     const email = $('#mail').value.trim(); if (!email) return;
     $('#mailBtn').disabled = true;
+    if (lgMode === 'pw') {
+      const password = $('#pass').value;
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      $('#mailBtn').disabled = false;
+      if (error) lgMsg(/invalid/i.test(error.message)
+        ? 'メールアドレスかパスワードがちがいます。<br>前に「メールのリンク」で入った人は、まだパスワードがありません。一度「メールのリンク」で入って、設定 → プロフィールでパスワードを決めてください。'
+        : 'エラー：' + esc(error.message));
+      return;
+    }
     const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
     $('#mailBtn').disabled = false;
-    const m = $('#mailSent'); m.classList.remove('hidden');
-    m.innerHTML = error
-      ? (/rate|limit|seconds/i.test(error.message) ? 'メールを送りすぎています。少し時間をおいてからもう一度ためしてください。' : 'エラー：' + esc(error.message))
-      : `<b>${esc(email)}</b> にメールを送りました。<br>メールの中の「ログインする」を押すと、この画面にもどってきます。<br>（届かないときは迷惑メールフォルダも見てください）`;
+    lgMsg(error
+      ? (/rate|limit|seconds/i.test(error.message) ? 'メールを送りすぎています（サイト全体で1時間に2通まで）。少し時間をおくか、パスワードでログインしてください。' : 'エラー：' + esc(error.message))
+      : `<b>${esc(email)}</b> にメールを送りました。<br>メールの中の「ログインする」を押すと、この画面にもどってきます。<br>（届かないときは迷惑メールフォルダも見てください）`);
+  };
+  $('#signupBtn').onclick = async () => {
+    const email = $('#mail').value.trim(), password = $('#pass').value;
+    if (!email || password.length < 6) return lgMsg('メールアドレスと、6文字以上のパスワードを入れてください。');
+    $('#signupBtn').disabled = true;
+    const { data, error } = await sb.auth.signUp({ email, password });
+    $('#signupBtn').disabled = false;
+    if (error) return lgMsg(/already|registered|exists/i.test(error.message)
+      ? 'このメールアドレスはもう登録されています。「ログイン」を押してください。<br>パスワードを決めていない人は、「メールのリンク」で入ってから、設定 → プロフィールで決めてください。'
+      : 'エラー：' + esc(error.message));
+    if (!data.session) lgMsg('登録しました。「ログイン」を押してください。');
   };
   const { data } = await sb.auth.getSession();
   if (data.session) enter(); else show('vLogin');
@@ -657,12 +706,12 @@ async function enter() {
   go(sessionStorageGet('view') || 'vInfo');
 }
 function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
-const GAMES = ['vRace', 'vSlot', 'vBj', 'vRou', 'vHilo'];
+const GAMES = ['vGameList', 'vRace', 'vSlot', 'vBj', 'vRou', 'vHilo'];
 // メインメニュー（左から）とサブメニュー
 const MENU = [
   ['vInfo', '情報', 'i', [['cur', '通貨'], ['mkt', '相場'], ['tl', 'TL'], ['friend', 'フレンド'], ['jack', '競馬億万長者']]],
   ['vWork', '仕事', '✎', [['jobs', '仕事をえらぶ'], ['stat', '給料'], ['corp', '企業ページ'], ['mywork', '勤め先']]],
-  ['vGame', '賭博', '♠', [['vRace', '🏇 競馬'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
+  ['vGame', '賭博', '♠', [['vGameList', '≡ 一覧'], ['vRace', '🏇 競馬'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
   ['vCorp', '企業', '社', [['search', '会社検索'], ['pin', 'ピン留め'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所']]],
   ['vTax', '役所', '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['kokko', '国庫・番付']]],
   ['vMore', '設定', '⚙', [['prof', 'プロフィール'], ['hist', '記録'], ['rule', '規約']]],
@@ -697,7 +746,25 @@ function go(v, sub) {
   if (sec === 'vWork' && sub === 'mywork') myWorkLoad();
   if (sec === 'vMore' && sub === 'admin') adminLoad();
 }
-$$('#tabs button').forEach(b => b.onclick = () => go(b.dataset.v));
+$$('#tabs button').forEach(b => b.onclick = () => go(b.dataset.v, b.dataset.v === 'vGame' ? 'vGameList' : undefined));
+// 賭博の一覧
+const GAME_LIST = [
+  ['vRace', '🏇', '競馬', '毎日16:30〜20:30（毎晩20:30はメインレース）。みんなで同じレースに賭ける、いちばんの目玉'],
+  ['vSlot', '7', 'スロット', '絵柄を3つそろえて当たり'],
+  ['vBj', '♠', 'ブラックジャック', 'カードの合計を21に近づけて、ディーラーと勝負'],
+  ['vRou', '◎', 'ルーレット', '数字や色に賭けて、玉の止まる場所を当てる'],
+  ['vHilo', '↕', 'ハイ＆ロー', '次のカードが上か下か。当てるたびに倍率アップ、好きなときに受け取れる'],
+];
+$('#gameList').innerHTML = GAME_LIST.filter(g => g[0] !== 'vRace' || RACE_ON).map(g => `<div class="game-row" data-g="${g[0]}">
+  <span class="ic">${g[1]}</span><span class="nm"><b>${g[2]}</b><small>${g[3]}</small></span><span class="go">›</span></div>`).join('');
+$$('#gameList [data-g]').forEach(r => r.onclick = () => go(r.dataset.g));
+$('#passSave').onclick = async () => {
+  const pw = $('#newPass').value; if (pw.length < 6) return toast('6文字以上にしてください');
+  if (!sb) return toast('この画面ではパスワードを変えられません');
+  const { error } = await sb.auth.updateUser({ password: pw });
+  if (error) return toast('エラー：' + error.message);
+  $('#newPass').value = ''; toast('パスワードを決めました。次からはパスワードでログインできます');
+};
 $('#logout').onclick = async () => { if (sb) await sb.auth.signOut(); location.reload(); };
 
 /* =================================================================
