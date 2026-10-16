@@ -1007,12 +1007,14 @@ end $$;
 --           重賞・オープン JRAと同じ（80/77.5/75/72.5%）　G1 85/82.5/80/77.5%
 -- ---------------------------------------------------------------------
 insert into public.keiba_venues(id, name, turn, straight, slope, circuit, front, turf_d, dirt_d) values
-  (1, '白浜',           '右', 290, false, 1600,  1.5, '{1200,1500,1800,2000,2600}', '{1000,1700}'),
-  (2, '風見',           '左', 360, false, 1800,  0.3, '{1400,1600,1800,2000,2400}', '{1300,1600,2100}'),
-  (3, '月影',           '右', 330, true,  1700,  0.6, '{1200,1600,2000,2200,2500}', '{1200,1800}'),
-  (4, '銀杏',           '左', 470, false, 2000, -0.8, '{1400,1600,1800,2000,2400,3200}', '{1400,1800,1900}'),
-  (5, 'アイリナックス', '左', 525, false, 2100, -1.0, '{1600,2000,2400}', '{1600,2100}')
-on conflict (id) do nothing;
+  -- 16:30 中京 / 17:30 京都 / 18:30 府中 / 19:30 京都 / 20:30 府中（メイン）
+  (1, '中京', '左', 412, true,  1705,  0.3, '{1200,1400,1600,2000,2200}', '{1200,1400,1800,1900}'),
+  (2, '京都', '右', 404, true,  1894,  0.1, '{1200,1400,1600,1800,2000,2200,2400,3000,3200}', '{1200,1400,1800,1900}'),
+  (3, '府中', '左', 525, true,  2083, -1.0, '{1400,1600,1800,2000,2400}', '{1300,1400,1600,2100}'),
+  (4, '京都', '右', 404, true,  1894,  0.1, '{1200,1400,1600,1800,2000,2200,2400,3000,3200}', '{1200,1400,1800,1900}'),
+  (5, '府中', '左', 525, true,  2083, -1.0, '{1600,2000,2400}', '{1600,2100}')
+on conflict (id) do update set name = excluded.name, turn = excluded.turn, straight = excluded.straight,
+  slope = excluded.slope, circuit = excluded.circuit, front = excluded.front, turf_d = excluded.turf_d, dirt_d = excluded.dirt_d;
 
 insert into public.keiba_jockeys(id, name, skill) values
   (1,'早瀬',68),(2,'桐生',66),(3,'浅見',63),(4,'葛城',62),(5,'御堂',61),(6,'神楽',60),(7,'R.ベルナール',67),
@@ -1023,10 +1025,10 @@ on conflict (id) do nothing;
 
 insert into public.keiba_names(kind, idx, name, grade, surface, dist, cond, handicap) values
   ('g1', 0, '白浜スプリントカップ',     'G1', '芝', 1200, '3up', false),
-  ('g1', 1, 'アイリナックスダービー',   'G1', '芝', 2400, '3yo', false),
+  ('g1', 1, 'AiliNaXダービー',   'G1', '芝', 2400, '3yo', false),
   ('g1', 2, '風見マイルチャンピオン',   'G1', '芝', 1600, '3up', false),
   ('g1', 3, '銀杏ダートクラシック',     'G1', 'ダ', 2000, '3up', false),
-  ('g1', 4, 'アイリナックスグランプリ', 'G1', '芝', 2500, '3up', false),
+  ('g1', 4, 'AiliNaXグランプリ', 'G1', '芝', 2500, '3up', false),
   ('sat', 0, '月影記念',             'G2', '芝', 2000, '3up', false),
   ('sat', 1, '風見ステークス',       'G3', '芝', 1400, '3up', false),
   ('sat', 2, '白浜杯',               'G3', 'ダ', 1800, '3up', false),
@@ -1038,6 +1040,9 @@ insert into public.keiba_names(kind, idx, name, grade, surface, dist, cond, hand
   ('wd', 4, '白雲ステークス', 'L', '芝', 2000, '3up', false),
   ('wd', 5, '宵月特別',     'OP', 'ダ', 1600, '3up', false)
 on conflict (kind, idx) do nothing;
+-- カタカナの「アイリナックス」はやめて AiliNaX に
+update public.keiba_names set name = replace(name, 'アイリナックス', 'AiliNaX') where name like '%アイリナックス%';
+update public.keiba_races set name = replace(name, 'アイリナックス', 'AiliNaX') where name like '%アイリナックス%';
 
 -- 小さな道具
 create or replace function public._kb_norm() returns numeric
