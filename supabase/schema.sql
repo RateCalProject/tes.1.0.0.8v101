@@ -948,14 +948,17 @@ end $$;
 
 -- 所持金（残高＋遊んでいる途中の賭け金）
 create or replace function public._assets(u uuid) returns bigint
-language sql stable set search_path = public as $$
-  select coalesce((select balance from profiles where id = u), 0)
+language plpgsql stable set search_path = public as $$
+begin
+  return coalesce((select balance from profiles where id = u), 0)
+       + coalesce((select sum(locked) from stock_orders where user_id = u and side = 'buy' and status = 'open'), 0)
+       + coalesce((select sum(remain) from fx_orders where user_id = u and side = 'sell' and status = 'open'), 0)
        + coalesce((select bet from hilo_games where user_id = u), 0)
        + coalesce((select bet from bj_games where user_id = u), 0)
        + coalesce((select sum(amount) from keiba_tickets where user_id = u and payout is null), 0)
        + coalesce((select sum(balance) from bank_accounts where user_id = u), 0)
-       + coalesce((select sum(balance) from companies where owner = u and status in ('active', 'suspended')), 0)
-$$;
+       + coalesce((select sum(balance) from companies where owner = u and status in ('active', 'suspended')), 0);
+end $$;
 
 -- 1か月分を締める（税務調査・無申告の決定・延滞金・差し押さえ・没収・給付金）
 create or replace function public._process_month(m int) returns void
@@ -1040,6 +1043,7 @@ begin
 
   -- 期限までに納められていない分は、残高から差し押さえ
   for r in select * from tax_returns where month = m and tax_due > tax_paid loop
+    perform _unlock_orders(r.user_id, '差し押さえ');
     got := _pay_tax(r.user_id, _bal(r.user_id), true, 'garnish');
     if got > 0 then
       perform _notice(r.user_id, format('未納の税金として、残高から %s を差し押さえました。', _fmt(got)));
@@ -1051,6 +1055,7 @@ begin
 
   -- 悪質なごまかし：税を納めたあとの残高の7割を没収（国庫へ）
   for r in select * from tax_returns where month = m and malicious loop
+    perform _unlock_orders(r.user_id, '没収');
     amt := floor(_bal(r.user_id) * 0.70);
     if amt > 0 then
       update profiles set balance = balance - amt where id = r.user_id;
@@ -2368,6 +2373,58 @@ alter table public.companies add column if not exists industries text[]  not nul
 alter table public.companies add column if not exists servers    jsonb   not null default '[]'::jsonb;  -- ゲーム・Discordのサーバー（5つまで）
 alter table public.companies add column if not exists desk_on    boolean not null default true;         -- 窓口で相談を受け付ける
 alter table public.companies add column if not exists desk_note  text    not null default '';           -- 窓口の案内（受付時間など）
+-- 上場（くわしくは下の「上場と株の売買」）：上場しているか・株の注文と取引・上場の申請
+alter table public.companies add column if not exists listed    boolean not null default false;
+alter table public.companies add column if not exists listed_at timestamptz;
+create table if not exists public.stock_orders (
+  id         bigserial primary key,
+  company_id int  not null references public.companies(id) on delete cascade,   -- 株の会社
+  exch_id    int  references public.companies(id) on delete set null,           -- 取引所（国営）
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  side       text not null check (side in ('buy', 'sell')),
+  price      bigint not null check (price > 0),                                 -- 1株あたりの X
+  qty        bigint not null check (qty > 0),
+  remain     bigint not null check (remain >= 0),
+  locked     bigint not null default 0,                                         -- 買い：まだ預かっている X（手数料こみ）
+  fee_pct    numeric not null default 0,                                        -- 注文したときの手数料（%）
+  status     text not null default 'open',                                      -- open / done / canceled
+  created_at timestamptz not null default now()
+);
+create table if not exists public.stock_trades (
+  id         bigserial primary key,
+  company_id int  not null references public.companies(id) on delete cascade,
+  exch_id    int  references public.companies(id) on delete set null,
+  buy_order  bigint not null,
+  sell_order bigint not null,
+  buyer      uuid not null references public.profiles(id) on delete cascade,
+  seller     uuid not null references public.profiles(id) on delete cascade,
+  price      bigint not null,
+  qty        bigint not null,
+  value      bigint not null,
+  fee_buy    bigint not null default 0,
+  fee_sell   bigint not null default 0,
+  created_at timestamptz not null default now()
+);
+create table if not exists public.stock_list_apps (
+  id         bigserial primary key,
+  company_id int  not null references public.companies(id) on delete cascade,
+  owner      uuid references public.profiles(id) on delete set null,
+  note       text not null default '',
+  status     text not null default 'pending' check (status in ('pending', 'approved', 'rejected', 'withdrawn')),
+  reason     text,
+  decided_by uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now(),
+  decided_at timestamptz
+);
+create index if not exists stock_orders_book_idx on public.stock_orders(company_id, side, status, price, id);
+create index if not exists stock_orders_user_idx on public.stock_orders(user_id, status);
+create index if not exists stock_trades_corp_idx on public.stock_trades(company_id, id desc);
+create index if not exists stock_trades_time_idx on public.stock_trades(created_at);
+create index if not exists stock_list_apps_corp_idx on public.stock_list_apps(company_id, status);
+alter table public.stock_orders enable row level security;
+alter table public.stock_trades enable row level security;
+alter table public.stock_list_apps enable row level security;
+revoke all on public.stock_orders, public.stock_trades, public.stock_list_apps from anon, authenticated;
 
 -- 企業の評価（くわしくは下の「企業の評価」）：評価の表と、会社の平均
 create table if not exists public.corp_reviews (
@@ -2407,6 +2464,8 @@ language sql stable set search_path = public as $$
     'servers', case when c.status in ('active', 'suspended') then c.servers else '[]'::jsonb end,
     'desk_on', c.desk_on and c.status in ('active', 'suspended'),
     'desk_note', case when c.status in ('active', 'suspended') then c.desk_note else '' end,
+    'listed', c.listed and c.status in ('active', 'suspended'),
+    'price', case when c.listed then (select price from stock_trades where company_id = c.id order by id desc limit 1) end,
     'mine', c.owner = u)
 $$;
 
@@ -2618,6 +2677,10 @@ begin
       'rating', _corp_rating(c.id),
       'cert_until', case when c.status = 'active' and c.cert_until > _now() then _dlabel(c.cert_until) end,
       'industries', c.industries, 'servers', c.servers, 'desk_on', c.desk_on, 'desk_note', c.desk_note,
+      'listed', c.listed, 'listed_at', _dlabel(c.listed_at),
+      'price', case when c.listed then (select price from stock_trades t where t.company_id = c.id order by t.id desc limit 1) end,
+      'list_app', (select jsonb_build_object('status', a.status, 'reason', a.reason, 'note', a.note, 'at', _dlabel(a.created_at))
+                     from stock_list_apps a where a.company_id = c.id order by a.id desc limit 1),
       'desk_unread', _desk_unread(c.id), 'desk_open', (select count(*) from desk_threads t where t.company_id = c.id and t.status = 'open'),
       'owed', (select coalesce(sum(price), 0) from corp_orders where company_id = c.id and status = 'paid'),
       'items', (select coalesce(jsonb_agg(jsonb_build_object('id', i.id, 'name', i.name, 'price', i.price,
@@ -2968,6 +3031,11 @@ begin
                      'ca', case when rl = 'admin' then p.ca end, 'at', _dlabel(r.created_at)) order by r.id), '[]'::jsonb)
                      from fx_requests r join profiles p on p.id = r.user_id where r.status = 'pending'),
     'cases', (select coalesce(jsonb_agg(_case_json(cc, u) order by cc.id), '[]'::jsonb) from court_cases cc where cc.status = 'open'),
+    'list_apps', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'cid_full', _cfull(c), 'name', c.name, 'owner', p.nickname, 'owner_id', p.account_no,
+                    'owner_badge', _badge(p.id), 'mine', c.owner = u, 'shares', c.shares, 'holders', (select count(*) from _holdings(c.id)),
+                    'rating', _corp_rating(c.id), 'note', a.note, 'at', _dlabel(a.created_at), 'since', _dlabel(c.decided_at)) order by a.id), '[]'::jsonb)
+                    from stock_list_apps a join companies c on c.id = a.company_id join profiles p on p.id = c.owner where a.status = 'pending'),
+    'listed', _stock_list(),
     'fee_pct', _fx_fee_pct());
   if rl = 'admin' then
     r := r || jsonb_build_object(
@@ -2975,6 +3043,8 @@ begin
       'supply', (select coalesce(sum(balance), 0) from profiles),
       'corp_money', (select coalesce(sum(balance), 0) from companies),
       'bank_money', (select coalesce(sum(balance), 0) from bank_accounts),
+      'order_money', (select coalesce(sum(locked), 0) from stock_orders where side = 'buy' and status = 'open')
+                     + (select coalesce(sum(remain), 0) from fx_orders where side = 'sell' and status = 'open'),
       'ca_total', (select coalesce(sum(ca), 0) from profiles) + (select coalesce(sum(ca), 0) from companies)
                   + (select coalesce(sum(locked), 0) from fx_orders where side = 'buy' and status = 'open')
                   + (select coalesce(sum(amount), 0) from fx_requests where kind = 'out' and status = 'pending'),
@@ -3155,6 +3225,10 @@ create table if not exists public.corp_holders (
 );
 alter table public.corp_holders enable row level security;
 revoke all on public.corp_holders from anon, authenticated;
+-- 全部ゆずる・全部売るとき、いったん0になってから行を消すので、0までは許す
+alter table public.corp_holders drop constraint if exists corp_holders_shares_check;
+alter table public.corp_holders add constraint corp_holders_shares_check check (shares >= 0);
+delete from public.corp_holders where shares = 0;
 -- 株主がいない活動中の会社は、社長が全部持っていることにする
 insert into public.corp_holders(company_id, user_id, shares)
 select c.id, c.owner, c.shares from public.companies c
@@ -3162,10 +3236,23 @@ select c.id, c.owner, c.shares from public.companies c
 
 create or replace function public._corp_holders(cid_int int) returns jsonb
 language sql stable set search_path = public as $$
-  select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id), 'shares', h.shares,
-           'pct', round(h.shares * 100.0 / greatest(c.shares, 1), 2)) order by h.shares desc, p.nickname), '[]'::jsonb)
-    from corp_holders h join profiles p on p.id = h.user_id join companies c on c.id = h.company_id
-   where h.company_id = cid_int
+  select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id), 'shares', h.n,
+           'pct', round(h.n * 100.0 / greatest(c.shares, 1), 2)) order by h.n desc, p.nickname), '[]'::jsonb)
+    from (select user_id, sum(n)::bigint n, sum(s)::bigint s from (
+            select user_id, shares n, 0 s from corp_holders where company_id = cid_int
+            union all
+            select user_id, remain, remain from stock_orders where company_id = cid_int and side = 'sell' and status = 'open') y
+          group by user_id) h
+    join profiles p on p.id = h.user_id join companies c on c.id = cid_int
+$$;
+-- 持ち株（売り注文に出している分もふくめる）。配当・分配に使う
+create or replace function public._holdings(cid_int int) returns table(user_id uuid, shares bigint)
+language sql stable set search_path = public as $$
+  select user_id, sum(n)::bigint from (
+    select user_id, shares n from corp_holders where company_id = cid_int
+    union all
+    select user_id, remain from stock_orders where company_id = cid_int and side = 'sell' and status = 'open') y
+  group by user_id
 $$;
 
 create or replace function public._add_shares(cid_int int, u uuid, n bigint) returns void
@@ -3184,6 +3271,7 @@ begin
   if (select official from companies where cid = _cid_norm(p_cid)) then raise exception '国営の会社には株がありません'; end if;
   c := _my_corp(u, p_cid);
   if c.status not in ('active', 'suspended') then raise exception 'この会社はいま動かせません（審査中・廃業など）'; end if;
+  if c.listed then raise exception '上場している会社は、発行株数を変えられません（株主を守るため）'; end if;
   if p_delta is null or p_delta = 0 then raise exception 'ふやす・へらす数を入れてください'; end if;
   if c.shares + p_delta < 1 or c.shares + p_delta > 1000000000 then raise exception '発行株数は1〜10億にしてください'; end if;
   if p_delta < 0 then
@@ -3229,11 +3317,17 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me();
 begin
   return jsonb_build_object('stocks', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'form', c.form, 'status', c.status,
-           'shares', h.shares, 'total', c.shares, 'pct', round(h.shares * 100.0 / greatest(c.shares, 1), 2),
+           'shares', coalesce(h.shares, 0), 'total', c.shares, 'pct', round((coalesce(h.shares, 0) + h.on_sale) * 100.0 / greatest(c.shares, 1), 2),
+           'on_sale', h.on_sale, 'listed', c.listed,
+           'price', case when c.listed then (select price from stock_trades t where t.company_id = c.id order by t.id desc limit 1) end,
            'owner', (select nickname from profiles where id = c.owner), 'mine', c.owner = u,
            'dividend_total', (select coalesce(sum(payout), 0) from tx_log where user_id = u and game = 'dividend' and detail->>'company_id' = c.id::text))
            order by c.name), '[]'::jsonb)
-         from corp_holders h join companies c on c.id = h.company_id where h.user_id = u and c.status in ('active', 'suspended')),
+         from (select company_id, sum(n)::bigint shares, sum(s)::bigint on_sale from (
+                 select company_id, shares n, 0 s from corp_holders where user_id = u
+                 union all
+                 select company_id, 0, remain from stock_orders where user_id = u and side = 'sell' and status = 'open') y group by company_id) h
+         join companies c on c.id = h.company_id where c.status in ('active', 'suspended')),
     'offers_in', (select coalesce(jsonb_agg(_offer_json(o) order by o.id desc), '[]'::jsonb) from share_offers o where o.to_user = u and o.status = 'open'),
     'offers_out', (select coalesce(jsonb_agg(_offer_json(o) order by o.id desc), '[]'::jsonb) from (
                     select * from share_offers where from_user = u order by (status = 'open') desc, id desc limit 20) o),
@@ -3249,7 +3343,7 @@ begin
   c := _my_corp(u, p_cid);
   if c.status not in ('active', 'suspended') then raise exception 'この会社はいま動かせません（審査中・廃業など）'; end if;
   if p_amount is null or p_amount < 1 or p_amount > c.balance then raise exception '配当に使えるのは会社のお金 % X までです', c.balance; end if;
-  for h in select * from corp_holders where company_id = c.id loop
+  for h in select * from _holdings(c.id) loop
     amt := floor(p_amount::numeric * h.shares / c.shares);
     if amt > 0 then
       perform _give(h.user_id, amt);
@@ -3598,7 +3692,7 @@ language plpgsql security definer set search_path = public as $$
 begin
   perform _me();
   return jsonb_build_object('exchanges', _fx_exchanges(),
-    'fx', (select _fx_market(c.id) from _fx_pick(null) c where c.id is not null), 'stocks', '[]'::jsonb);
+    'fx', (select _fx_market(c.id) from _fx_pick(null) c where c.id is not null), 'stocks', _stock_list());
 end $$;
 
 -- 取引所の画面（相場＋自分の残高・注文・交換申請）
@@ -3910,6 +4004,12 @@ begin
   end loop;
   -- 取引所なら、出ている注文を全部取り消して返す
   for r in select id from fx_orders where exch_id = c.id and status = 'open' loop perform _fx_cancel_order(r.id); end loop;
+  update stock_list_apps set status = 'withdrawn', decided_at = _now() where company_id = c.id and status = 'pending';
+  -- 上場していれば上場廃止（株の注文を取り消して、株と預かったお金を返す）
+  if c.listed or exists (select 1 from stock_orders where company_id = c.id and status = 'open') then
+    perform pg_advisory_xact_lock(7400, c.id);
+    perform _stock_delist(c.id, label || 'のため');
+  end if;
   -- 請求・求人・社員
   update invoices set status = 'canceled', done_at = _now() where status = 'open' and (from_comp = c.id or to_comp = c.id);
   update corp_jobs set active = false where company_id = c.id;
@@ -8361,6 +8461,295 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
+-- 上場と株の売買
+--   株式会社（国営はのぞく）の社長が上場を申請し、管理者・副管理者が審査する
+--   上場した株は、国営の風の芽証券取引所の板で X で売り買いする（指値。値段は1株あたりの X・整数）
+--   約定の値段は、先に出ていた注文の値段。自分の注文どうしは合わせない（自分の注文とぶつかる値段は出せない）
+--   手数料は取引所の手数料（%）を、買う人・売る人の両方から X で（切り捨て）。取引所のお金になる
+--   登録から7日たってから。買うのは税金の滞納がないとき。出せる注文は30件まで
+--   会社か取引所が休業中は売買停止（取り消しはできる）。上場廃止・廃業・倒産では、注文を取り消して返す
+--   上場している会社は、発行株数を変えられない（株主を守るため）
+-- ---------------------------------------------------------------------
+-- 国営の取引所
+create or replace function public._stock_exch() returns companies
+language sql stable set search_path = public as $$
+  select * from companies where cid = (select value from app_settings where key = 'exchange_cid') and official limit 1
+$$;
+
+-- 1つの株の相場（だれが売り買いしたかは出さない）
+create or replace function public._stock_market(cid_int int) returns jsonb
+language sql stable set search_path = public as $$
+  select jsonb_build_object(
+    'last', (select price from stock_trades where company_id = cid_int order by id desc limit 1),
+    'prev', (select price from stock_trades where company_id = cid_int and created_at <= _now() - interval '1 day' order by id desc limit 1),
+    'first', (select price from stock_trades where company_id = cid_int and created_at > _now() - interval '1 day' order by id limit 1),
+    'bid', (select max(price) from stock_orders where company_id = cid_int and side = 'buy' and status = 'open'),
+    'ask', (select min(price) from stock_orders where company_id = cid_int and side = 'sell' and status = 'open'),
+    'vol', (select coalesce(sum(qty), 0) from stock_trades where company_id = cid_int and created_at > _now() - interval '1 day'),
+    'bids', (select coalesce(jsonb_agg(jsonb_build_object('price', price, 'qty', q) order by price desc), '[]'::jsonb) from (
+              select price, sum(remain) q from stock_orders where company_id = cid_int and side = 'buy' and status = 'open' group by price order by price desc limit 8) z),
+    'asks', (select coalesce(jsonb_agg(jsonb_build_object('price', price, 'qty', q) order by price), '[]'::jsonb) from (
+              select price, sum(remain) q from stock_orders where company_id = cid_int and side = 'sell' and status = 'open' group by price order by price limit 8) z),
+    'trades', (select coalesce(jsonb_agg(jsonb_build_object('price', price, 'qty', qty, 'ts', _kb_ms(created_at)) order by id desc), '[]'::jsonb) from (
+              select * from stock_trades where company_id = cid_int order by id desc limit 20) z),
+    'chart', (select coalesce(jsonb_agg(jsonb_build_object('price', price, 'ts', _kb_ms(created_at)) order by id), '[]'::jsonb) from (
+              select * from stock_trades where company_id = cid_int order by id desc limit 100) z),
+    'shares', (select shares from companies where id = cid_int))
+$$;
+
+-- 上場している株の一覧（相場・取引所に出す）
+create or replace function public._stock_list() returns jsonb
+language sql stable set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'status', c.status, 'shares', c.shares,
+           'listed_at', _dlabel(c.listed_at), 'last', z.last, 'prev', z.prev, 'first', z.first, 'vol', z.vol,
+           'bid', (select max(price) from stock_orders where company_id = c.id and side = 'buy' and status = 'open'),
+           'ask', (select min(price) from stock_orders where company_id = c.id and side = 'sell' and status = 'open'),
+           'cap', z.last * c.shares) order by z.vol desc, c.name), '[]'::jsonb)
+    from companies c
+    cross join lateral (select
+      (select price from stock_trades where company_id = c.id order by id desc limit 1) as last,
+      (select price from stock_trades where company_id = c.id and created_at <= _now() - interval '1 day' order by id desc limit 1) as prev,
+      (select price from stock_trades where company_id = c.id and created_at > _now() - interval '1 day' order by id limit 1) as first,
+      (select coalesce(sum(qty), 0) from stock_trades where company_id = c.id and created_at > _now() - interval '1 day') as vol) z
+   where c.listed and c.status in ('active', 'suspended')
+$$;
+
+create or replace function public.stock_list() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare ex companies := _stock_exch();
+begin
+  perform _me();
+  return jsonb_build_object('stocks', _stock_list(), 'exch', case when ex.id is null then null
+           else jsonb_build_object('cid', ex.cid, 'name', ex.name, 'open', ex.status = 'active', 'fee_pct', ex.fx_fee) end);
+end $$;
+
+-- 1つの株の画面（相場＋自分の持ち株・注文）
+create or replace function public.stock_state(p_cid text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies; ex companies := _stock_exch(); me profiles;
+begin
+  select * into c from companies where cid = _cid_norm(p_cid);
+  if not found or c.status not in ('active', 'suspended') or not (c.listed or exists (select 1 from stock_trades where company_id = c.id)) then
+    raise exception 'その会社は上場していません';
+  end if;
+  select * into me from profiles where id = u;
+  return jsonb_build_object('cid', c.cid, 'name', c.name, 'status', c.status, 'listed', c.listed, 'listed_at', _dlabel(c.listed_at),
+    'market', _stock_market(c.id),
+    'exch', case when ex.id is null then null else jsonb_build_object('cid', ex.cid, 'name', ex.name, 'open', ex.status = 'active', 'fee_pct', ex.fx_fee) end,
+    'can_trade', c.listed and c.status = 'active' and ex.id is not null and ex.status = 'active',
+    'shares_mine', coalesce((select shares from corp_holders where company_id = c.id and user_id = u), 0),
+    'on_sale', (select coalesce(sum(remain), 0) from stock_orders where company_id = c.id and user_id = u and side = 'sell' and status = 'open'),
+    'orders', (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'side', side, 'price', price, 'qty', qty, 'remain', remain,
+                 'status', status, 'at', _dlabel(created_at), 'time', to_char(created_at at time zone 'Asia/Tokyo', 'HH24:MI'))
+                 order by (status = 'open') desc, id desc), '[]'::jsonb)
+               from (select * from stock_orders where company_id = c.id and user_id = u order by (status = 'open') desc, id desc limit 30) z),
+    'ok_from', case when _now() < me.created_at + interval '7 days' then _dlabel(me.created_at + interval '7 days') end,
+    'debt', _debt(u) > 0,
+    'balance', _bal(u));
+end $$;
+
+-- 注文を1つ取り消して、預けたものを返す（中で使う）
+create or replace function public._stock_cancel_order(oid bigint) returns void
+language plpgsql set search_path = public as $$
+declare o stock_orders;
+begin
+  select * into o from stock_orders where id = oid and status = 'open' for update;
+  if not found then return; end if;
+  update stock_orders set status = 'canceled', locked = 0 where id = o.id;
+  if o.side = 'buy' then update profiles set balance = balance + o.locked where id = o.user_id;
+  else perform _add_shares(o.company_id, o.user_id, o.remain); end if;
+end $$;
+
+-- 株の注文（買い：X を手数料こみで預ける／売り：株を預ける）。合う注文があれば、すぐ約定する
+create or replace function public.stock_order(p_cid text, p_side text, p_price bigint, p_qty bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies; ex companies; me profiles; o stock_orders; m stock_orders; bo stock_orders; so stock_orders;
+  q bigint; v bigint; fb bigint; fs bigint; lockamt bigint; have bigint; fee_tot bigint := 0;
+begin
+  if p_side not in ('buy', 'sell') then raise exception '買いか売りをえらんでください'; end if;
+  if p_price is null or p_price < 1 or p_price > 1000000000 then raise exception '値段は1株あたり1〜10億 X にしてください'; end if;
+  if p_qty is null or p_qty < 1 or p_qty > 1000000000 then raise exception '数量は1〜10億株にしてください'; end if;
+  -- 会社の行を先にロック（上場廃止・廃業の最中なら、終わるのを待ってから最新の状態で判断する）
+  select * into c from companies where cid = _cid_norm(p_cid) for key share;
+  if not found or not c.listed or c.status not in ('active', 'suspended') then raise exception 'その会社は上場していません'; end if;
+  if c.status <> 'active' then raise exception '「%」はいま休業中なので、売買は止まっています（取り消しはできます）', c.name; end if;
+  ex := _stock_exch();
+  if ex.id is null or ex.status <> 'active' then raise exception '取引所がいま開いていないので、注文できません'; end if;
+  perform pg_advisory_xact_lock(7400, c.id);            -- 同じ株の注文は1つずつ
+  select * into me from profiles where id = u for update;
+  if _now() < me.created_at + interval '7 days' then raise exception '登録から7日たつまで、株の売り買いはできません（%から）', _dlabel(me.created_at + interval '7 days'); end if;
+  if (select count(*) from stock_orders where user_id = u and status = 'open') >= 30 then raise exception '出せる株の注文は30件までです'; end if;
+  if p_side = 'buy' then
+    if exists (select 1 from stock_orders where company_id = c.id and user_id = u and side = 'sell' and status = 'open' and price <= p_price) then
+      raise exception '自分の売り注文と同じか高い値段の買い注文は出せません（先に売り注文を取り消してください）';
+    end if;
+    if _debt(u) > 0 then raise exception '税金の滞納があるので、株は買えません'; end if;
+    lockamt := p_price * p_qty + ceil(p_price * p_qty * ex.fx_fee / 100)::bigint;
+    update profiles set balance = balance - lockamt where id = u and balance >= lockamt;
+    if not found then raise exception 'AiliNaX が足りません（手数料をふくめて % X 必要です）', lockamt; end if;
+  else
+    if exists (select 1 from stock_orders where company_id = c.id and user_id = u and side = 'buy' and status = 'open' and price >= p_price) then
+      raise exception '自分の買い注文と同じか安い値段の売り注文は出せません（先に買い注文を取り消してください）';
+    end if;
+    select shares into have from corp_holders where company_id = c.id and user_id = u for update;
+    if coalesce(have, 0) < p_qty then raise exception '売れるのは持っている %株までです（売り注文中の株はのぞく）', coalesce(have, 0); end if;
+    update corp_holders set shares = shares - p_qty where company_id = c.id and user_id = u;
+    delete from corp_holders where company_id = c.id and user_id = u and shares <= 0;
+    lockamt := 0;
+  end if;
+  insert into stock_orders(company_id, exch_id, user_id, side, price, qty, remain, locked, fee_pct, created_at)
+  values (c.id, ex.id, u, p_side, p_price, p_qty, p_qty, lockamt, ex.fx_fee, _now()) returning * into o;
+  -- 反対側の注文と合わせる（値段の良い順・先に出た順）
+  loop
+    exit when o.remain = 0;
+    if o.side = 'buy' then
+      select * into m from stock_orders where company_id = c.id and side = 'sell' and status = 'open' and price <= o.price and user_id <> u
+       order by price, id limit 1 for update;
+    else
+      select * into m from stock_orders where company_id = c.id and side = 'buy' and status = 'open' and price >= o.price and user_id <> u
+       order by price desc, id limit 1 for update;
+    end if;
+    exit when not found;
+    q := least(o.remain, m.remain);
+    if o.side = 'buy' then bo := o; so := m; else bo := m; so := o; end if;
+    v := q * m.price;                                   -- 値段は先に出ていた注文（m）の値段
+    fb := floor(v * bo.fee_pct / 100); fs := floor(v * so.fee_pct / 100);
+    if v + fb > bo.locked then raise exception '預かりが足りません（内部エラー）'; end if;
+    update stock_orders set remain = remain - q, locked = locked - (v + fb), status = case when remain - q = 0 then 'done' else status end
+     where id = bo.id returning * into bo;
+    update stock_orders set remain = remain - q, status = case when remain - q = 0 then 'done' else status end
+     where id = so.id returning * into so;
+    perform _add_shares(c.id, bo.user_id, q);           -- 買った人に株
+    perform _give(so.user_id, v - fs);                  -- 売った人に X（手数料を引く）
+    insert into stock_trades(company_id, exch_id, buy_order, sell_order, buyer, seller, price, qty, value, fee_buy, fee_sell, created_at)
+    values (c.id, ex.id, bo.id, so.id, bo.user_id, so.user_id, m.price, q, v, fb, fs, _now());
+    perform _log(bo.user_id, 'share_buy', v + fb, 0, jsonb_build_object('company', c.name, 'shares', q, 'price', m.price, 'fee', fb, 'exchange', true));
+    perform _log(so.user_id, 'share_sell', 0, v - fs, jsonb_build_object('company', c.name, 'shares', q, 'price', m.price, 'fee', fs, 'exchange', true));
+    fee_tot := fee_tot + fb + fs;
+    if bo.remain = 0 and bo.locked > 0 then             -- 買い終わったら、あまった預かりを返す
+      update profiles set balance = balance + bo.locked where id = bo.user_id;
+      update stock_orders set locked = 0 where id = bo.id returning * into bo;
+    end if;
+    if m.id = bo.id and bo.status = 'done' then
+      perform _notice_l(bo.user_id, format('【株】「%s」の買い注文 #%s（%s株・1株 %s X）が全部約定しました。', c.name, bo.id, _fmt(bo.qty), _fmt(bo.price)),
+                        jsonb_build_object('go', 'stock', 'cid', c.cid), null);
+    elsif m.id = so.id and so.status = 'done' then
+      perform _notice_l(so.user_id, format('【株】「%s」の売り注文 #%s（%s株・1株 %s X）が全部約定しました。', c.name, so.id, _fmt(so.qty), _fmt(so.price)),
+                        jsonb_build_object('go', 'stock', 'cid', c.cid), null);
+    end if;
+    if o.side = 'buy' then o := bo; else o := so; end if;
+  end loop;
+  if fee_tot > 0 then perform _corp_move(ex.id, fee_tot, 'stock_fee', format('株の売買の手数料 %s X（%s）', _fmt(fee_tot), c.name)); end if;
+  return stock_state(c.cid);
+end $$;
+
+-- 注文を取り消す
+create or replace function public.stock_cancel(p_id bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); o stock_orders; cid_int int;
+begin
+  select company_id into cid_int from stock_orders where id = p_id and user_id = u and status = 'open';
+  if not found then raise exception '取り消せる注文が見つかりません'; end if;
+  perform 1 from companies where id = cid_int for key share;    -- 注文と同じ順番でロック
+  perform pg_advisory_xact_lock(7400, cid_int);
+  select * into o from stock_orders where id = p_id and user_id = u and status = 'open' for update;
+  if not found then raise exception '取り消せる注文が見つかりません'; end if;
+  perform _stock_cancel_order(o.id);
+  return stock_state((select cid from companies where id = o.company_id));
+end $$;
+
+-- 上場をやめる（中で使う）：注文を全部取り消して返し、知らせる
+create or replace function public._stock_delist(cid_int int, why text) returns void
+language plpgsql set search_path = public as $$
+declare c companies; r record;
+begin
+  select * into c from companies where id = cid_int;
+  for r in select * from stock_orders where company_id = cid_int and status = 'open' order by id loop
+    perform _stock_cancel_order(r.id);
+    perform _notice_l(r.user_id, format('【株】「%s」が上場廃止になったため、%s注文 #%s を取り消して、預けた%sを返しました。%s', c.name,
+                      case when r.side = 'buy' then '買い' else '売り' end, r.id, case when r.side = 'buy' then 'お金' else '株' end,
+                      coalesce('理由：' || why, '')), jsonb_build_object('go', 'stock', 'cid', c.cid), null);
+  end loop;
+  update companies set listed = false where id = cid_int;
+  update stock_list_apps set status = 'withdrawn', decided_at = _now() where company_id = cid_int and status = 'pending';
+end $$;
+
+-- 差し押さえ・没収の前に、AiliNaX を預けている注文（株の買い・通貨の売り）を取り消して残高にもどす
+create or replace function public._unlock_orders(u uuid, why text) returns int
+language plpgsql set search_path = public as $$
+declare r record; n int := 0;
+begin
+  for r in select id from stock_orders where user_id = u and side = 'buy' and status = 'open' order by id loop perform _stock_cancel_order(r.id); n := n + 1; end loop;
+  for r in select id from fx_orders where user_id = u and side = 'sell' and status = 'open' order by id loop perform _fx_cancel_order(r.id); n := n + 1; end loop;
+  if n > 0 then perform _notice(u, format('【%s】AiliNaX を預けていた注文 %s件を取り消して、残高にもどしました。', why, n)); end if;
+  return n;
+end $$;
+
+-- 社長：上場を申請する・取り下げる
+create or replace function public.stock_list_apply(p_cid text, p_note text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies;
+begin
+  c := _my_corp(u, p_cid);
+  if c.official then raise exception '国営の会社は上場できません'; end if;
+  if c.form <> '株式会社' then raise exception '上場できるのは株式会社だけです'; end if;
+  if c.status <> 'active' then raise exception '営業中の会社だけが申請できます'; end if;
+  if c.listed then raise exception 'もう上場しています'; end if;
+  if exists (select 1 from stock_list_apps where company_id = c.id and status = 'pending') then raise exception 'もう申請しています（審査をお待ちください）'; end if;
+  insert into stock_list_apps(company_id, owner, note, created_at) values (c.id, u, left(btrim(coalesce(p_note, '')), 500), _now());
+  return my_corps();
+end $$;
+
+create or replace function public.stock_list_withdraw(p_cid text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies;
+begin
+  c := _my_corp(u, p_cid);
+  update stock_list_apps set status = 'withdrawn', decided_at = _now() where company_id = c.id and status = 'pending';
+  if not found then raise exception '審査中の上場申請はありません'; end if;
+  return my_corps();
+end $$;
+
+-- 管理者・副管理者：上場の審査
+create or replace function public.admin_stock_decide(p_cid text, p_ok boolean, p_reason text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies; a stock_list_apps; why text := nullif(left(btrim(coalesce(p_reason, '')), 300), '');
+begin
+  if not _is_staff(u) then raise exception '管理者だけが使えます'; end if;
+  select * into c from companies where cid = _cid_norm(p_cid) for update;
+  if not found then raise exception '会社が見つかりません'; end if;
+  select * into a from stock_list_apps where company_id = c.id and status = 'pending' order by id desc limit 1 for update;
+  if not found then raise exception '審査中の上場申請が見つかりません'; end if;
+  if c.owner = u and _role(u) <> 'admin' then raise exception '自分の会社の申請は審査できません'; end if;
+  if p_ok then
+    if c.status <> 'active' or c.form <> '株式会社' or c.official then raise exception 'この会社はいま上場できません（休業中など）'; end if;
+    update companies set listed = true, listed_at = _now() where id = c.id;
+    update stock_list_apps set status = 'approved', reason = why, decided_by = u, decided_at = _now() where id = a.id;
+    perform _notice_l(c.owner, format('【上場】「%s」が風の芽証券取引所に上場しました。株は「企業 → 取引所」で売り買いできます。%s', c.name,
+                      coalesce('（' || why || '）', '')), jsonb_build_object('go', 'stock', 'cid', c.cid), u);
+  else
+    update stock_list_apps set status = 'rejected', reason = why, decided_by = u, decided_at = _now() where id = a.id;
+    perform _notice_l(c.owner, format('【上場】「%s」の上場申請は見送りになりました。%s', c.name, coalesce('理由：' || why, '')),
+                      jsonb_build_object('go', 'corp', 'cid', c.cid), u);
+  end if;
+  return admin_state();
+end $$;
+
+-- 管理者：上場廃止
+create or replace function public.admin_stock_delist(p_cid text, p_reason text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies; why text := nullif(left(btrim(coalesce(p_reason, '')), 300), '');
+begin
+  if _role(u) is distinct from 'admin' then raise exception '上場廃止は管理者だけができます'; end if;
+  select * into c from companies where cid = _cid_norm(p_cid) for update;
+  if not found or not c.listed then raise exception '上場している会社が見つかりません'; end if;
+  perform pg_advisory_xact_lock(7400, c.id);
+  perform _stock_delist(c.id, why);
+  perform _notice_l(c.owner, format('【上場】「%s」は上場廃止になりました。%s', c.name, coalesce('理由：' || why, '')), jsonb_build_object('go', 'corp', 'cid', c.cid), u);
+  return admin_state();
+end $$;
+
+-- ---------------------------------------------------------------------
 -- 実行権限：内部用（_ではじまる）は画面から呼べないようにする
 -- ---------------------------------------------------------------------
 do $$
@@ -8417,6 +8806,8 @@ begin
             '_ind_norm','corp_set_industries','_srv_norm','corp_set_servers','admin_corp_servers_clear',
             '_desk_staff','_desk_json','_desk_people','_desk_unread','desk_thread','desk_open','desk_send','desk_close','desk_list',
             'desk_settings','corp_member_desk','_user_row','admin_users','admin_user',
+            '_holdings','_stock_exch','_stock_market','_stock_list','_stock_cancel_order','_stock_delist','stock_list','stock_state',
+            'stock_order','stock_cancel','stock_list_apply','stock_list_withdraw','admin_stock_decide','admin_stock_delist','_unlock_orders',
             'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then

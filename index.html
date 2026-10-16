@@ -515,6 +515,11 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <p class="muted small" style="margin:8px 0 0">銀行の会社のページから口座を開けます（銀行によっては許可制）。利息は銀行が決めた1日あたりの％で、毎日つきます。お金を借りるのも銀行のページの「貸出パック」から。</p></div>
   <div class="card" data-sub="order"><h3 style="margin-top:0">買ったもの</h3><div id="odList"></div></div>
   <div class="card" data-sub="invest">
+    <h3 style="margin-top:0">株式（風の芽証券取引所）</h3>
+    <div id="stkList"></div>
+    <p class="muted small" style="margin:8px 0 0">上場している株式会社の株を、1株あたりの値段（X）で売り買いできます。会社を押すと、板と注文の画面が開きます。</p>
+  </div>
+  <div class="card" data-sub="invest">
     <h3 style="margin-top:0">取引所をえらぶ</h3>
     <div id="fxExList"></div>
     <p class="muted small" style="margin:6px 0 0">取引所ごとに注文の一覧（板）と手数料がちがいます。証券の会社なら、だれでも取引所を開けます（私営）。</p>
@@ -543,10 +548,6 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <input class="inp" id="fxContact" maxlength="120" placeholder="連絡先（Discord・公式サーバーのIDなど）">
     <button class="btn main wide" id="fxReq">交換を申請する</button>
     <h4 style="margin:12px 0 4px">自分の申請</h4><div id="fxReqs"></div>
-  </div>
-  <div class="card" data-sub="invest" style="text-align:center">
-    <h3 style="margin-top:0">株式（準備中）</h3>
-    <p class="muted small" style="margin:0">上場した株式会社の株を、風の芽証券取引所を通して売り買いできるようにする予定です。いまは「持ち株」から株をゆずれます。</p>
   </div>
   <div class="card" data-sub="stock"><h3 style="margin-top:0">持ち株</h3><div id="stList"></div>
     <p class="muted small" style="margin:8px 0 0">株（有限会社・合同会社は出資）を持っていると、会社が配当を出したとき、持ち分に合わせてもらえます。「ゆずる・売る」で代金をつけると、相手が払ったときに株が動きます（手数料1%は買う人。代金つきは登録7日から）。</p></div>
@@ -2171,6 +2172,7 @@ document.addEventListener('click', ev => {
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, () => toast(t)); else toast(t);
 }, true);
 const kindTag = c => (c.official ? '<span class="offtag">公式</span>' : '') + certTag(c) + (c.exchange ? '<span class="kindtag">取引所</span>' : c.kind === '銀行' ? '<span class="kindtag">銀行</span>' : c.kind === '証券' ? '<span class="kindtag">証券</span>' : '')
+  + (c.listed ? '<span class="kindtag">上場</span>' : '')
   + (c.status === 'suspended' ? '<span class="stag">休業中</span>' : c.status === 'bankrupt' ? '<span class="stag dead">倒産済み</span>' : c.status === 'closed' ? '<span class="stag dead">廃業済み</span>' : '')
   + (c.rating && c.rating.grade ? `<span class="gtag ${c.rating.grade === '優良企業' ? 'gold' : ''}">${c.rating.grade}</span>` : '');
 const starStr = n => '★'.repeat(n) + '☆'.repeat(5 - n);
@@ -2203,7 +2205,7 @@ async function corpLoad(sub) {
       $$('#bkList [data-lcancel]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); try { await call('loan_cancel', { p_loan: Number(b.dataset.lcancel) }); toast('取り消しました'); corpLoad('bank'); } catch (e) { toast(e.message); } });
     }
     if (sub === 'stock') await stockLoad();
-    if (sub === 'invest') await fxLoad();
+    if (sub === 'invest') await Promise.all([fxLoad(), stkListLoad()]);
     if (sub === 'order') {
       const d = await call('my_orders');
       $('#odList').innerHTML = d.length ? d.map(o => `<div class="co-row" data-cid="${o.cid}"><span class="nm"><b>${esc(o.item)}</b>
@@ -2260,6 +2262,8 @@ async function corpOpen(cid, ccOpen) {
     ${c.description ? `<p style="white-space:pre-wrap;margin:8px 0">${esc(c.description)}</p>` : ''}
     ${c.cert ? `<p class="small" style="margin:6px 0;color:#2B6FD6"><b>${CERT_SVG} サイトの認証を受けた会社です</b>（${c.cert_until}まで）</p>` : ''}
     <div class="small" style="margin:6px 0">評価：${ratingH(rt)}${rt.n ? `<span class="muted">　★5 ${rt.dist[4]}・★4 ${rt.dist[3]}・★3 ${rt.dist[2]}・★2 ${rt.dist[1]}・★1 ${rt.dist[0]}</span>` : ''}</div>
+    ${c.listed ? `<div class="row" style="margin:6px 0"><span class="small">株価 <b style="font-size:16px">${c.price != null ? fmt(c.price) + ' X' : '—'}</b>${c.price != null ? '' : '（まだ取引なし）'}・風の芽証券取引所に上場</span>
+      <button class="btn main s" data-stk="${c.cid}" style="margin-left:auto">株を売り買いする</button></div>` : ''}
     ${dead ? '' : `<div class="row" style="margin:8px 0"><button class="btn s" data-pin>${c.pinned ? '📌 ピン留めをやめる' : '📌 ピン留め'}</button>
       ${c.mine || c.status !== 'active' ? '' : '<button class="btn s" data-send>この会社に送金</button>'}
       ${c.desk_staff ? '<button class="btn s" data-dkinbox>💬 窓口をひらく（担当）</button>' : c.desk_on ? '<button class="btn main s" data-dknew>💬 窓口で相談</button>' : ''}</div>
@@ -2418,6 +2422,21 @@ function ownSections(c) {
       <button class="btn main s" data-act="desk_set">保存</button>
       <h4>相談</h4><div id="owDesk"><p class="muted small" style="margin:0">読みこみ中…</p></div>
       <p class="muted small" style="margin:6px 0 0">相談は、相談した人と会社（社長と窓口担当の社員）だけが見られます。社員を窓口担当にするのは「社員」から。受付を止めても、受付中の相談のやりとりは続けられます。</p>`]);
+  if (c.form === '株式会社' && !c.official) {
+    const la = c.list_app || {};
+    S.push(['list', '上場（株式）', c.listed ? `上場中${c.price != null ? '・株価 ' + fmt(c.price) + ' X' : ''}` : la.status === 'pending' ? '審査中' : 'まだ上場していません', 0, c.listed ? `
+      <p class="small" style="margin:0 0 6px">風の芽証券取引所に上場しています（${c.listed_at}から）。株価 <b>${c.price != null ? fmt(c.price) + ' X' : '—（まだ取引なし）'}</b>・発行 ${fmt(c.shares)}株</p>
+      <button class="btn main s" data-act="stk_open">株の板を見る</button>
+      <p class="muted small" style="margin:6px 0 0">上場中は発行株数を変えられません（株主を守るため）。持っている株は「企業 → 取引所」で売り買いできます。上場をやめるのは管理者が行います（窓口や訴えで相談してください）。</p>`
+      : la.status === 'pending' ? `
+      <p class="small" style="margin:0 0 6px">上場を申請しています（${la.at}）。管理者の審査をお待ちください。</p>
+      ${la.note ? `<p class="small muted" style="white-space:pre-wrap;margin:0 0 6px">${esc(la.note)}</p>` : ''}
+      <button class="btn s" data-act="list_withdraw">申請を取り下げる</button>` : `
+      ${la.status === 'rejected' ? `<p class="small" style="margin:0 0 6px">前回の申請（${la.at}）は見送りになりました。${la.reason ? '理由：' + esc(la.reason) : ''}</p>` : ''}
+      <p class="small" style="margin:0 0 6px">上場すると、会社の株を風の芽証券取引所でだれでも売り買いできるようになります（1株あたりの値段は X・手数料は取引所の手数料）。上場中は発行株数を変えられません。</p>
+      <textarea class="inp" rows="3" data-f="list_note" maxlength="500" placeholder="上場したい理由・会社の紹介（審査する人が読みます）"></textarea>
+      <button class="btn main s" data-act="list_apply">上場を申請する</button>`]);
+  }
   S.push(['items', '商品（購入ボタン）', `${c.items.length}個`, 0, `
       ${c.items.map(it => itemForm(it)).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
       <details class="ed"><summary>＋ 商品を追加</summary>${itemForm(null)}</details>`]);
@@ -2589,6 +2608,9 @@ $('#owCorp').onclick = async ev => {
   let r = null;
   try {
     if (a === 'save') r = await call('corp_update', { p_cid: cid, p_desc: f(card, 'desc'), p_rate: f(card, 'rate') === null ? null : Number(f(card, 'rate')) });
+    else if (a === 'list_apply') { if (!confirm('上場を申請します。管理者が審査します。よろしいですか？')) return; r = await call('stock_list_apply', { p_cid: cid, p_note: f(card, 'list_note') }); }
+    else if (a === 'list_withdraw') { if (!confirm('上場の申請を取り下げますか？')) return; r = await call('stock_list_withdraw', { p_cid: cid }); }
+    else if (a === 'stk_open') { stkOpen(cid); return; }
     else if (a === 'ind') { if (!OWip) return; const v = OWip.get(); if (!v.length) return toast('業種を1つ以上えらんでください'); r = await call('corp_set_industries', { p_cid: cid, p_inds: v }); }
     else if (a === 'srv_add') { srvEdRead(); if (OWsrv.list.length >= 5) return toast('サーバーは5つまでです'); OWsrv.list.push({ kind: 'discord', game: '', name: '', link: '', note: '' }); srvEdDraw(); return; }
     else if (a === 'srv_del') { srvEdRead(); OWsrv.list.splice(Number(b.dataset.i), 1); srvEdDraw(); return; }
@@ -2684,6 +2706,15 @@ async function adminLoad() {
           ${c.description ? `<p class="small" style="white-space:pre-wrap;margin:4px 0">${esc(c.description)}</p>` : ''}
           <div class="row"><button class="btn main s" data-ok="${c.cid}">許可</button><button class="btn s" data-ng="${c.cid}">却下</button></div></div>`).join('')
         : '<p class="muted small" style="margin:0">審査待ちはありません</p>'}
+      <h3>上場の審査</h3>
+      ${d.list_apps.length ? d.list_apps.map(a => `<div class="item"><div class="row"><b>${esc(a.name)}</b></div>
+          <p class="small muted" style="margin:4px 0">社長 ${nameB(a.owner, a.owner_badge)}（ID ${a.owner_id}）・申請 ${a.at}・会社の許可 ${a.since || '—'}・発行 ${fmt(a.shares)}株・株主 ${a.holders}人・評価 ${ratingH(a.rating || { n: 0 })}</p>
+          ${a.note ? `<p class="small" style="white-space:pre-wrap;margin:4px 0">${esc(a.note)}</p>` : ''}
+          <div class="row"><button class="btn main s" data-lok="${a.cid}">上場を許可</button><button class="btn s" data-lng="${a.cid}">見送る</button><button class="btn s" data-lco="${a.cid}">会社を見る</button></div></div>`).join('')
+        : '<p class="muted small" style="margin:0">審査待ちはありません</p>'}
+      <h3>上場している会社</h3>
+      ${d.listed.map(x => `<div class="line"><span class="grow">${esc(x.name)}${x.status === 'suspended' ? '<span class="stag">売買停止</span>' : ''}<small>株価 ${x.last != null ? fmt(x.last) + ' X' : '—'}・24時間 ${fmt(x.vol)}株・${x.listed_at}から</small></span>
+          <button class="btn s" data-stk="${x.cid}">板</button>${adm ? `<button class="btn s" data-delist="${x.cid}">上場廃止</button>` : ''}</div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
       <h3>訴えの審理</h3>
       ${d.cases.length ? d.cases.map(caseForm).join('') : '<p class="muted small" style="margin:0">審理中の訴えはありません</p>'}
       <h3>Cièlani-Nièpha との交換申請</h3>
@@ -2696,7 +2727,7 @@ async function adminLoad() {
       ${adm ? `<h3>国のお金（管理者だけに見えます）</h3>
       <div class="kv"><span>国庫</span><b>${fmt(t.balance)} X</b><span>発行</span><b>${fmt(t.issued_total)} X</b>
         <span>ユーザーの残高の合計</span><b>${fmt(d.supply)} X</b><span>会社のお金の合計</span><b>${fmt(d.corp_money)} X</b>
-        <span>銀行預金の合計</span><b>${fmt(d.bank_money)} X</b><span class="muted">カジノのもうけ</span><b>${fmt(t.casino_total)}</b>
+        <span>銀行預金の合計</span><b>${fmt(d.bank_money)} X</b><span>注文で預かっている X</span><b>${fmt(d.order_money)} X</b><span class="muted">カジノのもうけ</span><b>${fmt(t.casino_total)}</b>
         <span class="muted">税収</span><b>${fmt(t.tax_total)}</b><span class="muted">給付金</span><b>${fmt(t.benefit_total)}</b>
         <span class="muted">手数料・申請料</span><b>${fmt(t.fee_total)}</b><span class="muted">給料（仕事）</span><b>${fmt(t.wage_total)}</b>
         <span class="muted">没収・罰金</span><b>${fmt(t.confiscated_total)}</b></div>
@@ -2729,6 +2760,17 @@ async function adminLoad() {
       } catch (e) { toast(e.message); }
     });
     $$('#adminBox [data-certopen]').forEach(b => b.onclick = () => corpOpen(b.dataset.certopen, true));
+    $$('#adminBox [data-lco]').forEach(b => b.onclick = () => corpOpen(b.dataset.lco));
+    $$('#adminBox [data-lok], #adminBox [data-lng]').forEach(b => b.onclick = async () => {
+      const ok = !!b.dataset.lok, cid = b.dataset.lok || b.dataset.lng;
+      const why = prompt(ok ? '社長へのひとこと（なくてもOK）' : '見送る理由（社長に届きます）', ''); if (why === null) return;
+      try { await call('admin_stock_decide', { p_cid: cid, p_ok: ok, p_reason: why }); toast(ok ? '上場を許可しました' : '見送りました'); adminLoad(); } catch (e) { toast(e.message); }
+    });
+    $$('#adminBox [data-delist]').forEach(b => b.onclick = async () => {
+      const why = prompt('上場廃止の理由（社長と、注文を出していた人に届きます）', ''); if (why === null) return;
+      if (!confirm('上場廃止にしますか？出ている注文は全部取り消して返します。')) return;
+      try { await call('admin_stock_delist', { p_cid: b.dataset.delist, p_reason: why }); toast('上場廃止にしました'); adminLoad(); } catch (e) { toast(e.message); }
+    });
     $$('#adminBox [data-cact]').forEach(b => b.onclick = async () => {
       const a = b.dataset.cact, w = { suspend: '休業命令を出し', resume: '休業命令をとき', bankrupt: '倒産させ' }[a];
       const why = a === 'resume' ? '' : prompt(`${w}ます。理由（社長に届きます）`, ''); if (why === null) return;
@@ -2805,13 +2847,13 @@ $('#vInfo').addEventListener('click', async ev => {
    相場・取引所（AiliNaX ⇄ Cièlani-Alpićsk）
    ================================================================= */
 const CA_NAME = 'Cièlani-Alpićsk', CN_NAME = 'Cièlani-Nièpha';
-function fxChart(pts) {
+function fxChart(pts, unit) {
   if (pts.length < 2) return '<p class="muted small" style="margin:6px 0 0">グラフは取引が2回以上あると出ます</p>';
   const W = 320, H = 110, ps = pts.map(p => p.price), lo = Math.min(...ps), hi = Math.max(...ps), sp = hi - lo || 1;
   const xy = pts.map((p, i) => `${(i / (pts.length - 1) * (W - 8) + 4).toFixed(1)},${(H - 6 - (p.price - lo) / sp * (H - 22)).toFixed(1)}`).join(' ');
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;margin-top:8px">
     <polyline points="${xy}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/></svg>
-    <div class="row muted small" style="justify-content:space-between"><span>最近${pts.length}回の取引</span><span>高 ${fmtP(hi)}・安 ${fmtP(lo)} CA</span></div>`;
+    <div class="row muted small" style="justify-content:space-between"><span>最近${pts.length}回の取引</span><span>高 ${fmtP(hi)}・安 ${fmtP(lo)} ${unit || 'CA'}</span></div>`;
 }
 function fxSummary(m) {
   const base = m.prev ?? m.first, ch = m.last != null && base ? (m.last - base) / base * 100 : null;
@@ -2831,8 +2873,9 @@ async function mktLoad() {
       ${d.exchanges.length > 1 ? `<h4 style="margin:12px 0 4px">取引所ごとの値段</h4>` + d.exchanges.map(e => exRow(e, false)).join('') : ''}
       <p class="muted small" style="margin:8px 0 0">CA（${CA_NAME}）は ${CN_NAME}（風の芽公式サーバーの通貨）と同じ価値です。企業タブの「取引所」で売り買いできます${d.fx && d.fx.exchange ? `（上のグラフ：${esc(d.fx.exchange.name)}）` : ''}。</p>`;
     $$('#mktFx [data-fxex]').forEach(r => r.onclick = () => { fxEx = r.dataset.fxex; try { localStorage.setItem('fxEx', fxEx); } catch (e) {} go('vCorp', 'invest'); });
-    $('#mktStock').innerHTML = `<h3 style="margin-top:0">株価</h3>` + (d.stocks.length ? '' :
-      '<p class="muted small" style="margin:0">上場している会社はまだありません。株式の売り買いは、風の芽証券取引所で準備中です。</p>');
+    $('#mktStock').innerHTML = `<h3 style="margin-top:0">株価</h3>` + (d.stocks.length ? d.stocks.map(stkRow).join('')
+      + '<p class="muted small" style="margin:8px 0 0">押すと、板と注文の画面が開きます（企業タブの「取引所」からも）。</p>'
+      : '<p class="muted small" style="margin:0">上場している会社はまだありません。株式会社の社長は、企業ページの「上場」から申請できます。</p>');
   } catch (e) { toast(e.message); }
 }
 let FX = null, fxSide = 'buy', fxKind = 'in', fxEx = (() => { try { return localStorage.getItem('fxEx') || ''; } catch (e) { return ''; } })();
@@ -2898,6 +2941,107 @@ $('#vCorp').addEventListener('click', async ev => {
   } catch (e) { toast(e.message); }
 });
 
+/* ---------------- 株式（上場・売り買い） ---------------- */
+const chgH = (last, base) => { if (last == null || !base) return ''; const c = (last - base) / base * 100; return `<b style="color:${c >= 0 ? 'var(--win)' : 'var(--lose)'}">${c >= 0 ? '+' : ''}${c.toFixed(2)}%</b>`; };
+const stkRow = x => `<div class="co-row" data-stk="${x.cid}"><span class="nm"><b>${esc(x.name)}${x.status === 'suspended' ? '<span class="stag">売買停止</span>' : ''}</b>
+  <small>${x.last != null ? `時価総額 ${fmt(x.cap)} X・` : ''}24時間 ${fmt(x.vol)}株${x.last == null ? '・まだ取引がありません' : ''}</small></span>
+  <span style="text-align:right;white-space:nowrap"><b class="num">${x.last != null ? fmt(x.last) + ' X' : '—'}</b><br><small>${chgH(x.last, x.prev ?? x.first)}</small></span></div>`;
+async function stkListLoad() {
+  try {
+    const d = await call('stock_list');
+    $('#stkList').innerHTML = d.stocks.length ? d.stocks.map(stkRow).join('')
+      : '<p class="muted small" style="margin:0">上場している会社はまだありません。株式会社の社長は、企業ページの「上場」から申請できます。</p>';
+  } catch (e) { toast(e.message); }
+}
+document.addEventListener('click', ev => { const r = ev.target.closest('[data-stk]'); if (!r) return; ev.stopPropagation(); stkOpen(r.dataset.stk); }, true);
+const STK = { cid: null, d: null, side: 'buy', timer: null };
+async function stkOpen(cid) {
+  let d; try { d = await call('stock_state', { p_cid: cid }); } catch (e) { return toast(e.message); }
+  $$('.modal').forEach(m => m.remove()); clearTimeout(STK.timer);
+  STK.cid = d.cid; STK.d = d; STK.side = 'buy';
+  const m = document.createElement('div'); m.className = 'modal';
+  m.innerHTML = `<div class="sheet">
+    <div class="row"><b style="font-size:19px" class="grow">${esc(d.name)}<span class="kindtag">株式</span></b><button class="btn s" data-x>とじる</button></div>
+    <p class="small muted" style="margin:2px 0 6px"><a class="men" data-stkco>会社のページ</a>・風の芽証券取引所</p>
+    <div id="stkTop"></div>
+    <h4 style="margin:12px 0 4px">注文する</h4>
+    <div id="stkNote"></div>
+    <div class="seg" id="stkSide" style="margin-bottom:6px"><button data-k="buy" class="on">買う</button><button data-k="sell">売る</button></div>
+    <div class="row"><span class="small" style="width:6.5em">値段（1株）</span><input class="inp grow" id="stkPrice" type="number" inputmode="numeric" min="1" step="1" style="margin:0"><span class="small">X</span></div>
+    <div class="row"><span class="small" style="width:6.5em">数量</span><input class="inp grow" id="stkQty" type="number" inputmode="numeric" min="1" step="1" style="margin:0"><span class="small">株</span></div>
+    <p class="small" id="stkPrev" style="min-height:20px;margin:6px 0"></p>
+    <button class="btn main wide" id="stkGo">買い注文を出す</button>
+    <h4 style="margin:14px 0 4px">注文の一覧（板）</h4><div id="stkBook"></div>
+    <h4 style="margin:14px 0 4px">自分の注文</h4><div id="stkMine"></div>
+    <h4 style="margin:14px 0 4px">最近の取引</h4><div id="stkTrades"></div>
+    <p class="muted small" style="margin:10px 0 0">指値の注文です。値段の合う注文があればすぐ約定し（値段は先に出ていた注文の値段）、合わなければ残ります。取り消すと、預けたお金・株は戻ります。手数料は取引所の手数料（%）を、買う人・売る人の両方から X で払います。登録から7日たつと使えます。</p></div>`;
+  m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) { m.remove(); clearTimeout(STK.timer); STK.cid = null; } };
+  document.body.appendChild(m);
+  m.querySelector('[data-stkco]').onclick = () => corpOpen(STK.cid);
+  m.querySelectorAll('#stkSide button').forEach(b => b.onclick = () => { STK.side = b.dataset.k; m.querySelectorAll('#stkSide button').forEach(x => x.classList.toggle('on', x === b)); stkPrev(); });
+  m.querySelector('#stkPrice').oninput = stkPrev; m.querySelector('#stkQty').oninput = stkPrev;
+  m.querySelector('#stkGo').onclick = async () => {
+    const p = Math.floor(Number($('#stkPrice').value) || 0), q = Math.floor(Number($('#stkQty').value) || 0);
+    if (p < 1 || q < 1) return toast('値段と数量を入れてください');
+    if (!confirm(`${STK.side === 'buy' ? '買い' : '売り'}注文：${fmt(q)}株を1株 ${fmt(p)} X で出します。よろしいですか？`)) return;
+    try { STK.d = await call('stock_order', { p_cid: STK.cid, p_side: STK.side, p_price: p, p_qty: q }); setBal(STK.d.balance); $('#stkQty').value = ''; stkRender(); toast('注文しました'); }
+    catch (e) { toast(e.message); }
+  };
+  m.querySelector('#stkMine').onclick = async ev => {
+    const b = ev.target.closest('[data-stkc]'); if (!b) return;
+    if (!confirm('この注文を取り消しますか？（預けたお金・株は戻ります）')) return;
+    try { STK.d = await call('stock_cancel', { p_id: Number(b.dataset.stkc) }); setBal(STK.d.balance); stkRender(); toast('取り消しました'); } catch (e) { toast(e.message); }
+  };
+  const mk = d.market; if (mk.last ?? mk.ask ?? mk.bid) m.querySelector('#stkPrice').value = mk.last ?? mk.ask ?? mk.bid;
+  stkRender();
+  const cid0 = STK.cid;
+  const poll = async () => {
+    if (STK.cid !== cid0 || !document.body.contains(m)) return;
+    if (!document.hidden) { try { const n = await call('stock_state', { p_cid: cid0 }); if (STK.cid === cid0) { STK.d = n; stkRender(); } } catch (e) {} }
+    STK.timer = setTimeout(poll, 10000);
+  };
+  STK.timer = setTimeout(poll, 10000);
+}
+function stkRender() {
+  const d = STK.d, mk = d.market, fee = d.exch ? Number(d.exch.fee_pct) : 0;
+  $('#stkTop').innerHTML = `<div class="row" style="align-items:baseline;gap:8px"><span class="muted small">1株</span>
+      <b style="font-size:28px">${mk.last != null ? fmt(mk.last) : '—'}</b><span class="muted small">X</span>
+      <span style="margin-left:auto">${chgH(mk.last, mk.prev ?? mk.first)}</span></div>
+    <div class="kv" style="margin-top:6px"><span class="muted">買い（いちばん高い）</span><b>${mk.bid != null ? fmt(mk.bid) + ' X' : '—'}</b>
+      <span class="muted">売り（いちばん安い）</span><b>${mk.ask != null ? fmt(mk.ask) + ' X' : '—'}</b>
+      <span class="muted">24時間の出来高</span><b>${fmt(mk.vol)}株</b>
+      <span class="muted">発行株数</span><b>${fmt(mk.shares)}株</b>
+      ${mk.last != null ? `<span class="muted">時価総額</span><b>${fmt(mk.last * mk.shares)} X</b>` : ''}
+      <span class="muted">手数料</span><b>${fmtP(fee)}%</b>
+      <span>あなたの持ち株</span><b>${fmt(d.shares_mine)}株${d.on_sale ? `（＋売り注文中 ${fmt(d.on_sale)}）` : ''}</b>
+      <span>あなたの AiliNaX</span><b>${fmt(d.balance)} X</b></div>
+    ${mk.last == null ? '<p class="muted small" style="margin:6px 0 0">まだ取引がありません</p>' : fxChart(mk.chart, 'X')}`;
+  $('#stkNote').innerHTML = !d.listed ? '<p class="notice small" style="margin:0 0 6px">この会社は上場していないので、売り買いできません。</p>'
+    : !d.can_trade ? `<p class="notice small" style="margin:0 0 6px">いまは売買が止まっています（${d.status === 'suspended' ? '会社が休業中' : '取引所が休業中'}）。取り消しはできます。</p>`
+    : d.ok_from ? `<p class="notice small" style="margin:0 0 6px">登録から7日たつまで売り買いできません（${d.ok_from}から）。</p>`
+    : d.debt ? '<p class="notice small" style="margin:0 0 6px">税金の滞納があるので、買うことはできません（売るのはできます）。</p>' : '';
+  $('#stkGo').disabled = !d.can_trade || !!d.ok_from;
+  const rows = (a, col) => a.map(x => `<div class="line"><span class="grow num" style="color:${col}">${fmt(x.price)} X</span><b class="num">${fmt(x.qty)}株</b></div>`).join('');
+  $('#stkBook').innerHTML = `<div class="small muted">売り注文</div>${rows([...mk.asks].reverse(), 'var(--lose)') || '<p class="muted small" style="margin:0">なし</p>'}
+    <div class="small muted" style="margin-top:6px">買い注文</div>${rows(mk.bids, 'var(--win)') || '<p class="muted small" style="margin:0">なし</p>'}`;
+  const ST = { open: '注文中', done: '約定', canceled: '取り消し' };
+  $('#stkMine').innerHTML = d.orders.map(o => `<div class="line"><span class="grow">${o.side === 'buy' ? '買い' : '売り'} ${fmt(o.qty)}株 @ ${fmt(o.price)} X
+      <small>#${o.id}・${o.at} ${o.time}・残り ${fmt(o.remain)}株</small></span>${o.status === 'open' ? `<button class="btn s" data-stkc="${o.id}">取り消す</button>` : `<span class="tag ${o.status === 'done' ? 'good' : ''}">${ST[o.status]}</span>`}</div>`).join('')
+    || '<p class="muted small" style="margin:0">ありません</p>';
+  $('#stkTrades').innerHTML = mk.trades.slice(0, 10).map(t => `<div class="line"><span class="grow num">${fmt(t.price)} X<small>${new Date(t.ts).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</small></span><b class="num">${fmt(t.qty)}株</b></div>`).join('')
+    || '<p class="muted small" style="margin:0">まだありません</p>';
+  stkPrev();
+}
+function stkPrev() {
+  const d = STK.d; if (!d) return;
+  const p = Math.floor(Number($('#stkPrice').value) || 0), q = Math.floor(Number($('#stkQty').value) || 0), fee = d.exch ? Number(d.exch.fee_pct) : 0;
+  $('#stkPrev').innerHTML = p > 0 && q > 0 ? (STK.side === 'buy'
+      ? `${fmt(q)}株を買うのに、最大 <b>${fmt(p * q + Math.ceil(p * q * fee / 100))} X</b>（手数料 ${fmtP(fee)}% こみ）を預けます。安く買えたら差額は戻ります`
+      : `${fmt(q)}株を売って、<b>${fmt(p * q - Math.floor(p * q * fee / 100))} X</b> くらい以上を受け取ります（手数料 ${fmtP(fee)}% を引いたあと）。売れるのは ${fmt(d.shares_mine)}株まで`)
+    : '<span class="muted">1株あたりの値段（X）と数量を入れてください</span>';
+  $('#stkGo').textContent = STK.side === 'buy' ? '買い注文を出す' : '売り注文を出す';
+}
+
 /* ---------------- 株 ---------------- */
 const unitOf = c => c.form === '株式会社' ? '株' : '口';
 const holdersHtml = (c, n) => c.holders.slice(0, n).map(h => `<div class="line"><span class="grow">${nameB(h.nickname, h.badge)}<small>ID ${h.uid}</small></span>
@@ -2911,9 +3055,10 @@ async function stockLoad() {
         <div class="small muted">${nameB(o.from_name, o.from_badge)}（ID ${o.from_id}）から・代金 <b>${fmt(o.price)} X</b>（手数料 ${fmt(o.fee)} X）・${o.at}</div>
         <div class="row" style="margin-top:6px"><button class="btn main s" data-ofok="${o.id}" data-p="${o.price}" data-f="${o.fee}">払って受け取る</button><button class="btn s" data-ofng="${o.id}">断る</button></div></div>`).join('') : '')
       + (d.stocks.length ? `<h4 style="margin:${d.offers_in.length ? 12 : 0}px 0 4px">持っている株</h4>` : '')
-      + (d.stocks.map(x => `<div class="item"><div class="row"><b>${esc(x.name)}${x.status === 'suspended' ? '<span class="stag">休業中</span>' : ''}</b><b class="num" style="margin-left:auto">${fmt(x.shares)} ${unitOf(x)}</b></div>
+      + (d.stocks.map(x => `<div class="item"><div class="row"><b>${esc(x.name)}${x.listed ? '<span class="kindtag">上場</span>' : ''}${x.status === 'suspended' ? '<span class="stag">休業中</span>' : ''}</b><b class="num" style="margin-left:auto">${fmt(x.shares + (x.on_sale || 0))} ${unitOf(x)}</b></div>
       <div class="small muted">発行 ${fmt(x.total)} ${unitOf(x)} のうち ${Number(x.pct)}%・社長 ${esc(x.owner)}${x.mine ? '（あなた）' : ''}・もらった配当 ${fmt(x.dividend_total)} X</div>
-      <div class="row" style="margin-top:6px"><button class="btn s" data-give="${x.cid}" data-max="${x.shares}">ゆずる・売る</button><button class="btn s" data-co="${x.cid}">会社を見る</button></div></div>`).join('')
+      ${x.listed ? `<div class="small">株価 ${x.price != null ? `<b>${fmt(x.price)} X</b>（評価額 ${fmt(x.price * (x.shares + (x.on_sale || 0)))} X）` : 'まだ取引なし'}${x.on_sale ? `・売り注文中 ${fmt(x.on_sale)}株` : ''}</div>` : ''}
+      <div class="row" style="margin-top:6px">${x.listed ? `<button class="btn main s" data-stk="${x.cid}">取引所で売り買い</button>` : ''}<button class="btn s" data-give="${x.cid}" data-max="${x.shares}">ゆずる・売る</button><button class="btn s" data-co="${x.cid}">会社を見る</button></div></div>`).join('')
       || '<p class="muted small" style="margin:0">まだ持っていません</p>')
       + (d.offers_out.length ? `<h4 style="margin:12px 0 4px">出した申し出</h4>` + d.offers_out.map(o => `<div class="line"><span class="grow">${esc(o.company)} ${fmt(o.shares)} ${o.unit} → ${esc(o.to_name)}（ID ${o.to_id}）
           <small>代金 ${fmt(o.price)} X・${o.at}</small></span>${o.status === 'open' ? `<button class="btn s" data-ofc="${o.id}">取り消す</button>` : `<span class="tag ${o.status === 'done' ? 'good' : ''}">${ST[o.status]}</span>`}</div>`).join('') : '');
@@ -3860,13 +4005,14 @@ const NT_GO = { フレンド: ['vInfo', 'friend'], メンション: ['vInfo', 't
   没収: ['vTax', 'tax'], 企業申請: ['vWork', 'corp'], 社長交代: ['vWork', 'corp'], 命令: ['vWork', 'corp'], 応募: ['vWork', 'corp'], 口座の申込: ['vWork', 'corp'],
   借入の申込: ['vWork', 'corp'], 返済: ['vWork', 'corp'], 採用: ['vWork', 'mywork'], 株: ['vCorp', 'stock'], 株の譲渡: ['vCorp', 'stock'], 配当: ['vCorp', 'stock'],
   口座: ['vCorp', 'bank'], 借入: ['vCorp', 'bank'], 交換: ['vCorp', 'invest'], 本: ['vInfo', 'pub'], '広報・書籍': ['vInfo', 'pub'], 対戦: ['vGame', 'vGameList'],
-  倒産: ['vMore', 'hist'], 廃業: ['vMore', 'hist'], お金: ['vMore', 'hist'], 認証: ['vWork', 'corp'], 窓口: ['vCorp', 'desk'], サーバー: ['vWork', 'corp'] };
+  倒産: ['vMore', 'hist'], 廃業: ['vMore', 'hist'], お金: ['vMore', 'hist'], 認証: ['vWork', 'corp'], 窓口: ['vCorp', 'desk'], サーバー: ['vWork', 'corp'], 上場: ['vWork', 'corp'] };
 function noticeGo(n) {
   const L = n.link || {}, b = n.body || '', tag = noticeTag(b);
   $$('.modal').forEach(m => m.remove());
   if (L.go === 'room' || (tag === '対戦' && /部屋 #(\d+)/.test(b))) { RM.id = Number(L.room || /部屋 #(\d+)/.exec(b)[1]); return go('vRoom'); }
   if (L.go === 'corp' && L.cid) return corpOpen(L.cid);
   if (L.go === 'desk' && L.t) return deskOpen(Number(L.t));
+  if (L.go === 'stock' && L.cid) return stkOpen(L.cid);
   if (L.go === 'mywork') return go('vWork', 'mywork');
   if (L.go === 'tl') { tlScope = 'mention'; $$('#tlScope button').forEach(x => x.classList.toggle('on', x.dataset.k === 'mention')); return go('vInfo', 'tl'); }
   if (tag === '注文') return go(/渡してください/.test(b) ? 'vWork' : 'vCorp', /渡してください/.test(b) ? 'corp' : 'order');
