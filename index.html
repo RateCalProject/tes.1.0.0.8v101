@@ -75,8 +75,8 @@ h3{font-size:15px;margin:16px 0 8px}
 .center{min-height:70vh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:14px}
 .center h1{font-size:28px;margin:0}
 .notice{font-size:13px;color:var(--muted);line-height:1.7;max-width:420px}
-.gbtn{display:inline-flex;align-items:center;gap:10px;background:#fff;color:#1F1F1F;border:1px solid #DADCE0;border-radius:999px;padding:11px 20px;font-weight:700;font-size:15px}
-.gbtn svg{width:18px;height:18px}
+.mailform{display:flex;flex-direction:column;gap:10px;width:100%;max-width:340px}
+.mailform input{font-size:16px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
 
 /* 競馬 */
 .racehead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
@@ -169,8 +169,12 @@ canvas#track{width:100%;display:block;border-radius:10px;background:#3E7A5A;touc
 <!-- ログイン -->
 <section id="vLogin" class="center hidden">
   <h1>AiliNaX カジノ</h1>
-  <p class="notice">架空通貨 <b>AiliNaX</b>（アイリナックス）で遊ぶカジノです。<br>はじめてログインした人に 1,000 AiliNaX を配ります（1回だけ）。</p>
-  <button class="gbtn" id="gLogin"><svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.7 13.3l7.9 6.2C12.5 13.6 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.4 5.8c4.3-4 6.9-9.9 6.9-17.2z"/><path fill="#FBBC05" d="M10.6 28.5c-.5-1.4-.8-2.9-.8-4.5s.3-3.1.8-4.5l-7.9-6.2C1 16.6 0 20.2 0 24s1 7.4 2.7 10.7l7.9-6.2z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.8c-2.1 1.4-4.8 2.3-8.5 2.3-6.2 0-11.5-4.1-13.4-9.8l-7.9 6.2C6.6 42.6 14.6 48 24 48z"/></svg>Google でログイン</button>
+  <p class="notice">架空通貨 <b>AiliNaX</b>（アイリナックス）で遊ぶカジノです。<br>メールアドレスでログインします（パスワードはいりません）。<br>はじめてログインした人に 1,000 AiliNaX を配ります（1回だけ）。</p>
+  <form id="mailForm" class="mailform">
+    <input type="email" id="mail" required autocomplete="email" placeholder="メールアドレス">
+    <button class="btn main big" id="mailBtn" type="submit">ログイン用のメールを送る</button>
+  </form>
+  <p class="notice small hidden" id="mailSent"></p>
   <p class="notice small"><b>AiliNaX は現金・物・他の通貨・ゲーム内アイテムなどと交換できません。</b>交換・売買の持ちかけも禁止です。</p>
   <p class="links small"><a href="battle/">付属ゲーム：市区町村バトル（ログインなしで遊べます）</a></p>
 </section>
@@ -302,7 +306,7 @@ canvas#track{width:100%;display:block;border-radius:10px;background:#3E7A5A;touc
   <div class="card">
     <h3 style="margin-top:0">ニックネーム</h3>
     <div class="row"><input id="nick" maxlength="12" class="grow" style="padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg)"><button class="btn main" id="nickSave">変える</button></div>
-    <p class="muted small" style="margin:6px 0 0">ランキングや競馬の投票で、みんなに見えます。本名は入れないでください。</p>
+    <p class="muted small" style="margin:6px 0 0">ランキングや競馬の投票で、みんなに見えます。本名やメールアドレスは入れないでください。</p>
   </div>
   <div class="card"><h3 style="margin-top:0">ランキング</h3><ul class="rank" id="rank"></ul></div>
   <div class="card"><h3 style="margin-top:0">自分の記録</h3><ul class="rank" id="hist"></ul></div>
@@ -386,7 +390,17 @@ async function boot() {
   if (CFG.devApi) return enter();
   if (!CFG.url || !CFG.anonKey || !window.supabase) return show('vSetup');
   sb = supabase.createClient(CFG.url, CFG.anonKey);
-  $('#gLogin').onclick = () => sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + location.pathname } });
+  $('#mailForm').onsubmit = async ev => {
+    ev.preventDefault();
+    const email = $('#mail').value.trim(); if (!email) return;
+    $('#mailBtn').disabled = true;
+    const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
+    $('#mailBtn').disabled = false;
+    const m = $('#mailSent'); m.classList.remove('hidden');
+    m.innerHTML = error
+      ? (/rate|limit|seconds/i.test(error.message) ? 'メールを送りすぎています。少し時間をおいてからもう一度ためしてください。' : 'エラー：' + esc(error.message))
+      : `<b>${esc(email)}</b> にメールを送りました。<br>メールの中の「ログインする」を押すと、この画面にもどってきます。<br>（届かないときは迷惑メールフォルダも見てください）`;
+  };
   const { data } = await sb.auth.getSession();
   if (data.session) enter(); else show('vLogin');
   sb.auth.onAuthStateChange((ev, s) => { if (ev === 'SIGNED_IN' && !entered) enter(); if (ev === 'SIGNED_OUT') location.reload(); });
