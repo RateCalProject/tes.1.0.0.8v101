@@ -240,6 +240,9 @@ alter table public.treasury    add column if not exists confiscated_total bigint
 -- 送金（あとから足した列）
 alter table public.profiles add column if not exists account_no text;
 create unique index if not exists profiles_account_no_idx on public.profiles(account_no);
+-- 利用停止（役所の判決）・メール認証（オレンジのチェック用）
+alter table public.profiles add column if not exists banned_until timestamptz;
+alter table public.profiles add column if not exists mail_verified_at timestamptz;
 alter table public.treasury add column if not exists fee_total bigint not null default 0;
 
 -- 企業・銀行 ---------------------------------------------------------
@@ -258,7 +261,6 @@ create table if not exists public.companies (
   created_at  timestamptz not null default now(),
   decided_at  timestamptz
 );
-create unique index if not exists companies_name_idx on public.companies(lower(name)) where status <> 'rejected';
 -- 会社の形（株式会社・有限会社・合同会社）。name には「株式会社〇〇」のように形もふくめた名前を入れる
 alter table public.companies add column if not exists form text not null default '株式会社';
 -- 会社のID：「会社番号3けた-代表（社長）のID5けた」（例 101-76705）。取引は最初の3けただけでもできる
@@ -291,6 +293,14 @@ begin
   if n > 9999 then raise exception '会社番号がいっぱいです'; end if;
   return n::text;
 end $$;
+-- 業種：一般・銀行・証券
+alter table public.companies drop constraint if exists companies_kind_check;
+alter table public.companies add constraint companies_kind_check check (kind in ('一般', '銀行', '証券'));
+-- 状態：pending（審査中）/ active / suspended（休業）/ closed（廃業）/ bankrupt（倒産）/ rejected
+alter table public.companies add column if not exists closed_at timestamptz;
+alter table public.companies add column if not exists court_lock boolean not null default false;   -- 役所の命令で休業中（自分では再開できない）
+drop index if exists public.companies_name_idx;
+create unique index if not exists companies_name_live_idx on public.companies(lower(name)) where status not in ('rejected', 'closed', 'bankrupt');
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'companies_form_chk') then
     alter table public.companies add constraint companies_form_chk check (form in ('株式会社', '有限会社', '合同会社'));
@@ -314,7 +324,7 @@ create table if not exists public.corp_orders (
   price       bigint not null,
   fee         bigint not null,
   note        text,
-  status      text not null default 'paid',         -- paid（支払いずみ）/ done（渡しずみ）
+  status      text not null default 'paid',         -- paid（支払いずみ）/ done（渡しずみ）/ refunded（廃業・倒産で返金）
   created_at  timestamptz not null default now(),
   done_at     timestamptz
 );
@@ -381,9 +391,13 @@ revoke all on public.profiles, public.tx_log, public.hilo_games, public.bj_games
 -- ---------------------------------------------------------------------
 create or replace function public._me() returns uuid
 language plpgsql stable set search_path = public as $$
-declare u uuid := auth.uid();
+declare u uuid := auth.uid(); bu timestamptz;
 begin
   if u is null then raise exception 'ログインしてください'; end if;
+  select banned_until into bu from profiles where id = u;
+  if bu is not null and bu > _now() then
+    raise exception '利用停止中です（%まで）。役所の判決によるものです', to_char(bu at time zone 'Asia/Tokyo', 'FMMM"月"FMDD"日" HH24:MI');
+  end if;
   return u;
 end $$;
 
@@ -420,6 +434,11 @@ begin
   if amt > 0 and exists (select 1 from tax_returns t join tax_months mm on mm.month = t.month and mm.processed
                           where t.user_id = u and t.tax_due > t.tax_paid) then
     perform _pay_tax(u, amt, true, 'garnish');
+    b := _bal(u);
+  end if;
+  -- 役所の判決で払いきれていない賠償金があれば、入ってきた分から取り立てる
+  if amt > 0 and exists (select 1 from court_cases where defendant_user = u and comp_unpaid > 0) then
+    perform _court_collect_user(u, amt);
     b := _bal(u);
   end if;
   return b;
@@ -461,6 +480,7 @@ begin
   on conflict (id) do nothing;
   if found then perform _log(u, 'start', 0, 1000, '{"note":"はじめての配布"}'); end if;
   update profiles set account_no = _new_acct() where id = u and account_no is null;
+  perform _mail_seen(u);
   -- 締めの日を過ぎていたら、税の締め（調査・差し押さえ・給付金）をここで行う
   -- 万一失敗してもログインは止めない
   begin
@@ -468,7 +488,8 @@ begin
   exception when others then
     raise warning 'tax tick failed: %', sqlerrm;
   end;
-  return (select jsonb_build_object('nickname', nickname, 'balance', balance, 'tax', _tax_badge(u), 'account_no', account_no, 'is_admin', _is_admin(u))
+  return (select jsonb_build_object('nickname', nickname, 'balance', balance, 'tax', _tax_badge(u), 'account_no', account_no,
+            'is_admin', _is_admin(u), 'role', _role(u), 'badge', _badge(u))
             from profiles where id = u);
 end $$;
 
@@ -478,7 +499,11 @@ language plpgsql security definer set search_path = public as $$
 begin
   return (select jsonb_build_object('nickname', nickname, 'balance', balance, 'account_no', account_no,
             'send_ok', _now() >= created_at + interval '7 days', 'send_from', _dlabel(created_at + interval '7 days'),
-            'is_admin', _is_admin(id))
+            'is_admin', _is_admin(id), 'role', _role(id), 'badge', _badge(id),
+            'check', jsonb_build_object('days', _now() >= created_at + interval '7 days', 'days_from', _dlabel(created_at + interval '7 days'),
+                       'debt', _debt(id), 'mail', mail_verified_at is not null and mail_verified_at >= _now() - interval '183 days',
+                       'mail_at', case when mail_verified_at is null then null else _dlabel(mail_verified_at) end,
+                       'mail_until', case when mail_verified_at is null then null else _dlabel(mail_verified_at + interval '183 days') end))
             from profiles where id = _me());
 end $$;
 
@@ -817,7 +842,7 @@ end $$;
 create or replace function public._income(u uuid, m int) returns bigint
 language sql stable set search_path = public as $$
   select greatest(coalesce(sum(payout - bet), 0), 0)::bigint from tx_log
-   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend')
+   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend','liquidation')
      and created_at >= _month_start(m) and created_at < _month_start(_next_month(m))
 $$;
 
@@ -831,6 +856,51 @@ language sql stable set search_path = public as $$
     from tax_returns t join tax_months mm on mm.month = t.month and mm.processed
    where t.user_id = u and t.tax_due > t.tax_paid
 $$;
+
+-- 役割：admin（管理者）/ sub（副管理者）/ null
+--   管理者は app_settings 'admins'（ユーザーのuuid）、副管理者は 'subadmins'（ユーザーのID。カンマ区切り）
+create or replace function public._role(u uuid) returns text
+language plpgsql stable set search_path = public as $$
+begin
+  if u is null then return null; end if;
+  if exists (select 1 from app_settings where key = 'admins' and u::text = any(string_to_array(value, ','))) then return 'admin'; end if;
+  if exists (select 1 from app_settings s join profiles p on p.id = u
+              where s.key = 'subadmins' and p.account_no = any(string_to_array(replace(s.value, ' ', ''), ','))) then return 'sub'; end if;
+  return null;
+end $$;
+create or replace function public._is_staff(u uuid) returns boolean
+language plpgsql stable set search_path = public as $$ begin return _role(u) is not null; end $$;
+
+-- 名前の横のしるし：role（管理者タグ）と ok（オレンジのチェック）
+--   チェック：税金の滞納がない（前に滞納していても、いま払い終わっていればOK）・登録から7日・半年以内にメールで認証
+create or replace function public._badge(u uuid) returns jsonb
+language plpgsql stable set search_path = public as $$
+declare p profiles;
+begin
+  select * into p from profiles where id = u;
+  if not found then return null; end if;
+  return jsonb_build_object('role', _role(u),
+    'ok', _debt(u) = 0 and _now() >= p.created_at + interval '7 days'
+          and p.mail_verified_at is not null and p.mail_verified_at >= _now() - interval '183 days');
+end $$;
+
+-- ログインのしかたを見て、メールで認証した時刻を覚える（メールのリンク・登録の確認など）
+create or replace function public._mail_seen(u uuid) returns void
+language plpgsql set search_path = public as $$
+declare j jsonb; e jsonb; t timestamptz;
+begin
+  begin
+    j := nullif(current_setting('request.jwt.claims', true), '')::jsonb;
+  exception when others then j := null;
+  end;
+  if j is null or jsonb_typeof(j->'amr') is distinct from 'array' then return; end if;
+  for e in select * from jsonb_array_elements(j->'amr') loop
+    if e->>'method' in ('otp', 'magiclink', 'email/signup', 'email_change', 'recovery', 'invite') and (e->>'timestamp') ~ '^\d+$' then
+      t := to_timestamp((e->>'timestamp')::bigint);
+      update profiles set mail_verified_at = t where id = u and (mail_verified_at is null or mail_verified_at < t);
+    end if;
+  end loop;
+end $$;
 
 -- 残高から税を納める（古い月から）。only_overdue = 滞納の分だけに充てる。納めた額を返す
 create or replace function public._pay_tax(u uuid, maxamt bigint, only_overdue boolean, kind text) returns bigint
@@ -864,7 +934,7 @@ language sql stable set search_path = public as $$
        + coalesce((select bet from bj_games where user_id = u), 0)
        + coalesce((select sum(amount) from keiba_tickets where user_id = u and payout is null), 0)
        + coalesce((select sum(balance) from bank_accounts where user_id = u), 0)
-       + coalesce((select sum(balance) from companies where owner = u and status = 'active'), 0)
+       + coalesce((select sum(balance) from companies where owner = u and status in ('active', 'suspended')), 0)
 $$;
 
 -- 1か月分を締める（税務調査・無申告の決定・延滞金・差し押さえ・没収・給付金）
@@ -1056,7 +1126,7 @@ begin
     left join tax_months mm on mm.month = t.month;
 
   select max(month) into topm from tax_months where processed;
-  select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname) order by t.tax_paid desc), '[]'::jsonb) into top
+  select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'badge', _badge(p.id)) order by t.tax_paid desc), '[]'::jsonb) into top
     from (select * from tax_returns where month = topm and tax_paid > 0 order by tax_paid desc limit 10) t
     join profiles p on p.id = t.user_id;
 
@@ -1926,6 +1996,8 @@ begin
   if found then return; end if;
   select id, name into rcomp, rname from companies where cid = _cid_norm(k) and status = 'active';
   if found then return; end if;
+  if exists (select 1 from companies where cid = _cid_norm(k) and status = 'suspended') then raise exception 'その会社はいま休業中です'; end if;
+  if exists (select 1 from companies where cid = _cid_norm(k) and status in ('closed', 'bankrupt')) then raise exception 'その会社はもうありません（廃業・倒産）'; end if;
   raise exception 'そのIDの人や会社は見つかりません';
 end $$;
 
@@ -1969,6 +2041,11 @@ begin
   update companies set balance = balance + amt where id = cid_int returning balance into b;
   if b < 0 then raise exception '会社のお金が足りません'; end if;
   insert into corp_ledger(company_id, kind, amount, memo, balance_after) values (cid_int, k, amt, memo, b);
+  -- 役所の判決で払いきれていない賠償金があれば、入ってきた分から取り立てる
+  if amt > 0 and k <> 'court' and exists (select 1 from court_cases where defendant_comp = cid_int and comp_unpaid > 0) then
+    perform _court_collect_comp(cid_int, amt);
+    select balance into b from companies where id = cid_int;
+  end if;
   return b;
 end $$;
 
@@ -2138,7 +2215,7 @@ begin
     -- 競馬億万長者：今週（月曜から）の競馬の勝ち（払戻 − 賭け金）の合計
     'week_from', _dlabel((_kb_jday(_now()) - (extract(isodow from _kb_jday(_now()))::int - 1))::timestamp at time zone 'Asia/Tokyo'),
     'jackpots', (select coalesce(jsonb_agg(z order by z.net desc), '[]'::jsonb) from (
-        select p.nickname, sum(t.payout - t.amount)::bigint net, sum(t.payout)::bigint payout, sum(t.amount)::bigint bet,
+        select p.nickname, _badge(p.id) badge, sum(t.payout - t.amount)::bigint net, sum(t.payout)::bigint payout, sum(t.amount)::bigint bet,
                count(*) filter (where t.payout > 0) hits, max(t.payout)::bigint best
           from keiba_tickets t join profiles p on p.id = t.user_id join keiba_races r on r.id = t.race_id
          where t.payout is not null and r.day >= _kb_jday(_now()) - (extract(isodow from _kb_jday(_now()))::int - 1)
@@ -2203,7 +2280,8 @@ end $$;
 create or replace function public._corp_card(c companies, u uuid) returns jsonb
 language sql stable set search_path = public as $$
   select jsonb_build_object('cid', c.cid, 'cid_full', _cfull(c), 'name', c.name, 'form', c.form, 'kind', c.kind, 'description', c.description,
-    'owner', (select nickname from profiles where id = c.owner), 'rate', c.rate,
+    'owner', (select nickname from profiles where id = c.owner), 'owner_badge', _badge(c.owner), 'rate', c.rate, 'status', c.status,
+    'exchange', c.cid = (select value from app_settings where key = 'exchange_cid'),
     'pinned', exists (select 1 from corp_pins where user_id = u and company_id = c.id),
     'mine', c.owner = u)
 $$;
@@ -2215,7 +2293,7 @@ declare u uuid := _me(); q text := btrim(coalesce(p_q, ''));
 begin
   return (select coalesce(jsonb_agg(_corp_card(c, u) order by c.name), '[]'::jsonb) from (
     select * from companies
-     where status = 'active' and (q = '' or name ilike '%' || q || '%' or cid = split_part(q, '-', 1) or description ilike '%' || q || '%')
+     where status in ('active', 'suspended') and (q = '' or name ilike '%' || q || '%' or cid = split_part(q, '-', 1) or description ilike '%' || q || '%')
      order by name limit 50) c);
 end $$;
 
@@ -2224,14 +2302,14 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me();
 begin
   return (select coalesce(jsonb_agg(_corp_card(c, u) order by c.name), '[]'::jsonb)
-            from companies c join corp_pins p on p.company_id = c.id and p.user_id = u where c.status = 'active');
+            from companies c join corp_pins p on p.company_id = c.id and p.user_id = u where c.status in ('active', 'suspended'));
 end $$;
 
 create or replace function public.corp_pin(p_cid text, p_on boolean) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies;
 begin
-  select * into c from companies where cid = _cid_norm(p_cid) and status = 'active';
+  select * into c from companies where cid = _cid_norm(p_cid) and status in ('active', 'suspended');
   if not found then raise exception '会社が見つかりません'; end if;
   if p_on then insert into corp_pins values (u, c.id) on conflict do nothing;
   else delete from corp_pins where user_id = u and company_id = c.id; end if;
@@ -2243,7 +2321,7 @@ create or replace function public.corp_page(p_cid text) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies; acct bank_accounts;
 begin
-  select * into c from companies where cid = _cid_norm(p_cid) and status = 'active';
+  select * into c from companies where cid = _cid_norm(p_cid) and status in ('active', 'suspended');
   if not found then raise exception '会社が見つかりません'; end if;
   if c.kind = '銀行' then perform _bank_accrue(c.id, u); end if;
   select * into acct from bank_accounts where company_id = c.id and user_id = u;
@@ -2263,7 +2341,7 @@ begin
   select * into it from corp_items where id = p_item and active;
   if not found then raise exception 'その商品は売っていません'; end if;
   select * into c from companies where id = it.company_id and status = 'active';
-  if not found then raise exception 'この会社はいま営業していません'; end if;
+  if not found then raise exception 'この会社はいま営業していません（休業中など）'; end if;
   if c.owner = u then raise exception '自分の会社の商品は買えません'; end if;
   select * into me from profiles where id = u for update;
   okday := me.created_at + interval '7 days';
@@ -2332,7 +2410,7 @@ begin
   update bank_accounts set balance = balance - p_amount where company_id = c.id and user_id = u;
   update profiles set balance = balance + p_amount where id = u;
   perform _log(u, 'withdraw', 0, p_amount, jsonb_build_object('bank', c.name));
-  if c.status = 'active' then return corp_page(p_cid); end if;
+  if c.status in ('active', 'suspended') then return corp_page(p_cid); end if;
   return jsonb_build_object('balance', _bal(u));
 end $$;
 
@@ -2355,13 +2433,14 @@ begin
   if char_length(base) < 1 or char_length(base) > 24 then raise exception '会社名は1〜24文字です'; end if;
   if p_form not in ('株式会社', '有限会社', '合同会社') then raise exception '会社の形（株式会社・有限会社・合同会社）をえらんでください'; end if;
   if base ~ '(株式会社|有限会社|合同会社|合資会社|合名会社)' then raise exception '会社名には「株式会社」などを入れないでください（下でえらべます）'; end if;
-  if p_kind not in ('一般', '銀行') then raise exception '会社の種類をえらんでください'; end if;
+  if p_kind not in ('一般', '銀行', '証券') then raise exception '会社の種類をえらんでください'; end if;
   if p_kind = '銀行' and p_form <> '株式会社' then raise exception '銀行は株式会社だけです'; end if;
+  if p_kind = '証券' and p_form <> '株式会社' then raise exception '証券会社は株式会社だけです'; end if;
   nm := case when coalesce(p_pre, true) then p_form || base else base || p_form end;
-  if (select count(*) from companies where owner = u and status in ('pending', 'active')) >= 3 then
+  if (select count(*) from companies where owner = u and status in ('pending', 'active', 'suspended')) >= 3 then
     raise exception '会社は1人3つまでです';
   end if;
-  if exists (select 1 from companies where lower(name) = lower(nm) and status <> 'rejected') then
+  if exists (select 1 from companies where lower(name) = lower(nm) and status not in ('rejected', 'closed', 'bankrupt')) then
     raise exception 'その名前の会社はもうあります';
   end if;
   perform _take(u, 1000);
@@ -2379,7 +2458,9 @@ declare u uuid := _me();
 begin
   return jsonb_build_object('corps', (select coalesce(jsonb_agg(jsonb_build_object(
       'cid', c.cid, 'cid_full', _cfull(c), 'name', c.name, 'form', c.form, 'kind', c.kind, 'description', c.description, 'status', c.status, 'reason', c.reason,
-      'balance', c.balance, 'rate', c.rate,
+      'balance', c.balance, 'rate', c.rate, 'ca', c.ca, 'court_lock', c.court_lock,
+      'closed_at', case when c.closed_at is null then null else _dlabel(c.closed_at) end,
+      'owed', (select coalesce(sum(price), 0) from corp_orders where company_id = c.id and status = 'paid'),
       'items', (select coalesce(jsonb_agg(jsonb_build_object('id', i.id, 'name', i.name, 'price', i.price,
                   'description', i.description, 'active', i.active) order by i.id), '[]'::jsonb) from corp_items i where i.company_id = c.id),
       'orders', (select coalesce(jsonb_agg(z order by z.id desc), '[]'::jsonb) from (
@@ -2389,11 +2470,11 @@ begin
                   select id, kind, amount, memo, balance_after, _dlabel(created_at) at from corp_ledger where company_id = c.id order by id desc limit 20) z),
       'jobs', (select coalesce(jsonb_agg(jsonb_build_object('id', j.id, 'title', j.title, 'description', j.description,
                  'wage', j.wage, 'contact', j.contact, 'active', j.active) order by j.id desc), '[]'::jsonb) from corp_jobs j where j.company_id = c.id),
-      'applies', (select coalesce(jsonb_agg(jsonb_build_object('id', a.id, 'title', j.title, 'nickname', p.nickname, 'uid', p.account_no,
+      'applies', (select coalesce(jsonb_agg(jsonb_build_object('id', a.id, 'title', j.title, 'nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id),
                  'message', a.message, 'at', _dlabel(a.created_at)) order by a.id), '[]'::jsonb)
                  from corp_applies a join corp_jobs j on j.id = a.job_id join profiles p on p.id = a.user_id
                  where j.company_id = c.id and a.status = 'waiting'),
-      'members', (select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'role', m.role,
+      'members', (select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id), 'role', m.role,
                  'salary', m.salary, 'paid_total', m.paid_total) order by m.joined_at), '[]'::jsonb)
                  from corp_members m join profiles p on p.id = m.user_id where m.company_id = c.id),
       'deposits', (select coalesce(sum(balance), 0) from bank_accounts where company_id = c.id),
@@ -2471,7 +2552,7 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies;
 begin
   c := _my_corp(u, p_cid);
-  if c.status <> 'active' then raise exception 'この会社はまだ活動していません'; end if;
+  if c.status not in ('active', 'suspended') then raise exception 'この会社はいま動かせません（審査中・廃業など）'; end if;
   if p_amount is null or p_amount < 1 or p_amount > c.balance then raise exception '引き出せるのは % X までです', c.balance; end if;
   perform _corp_move(c.id, -p_amount, 'salary', '社長への給料');
   perform _give(u, p_amount);
@@ -2484,7 +2565,7 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies;
 begin
   c := _my_corp(u, p_cid);
-  if c.status <> 'active' then raise exception 'この会社はまだ活動していません'; end if;
+  if c.status not in ('active', 'suspended') then raise exception 'この会社はいま動かせません（審査中・廃業など）'; end if;
   if p_amount is null or p_amount < 1 then raise exception '1 X以上にしてください'; end if;
   perform _take(u, p_amount);
   perform _log(u, 'fund', p_amount, 0, jsonb_build_object('company', c.name));
@@ -2534,7 +2615,7 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies; t text := btrim(coalesce(p_title, ''));
 begin
   c := _my_corp(u, p_cid);
-  if c.status <> 'active' then raise exception 'この会社はまだ活動していません'; end if;
+  if c.status not in ('active', 'suspended') then raise exception 'この会社はいま動かせません（審査中・廃業など）'; end if;
   if char_length(t) < 1 or char_length(t) > 40 then raise exception '求人のタイトルは1〜40文字です'; end if;
   if p_job is null then
     if (select count(*) from corp_jobs where company_id = c.id and active) >= 10 then raise exception '出せる求人は10件までです'; end if;
@@ -2573,6 +2654,7 @@ begin
   select * into j from corp_jobs where id = p_job and active;
   if not found then raise exception 'その求人はもう締め切られています'; end if;
   select * into c from companies where id = j.company_id and status = 'active';
+  if not found then raise exception 'この会社はいま募集していません（休業中など）'; end if;
   if c.owner = u then raise exception '自分の会社の求人です'; end if;
   if exists (select 1 from corp_members where company_id = c.id and user_id = u) then raise exception 'もうこの会社の社員です'; end if;
   select * into me from profiles where id = u;
@@ -2629,7 +2711,7 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies; m record; amt bigint; total bigint := 0; n int := 0;
 begin
   c := _my_corp(u, p_cid);
-  if c.status <> 'active' then raise exception 'この会社はまだ活動していません'; end if;
+  if c.status not in ('active', 'suspended') then raise exception 'この会社はいま動かせません（審査中・廃業など）'; end if;
   for m in select cm.*, p.nickname, p.account_no from corp_members cm join profiles p on p.id = cm.user_id
             where cm.company_id = c.id and (coalesce(p_user, '') = '' or p.account_no = btrim(p_user)) loop
     amt := case when coalesce(p_user, '') = '' then m.salary else p_amount end;
@@ -2670,39 +2752,50 @@ begin
   return my_jobs();
 end $$;
 
--- 管理者：審査と、国のお金のようす
+-- 管理者・副管理者：審査など（国のお金のようすは管理者だけ）
 create or replace function public.admin_state() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); tr treasury;
+declare u uuid := _me(); tr treasury; rl text := _role(u); r jsonb;
 begin
-  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  if rl is null then raise exception '管理者だけが使えます'; end if;
   select * into tr from treasury where id = 1;
-  return jsonb_build_object(
+  r := jsonb_build_object('role', rl,
     'pending', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'cid_full', _cfull(c), 'name', c.name, 'form', c.form, 'kind', c.kind, 'description', c.description,
-                  'owner', p.nickname, 'owner_id', p.account_no, 'at', _dlabel(c.created_at)) order by c.id), '[]'::jsonb)
+                  'owner', p.nickname, 'owner_id', p.account_no, 'owner_badge', _badge(p.id), 'mine', c.owner = u, 'at', _dlabel(c.created_at)) order by c.id), '[]'::jsonb)
                   from companies c join profiles p on p.id = c.owner where c.status = 'pending'),
     'active', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'cid_full', _cfull(c), 'name', c.name, 'form', c.form, 'kind', c.kind, 'owner', p.nickname,
-                  'balance', c.balance) order by c.name), '[]'::jsonb)
-                  from companies c join profiles p on p.id = c.owner where c.status = 'active'),
-    'treasury', to_jsonb(tr),
-    'supply', (select coalesce(sum(balance), 0) from profiles),
-    'corp_money', (select coalesce(sum(balance), 0) from companies),
-    'bank_money', (select coalesce(sum(balance), 0) from bank_accounts),
-    'ca_total', (select coalesce(sum(ca), 0) from profiles)
-                + (select coalesce(sum(remain * price), 0) from fx_orders where side = 'buy' and status = 'open')
-                + (select coalesce(sum(amount), 0) from fx_requests where kind = 'out' and status = 'pending'),
+                  'status', c.status, 'court_lock', c.court_lock,
+                  'balance', case when rl = 'admin' then c.balance end) order by c.name), '[]'::jsonb)
+                  from companies c join profiles p on p.id = c.owner where c.status in ('active', 'suspended')),
     'fx_requests', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'kind', r.kind, 'amount', r.amount, 'contact', r.contact,
-                     'nickname', p.nickname, 'uid', p.account_no, 'ca', p.ca, 'at', _dlabel(r.created_at)) order by r.id), '[]'::jsonb)
-                     from fx_requests r join profiles p on p.id = r.user_id where r.status = 'pending'));
+                     'nickname', p.nickname, 'uid', p.account_no, 'mine', r.user_id = u,
+                     'ca', case when rl = 'admin' then p.ca end, 'at', _dlabel(r.created_at)) order by r.id), '[]'::jsonb)
+                     from fx_requests r join profiles p on p.id = r.user_id where r.status = 'pending'),
+    'cases', (select coalesce(jsonb_agg(_case_json(cc, u) order by cc.id), '[]'::jsonb) from court_cases cc where cc.status = 'open'),
+    'fee_pct', _fx_fee_pct());
+  if rl = 'admin' then
+    r := r || jsonb_build_object(
+      'treasury', to_jsonb(tr),
+      'supply', (select coalesce(sum(balance), 0) from profiles),
+      'corp_money', (select coalesce(sum(balance), 0) from companies),
+      'bank_money', (select coalesce(sum(balance), 0) from bank_accounts),
+      'ca_total', (select coalesce(sum(ca), 0) from profiles) + (select coalesce(sum(ca), 0) from companies)
+                  + (select coalesce(sum(locked), 0) from fx_orders where side = 'buy' and status = 'open')
+                  + (select coalesce(sum(amount), 0) from fx_requests where kind = 'out' and status = 'pending'),
+      'ca_reserve', tr.ca_balance, 'ca_issued', tr.ca_issued,
+      'subadmins', (select value from app_settings where key = 'subadmins'));
+  end if;
+  return r;
 end $$;
 
 create or replace function public.admin_corp_decide(p_cid text, p_ok boolean, p_reason text) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies;
 begin
-  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  if not _is_staff(u) then raise exception '管理者だけが使えます'; end if;
   select * into c from companies where cid = _cid_norm(p_cid) and status = 'pending' for update;
   if not found then raise exception '審査中の申請が見つかりません'; end if;
+  if c.owner = u and _role(u) <> 'admin' then raise exception '自分の申請は審査できません'; end if;
   if p_ok then
     update companies set status = 'active', decided_at = _now() where id = c.id;
     perform _add_shares(c.id, c.owner, c.shares);
@@ -2873,7 +2966,7 @@ select c.id, c.owner, c.shares from public.companies c
 
 create or replace function public._corp_holders(cid_int int) returns jsonb
 language sql stable set search_path = public as $$
-  select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'shares', h.shares,
+  select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id), 'shares', h.shares,
            'pct', round(h.shares * 100.0 / greatest(c.shares, 1), 2)) order by h.shares desc, p.nickname), '[]'::jsonb)
     from corp_holders h join profiles p on p.id = h.user_id join companies c on c.id = h.company_id
    where h.company_id = cid_int
@@ -2893,7 +2986,7 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies; mine bigint;
 begin
   c := _my_corp(u, p_cid);
-  if c.status <> 'active' then raise exception 'この会社はまだ活動していません'; end if;
+  if c.status not in ('active', 'suspended') then raise exception 'この会社はいま動かせません（審査中・廃業など）'; end if;
   if p_delta is null or p_delta = 0 then raise exception 'ふやす・へらす数を入れてください'; end if;
   if c.shares + p_delta < 1 or c.shares + p_delta > 1000000000 then raise exception '発行株数は1〜10億にしてください'; end if;
   if p_delta < 0 then
@@ -2915,7 +3008,7 @@ create or replace function public.share_give(p_cid text, p_to text, p_shares big
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies; mine bigint; t record; me profiles;
 begin
-  select * into c from companies where cid = _cid_norm(p_cid) and status = 'active';
+  select * into c from companies where cid = _cid_norm(p_cid) and status in ('active', 'suspended');
   if not found then raise exception '会社が見つかりません'; end if;
   select shares into mine from corp_holders where company_id = c.id and user_id = u for update;
   if p_shares is null or p_shares < 1 then raise exception 'ゆずる数を入れてください'; end if;
@@ -2937,12 +3030,15 @@ create or replace function public.my_stocks() returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me();
 begin
-  return jsonb_build_object('stocks', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'form', c.form,
+  return jsonb_build_object('stocks', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'form', c.form, 'status', c.status,
            'shares', h.shares, 'total', c.shares, 'pct', round(h.shares * 100.0 / greatest(c.shares, 1), 2),
            'owner', (select nickname from profiles where id = c.owner), 'mine', c.owner = u,
            'dividend_total', (select coalesce(sum(payout), 0) from tx_log where user_id = u and game = 'dividend' and detail->>'company_id' = c.id::text))
            order by c.name), '[]'::jsonb)
-         from corp_holders h join companies c on c.id = h.company_id where h.user_id = u and c.status = 'active'),
+         from corp_holders h join companies c on c.id = h.company_id where h.user_id = u and c.status in ('active', 'suspended')),
+    'offers_in', (select coalesce(jsonb_agg(_offer_json(o) order by o.id desc), '[]'::jsonb) from share_offers o where o.to_user = u and o.status = 'open'),
+    'offers_out', (select coalesce(jsonb_agg(_offer_json(o) order by o.id desc), '[]'::jsonb) from (
+                    select * from share_offers where from_user = u order by (status = 'open') desc, id desc limit 20) o),
     'balance', _bal(u));
 end $$;
 
@@ -2952,7 +3048,7 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies; h record; amt bigint; total bigint := 0; n int := 0; r jsonb;
 begin
   c := _my_corp(u, p_cid);
-  if c.status <> 'active' then raise exception 'この会社はまだ活動していません'; end if;
+  if c.status not in ('active', 'suspended') then raise exception 'この会社はいま動かせません（審査中・廃業など）'; end if;
   if p_amount is null or p_amount < 1 or p_amount > c.balance then raise exception '配当に使えるのは会社のお金 % X までです', c.balance; end if;
   for h in select * from corp_holders where company_id = c.id loop
     amt := floor(p_amount::numeric * h.shares / c.shares);
@@ -2975,11 +3071,11 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies; t record; me profiles;
 begin
   c := _my_corp(u, p_cid);
-  if c.status <> 'active' then raise exception 'この会社はまだ活動していません'; end if;
+  if c.status not in ('active', 'suspended') then raise exception 'この会社はいま動かせません（審査中・廃業など）'; end if;
   select * into t from _find_id(p_to);
   if t.rid is null then raise exception '社長にできるのはユーザーだけです'; end if;
   if t.rid = u then raise exception 'あなたがもう社長です'; end if;
-  if (select count(*) from companies where owner = t.rid and status in ('pending', 'active')) >= 3 then
+  if (select count(*) from companies where owner = t.rid and status in ('pending', 'active', 'suspended')) >= 3 then
     raise exception 'その人はもう3社の社長です';
   end if;
   select * into me from profiles where id = u;
@@ -3027,12 +3123,12 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me();
 begin
   return jsonb_build_object(
-    'friends', (select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'since', _dlabel(f.created_at)) order by p.nickname), '[]'::jsonb)
+    'friends', (select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id), 'since', _dlabel(f.created_at)) order by p.nickname), '[]'::jsonb)
                   from friends f join profiles p on p.id = case when f.from_user = u then f.to_user else f.from_user end
                  where f.status = 'ok' and (f.from_user = u or f.to_user = u)),
-    'incoming', (select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'at', _dlabel(f.created_at)) order by f.id desc), '[]'::jsonb)
+    'incoming', (select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id), 'at', _dlabel(f.created_at)) order by f.id desc), '[]'::jsonb)
                   from friends f join profiles p on p.id = f.from_user where f.status = 'pending' and f.to_user = u),
-    'outgoing', (select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'at', _dlabel(f.created_at)) order by f.id desc), '[]'::jsonb)
+    'outgoing', (select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id), 'at', _dlabel(f.created_at)) order by f.id desc), '[]'::jsonb)
                   from friends f join profiles p on p.id = f.to_user where f.status = 'pending' and f.from_user = u));
 end $$;
 
@@ -3094,7 +3190,7 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me();
 begin
   return (select coalesce(jsonb_agg(jsonb_build_object('id', z.id, 'body', z.body, 'at', _dlabel(z.created_at),
-            'ts', floor(extract(epoch from z.created_at) * 1000), 'nickname', p.nickname, 'uid', p.account_no,
+            'ts', floor(extract(epoch from z.created_at) * 1000), 'nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id),
             'mine', z.user_id = u, 'friend', _is_friend(u, z.user_id),
             'asked', exists (select 1 from friends f where f.from_user = u and f.to_user = z.user_id and f.status = 'pending'))
             order by z.id desc), '[]'::jsonb)
@@ -3110,8 +3206,8 @@ declare u uuid := _me(); b text := btrim(coalesce(p_body, ''));
 begin
   if char_length(b) < 1 then raise exception '何か書いてください'; end if;
   if char_length(b) > 140 then raise exception '140文字までです'; end if;
-  if exists (select 1 from posts where user_id = u and created_at > _now() - interval '20 seconds') then
-    raise exception '連続の投稿は20秒あけてください';
+  if exists (select 1 from posts where user_id = u and created_at > _now() - interval '10 seconds') then
+    raise exception '連続の投稿は10秒あけてください';
   end if;
   if (select count(*) from posts where user_id = u and created_at > _now() - interval '1 day') >= 100 then
     raise exception '投稿は1日100件までです';
@@ -3126,7 +3222,7 @@ create or replace function public.tl_delete(p_id bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me();
 begin
-  delete from posts where id = p_id and (user_id = u or _is_admin(u));
+  delete from posts where id = p_id and (user_id = u or _is_staff(u));
   if not found then raise exception '消せる投稿が見つかりません'; end if;
   return jsonb_build_object('ok', true);
 end $$;
@@ -3134,8 +3230,11 @@ end $$;
 -- ---------------------------------------------------------------------
 -- 通貨の取引所（AiliNaX ⇄ Cièlani-Alpićsk）
 --   Cièlani-Alpićsk（CA）：Cièlani-Nièpha（CN・風の芽公式サーバーの通貨）と同じ価値の、サイトの中で使う通貨
---   値段は「1 X = 何 CA」。買い注文＝CAを払ってXを買う、売り注文＝Xを売ってCAをもらう（指値・先に出た値段で約定）
---   注文中のお金は預かる（買い：数量×値段のCA、売り：数量のX）。取り消すと戻る
+--   値段は「1 X = 何 CA」（小数第4位まで）。買い注文＝CAを払ってXを買う、売り注文＝Xを売ってCAをもらう
+--   約定は先に出ていた注文の値段。動くCAは、買い注文ごとに約定の合計を切り上げた整数（端数で得をしないように）
+--   注文中のお金は預かる（買い：数量×値段を切り上げたCA、売り：数量のX）。取り消すと戻る
+--   手数料（はじめ0.1%）：買った人は受け取るXから、売った人は受け取るCAから引かれ、取引所の会社に入る
+--   取引所の会社（風の芽証券取引所）が休業・廃業していると注文できない
 --   CN ⇄ CA は運営者が手で交換（1万単位）：交換申請 → 管理者が処理
 -- ---------------------------------------------------------------------
 alter table public.profiles add column if not exists ca bigint not null default 0;
@@ -3144,29 +3243,59 @@ do $$ begin
     alter table public.profiles add constraint profiles_ca_chk check (ca >= 0);
   end if;
 end $$;
+alter table public.companies add column if not exists ca bigint not null default 0;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'companies_ca_chk') then
+    alter table public.companies add constraint companies_ca_chk check (ca >= 0);
+  end if;
+end $$;
 
 create table if not exists public.fx_orders (
-  id         bigserial primary key,
-  user_id    uuid not null references public.profiles(id) on delete cascade,
-  side       text not null check (side in ('buy', 'sell')),   -- buy：Xを買う（CAを払う）／sell：Xを売る
-  price      bigint not null check (price > 0),               -- 1 X あたりの CA
-  qty        bigint not null check (qty > 0),                 -- X の数
-  remain     bigint not null check (remain >= 0),
-  status     text not null default 'open',                    -- open / done / canceled
-  created_at timestamptz not null default now()
+  id          bigserial primary key,
+  user_id     uuid not null references public.profiles(id) on delete cascade,
+  side        text not null check (side in ('buy', 'sell')),   -- buy：Xを買う（CAを払う）／sell：Xを売る
+  price       numeric(20,4) not null check (price > 0),         -- 1 X あたりの CA
+  qty         bigint not null check (qty > 0),                  -- X の数
+  remain      bigint not null check (remain >= 0),
+  locked      bigint not null default 0,                        -- 買い：まだ預かっているCA
+  spent_exact numeric not null default 0,                       -- 買い：約定したCAの正確な合計
+  spent       bigint not null default 0,                        -- 買い：実際に払ったCA（spent_exact の切り上げ）
+  status      text not null default 'open',                     -- open / done / canceled
+  created_at  timestamptz not null default now()
 );
-create index if not exists fx_orders_book_idx on public.fx_orders(side, status, price, id);
-create index if not exists fx_orders_user_idx on public.fx_orders(user_id, status);
 create table if not exists public.fx_trades (
   id         bigserial primary key,
   buy_order  bigint not null,
   sell_order bigint not null,
   buyer      uuid not null references public.profiles(id) on delete cascade,
   seller     uuid not null references public.profiles(id) on delete cascade,
-  price      bigint not null,
+  price      numeric(20,4) not null,
   qty        bigint not null,
+  value      bigint not null default 0,     -- 動いたCA
+  fee_x      bigint not null default 0,     -- 買った人から取った手数料（X）
+  fee_ca     bigint not null default 0,     -- 売った人から取った手数料（CA）
   created_at timestamptz not null default now()
 );
+-- 前の形（値段が整数・預かりの列なし）からの切りかえ（1回だけ）
+do $$
+begin
+  if not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'fx_orders' and column_name = 'locked') then
+    alter table public.fx_orders add column locked bigint not null default 0;
+    alter table public.fx_orders add column spent_exact numeric not null default 0;
+    alter table public.fx_orders add column spent bigint not null default 0;
+    update public.fx_orders set locked = remain * price where side = 'buy' and status = 'open';
+  end if;
+  if not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'fx_trades' and column_name = 'value') then
+    alter table public.fx_trades add column value bigint not null default 0;
+    alter table public.fx_trades add column fee_x bigint not null default 0;
+    alter table public.fx_trades add column fee_ca bigint not null default 0;
+    update public.fx_trades set value = (price * qty)::bigint;
+  end if;
+end $$;
+alter table public.fx_orders alter column price type numeric(20,4);
+alter table public.fx_trades alter column price type numeric(20,4);
+create index if not exists fx_orders_book_idx on public.fx_orders(side, status, price, id);
+create index if not exists fx_orders_user_idx on public.fx_orders(user_id, status);
 create index if not exists fx_trades_time_idx on public.fx_trades(created_at);
 create table if not exists public.fx_requests (
   id         bigserial primary key,
@@ -3183,6 +3312,12 @@ alter table public.fx_orders enable row level security;
 alter table public.fx_trades enable row level security;
 alter table public.fx_requests enable row level security;
 revoke all on public.fx_orders, public.fx_trades, public.fx_requests from anon, authenticated;
+
+-- 手数料（%）と、手数料を受け取る取引所の会社
+create or replace function public._fx_fee_pct() returns numeric
+language sql stable set search_path = public as $$
+  select coalesce((select value::numeric from app_settings where key = 'fx_fee_pct'), 0.1)
+$$;
 
 -- 相場（だれでも見られる部分。だれが取引したかは出さない）
 create or replace function public._fx_market() returns jsonb
@@ -3202,8 +3337,9 @@ language sql stable set search_path = public as $$
               select * from fx_trades order by id desc limit 20) z),
     'chart', (select coalesce(jsonb_agg(jsonb_build_object('price', price, 'ts', _kb_ms(created_at)) order by id), '[]'::jsonb) from (
               select * from fx_trades order by id desc limit 100) z),
-    'exchange', (select jsonb_build_object('cid', cid, 'name', name) from companies
-                  where cid = (select value from app_settings where key = 'exchange_cid') and status = 'active'))
+    'fee_pct', _fx_fee_pct(),
+    'exchange', (select jsonb_build_object('cid', cid, 'name', name, 'open', status = 'active') from companies
+                  where cid = (select value from app_settings where key = 'exchange_cid')))
 $$;
 
 -- 情報タブの「相場」
@@ -3222,7 +3358,7 @@ begin
   return jsonb_build_object('market', _fx_market(),
     'ca', (select ca from profiles where id = u), 'balance', _bal(u),
     'orders', (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'side', side, 'price', price, 'qty', qty, 'remain', remain,
-                 'status', status, 'at', _dlabel(created_at)) order by (status = 'open') desc, id desc), '[]'::jsonb) from (
+                 'spent', spent, 'status', status, 'at', _dlabel(created_at)) order by (status = 'open') desc, id desc), '[]'::jsonb) from (
                select * from fx_orders where user_id = u order by (status = 'open') desc, id desc limit 30) z),
     'requests', (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'kind', kind, 'amount', amount, 'contact', contact,
                  'status', status, 'note', note, 'at', _dlabel(created_at)) order by id desc), '[]'::jsonb) from (
@@ -3230,23 +3366,35 @@ begin
 end $$;
 
 -- 注文する
-create or replace function public.fx_order(p_side text, p_price bigint, p_qty bigint) returns jsonb
+drop function if exists public.fx_order(text, bigint, bigint);
+create or replace function public.fx_order(p_side text, p_price numeric, p_qty bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); o fx_orders; m fx_orders; q bigint; got bigint;
+declare u uuid := _me(); o fx_orders; m fx_orders; bo fx_orders; so fx_orders; xc companies; me profiles;
+  q bigint; v bigint; ex numeric; fx bigint; fc bigint; lockamt bigint; okday timestamptz;
+  pct numeric := _fx_fee_pct(); tot_x bigint := 0; tot_c bigint := 0;
 begin
   if p_side not in ('buy', 'sell') then raise exception '買いか売りをえらんでください'; end if;
-  if p_price is null or p_price < 1 or p_price > 1000000000 then raise exception '値段は1〜10億 CA にしてください'; end if;
+  if p_price is null or p_price <= 0 or p_price > 1000000000 then raise exception '値段は0より大きく、10億 CA までにしてください'; end if;
+  if p_price <> round(p_price, 4) then raise exception '値段は小数第4位までです'; end if;
   if p_qty is null or p_qty < 1 or p_qty > 1000000000 then raise exception '数量は1〜10億 X にしてください'; end if;
+  select * into xc from companies where cid = (select value from app_settings where key = 'exchange_cid');
+  if found and xc.status <> 'active' then raise exception '取引所（%）がいま営業していないので、注文できません', xc.name; end if;
+  if xc.id is null then pct := 0; end if;
+  select * into me from profiles where id = u for update;
+  okday := me.created_at + interval '7 days';
+  if _now() < okday then raise exception '登録から7日たつまで取引所は使えません（%から）', _dlabel(okday); end if;
   if (select count(*) from fx_orders where user_id = u and status = 'open') >= 30 then raise exception '出せる注文は30件までです'; end if;
-  perform 1 from profiles where id = u for update;
   if p_side = 'buy' then
-    update profiles set ca = ca - p_price * p_qty where id = u and ca >= p_price * p_qty;
-    if not found then raise exception 'Cièlani-Alpićsk が足りません（% CA 必要です）', p_price * p_qty; end if;
+    lockamt := ceil(p_price * p_qty)::bigint;
+    update profiles set ca = ca - lockamt where id = u and ca >= lockamt;
+    if not found then raise exception 'Cièlani-Alpićsk が足りません（% CA 必要です）', lockamt; end if;
   else
+    lockamt := 0;
     update profiles set balance = balance - p_qty where id = u and balance >= p_qty;
     if not found then raise exception 'AiliNaX が足りません'; end if;
   end if;
-  insert into fx_orders(user_id, side, price, qty, remain, created_at) values (u, p_side, p_price, p_qty, p_qty, _now()) returning * into o;
+  insert into fx_orders(user_id, side, price, qty, remain, locked, created_at)
+  values (u, p_side, p_price, p_qty, p_qty, lockamt, _now()) returning * into o;
   -- 反対側の注文と合わせる（値段の良い順・先に出た順。自分の注文とは合わせない）
   loop
     exit when o.remain = 0;
@@ -3259,20 +3407,33 @@ begin
     end if;
     exit when not found;
     q := least(o.remain, m.remain);
-    got := q * m.price;                                    -- 動く CA（値段は先に出ていた注文の値段）
-    if o.side = 'buy' then
-      update profiles set ca = ca + q * (o.price - m.price) where id = u;      -- 安く買えた分のCAを返す
-      perform _give(u, q);                                                     -- 買った X
-      update profiles set ca = ca + got where id = m.user_id;                  -- 売った人に CA
-      insert into fx_trades(buy_order, sell_order, buyer, seller, price, qty, created_at) values (o.id, m.id, u, m.user_id, m.price, q, _now());
-    else
-      update profiles set ca = ca + got where id = u;                          -- 売った X の代金
-      perform _give(m.user_id, q);                                             -- 買った人に X
-      insert into fx_trades(buy_order, sell_order, buyer, seller, price, qty, created_at) values (m.id, o.id, m.user_id, u, m.price, q, _now());
+    if o.side = 'buy' then bo := o; so := m; else bo := m; so := o; end if;
+    ex := bo.spent_exact + q * m.price;            -- 値段は先に出ていた注文（m）の値段
+    v := ceil(ex)::bigint - bo.spent;              -- このとき動くCA（買い注文ごとに合計を切り上げ）
+    if v > bo.locked then raise exception '預かりが足りません（内部エラー）'; end if;
+    update fx_orders set remain = remain - q, spent_exact = ex, spent = spent + v, locked = locked - v,
+           status = case when remain - q = 0 then 'done' else status end
+     where id = bo.id returning * into bo;
+    update fx_orders set remain = remain - q, status = case when remain - q = 0 then 'done' else status end
+     where id = so.id returning * into so;
+    fx := floor(q * pct / 100); fc := floor(v * pct / 100);
+    perform _give(bo.user_id, q - fx);                                   -- 買った人に X（手数料を引く）
+    update profiles set ca = ca + (v - fc) where id = so.user_id;       -- 売った人に CA（手数料を引く）
+    insert into fx_trades(buy_order, sell_order, buyer, seller, price, qty, value, fee_x, fee_ca, created_at)
+    values (bo.id, so.id, bo.user_id, so.user_id, m.price, q, v, fx, fc, _now());
+    tot_x := tot_x + fx; tot_c := tot_c + fc;
+    if bo.remain = 0 and bo.locked > 0 then                              -- 買い終わったら、あまった預かりを返す
+      update profiles set ca = ca + bo.locked where id = bo.user_id;
+      update fx_orders set locked = 0 where id = bo.id returning * into bo;
     end if;
-    update fx_orders set remain = remain - q, status = case when remain - q = 0 then 'done' else status end where id = m.id;
-    update fx_orders set remain = remain - q, status = case when remain - q = 0 then 'done' else status end where id = o.id returning * into o;
+    if o.side = 'buy' then o := bo; else o := so; end if;
   end loop;
+  if tot_x > 0 then perform _corp_move(xc.id, tot_x, 'fx_fee', format('取引の手数料 %s X', _fmt(tot_x))); end if;
+  if tot_c > 0 then
+    update companies set ca = ca + tot_c where id = xc.id;
+    insert into corp_ledger(company_id, kind, amount, memo, balance_after)
+    values (xc.id, 'fx_fee', 0, format('取引の手数料 %s CA', _fmt(tot_c)), (select balance from companies where id = xc.id));
+  end if;
   return fx_state();
 end $$;
 
@@ -3283,10 +3444,36 @@ declare u uuid := _me(); o fx_orders;
 begin
   select * into o from fx_orders where id = p_id and user_id = u and status = 'open' for update;
   if not found then raise exception '取り消せる注文が見つかりません'; end if;
-  update fx_orders set status = 'canceled' where id = o.id;
-  if o.side = 'buy' then update profiles set ca = ca + o.remain * o.price where id = u;
-  else perform _give(u, o.remain); end if;
+  update fx_orders set status = 'canceled', locked = 0 where id = o.id;
+  if o.side = 'buy' then update profiles set ca = ca + o.locked where id = u;
+  else update profiles set balance = balance + o.remain where id = u; end if;
   return fx_state();
+end $$;
+
+-- 管理者：取引所の手数料（%）を決める
+create or replace function public.admin_fx_fee(p_pct numeric) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me();
+begin
+  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  if p_pct is null or p_pct < 0 or p_pct > 10 then raise exception '手数料は0〜10%%にしてください'; end if;
+  insert into app_settings values ('fx_fee_pct', round(p_pct, 4)::text) on conflict (key) do update set value = excluded.value;
+  return admin_state();
+end $$;
+
+-- 会社の Cièlani-Alpićsk を社長に移す
+create or replace function public.corp_ca_withdraw(p_cid text, p_amount bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies;
+begin
+  c := _my_corp(u, p_cid);
+  if c.status not in ('active', 'suspended') then raise exception 'この会社はいま動かせません'; end if;
+  if p_amount is null or p_amount < 1 or p_amount > c.ca then raise exception '移せるのは % CA までです', c.ca; end if;
+  update companies set ca = ca - p_amount where id = c.id;
+  update profiles set ca = ca + p_amount where id = u;
+  insert into corp_ledger(company_id, kind, amount, memo, balance_after)
+  values (c.id, 'ca_out', 0, format('Cièlani-Alpićsk %s CA を社長に移した', _fmt(p_amount)), c.balance);
+  return my_corps();
 end $$;
 
 -- Cièlani-Nièpha との交換申請（1万単位。運営者が手で処理）
@@ -3324,11 +3511,18 @@ create or replace function public.admin_fx_decide(p_id bigint, p_ok boolean, p_n
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); r fx_requests;
 begin
-  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  if not _is_staff(u) then raise exception '管理者だけが使えます'; end if;
   select * into r from fx_requests where id = p_id and status = 'pending' for update;
   if not found then raise exception '処理待ちの申請が見つかりません'; end if;
+  if r.user_id = u and _role(u) <> 'admin' then raise exception '自分の申請は処理できません'; end if;
   update fx_requests set status = case when p_ok then 'done' else 'rejected' end, note = left(coalesce(p_note, ''), 200), done_at = _now() where id = r.id;
-  if p_ok and r.kind = 'in' then update profiles set ca = ca + r.amount where id = r.user_id; end if;
+  -- in を通す：国が持っている Cièlani-Alpićsk（380億）から渡す／out を通す：預かったCAを国にもどす
+  if p_ok and r.kind = 'in' then
+    update treasury set ca_balance = ca_balance - r.amount where id = 1 and ca_balance >= r.amount;
+    if not found then raise exception '国が持っている Cièlani-Alpićsk が足りません'; end if;
+    update profiles set ca = ca + r.amount where id = r.user_id;
+  end if;
+  if p_ok and r.kind = 'out' then update treasury set ca_balance = ca_balance + r.amount where id = 1; end if;
   if not p_ok and r.kind = 'out' then update profiles set ca = ca + r.amount where id = r.user_id; end if;
   perform _notice(r.user_id, format('【交換】%s %s の申請（#%s）は%s。%s',
     case r.kind when 'in' then 'Cièlani-Nièpha → Cièlani-Alpićsk' else 'Cièlani-Alpićsk → Cièlani-Nièpha' end, _fmt(r.amount), r.id,
@@ -3336,6 +3530,547 @@ begin
     case when coalesce(p_note, '') <> '' then 'メモ：' || p_note else '' end));
   return admin_state();
 end $$;
+
+-- ---------------------------------------------------------------------
+-- Cièlani-Alpićsk の発行：380億 CA を1回だけ（これ以上は発行しない）
+--   国（treasury.ca_balance）が持っていて、Cièlani-Nièpha との交換で出し入れする
+-- ---------------------------------------------------------------------
+alter table public.treasury add column if not exists ca_balance bigint not null default 0;
+alter table public.treasury add column if not exists ca_issued  bigint not null default 0;
+update public.treasury set ca_balance = ca_balance + 38000000000, ca_issued = 38000000000 where id = 1 and ca_issued = 0;
+
+-- ---------------------------------------------------------------------
+-- 会社の休業・廃業・倒産
+--   休業：社長が休む（再開できる）。商品は買えない・送金や請求は受けられない・求人は出ない・銀行は預けられない（引き出しはOK）
+--   廃業：会社をたたむ。払うべきもの（渡していない注文の代金・銀行の払えていない利息・役所の賠償金）を全部払えるときだけ
+--   倒産：払うべきものより会社のお金が少ないとき。会社のお金を払うべき額の割合で分けて返す。株は消える
+--   どちらも：銀行の預金は全部返す・請求は取り消し・社員は解散・残ったお金は株主に持ち株の割合で分ける（端数は社長）
+--             会社の Cièlani-Alpićsk は社長へ
+-- ---------------------------------------------------------------------
+create or replace function public._cstat(st text) returns text
+language sql immutable as $$
+  select case st when 'pending' then '審査中' when 'active' then '営業中' when 'suspended' then '休業中'
+                 when 'closed' then '廃業' when 'bankrupt' then '倒産' when 'rejected' then '却下' else st end
+$$;
+
+create or replace function public._corp_close(cid_int int, how text, why text) returns jsonb
+language plpgsql set search_path = public as $$
+declare c companies; r record; owed_orders bigint; owed_int bigint; owed_court bigint; claims bigint;
+  ratio numeric; amt bigint; rest bigint; total bigint := 0; label text; refunded bigint := 0; deposits bigint := 0; holders int := 0;
+begin
+  select * into c from companies where id = cid_int for update;
+  if not found or c.status not in ('active', 'suspended') then raise exception 'この会社はもう活動していません'; end if;
+  label := case when how = 'closed' then '廃業' else '倒産' end;
+  if c.kind = '銀行' then
+    perform _bank_accrue_all(c.id);
+    select * into c from companies where id = cid_int;
+  end if;
+  owed_orders := coalesce((select sum(price) from corp_orders where company_id = c.id and status = 'paid'), 0);
+  owed_int    := coalesce((select sum(floor(unpaid))::bigint from bank_accounts where company_id = c.id), 0);
+  owed_court  := coalesce((select sum(comp_unpaid) from court_cases where defendant_comp = c.id and comp_unpaid > 0), 0);
+  claims := owed_orders + owed_int + owed_court;
+  if how = 'closed' and c.balance < claims then
+    raise exception '会社のお金（% X）が、払うべきもの（% X）より少ないので廃業できません。倒産の手続きをしてください', c.balance, claims;
+  end if;
+  if how = 'bankrupt_self' and c.balance >= claims then
+    raise exception 'お金が足りているので、倒産ではなく廃業にしてください';
+  end if;
+  ratio := case when claims = 0 then 1 else least(1, c.balance::numeric / claims) end;
+  -- 渡していない注文の代金を返す
+  for r in select * from corp_orders where company_id = c.id and status = 'paid' order by id loop
+    amt := floor(r.price * ratio);
+    if amt > 0 then
+      perform _corp_move(c.id, -amt, 'refund', format('注文 #%s の返金（%s）', r.id, label));
+      perform _give(r.buyer, amt);
+      perform _log(r.buyer, 'order_refund', 0, amt, jsonb_build_object('company', c.name, 'order', r.id));
+    end if;
+    refunded := refunded + amt;
+    update corp_orders set status = 'refunded', done_at = _now() where id = r.id;
+    perform _notice(r.buyer, format('【%s】「%s」が%sしたため、注文 #%s（%s X）の代金のうち %s X を返しました。',
+                    label, c.name, label, r.id, _fmt(r.price), _fmt(amt)));
+  end loop;
+  -- 銀行：払えていない利息（割合で）と、預金を全部返す
+  for r in select * from bank_accounts where company_id = c.id loop
+    amt := floor(floor(r.unpaid) * ratio);
+    if amt > 0 then
+      perform _corp_move(c.id, -amt, 'interest', '預金の利息（' || label || '）');
+      update profiles set balance = balance + amt where id = r.user_id;
+      perform _log(r.user_id, 'interest', 0, amt, jsonb_build_object('bank', c.name));
+    end if;
+    if r.balance > 0 then
+      update profiles set balance = balance + r.balance where id = r.user_id;
+      perform _log(r.user_id, 'withdraw', 0, r.balance, jsonb_build_object('bank', c.name, 'closed', true));
+    end if;
+    deposits := deposits + r.balance;
+    perform _notice(r.user_id, format('【%s】銀行「%s」が%sしたため、預金 %s X をあなたに返しました。', label, c.name, label, _fmt(r.balance)));
+  end loop;
+  delete from bank_accounts where company_id = c.id;
+  -- 役所の賠償金（割合で。残りはなくなる）
+  for r in select * from court_cases where defendant_comp = c.id and comp_unpaid > 0 loop
+    amt := floor(r.comp_unpaid * ratio);
+    if amt > 0 then
+      perform _corp_move(c.id, -amt, 'court', format('訴え #%s の賠償金（%s）', r.id, label));
+      perform _give(r.plaintiff, amt);
+      perform _log(r.plaintiff, 'court_comp', 0, amt, jsonb_build_object('case', r.id));
+    end if;
+    update court_cases set comp_paid = comp_paid + amt, comp_unpaid = 0 where id = r.id;
+    perform _notice(r.plaintiff, format('【訴え #%s】「%s」が%sしたため、賠償金のうち %s X を受け取りました（残りはなくなりました）。', r.id, c.name, label, _fmt(amt)));
+  end loop;
+  -- 請求・求人・社員
+  update invoices set status = 'canceled', done_at = _now() where status = 'open' and (from_comp = c.id or to_comp = c.id);
+  update corp_jobs set active = false where company_id = c.id;
+  update corp_applies set status = 'declined' where status = 'waiting' and job_id in (select id from corp_jobs where company_id = c.id);
+  for r in select user_id from corp_members where company_id = c.id loop
+    perform _notice(r.user_id, format('【%s】勤め先の「%s」が%sしました。', label, c.name, label));
+  end loop;
+  delete from corp_members where company_id = c.id;
+  -- 残ったお金を株主に（持ち株の割合。端数は社長）
+  select balance into rest from companies where id = c.id;
+  if rest > 0 then
+    for r in select * from corp_holders where company_id = c.id loop
+      amt := floor(rest::numeric * r.shares / greatest(c.shares, 1));
+      if amt > 0 then
+        perform _give(r.user_id, amt);
+        perform _log(r.user_id, 'liquidation', 0, amt, jsonb_build_object('company', c.name));
+        perform _notice(r.user_id, format('【%s】「%s」の残ったお金から、持ち株の割合で %s X を受け取りました。', label, c.name, _fmt(amt)));
+        total := total + amt; holders := holders + 1;
+      end if;
+    end loop;
+    if rest - total > 0 then
+      perform _give(c.owner, rest - total);
+      perform _log(c.owner, 'liquidation', 0, rest - total, jsonb_build_object('company', c.name));
+    end if;
+    perform _corp_move(c.id, -rest, 'liquidation', '残ったお金を株主に分配（' || label || '）');
+  end if;
+  if c.ca > 0 then
+    update profiles set ca = ca + c.ca where id = c.owner;
+    update companies set ca = 0 where id = c.id;
+  end if;
+  for r in select user_id from corp_holders where company_id = c.id and user_id <> c.owner loop
+    perform _notice(r.user_id, format('【%s】「%s」が%sしました。持っていた株はなくなりました。', label, c.name, label));
+  end loop;
+  delete from corp_holders where company_id = c.id;
+  delete from corp_pins where company_id = c.id;
+  update share_offers set status = 'canceled', done_at = _now() where company_id = c.id and status = 'open';
+  update companies set status = case when how = 'closed' then 'closed' else 'bankrupt' end,
+         reason = left(coalesce(why, ''), 300), closed_at = _now(), court_lock = false
+   where id = c.id;
+  perform _notice(c.owner, format('【%s】「%s」を%sしました。%s', label, c.name, label,
+                  case when coalesce(why, '') <> '' then '（' || why || '）' else '' end));
+  return jsonb_build_object('refunded', refunded, 'deposits', deposits, 'distributed', rest, 'holders', holders, 'ratio', ratio);
+end $$;
+
+-- 社長：休業する・再開する
+create or replace function public.corp_suspend(p_cid text, p_on boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies;
+begin
+  c := _my_corp(u, p_cid);
+  if p_on then
+    if c.status <> 'active' then raise exception '営業中の会社だけ休業できます'; end if;
+    update companies set status = 'suspended' where id = c.id;
+    for c in select * from companies where id = c.id loop end loop;
+  else
+    if c.status <> 'suspended' then raise exception '休業中ではありません'; end if;
+    if c.court_lock then raise exception '役所の命令で休業中なので、自分では再開できません'; end if;
+    update companies set status = 'active' where id = c.id;
+  end if;
+  insert into corp_ledger(company_id, kind, amount, memo, balance_after)
+  values (c.id, 'status', 0, case when p_on then '休業した' else '営業を再開した' end, c.balance);
+  return my_corps();
+end $$;
+
+-- 社長：廃業する（p_kind = 'close'）・倒産する（p_kind = 'bankrupt'）
+create or replace function public.corp_close(p_cid text, p_kind text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies; r jsonb;
+begin
+  c := _my_corp(u, p_cid);
+  if p_kind not in ('close', 'bankrupt') then raise exception '廃業か倒産をえらんでください'; end if;
+  if c.cid = (select value from app_settings where key = 'exchange_cid') and _role(u) <> 'admin' then
+    raise exception '取引所の会社は、管理者しかたためません';
+  end if;
+  r := _corp_close(c.id, case when p_kind = 'close' then 'closed' else 'bankrupt_self' end, null);
+  return my_corps() || jsonb_build_object('result', r);
+end $$;
+
+-- 管理者：会社を休業させる・再開させる・倒産させる
+create or replace function public.admin_corp_action(p_cid text, p_action text, p_reason text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies;
+begin
+  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  select * into c from companies where cid = _cid_norm(p_cid) and status in ('active', 'suspended') for update;
+  if not found then raise exception '会社が見つかりません'; end if;
+  if p_action = 'suspend' then
+    update companies set status = 'suspended', court_lock = true where id = c.id;
+    perform _notice(c.owner, format('【命令】「%s」は管理者の命令で休業になりました。%s', c.name, coalesce(p_reason, '')));
+  elsif p_action = 'resume' then
+    update companies set status = 'active', court_lock = false where id = c.id;
+    perform _notice(c.owner, format('【命令】「%s」の休業命令がとかれました。営業できます。', c.name));
+  elsif p_action = 'bankrupt' then
+    perform _corp_close(c.id, 'bankrupt_court', coalesce(nullif(p_reason, ''), '管理者の命令'));
+  else
+    raise exception 'えらべるのは 休業・再開・倒産 です';
+  end if;
+  return admin_state();
+end $$;
+
+-- ---------------------------------------------------------------------
+-- 株の譲渡（代金つき）
+--   代金0なら、すぐにゆずる（いままでの「ゆずる」）
+--   代金ありなら、相手に「申し出」が届き、相手が受けると代金（＋手数料1%・最低1 Xは国庫へ）を払って株が動く
+--   お金が動くので、送金と同じく、どちらも登録から7日・買う人に税の滞納がないこと
+-- ---------------------------------------------------------------------
+create table if not exists public.share_offers (
+  id         bigserial primary key,
+  company_id int  not null references public.companies(id) on delete cascade,
+  from_user  uuid not null references public.profiles(id) on delete cascade,
+  to_user    uuid not null references public.profiles(id) on delete cascade,
+  shares     bigint not null check (shares > 0),
+  price      bigint not null check (price > 0),       -- 代金の合計（X）
+  status     text not null default 'open',            -- open / done / declined / canceled
+  created_at timestamptz not null default now(),
+  done_at    timestamptz
+);
+create index if not exists share_offers_to_idx on public.share_offers(to_user, status);
+create index if not exists share_offers_from_idx on public.share_offers(from_user, status);
+alter table public.share_offers enable row level security;
+revoke all on public.share_offers from anon, authenticated;
+
+create or replace function public._offer_json(o share_offers) returns jsonb
+language sql stable set search_path = public as $$
+  select jsonb_build_object('id', o.id, 'shares', o.shares, 'price', o.price, 'status', o.status, 'at', _dlabel(o.created_at),
+    'fee', _xfer_fee(o.price),
+    'cid', (select cid from companies where id = o.company_id), 'company', (select name from companies where id = o.company_id),
+    'unit', (select case when form = '株式会社' then '株' else '口' end from companies where id = o.company_id),
+    'from_name', (select nickname from profiles where id = o.from_user), 'from_id', (select account_no from profiles where id = o.from_user),
+    'from_badge', _badge(o.from_user),
+    'to_name', (select nickname from profiles where id = o.to_user), 'to_id', (select account_no from profiles where id = o.to_user))
+$$;
+
+create or replace function public.share_offer(p_cid text, p_to text, p_shares bigint, p_price bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies; mine bigint; t record; me profiles;
+begin
+  if coalesce(p_price, 0) = 0 then
+    perform share_give(p_cid, p_to, p_shares);
+    return my_stocks();
+  end if;
+  if p_price < 0 or p_price > 1000000000000 then raise exception '代金は0〜1兆 X にしてください'; end if;
+  select * into c from companies where cid = _cid_norm(p_cid) and status in ('active', 'suspended');
+  if not found then raise exception '会社が見つかりません'; end if;
+  if p_shares is null or p_shares < 1 then raise exception 'ゆずる数を入れてください'; end if;
+  select shares into mine from corp_holders where company_id = c.id and user_id = u;
+  if coalesce(mine, 0) < p_shares then raise exception 'ゆずれるのは持っている % までです', coalesce(mine, 0); end if;
+  select * into t from _find_id(p_to);
+  if t.rid is null then raise exception '株をゆずれるのはユーザーだけです'; end if;
+  if t.rid = u then raise exception '自分にはゆずれません'; end if;
+  select * into me from profiles where id = u;
+  if _now() < me.created_at + interval '7 days' then raise exception '登録から7日たつまで、代金つきの譲渡はできません'; end if;
+  if (select count(*) from share_offers where from_user = u and status = 'open') >= 20 then raise exception '返事待ちの申し出は20件までです'; end if;
+  insert into share_offers(company_id, from_user, to_user, shares, price, created_at) values (c.id, u, t.rid, p_shares, p_price, _now());
+  perform _notice(t.rid, format('【株の譲渡】%s（ID %s）から「%s」の%s %s を %s X でゆずりたいという申し出が来ました。企業タブの「持ち株」から返事できます。',
+                  me.nickname, me.account_no, c.name, case when c.form = '株式会社' then '株' else '出資' end, _fmt(p_shares), _fmt(p_price)));
+  return my_stocks();
+end $$;
+
+-- 申し出に返事する（受ける＝代金を払って株を受け取る）
+create or replace function public.share_offer_answer(p_id bigint, p_ok boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); o share_offers; c companies; me profiles; seller profiles; mine bigint; fee bigint;
+begin
+  select * into o from share_offers where id = p_id and to_user = u and status = 'open' for update;
+  if not found then raise exception '申し出が見つかりません'; end if;
+  select * into c from companies where id = o.company_id;
+  select * into seller from profiles where id = o.from_user;
+  if not p_ok then
+    update share_offers set status = 'declined', done_at = _now() where id = o.id;
+    perform _notice(o.from_user, format('【株の譲渡】「%s」の株の申し出（#%s）は断られました。', c.name, o.id));
+    return my_stocks();
+  end if;
+  if c.status not in ('active', 'suspended') then raise exception 'この会社はもうありません'; end if;
+  select * into me from profiles where id = u for update;
+  if _now() < me.created_at + interval '7 days' then raise exception '登録から7日たつまで、代金つきの譲渡は受けられません'; end if;
+  if _debt(u) > 0 then raise exception '税金の滞納があるので払えません'; end if;
+  select shares into mine from corp_holders where company_id = c.id and user_id = o.from_user for update;
+  if coalesce(mine, 0) < o.shares then raise exception '相手がもう、その数の株を持っていません'; end if;
+  fee := _xfer_fee(o.price);
+  if me.balance < o.price + fee then raise exception 'AiliNaXが足りません（手数料 % X をふくめて % X 必要です）', fee, o.price + fee; end if;
+  update profiles set balance = balance - (o.price + fee) where id = u;
+  update treasury set balance = balance + fee, fee_total = fee_total + fee where id = 1;
+  perform _log(u, 'share_buy', o.price + fee, 0, jsonb_build_object('company', c.name, 'shares', o.shares, 'fee', fee));
+  perform _give(o.from_user, o.price);
+  perform _log(o.from_user, 'share_sell', 0, o.price, jsonb_build_object('company', c.name, 'shares', o.shares));
+  update corp_holders set shares = shares - o.shares where company_id = c.id and user_id = o.from_user;
+  delete from corp_holders where company_id = c.id and shares <= 0;
+  perform _add_shares(c.id, u, o.shares);
+  update share_offers set status = 'done', done_at = _now() where id = o.id;
+  perform _notice(o.from_user, format('【株の譲渡】%s さんが「%s」の株 %s を %s X で受けました。代金が入りました。', me.nickname, c.name, _fmt(o.shares), _fmt(o.price)));
+  return my_stocks() || jsonb_build_object('balance', _bal(u));
+end $$;
+
+create or replace function public.share_offer_cancel(p_id bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me();
+begin
+  update share_offers set status = 'canceled', done_at = _now() where id = p_id and from_user = u and status = 'open';
+  if not found then raise exception '取り消せる申し出が見つかりません'; end if;
+  return my_stocks();
+end $$;
+
+-- ---------------------------------------------------------------------
+-- 役所の訴え（不正・詐欺などの訴訟・賠償請求）
+--   だれでも、相手のID（ユーザーか会社）を訴えられる（返事待ちは1人3件まで・同じ相手には1件）
+--   訴えられた人（会社なら社長）は反論を書ける
+--   管理者・副管理者が審理する（自分が関係する訴えはだめ。管理者・副管理者が訴えられたものは管理者だけ）
+--   認めると：賠償金（相手のお金→訴えた人。足りない分は、相手にお金が入るたびに取り立てる）
+--             罰金（国庫へ・あるだけ）・利用停止（日数）・会社の休業命令・倒産
+-- ---------------------------------------------------------------------
+create table if not exists public.court_cases (
+  id             bigserial primary key,
+  plaintiff      uuid not null references public.profiles(id) on delete cascade,
+  defendant_user uuid references public.profiles(id) on delete cascade,
+  defendant_comp int  references public.companies(id) on delete cascade,
+  kind           text not null default 'その他',     -- 詐欺 / 不正 / その他
+  claim          bigint not null default 0 check (claim >= 0),
+  body           text not null,
+  evidence       text not null default '',
+  status         text not null default 'open',      -- open / judged（認めた）/ dismissed（棄却）/ withdrawn（取り下げ）
+  defense        text,
+  defense_at     timestamptz,
+  verdict        text,
+  comp_ordered   bigint not null default 0,
+  comp_paid      bigint not null default 0,
+  comp_unpaid    bigint not null default 0,
+  fine           bigint not null default 0,
+  penalties      jsonb not null default '[]',
+  judge          uuid references public.profiles(id) on delete set null,
+  created_at     timestamptz not null default now(),
+  decided_at     timestamptz
+);
+create index if not exists court_cases_unpaid_user_idx on public.court_cases(defendant_user) where comp_unpaid > 0;
+create index if not exists court_cases_unpaid_comp_idx on public.court_cases(defendant_comp) where comp_unpaid > 0;
+create index if not exists court_cases_status_idx on public.court_cases(status);
+alter table public.court_cases enable row level security;
+revoke all on public.court_cases from anon, authenticated;
+
+-- 訴えられた側の人（会社なら社長）
+create or replace function public._case_def_owner(cc court_cases) returns uuid
+language sql stable set search_path = public as $$
+  select coalesce(cc.defendant_user, (select owner from companies where id = cc.defendant_comp))
+$$;
+
+create or replace function public._case_json(cc court_cases, u uuid) returns jsonb
+language sql stable set search_path = public as $$
+  select jsonb_build_object('id', cc.id, 'kind', cc.kind, 'claim', cc.claim, 'body', cc.body, 'evidence', cc.evidence,
+    'status', cc.status, 'defense', cc.defense, 'verdict', cc.verdict, 'at', _dlabel(cc.created_at),
+    'decided_at', case when cc.decided_at is null then null else _dlabel(cc.decided_at) end,
+    'comp_ordered', cc.comp_ordered, 'comp_paid', cc.comp_paid, 'comp_unpaid', cc.comp_unpaid, 'fine', cc.fine, 'penalties', cc.penalties,
+    'p_name', (select nickname from profiles where id = cc.plaintiff), 'p_id', (select account_no from profiles where id = cc.plaintiff),
+    'p_badge', _badge(cc.plaintiff),
+    'd_name', coalesce((select nickname from profiles where id = cc.defendant_user), (select name from companies where id = cc.defendant_comp)),
+    'd_id', coalesce((select account_no from profiles where id = cc.defendant_user), (select _cfull(c) from companies c where c.id = cc.defendant_comp)),
+    'd_badge', _badge(_case_def_owner(cc)), 'd_company', cc.defendant_comp is not null,
+    'd_owner', (select nickname from profiles where id = _case_def_owner(cc)),
+    'mine_p', cc.plaintiff = u, 'mine_d', _case_def_owner(cc) = u)
+$$;
+
+-- 自分の訴え（訴えたもの・訴えられたもの）
+create or replace function public.court_list() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me();
+begin
+  return jsonb_build_object(
+    'mine', (select coalesce(jsonb_agg(_case_json(cc, u) order by cc.id desc), '[]'::jsonb) from (
+              select * from court_cases where plaintiff = u order by id desc limit 30) cc),
+    'against', (select coalesce(jsonb_agg(_case_json(cc, u) order by cc.id desc), '[]'::jsonb) from (
+              select * from court_cases where defendant_user = u or defendant_comp in (select id from companies where owner = u)
+               order by id desc limit 30) cc));
+end $$;
+
+-- 訴える
+create or replace function public.court_file(p_to text, p_kind text, p_claim bigint, p_body text, p_evidence text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); k text := btrim(coalesce(p_to, '')); du uuid; dc companies; me profiles; owner_u uuid; dname text;
+begin
+  if p_kind not in ('詐欺', '不正', 'その他') then raise exception '種類（詐欺・不正・その他）をえらんでください'; end if;
+  if p_claim is null or p_claim < 0 or p_claim > 1000000000000 then raise exception '賠償してほしい額は0〜1兆 X にしてください'; end if;
+  if char_length(btrim(coalesce(p_body, ''))) < 10 then raise exception '何があったか、10文字以上で書いてください'; end if;
+  select id, nickname into du, dname from profiles where account_no = k;
+  if du is null then
+    select * into dc from companies where cid = _cid_norm(k) and status in ('active', 'suspended');
+    if dc.id is null then raise exception 'そのIDの人や会社は見つかりません'; end if;
+    dname := dc.name; owner_u := dc.owner;
+  else
+    owner_u := du;
+  end if;
+  if owner_u = u then raise exception '自分（自分の会社）は訴えられません'; end if;
+  if (select count(*) from court_cases where plaintiff = u and status = 'open') >= 3 then raise exception '返事待ちの訴えは3件までです'; end if;
+  if exists (select 1 from court_cases where plaintiff = u and status = 'open'
+               and (defendant_user = du or defendant_comp = dc.id)) then raise exception 'この相手への訴えは、もう審理中です'; end if;
+  select * into me from profiles where id = u;
+  insert into court_cases(plaintiff, defendant_user, defendant_comp, kind, claim, body, evidence, created_at)
+  values (u, du, dc.id, p_kind, p_claim, left(btrim(p_body), 1000), left(btrim(coalesce(p_evidence, '')), 500), _now());
+  perform _notice(owner_u, format('【訴え】%s さん（ID %s）が%sを「%s」で訴えました（賠償の請求 %s X）。役所の「訴え」から反論を書けます。',
+                  me.nickname, me.account_no, case when dc.id is null then 'あなた' else '会社「' || dname || '」' end, p_kind, _fmt(p_claim)));
+  return court_list();
+end $$;
+
+-- 反論を書く（訴えられた人・会社の社長）
+create or replace function public.court_defend(p_id bigint, p_text text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); cc court_cases;
+begin
+  select * into cc from court_cases where id = p_id and status = 'open' for update;
+  if not found or _case_def_owner(cc) is distinct from u then raise exception '反論できる訴えが見つかりません'; end if;
+  if char_length(btrim(coalesce(p_text, ''))) < 1 then raise exception '反論を書いてください'; end if;
+  update court_cases set defense = left(btrim(p_text), 1000), defense_at = _now() where id = cc.id;
+  perform _notice(cc.plaintiff, format('【訴え #%s】相手が反論を書きました。', cc.id));
+  return court_list();
+end $$;
+
+-- 訴えを取り下げる（訴えた人）
+create or replace function public.court_withdraw(p_id bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); cc court_cases;
+begin
+  select * into cc from court_cases where id = p_id and plaintiff = u and status = 'open' for update;
+  if not found then raise exception '取り下げられる訴えが見つかりません'; end if;
+  update court_cases set status = 'withdrawn', decided_at = _now() where id = cc.id;
+  perform _notice(_case_def_owner(cc), format('【訴え #%s】訴えは取り下げられました。', cc.id));
+  return court_list();
+end $$;
+
+-- 払いきれていない賠償金を取り立てる（ユーザー：入ってきた額まで／会社：入ってきた額まで）
+create or replace function public._court_collect_user(u uuid, amt bigint) returns void
+language plpgsql set search_path = public as $$
+declare r court_cases; left_amt bigint := amt; pay bigint; b bigint;
+begin
+  for r in select * from court_cases where defendant_user = u and comp_unpaid > 0 order by id for update loop
+    exit when left_amt <= 0;
+    select balance into b from profiles where id = u;
+    pay := least(r.comp_unpaid, left_amt, b);
+    exit when pay <= 0;
+    update profiles set balance = balance - pay where id = u;
+    update court_cases set comp_paid = comp_paid + pay, comp_unpaid = comp_unpaid - pay where id = r.id;
+    perform _log(u, 'court_garnish', pay, 0, jsonb_build_object('case', r.id));
+    perform _give(r.plaintiff, pay);
+    perform _log(r.plaintiff, 'court_comp', 0, pay, jsonb_build_object('case', r.id));
+    perform _notice(u, format('【訴え #%s】入ってきたお金から、賠償金 %s X を取り立てました（残り %s X）。', r.id, _fmt(pay), _fmt(r.comp_unpaid - pay)));
+    perform _notice(r.plaintiff, format('【訴え #%s】賠償金 %s X が入りました（残り %s X）。', r.id, _fmt(pay), _fmt(r.comp_unpaid - pay)));
+    left_amt := left_amt - pay;
+  end loop;
+end $$;
+
+create or replace function public._court_collect_comp(cid_int int, amt bigint) returns void
+language plpgsql set search_path = public as $$
+declare r court_cases; left_amt bigint := amt; pay bigint; b bigint;
+begin
+  for r in select * from court_cases where defendant_comp = cid_int and comp_unpaid > 0 order by id for update loop
+    exit when left_amt <= 0;
+    select balance into b from companies where id = cid_int;
+    pay := least(r.comp_unpaid, left_amt, b);
+    exit when pay <= 0;
+    perform _corp_move(cid_int, -pay, 'court', format('訴え #%s の賠償金（取り立て）', r.id));
+    update court_cases set comp_paid = comp_paid + pay, comp_unpaid = comp_unpaid - pay where id = r.id;
+    perform _give(r.plaintiff, pay);
+    perform _log(r.plaintiff, 'court_comp', 0, pay, jsonb_build_object('case', r.id));
+    perform _notice(r.plaintiff, format('【訴え #%s】賠償金 %s X が入りました（残り %s X）。', r.id, _fmt(pay), _fmt(r.comp_unpaid - pay)));
+    left_amt := left_amt - pay;
+  end loop;
+end $$;
+
+-- 審理する（管理者・副管理者）
+--   p_ok：認める／棄却。認めるとき：p_comp 賠償金（請求額まで）・p_fine 罰金・p_ban_days 利用停止の日数・p_corp 会社の処分（none / suspend / bankrupt）
+create or replace function public.admin_court_decide(p_id bigint, p_ok boolean, p_comp bigint, p_fine bigint, p_ban_days int, p_corp text, p_verdict text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); rl text := _role(u); cc court_cases; downer uuid; dc companies; pen jsonb := '[]'::jsonb;
+  got bigint := 0; take bigint; fine_got bigint := 0; r record; vtxt text := left(btrim(coalesce(p_verdict, '')), 1000);
+begin
+  if rl is null then raise exception '管理者だけが使えます'; end if;
+  select * into cc from court_cases where id = p_id and status = 'open' for update;
+  if not found then raise exception '審理中の訴えが見つかりません'; end if;
+  downer := _case_def_owner(cc);
+  if u in (cc.plaintiff, downer) then raise exception '自分が関係する訴えは審理できません'; end if;
+  if rl <> 'admin' and (_role(cc.plaintiff) is not null or _role(downer) is not null) then
+    raise exception '管理者・副管理者が関係する訴えは、管理者だけが審理できます';
+  end if;
+  if char_length(vtxt) < 1 then raise exception '判決の理由を書いてください'; end if;
+  if not p_ok then
+    update court_cases set status = 'dismissed', verdict = vtxt, judge = u, decided_at = _now() where id = cc.id;
+    perform _notice(cc.plaintiff, format('【訴え #%s】訴えは認められませんでした（棄却）。理由：%s', cc.id, vtxt));
+    perform _notice(downer, format('【訴え #%s】あなたへの訴えは認められませんでした（棄却）。', cc.id));
+    return admin_state();
+  end if;
+  p_comp := greatest(coalesce(p_comp, 0), 0); p_fine := greatest(coalesce(p_fine, 0), 0);
+  p_ban_days := greatest(coalesce(p_ban_days, 0), 0); p_corp := coalesce(p_corp, 'none');
+  if p_comp > cc.claim then raise exception '賠償金は、請求された額（% X）までです', cc.claim; end if;
+  if p_ban_days > 365 then raise exception '利用停止は365日までです'; end if;
+  if p_corp not in ('none', 'suspend', 'bankrupt') then raise exception '会社の処分は なし・休業・倒産 です'; end if;
+  if p_corp <> 'none' and cc.defendant_comp is null then raise exception '会社の処分は、会社を訴えたときだけです'; end if;
+  if cc.defendant_comp is not null then select * into dc from companies where id = cc.defendant_comp for update; end if;
+  -- 賠償金
+  if p_comp > 0 then
+    if cc.defendant_user is not null then
+      take := least(p_comp, (select balance from profiles where id = cc.defendant_user));
+      if take > 0 then update profiles set balance = balance - take where id = cc.defendant_user; got := got + take; end if;
+      for r in select * from bank_accounts where user_id = cc.defendant_user and balance > 0 order by balance desc loop
+        exit when got >= p_comp;
+        take := least(p_comp - got, r.balance);
+        update bank_accounts set balance = balance - take where company_id = r.company_id and user_id = r.user_id;
+        got := got + take;
+      end loop;
+      if got > 0 then perform _log(cc.defendant_user, 'court_pay', got, 0, jsonb_build_object('case', cc.id)); end if;
+    else
+      take := least(p_comp, dc.balance);
+      if take > 0 then perform _corp_move(dc.id, -take, 'court', format('訴え #%s の賠償金', cc.id)); got := take; end if;
+    end if;
+    if got > 0 then
+      perform _give(cc.plaintiff, got);
+      perform _log(cc.plaintiff, 'court_comp', 0, got, jsonb_build_object('case', cc.id));
+    end if;
+    pen := pen || jsonb_build_array(format('賠償金 %s X（払えた額 %s X）', _fmt(p_comp), _fmt(got)));
+  end if;
+  update court_cases set comp_ordered = p_comp, comp_paid = got, comp_unpaid = p_comp - got where id = cc.id;
+  -- 罰金（あるだけ。国庫へ）
+  if p_fine > 0 then
+    if cc.defendant_user is not null then
+      fine_got := least(p_fine, (select balance from profiles where id = cc.defendant_user));
+      if fine_got > 0 then
+        update profiles set balance = balance - fine_got where id = cc.defendant_user;
+        perform _log(cc.defendant_user, 'court_fine', fine_got, 0, jsonb_build_object('case', cc.id));
+      end if;
+    else
+      fine_got := least(p_fine, (select balance from companies where id = dc.id));
+      if fine_got > 0 then perform _corp_move(dc.id, -fine_got, 'court', format('訴え #%s の罰金', cc.id)); end if;
+    end if;
+    if fine_got > 0 then
+      update treasury set balance = balance + fine_got, confiscated_total = confiscated_total + fine_got where id = 1;
+    end if;
+    pen := pen || jsonb_build_array(format('罰金 %s X', _fmt(fine_got)));
+  end if;
+  -- 利用停止（ユーザー。会社なら社長）
+  if p_ban_days > 0 then
+    update profiles set banned_until = greatest(coalesce(banned_until, _now()), _now()) + make_interval(days => p_ban_days) where id = downer;
+    pen := pen || jsonb_build_array(format('利用停止 %s日', p_ban_days));
+  end if;
+  -- 会社の処分
+  if p_corp = 'suspend' then
+    update companies set status = 'suspended', court_lock = true where id = dc.id and status in ('active', 'suspended');
+    pen := pen || jsonb_build_array('会社の休業命令');
+  elsif p_corp = 'bankrupt' then
+    perform _corp_close(dc.id, 'bankrupt_court', format('訴え #%s の判決', cc.id));
+    pen := pen || jsonb_build_array('会社の倒産');
+  end if;
+  update court_cases set status = 'judged', verdict = vtxt, fine = fine_got, penalties = pen, judge = u, decided_at = _now() where id = cc.id;
+  perform _notice(cc.plaintiff, format('【訴え #%s】訴えが認められました。%s 理由：%s', cc.id,
+                  (select string_agg(x, '・') from jsonb_array_elements_text(pen) x), vtxt));
+  perform _notice(downer, format('【訴え #%s】あなたへの訴えが認められました。処分：%s。理由：%s', cc.id,
+                  coalesce((select string_agg(x, '・') from jsonb_array_elements_text(pen) x), '注意'), vtxt));
+  return admin_state();
+end $$;
+
 
 -- 前の5けたの会社IDを、3けたの会社番号に変える（何度流しても同じ）
 do $$
@@ -3377,6 +4112,10 @@ begin
             '_corp_holders','_add_shares','corp_shares_change','share_give','my_stocks','corp_dividend','corp_owner_set',
             '_is_friend','friend_list','friend_request','friend_answer','friend_remove','tl_list','tl_post','tl_delete',
             '_fx_market','market_info','fx_state','fx_order','fx_cancel','fx_request','fx_request_cancel','admin_fx_decide',
+            '_fx_fee_pct','admin_fx_fee','corp_ca_withdraw','_role','_is_staff','_badge','_mail_seen','_cstat','_corp_close',
+            'corp_suspend','corp_close','admin_corp_action','_offer_json','share_offer','share_offer_answer','share_offer_cancel',
+            '_case_def_owner','_case_json','court_list','court_file','court_defend','court_withdraw','_court_collect_user',
+            '_court_collect_comp','admin_court_decide',
             '_kb_norm','_kb_gumbel','_kb_midx','_kb_jday','_kb_ms','_kb_agef','_kb_fit','_kb_name','_kb_new_horse',
             '_kb_make_race','_kb_make_day','_kb_seq','_kb_prob','_kb_prob_trio','_kb_rate','_kb_odds','_kb_check_sel',
             '_kb_hit','_kb_settle','_kb_month','_kb_seed','_kb_tick','_kb_status',

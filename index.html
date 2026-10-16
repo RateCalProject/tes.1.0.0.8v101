@@ -198,6 +198,13 @@ h3{font-size:15px;margin:16px 0 8px}
 .co-row .nm b{display:block}
 .co-row .nm small{color:var(--muted);display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kindtag{font-size:11px;font-weight:800;border-radius:4px;padding:1px 6px;background:var(--soft);color:var(--accent);margin-left:6px}
+.stag{font-size:11px;font-weight:800;border-radius:4px;padding:1px 6px;background:#F3E3C7;color:#8A5A12;margin-left:6px}
+.chk{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:#F08A24;color:#fff;font-size:10px;font-weight:900;margin-left:3px;vertical-align:-2px}
+.admtag{display:inline-block;font-size:10px;line-height:1;padding:3px 5px;border-radius:5px;background:#1C1C1A;color:#fff;margin-left:4px;vertical-align:1px;font-weight:800}
+.admtag.sub{background:#6B6A64}
+.cond{display:flex;gap:8px;align-items:center;padding:4px 0;font-size:14px}
+.cond .y{color:var(--win);font-weight:900}.cond .n{color:var(--lose);font-weight:900}
+.case h4{margin:8px 0 2px}
 .item{border:1px solid var(--line);border-radius:10px;padding:10px;margin:8px 0}
 .item > .row > b:first-child{flex:1;min-width:0}
 .item > .row > b.num{flex:none;white-space:nowrap}
@@ -312,7 +319,8 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <div class="small muted" style="margin:6px 0 2px">「株式会社」などをつける場所（例：株式会社〇〇／〇〇株式会社）</div>
     <div class="seg" id="apPos"><button data-k="1" class="on">前につける</button><button data-k="0">後につける</button></div>
     <div class="small muted" style="margin:6px 0 2px">業種</div>
-    <div class="seg" id="apKind" style="margin:0 0 4px"><button data-k="一般" class="on">ふつうの会社</button><button data-k="銀行">銀行（株式会社だけ）</button></div>
+    <div class="seg" id="apKind" style="margin:0 0 4px"><button data-k="一般" class="on">ふつうの会社</button><button data-k="銀行">銀行</button><button data-k="証券">証券</button></div>
+    <p class="muted small" style="margin:0 0 4px">銀行・証券会社は株式会社だけです。</p>
     <p class="small" id="apPrev" style="margin:4px 0">申請する名前：<b>—</b></p>
     <textarea class="inp" id="apDesc" rows="3" maxlength="1000" placeholder="どんな会社か（企業ページに出ます）"></textarea>
     <button class="btn main wide" id="apSend">申請する（1,000 X）</button>
@@ -344,11 +352,11 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   <div class="card" data-sub="invest">
     <h3 style="margin-top:0">注文</h3>
     <div class="seg" id="fxSide" style="margin-bottom:8px"><button data-k="buy" class="on">AiliNaX を買う</button><button data-k="sell">AiliNaX を売る</button></div>
-    <input class="inp" id="fxPrice" type="number" inputmode="numeric" min="1" step="1" placeholder="値段（1 X あたりの CA）">
+    <input class="inp" id="fxPrice" type="number" inputmode="decimal" min="0.0001" step="0.0001" placeholder="値段（1 X あたりの CA。小数第4位まで）">
     <input class="inp" id="fxQty" type="number" inputmode="numeric" min="1" step="1" placeholder="数量（X）">
     <p class="small" id="fxPrev" style="min-height:20px;margin:6px 0"></p>
     <button class="btn main big wide" id="fxGo">AiliNaX を買う</button>
-    <p class="muted small" style="margin:8px 0 0">指値の注文です。値段の合う注文があれば、すぐに取引されます（先に出ていた注文の値段で）。合わなければ注文として残り、取り消すと預けた分が戻ります。手数料はかかりません。</p>
+    <p class="muted small" style="margin:8px 0 0">指値の注文です。値段の合う注文があれば、すぐに取引されます（先に出ていた注文の値段で）。合わなければ注文として残り、取り消すと預けた分が戻ります。手数料（はじめ0.1%）は風の芽証券取引所に入ります。登録から7日たつと使えます。</p>
   </div>
   <div class="card" data-sub="invest"><h3 style="margin-top:0">注文の一覧（板）</h3><div id="fxBook"></div></div>
   <div class="card" data-sub="invest"><h3 style="margin-top:0">自分の注文</h3><div id="fxMine"></div></div>
@@ -366,7 +374,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <p class="muted small" style="margin:0">上場した株式会社の株を、風の芽証券取引所を通して売り買いできるようにする予定です。いまは「持ち株」から株をゆずれます。</p>
   </div>
   <div class="card" data-sub="stock"><h3 style="margin-top:0">持ち株</h3><div id="stList"></div>
-    <p class="muted small" style="margin:8px 0 0">株（有限会社・合同会社は出資）を持っていると、会社が配当を出したとき、持ち分に合わせてもらえます。ゆずるときの代金は「請求」や「送金」でやりとりしてください。</p></div>
+    <p class="muted small" style="margin:8px 0 0">株（有限会社・合同会社は出資）を持っていると、会社が配当を出したとき、持ち分に合わせてもらえます。「ゆずる・売る」で代金をつけると、相手が払ったときに株が動きます（手数料1%は買う人。代金つきは登録7日から）。</p></div>
   <p class="muted small" data-sub="search pin" style="margin:8px 4px">ブロックなどゲーム内アイテムは、会社の商品として売り買いできます。今後：Discord連携の送金・借入も企業から使えるようにする予定です。</p>
 </section>
 
@@ -536,6 +544,18 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   </div>
   <div data-sub="bill" class="card"><h3 style="margin-top:0">届いた請求</h3><div id="bIn"></div></div>
   <div data-sub="bill" class="card"><h3 style="margin-top:0">出した請求</h3><div id="bOut"></div></div>
+  <div data-sub="court" class="card">
+    <h3 style="margin-top:0">訴える（不正・詐欺など）</h3>
+    <p class="muted small" style="margin:0 0 6px">お金をだまし取られた・品物を渡してもらえないなど、困ったことがあったら訴えられます。管理者が両方の話を聞いて、認められると、相手から賠償金を取り立てたり、罰金・利用停止・会社の休業や倒産などの処罰をします。うその訴えはやめましょう。</p>
+    <input class="inp" id="ctTo" inputmode="numeric" maxlength="11" placeholder="相手のID（ユーザー5けた・会社3けた）">
+    <div class="seg" id="ctKind" style="margin:4px 0"><button data-k="詐欺" class="on">詐欺</button><button data-k="不正">不正</button><button data-k="その他">その他</button></div>
+    <input class="inp" id="ctClaim" type="number" inputmode="numeric" min="0" step="1" placeholder="賠償してほしい額（X）。処罰だけなら 0">
+    <textarea class="inp" id="ctBody" rows="4" maxlength="1000" placeholder="何があったか（いつ・何を・いくら）"></textarea>
+    <input class="inp" id="ctEv" maxlength="500" placeholder="証拠（注文や請求の番号、日時、スクショの説明など）">
+    <button class="btn main wide" id="ctSend">訴える</button>
+  </div>
+  <div data-sub="court" class="card"><h3 style="margin-top:0">自分が訴えたもの</h3><div id="ctMine"></div></div>
+  <div data-sub="court" class="card"><h3 style="margin-top:0">訴えられたもの</h3><div id="ctAgainst"></div></div>
   <div data-sub="kokko" class="card" id="txTreasury"></div>
   <div data-sub="kokko" class="card" id="txTop"></div>
   <div data-sub="tax" class="card hist" id="txHist"></div>
@@ -562,6 +582,12 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <h3 style="margin-top:0">ニックネーム</h3>
     <div class="row"><input id="nick" maxlength="12" class="grow" style="padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg)"><button class="btn main" id="nickSave">変える</button></div>
     <p class="muted small" style="margin:6px 0 0">TLや競馬億万長者などで、みんなに見えます（所持金は自分にしか見えません）。本名やメールアドレスは入れないでください。</p>
+  </div>
+  <div class="card" data-sub="prof">
+    <h3 style="margin-top:0">オレンジのチェック <span class="chk">✓</span></h3>
+    <div id="chkBox"></div>
+    <button class="btn wide" id="mailVerify" style="margin-top:8px">メールで認証する（リンクが届きます）</button>
+    <p class="muted small" style="margin:6px 0 0">3つの条件がそろうと、名前の横にオレンジのチェックがつきます。メールの認証は半年ごとに必要です。認証のメールはサイト全体で1時間に2通までなので、届かないときは時間をおいてください。</p>
   </div>
   <div class="card" data-sub="prof" id="pwCard">
     <h3 style="margin-top:0">パスワード</h3>
@@ -703,7 +729,7 @@ async function enter() {
   try {
     const p = await call('ensure_profile');
     ME = p; setBal(p.balance); $('#nick').value = p.nickname; setTaxDot(p.tax);
-    if (p.is_admin && !MENU_OF.vMore[3].some(x => x[0] === 'admin')) MENU_OF.vMore[3].push(['admin', '管理']);
+    if (p.role && !MENU_OF.vMore[3].some(x => x[0] === 'admin')) MENU_OF.vMore[3].push(['admin', '管理']);
   } catch (e) { toast(e.message); show('vLogin'); entered = false; return; }
   if (location.hash.includes('access_token')) history.replaceState(null, '', location.pathname);
   $('#bal').classList.remove('hidden'); $('#tabs').classList.remove('hidden');
@@ -717,7 +743,7 @@ const MENU = [
   ['vWork', '仕事', '✎', [['jobs', '仕事をえらぶ'], ['stat', '給料'], ['corp', '企業ページ'], ['mywork', '勤め先']]],
   ['vGame', '賭博', '♠', [['vGameList', '≡ 一覧'], ['vRace', '🏇 競馬'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
   ['vCorp', '企業', '社', [['search', '会社検索'], ['pin', 'ピン留め'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所']]],
-  ['vTax', '役所', '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['kokko', '国庫・番付']]],
+  ['vTax', '役所', '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['court', '訴え'], ['kokko', '国庫・番付']]],
   ['vMore', '設定', '⚙', [['prof', 'プロフィール'], ['hist', '記録'], ['rule', '規約']]],
 ];
 const MENU_OF = Object.fromEntries(MENU.map(m => [m[0], m]));
@@ -1326,6 +1352,11 @@ $('#sSpin').onclick = async () => {
 const RANK = ['', 'A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'], SUIT = ['♠', '♥', '♦', '♣'];
 const cardHtml = (c, cls = '') => `<div class="pc ${c.s === 1 || c.s === 2 ? 'red' : ''} ${cls}">${RANK[c.r]}<small>${SUIT[c.s]}</small></div>`;
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// 名前の横のしるし（オレンジのチェック・管理者タグ）
+const badgeH = b => !b ? '' : (b.ok ? '<span class="chk" title="チェック：滞納なし・登録7日・半年以内にメール認証">✓</span>' : '')
+  + (b.role ? `<span class="admtag ${b.role === 'sub' ? 'sub' : ''}">${b.role === 'admin' ? '管理者' : '副管理者'}</span>` : '');
+const nameB = (n, b) => esc(n) + badgeH(b);
+const fmtP = n => Number(n || 0).toLocaleString('ja-JP', { maximumFractionDigits: 4 });
 
 /* ---------------- ブラックジャック ---------------- */
 const bjBet = betBox($('#bjBetBox'), 50);
@@ -1465,7 +1496,7 @@ function setTaxDot(b) {
 }
 let TX = null;
 async function taxLoad() {
-  xferLoad(); billLoad();
+  xferLoad(); billLoad(); courtLoad();
   try { TX = await call('tax_state'); taxRender(); }
   catch (e) { toast(e.message); }
 }
@@ -1534,7 +1565,7 @@ function taxRender() {
 
   // 高額納税者番付
   $('#txTop').innerHTML = `<h3 style="margin-top:0">高額納税者番付${T.top_month ? `（${mlab(T.top_month)}分）` : ''}</h3>` +
-    (T.top.length ? `<ul class="rank">${T.top.map((r, i) => `<li><b>${i + 1}</b><span>${esc(r.nickname)}</span></li>`).join('')}</ul>`
+    (T.top.length ? `<ul class="rank">${T.top.map((r, i) => `<li><b>${i + 1}</b><span>${nameB(r.nickname, r.badge)}</span></li>`).join('')}</ul>`
                   : '<p class="muted small" style="margin:0">毎月16日に発表します。</p>');
 
   // 記録
@@ -1570,7 +1601,7 @@ async function infoLoad() {
       <span class="muted">送金の手数料（累計）</span><b>${fmt(d.fee)} X</b>`;
     $('#infoWeek').textContent = `（${d.week_from}〜 の勝ちの合計。毎週月曜にリセット）`;
     $('#infoJack').innerHTML = d.jackpots.length ? d.jackpots.map((j, i) => `<li><b>${i + 1}</b>
-      <span class="grow">${esc(j.nickname)}<small class="muted" style="display:block;font-size:11px">的中 ${fmt(j.hits)}本・払戻 ${fmt(j.payout)}・賭け ${fmt(j.bet)}・最高 ${fmt(j.best)}</small></span>
+      <span class="grow">${nameB(j.nickname, j.badge)}<small class="muted" style="display:block;font-size:11px">的中 ${fmt(j.hits)}本・払戻 ${fmt(j.payout)}・賭け ${fmt(j.bet)}・最高 ${fmt(j.best)}</small></span>
       <span class="v" style="color:var(--win)">+${fmt(j.net)}</span></li>`).join('')
       : '<li class="muted">今週はまだ勝った人がいません</li>';
   } catch (e) { toast(e.message); }
@@ -1673,6 +1704,49 @@ function xferInput() {
 }
 $('#xTo').oninput = xferInput; $('#xAmt').oninput = xferInput;
 
+
+/* ---------------- 訴え ---------------- */
+let ctKind = '詐欺';
+const CT_ST = { open: '審理中', judged: '認められた', dismissed: '棄却', withdrawn: '取り下げ' };
+const caseHtml = (x, side) => `<div class="item case">
+  <div class="row"><b>#${x.id} ${esc(x.kind)}</b><span class="tag ${x.status === 'judged' ? 'good' : ''}" style="margin-left:auto">${CT_ST[x.status]}</span></div>
+  <div class="small muted">${side === 'mine' ? `相手：${nameB(x.d_name, x.d_badge)}（ID ${x.d_id}${x.d_company ? '・社長 ' + esc(x.d_owner) : ''}）` : `訴えた人：${nameB(x.p_name, x.p_badge)}（ID ${x.p_id}）`}・${x.at}・賠償の請求 ${fmt(x.claim)} X</div>
+  <p class="small" style="margin:6px 0;white-space:pre-wrap">${esc(x.body)}</p>
+  ${x.evidence ? `<div class="small muted">証拠：${esc(x.evidence)}</div>` : ''}
+  ${x.defense ? `<h4 class="small">反論</h4><p class="small" style="margin:0;white-space:pre-wrap">${esc(x.defense)}</p>` : ''}
+  ${x.verdict ? `<h4 class="small">判決（${x.decided_at}）</h4><p class="small" style="margin:0;white-space:pre-wrap">${esc(x.verdict)}</p>
+     ${x.penalties.length ? `<div class="small" style="margin-top:4px">処分：${x.penalties.map(esc).join('・')}</div>` : ''}
+     ${x.comp_unpaid > 0 ? `<div class="small muted">賠償金の残り ${fmt(x.comp_unpaid)} X（相手にお金が入るたびに取り立てます）</div>` : ''}` : ''}
+  ${x.status === 'open' && side === 'mine' ? `<button class="btn s" data-ctw="${x.id}" style="margin-top:6px">取り下げる</button>` : ''}
+  ${x.status === 'open' && side === 'against' ? `<textarea class="inp" rows="3" maxlength="1000" data-ctd-text="${x.id}" placeholder="反論（あなたの言い分）" style="margin-top:6px">${esc(x.defense || '')}</textarea>
+     <button class="btn main s" data-ctd="${x.id}">反論を出す</button>` : ''}</div>`;
+async function courtLoad() {
+  try {
+    const d = await call('court_list');
+    $('#ctMine').innerHTML = d.mine.map(x => caseHtml(x, 'mine')).join('') || '<p class="muted small" style="margin:0">ありません</p>';
+    $('#ctAgainst').innerHTML = d.against.map(x => caseHtml(x, 'against')).join('') || '<p class="muted small" style="margin:0">ありません</p>';
+  } catch (e) { toast(e.message); }
+}
+$$('#ctKind button').forEach(b => b.onclick = () => { ctKind = b.dataset.k; $$('#ctKind button').forEach(x => x.classList.toggle('on', x === b)); });
+$('#ctSend').onclick = async () => {
+  const to = $('#ctTo').value.trim();
+  if (!/^(\d{5,6}|\d{3,4}(-\d{5,6})?)$/.test(to)) return toast('相手のID（ユーザー5けた・会社3けた）を入れてください');
+  if ($('#ctBody').value.trim().length < 10) return toast('何があったか、10文字以上で書いてください');
+  if (!confirm('この内容で訴えますか？相手に知らされます。')) return;
+  try {
+    await call('court_file', { p_to: to, p_kind: ctKind, p_claim: Math.max(0, Math.floor(Number($('#ctClaim').value) || 0)), p_body: $('#ctBody').value, p_evidence: $('#ctEv').value });
+    ['#ctTo', '#ctClaim', '#ctBody', '#ctEv'].forEach(k => { $(k).value = ''; }); toast('訴えました。管理者の判断を待ちましょう'); courtLoad();
+  } catch (e) { toast(e.message); }
+};
+$('#vTax').addEventListener('click', async ev => {
+  const w = ev.target.closest('[data-ctw]'), d = ev.target.closest('[data-ctd]'); if (!w && !d) return;
+  try {
+    if (w) { if (!confirm('訴えを取り下げますか？')) return; await call('court_withdraw', { p_id: Number(w.dataset.ctw) }); toast('取り下げました'); }
+    if (d) { await call('court_defend', { p_id: Number(d.dataset.ctd), p_text: $(`[data-ctd-text="${d.dataset.ctd}"]`).value }); toast('反論を出しました'); }
+    courtLoad();
+  } catch (e) { toast(e.message); }
+});
+
 /* ---------------- 請求 ---------------- */
 let BL = null;
 const B_ST = { open: '未払い', paid: '払いずみ', declined: '断られた', canceled: '取り消し' };
@@ -1723,9 +1797,10 @@ $('#xSend').onclick = async () => {
 /* =================================================================
    企業（さがす・ピン留め・求人・銀行・買ったもの・会社のページ）
    ================================================================= */
-const kindTag = c => c.kind === '銀行' ? '<span class="kindtag">銀行</span>' : '';
+const kindTag = c => (c.exchange ? '<span class="kindtag">取引所</span>' : c.kind === '銀行' ? '<span class="kindtag">銀行</span>' : c.kind === '証券' ? '<span class="kindtag">証券</span>' : '')
+  + (c.status === 'suspended' ? '<span class="stag">休業中</span>' : '');
 const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>${esc(c.name)}${kindTag(c)}</b>
-  <small>ID ${c.cid_full || c.cid}・社長 ${esc(c.owner)}${c.description ? '・' + esc(c.description) : ''}</small></span>${c.pinned ? '📌' : ''}</div>`;
+  <small>ID ${c.cid_full || c.cid}・社長 ${nameB(c.owner, c.owner_badge)}${c.description ? '・' + esc(c.description) : ''}</small></span>${c.pinned ? '📌' : ''}</div>`;
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 async function corpLoad(sub) {
@@ -1750,7 +1825,7 @@ async function corpLoad(sub) {
       const d = await call('my_orders');
       $('#odList').innerHTML = d.length ? d.map(o => `<div class="co-row" data-cid="${o.cid}"><span class="nm"><b>${esc(o.item)}</b>
           <small>${esc(o.company)}・注文 #${o.id}・${o.at}${o.note ? '・' + esc(o.note) : ''}</small></span>
-          <span class="tag ${o.status === 'done' ? 'good' : ''}">${o.status === 'done' ? '受け取りずみ' : '支払いずみ'}</span></div>`).join('')
+          <span class="tag ${o.status === 'done' ? 'good' : ''}">${{ done: '受け取りずみ', refunded: '返金ずみ' }[o.status] || '支払いずみ'}</span></div>`).join('')
         : '<p class="muted small" style="margin:0">まだ何も買っていません</p>';
       bindRows($('#odList'));
     }
@@ -1792,20 +1867,21 @@ async function corpOpen(cid) {
   const bank = c.kind === '銀行';
   m.innerHTML = `<div class="sheet">
     <div class="row"><b style="font-size:20px">${esc(c.name)}</b>${kindTag(c)}<button class="btn s" style="margin-left:auto" data-x>とじる</button></div>
-    <p class="muted small" style="margin:4px 0">ID <b style="user-select:all">${c.cid_full}</b>（${c.cid} だけでもOK）・社長 ${esc(c.owner)}</p>
+    <p class="muted small" style="margin:4px 0">ID <b style="user-select:all">${c.cid_full}</b>（${c.cid} だけでもOK）・社長 ${nameB(c.owner, c.owner_badge)}</p>
+    ${c.status === 'suspended' ? '<p class="notice small" style="margin:6px 0">この会社はいま<b>休業中</b>です。買い物・送金・預け入れはできません（銀行の引き出しはできます）。</p>' : ''}
     ${c.description ? `<p style="white-space:pre-wrap;margin:8px 0">${esc(c.description)}</p>` : ''}
     <div class="row" style="margin:8px 0"><button class="btn s" data-pin>${c.pinned ? '📌 ピン留めをやめる' : '📌 ピン留め'}</button>
-      ${c.mine ? '' : '<button class="btn s" data-send>この会社に送金</button>'}</div>
+      ${c.mine || c.status !== 'active' ? '' : '<button class="btn s" data-send>この会社に送金</button>'}</div>
     ${bank ? `<h3>銀行</h3><p class="small" style="margin:0 0 6px">預金の金利：1日 <b>${Number(c.rate)}%</b>（毎日つきます）</p>
       ${c.account ? `<div class="kv"><span>あなたの預金</span><b>${fmt(c.account.balance)} X</b><span class="muted">もらった利息</span><b>${fmt(c.account.interest_total)} X</b></div>
-        <div class="row" style="margin-top:8px"><button class="btn main s" data-dep>預ける</button><button class="btn s" data-wd>引き出す</button></div>`
-        : (c.mine ? '' : '<button class="btn main s" data-open-acct>口座を開く（無料）</button>')}` : ''}
+        <div class="row" style="margin-top:8px">${c.status === 'active' ? '<button class="btn main s" data-dep>預ける</button>' : ''}<button class="btn s" data-wd>引き出す</button></div>`
+        : (c.mine || c.status !== 'active' ? '' : '<button class="btn main s" data-open-acct>口座を開く（無料）</button>')}` : ''}
     <h3>${unitOf(c) === '株' ? '株主' : '出資者'}</h3>
     <p class="small muted" style="margin:0 0 4px">発行 ${fmt(c.shares)} ${unitOf(c)}</p>${holdersHtml(c, 10)}
     <h3>商品</h3>
     ${c.items.length ? c.items.map(it => `<div class="item"><div class="row" style="justify-content:space-between"><b>${esc(it.name)}</b><b class="num" style="margin-left:auto;white-space:nowrap">${fmt(it.price)} X</b></div>
         ${it.description ? `<p class="small muted" style="margin:4px 0;white-space:pre-wrap">${esc(it.description)}</p>` : ''}
-        ${c.mine ? '' : `<button class="btn main s" data-buy="${it.id}" data-price="${it.price}" data-name="${esc(it.name)}">購入する</button>`}</div>`).join('')
+        ${c.mine || c.status !== 'active' ? '' : `<button class="btn main s" data-buy="${it.id}" data-price="${it.price}" data-name="${esc(it.name)}">購入する</button>`}</div>`).join('')
       : '<p class="muted small">いまは商品がありません</p>'}
     <p class="muted small">買うときは手数料（1%・最低1 X）がかかります。品物（マイクラのブロックなど）は会社がサイトの外で渡します。</p></div>`;
   m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) m.remove(); };
@@ -1833,19 +1909,19 @@ async function corpOpen(cid) {
 let OW = null, apKind = '一般', apForm = '株式会社', apPre = true;
 const apName = () => { const n = $('#apName').value.trim(); return n ? (apPre ? apForm + n : n + apForm) : ''; };
 function apUpd() {
-  if (apKind === '銀行' && apForm !== '株式会社') apForm = '株式会社';
+  if ((apKind === '銀行' || apKind === '証券') && apForm !== '株式会社') apForm = '株式会社';
   $$('#apKind button').forEach(x => x.classList.toggle('on', x.dataset.k === apKind));
   $$('#apForm button').forEach(x => x.classList.toggle('on', x.dataset.k === apForm));
   $$('#apPos button').forEach(x => x.classList.toggle('on', (x.dataset.k === '1') === apPre));
   $('#apPrev').innerHTML = `申請する名前：<b>${esc(apName()) || '—'}</b>`;
 }
 $$('#apKind button').forEach(b => b.onclick = () => { apKind = b.dataset.k; apUpd(); });
-$$('#apForm button').forEach(b => b.onclick = () => { apForm = b.dataset.k; if (apForm !== '株式会社' && apKind === '銀行') apKind = '一般'; apUpd(); });
+$$('#apForm button').forEach(b => b.onclick = () => { apForm = b.dataset.k; if (apForm !== '株式会社' && (apKind === '銀行' || apKind === '証券')) apKind = '一般'; apUpd(); });
 $$('#apPos button').forEach(b => b.onclick = () => { apPre = b.dataset.k === '1'; apUpd(); });
 $('#apName').oninput = apUpd;
 $('#apSend').onclick = async () => {
   const name = apName(); if (!name) return toast('会社名を入れてください');
-  if (!confirm(`「${name}」（${apKind === '銀行' ? '銀行' : apForm}）を申請します。申請料 1,000 X がかかります。よろしいですか？`)) return;
+  if (!confirm(`「${name}」（${apKind === '一般' ? apForm : apKind === '銀行' ? '銀行' : '証券会社'}）を申請します。申請料 1,000 X がかかります。よろしいですか？`)) return;
   try { OW = await call('corp_apply', { p_name: $('#apName').value.trim(), p_form: apForm, p_pre: apPre, p_kind: apKind, p_desc: $('#apDesc').value }); toast('申請しました。審査をお待ちください'); $('#apName').value = ''; $('#apDesc').value = ''; apUpd(); ownRender(); setBal(OW.balance); }
   catch (e) { toast(e.message); }
 };
@@ -1855,13 +1931,17 @@ function ownRender() {
   if (!OW) return;
   const corps = OW.corps;
   let h = corps.map(c => {
-    if (c.status !== 'active') return `<div class="card own"><h3 style="margin-top:0">${esc(c.name)}${kindTag(c)} <span class="tag">${ST_CO[c.status] || c.status}</span></h3>
+    if (c.status === 'pending') return `<div class="card own"><h3 style="margin-top:0">${esc(c.name)}${kindTag(c)} <span class="tag">審査中</span></h3>
       <p class="muted small" style="margin:0">管理者が確認するまでお待ちください。許可されると、お知らせが届きます。</p></div>`;
-    const bank = c.kind === '銀行', cid = c.cid;
+    if (c.status === 'closed' || c.status === 'bankrupt') return `<div class="card own"><h3 style="margin-top:0">${esc(c.name)} <span class="tag">${c.status === 'closed' ? '廃業' : '倒産'}</span></h3>
+      <p class="muted small" style="margin:0">${c.closed_at || ''}に${c.status === 'closed' ? '廃業' : '倒産'}しました。${c.reason ? esc(c.reason) : ''}</p></div>`;
+    const bank = c.kind === '銀行', cid = c.cid, sus = c.status === 'suspended';
     return `<div class="card own" data-co="${cid}">
-      <h3 style="margin-top:0">${esc(c.name)}${kindTag(c)} <span class="tag good">活動中</span></h3>
+      <h3 style="margin-top:0">${esc(c.name)}${kindTag({ ...c, status: '' })} ${sus ? `<span class="stag">${c.court_lock ? '休業中（命令）' : '休業中'}</span>` : '<span class="tag good">営業中</span>'}</h3>
       <div class="kv"><span>会社のID</span><b style="user-select:all">${c.cid_full}</b><span class="muted">省略形（取引に使える）</span><b>${cid}</b><span>会社のお金</span><b>${fmt(c.balance)} X</b>
-        ${bank ? `<span class="muted">あずかっている預金</span><b>${fmt(c.deposits)} X</b><span class="muted">口座の数</span><b>${c.accounts}</b>` : ''}</div>
+        ${bank ? `<span class="muted">あずかっている預金</span><b>${fmt(c.deposits)} X</b><span class="muted">口座の数</span><b>${c.accounts}</b>` : ''}
+        ${c.ca > 0 ? `<span class="muted">会社の Cièlani-Alpićsk</span><b>${fmt(c.ca)} CA</b>` : ''}</div>
+      ${c.ca > 0 ? '<button class="btn s" data-act="ca_out" style="margin-top:6px">CA を社長に移す</button>' : ''}
       <div class="row" style="margin-top:8px;flex-wrap:wrap">
         <button class="btn s" data-act="send">会社から送金</button><button class="btn s" data-act="bill">請求する</button><button class="btn s" data-act="withdraw">自分に引き出す</button>
         <button class="btn s" data-act="fund">自分から入れる</button><button class="btn main s" data-act="payall">全員に給料</button></div>
@@ -1885,20 +1965,29 @@ function ownRender() {
 
       <h4>注文</h4>
       ${c.orders.map(o => `<div class="line"><span class="grow">#${o.id} ${esc(o.item)}（${fmt(o.price)} X）<small>${esc(o.buyer)}（ID ${o.buyer_id}）・${o.at}${o.note ? '・' + esc(o.note) : ''}</small></span>
-        ${o.status === 'done' ? '<span class="tag good">渡しずみ</span>' : `<button class="btn main s" data-act="done" data-id="${o.id}">渡した</button>`}</div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
+        ${o.status === 'done' ? '<span class="tag good">渡しずみ</span>' : o.status === 'refunded' ? '<span class="tag">返金ずみ</span>' : `<button class="btn main s" data-act="done" data-id="${o.id}">渡した</button>`}</div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
 
       <h4>求人</h4>
       ${c.jobs.map(j => jobForm(j)).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
       <details class="ed"><summary>＋ 求人を出す</summary>${jobForm(null)}</details>
 
       <h4>応募</h4>
-      ${c.applies.map(a => `<div class="line"><span class="grow">${esc(a.nickname)}（ID ${a.uid}）→「${esc(a.title)}」<small>${a.at}${a.message ? '・' + esc(a.message) : ''}</small></span>
+      ${c.applies.map(a => `<div class="line"><span class="grow">${nameB(a.nickname, a.badge)}（ID ${a.uid}）→「${esc(a.title)}」<small>${a.at}${a.message ? '・' + esc(a.message) : ''}</small></span>
         <button class="btn main s" data-act="hire" data-id="${a.id}">採用</button><button class="btn s" data-act="decline" data-id="${a.id}">見送り</button></div>`).join('') || '<p class="muted small" style="margin:0">いまはありません</p>'}
 
       <h4>社員</h4>
-      ${c.members.map(mb => `<div class="line"><span class="grow">${esc(mb.nickname)}（ID ${mb.uid}）・${esc(mb.role)}<small>給料 ${fmt(mb.salary)} X／これまで ${fmt(mb.paid_total)} X</small></span>
+      ${c.members.map(mb => `<div class="line"><span class="grow">${nameB(mb.nickname, mb.badge)}（ID ${mb.uid}）・${esc(mb.role)}<small>給料 ${fmt(mb.salary)} X／これまで ${fmt(mb.paid_total)} X</small></span>
         <button class="btn main s" data-act="pay" data-uid="${mb.uid}">払う</button><button class="btn s" data-act="mset" data-uid="${mb.uid}" data-sal="${mb.salary}" data-role="${esc(mb.role)}">設定</button>
         <button class="btn s" data-act="fire" data-uid="${mb.uid}">やめてもらう</button></div>`).join('') || '<p class="muted small" style="margin:0">まだいません。求人を出してみましょう</p>'}
+
+      <h4>会社の状態</h4>
+      <div class="row" style="flex-wrap:wrap">
+        ${sus ? (c.court_lock ? '<span class="muted small">役所（管理者）の命令で休業中です。自分では再開できません。</span>' : '<button class="btn main s" data-act="resume">営業を再開する</button>')
+              : '<button class="btn s" data-act="suspend">休業する</button>'}
+        <button class="btn s" data-act="close">廃業する</button><button class="btn s" data-act="bankrupt">倒産する</button></div>
+      <p class="muted small" style="margin:6px 0 0">休業中は、買い物・送金・請求を受けられず、求人も出ません（あとで再開できます）。
+        廃業・倒産すると、銀行の預金はみんなに返し、渡していない注文の代金を返して、残ったお金を株主に持ち株の割合で分けます。
+        渡していない注文の代金は <b>${fmt(c.owed)} X</b>。会社のお金が足りれば「廃業」、足りなければ「倒産」です（倒産では代金を割合で返し、株は消えます）。</p>
 
       <h4>会社のお金の出入り</h4>
       ${c.ledger.map(l => `<div class="line"><span class="grow">${esc(l.memo || l.kind)}<small>${l.at}・残り ${fmt(l.balance_after)} X</small></span>
@@ -1953,6 +2042,14 @@ $('#owCorp').onclick = async ev => {
     else if (a === 'owner') { const to = prompt('新しい社長のID（ユーザー・5けた）。交代すると、あなたはこの会社を動かせなくなります', ''); if (!to) return;
         if (!confirm(`ID ${to} の人に社長を交代します。もとに戻すには新しい社長に頼む必要があります。よろしいですか？`)) return;
         r = await call('corp_owner_set', { p_cid: cid, p_to: to.trim() }); }
+    else if (a === 'suspend') { if (!confirm('休業します。休業中は買い物・送金などを受けられません。よろしいですか？')) return; r = await call('corp_suspend', { p_cid: cid, p_on: true }); }
+    else if (a === 'resume') r = await call('corp_suspend', { p_cid: cid, p_on: false });
+    else if (a === 'close' || a === 'bankrupt') {
+      const w = a === 'close' ? '廃業' : '倒産';
+      if (!confirm(`本当に${w}しますか？もとに戻せません。\n銀行の預金は返し、渡していない注文の代金を返し、残ったお金は株主に分けます。`)) return;
+      if (prompt(`確認のため「${w}」と入力してください`, '') !== w) return toast('やめました');
+      r = await call('corp_close', { p_cid: cid, p_kind: a }); }
+    else if (a === 'ca_out') { const n = num('社長に移す Cièlani-Alpićsk（CA）', ''); if (!n) return; r = await call('corp_ca_withdraw', { p_cid: cid, p_amount: n }); }
     else if (a === 'bill') { go('vTax', 'bill'); setTimeout(() => { $('#bFrom').value = cid; }, 600); return; }
     else if (a === 'withdraw') { const n = num('自分に引き出す額（X）', ''); if (!n) return; r = await call('corp_withdraw', { p_cid: cid, p_amount: n }); }
     else if (a === 'fund') { const n = num('会社に入れる額（X）', ''); if (!n) return; r = await call('corp_fund', { p_cid: cid, p_amount: n }); }
@@ -1978,29 +2075,56 @@ async function myWorkLoad() {
    ================================================================= */
 async function adminLoad() {
   try {
-    const d = await call('admin_state'), t = d.treasury;
-    $('#adminBox').innerHTML = `<h3 style="margin-top:0">企業の審査</h3>
+    const d = await call('admin_state'), t = d.treasury, adm = d.role === 'admin';
+    const caseForm = x => `<div class="item case" data-case="${x.id}">
+      <div class="row"><b>#${x.id} ${esc(x.kind)}</b><span class="muted small" style="margin-left:auto">${x.at}</span></div>
+      <div class="small">訴えた人：${nameB(x.p_name, x.p_badge)}（ID ${x.p_id}）</div>
+      <div class="small">相手：${nameB(x.d_name, x.d_badge)}（ID ${x.d_id}${x.d_company ? '・社長 ' + esc(x.d_owner) : ''}）</div>
+      <div class="small">賠償の請求：<b>${fmt(x.claim)} X</b></div>
+      <p class="small" style="margin:6px 0;white-space:pre-wrap">${esc(x.body)}</p>
+      ${x.evidence ? `<div class="small muted">証拠：${esc(x.evidence)}</div>` : ''}
+      <h4 class="small">反論</h4><p class="small" style="margin:0;white-space:pre-wrap">${x.defense ? esc(x.defense) : '<span class="muted">まだありません</span>'}</p>
+      <details class="ed" style="margin-top:6px"><summary>判決を書く</summary>
+        <div class="row" style="margin-top:6px"><span class="small" style="width:7em">賠償金（X）</span><input class="inp grow" data-k="comp" type="number" min="0" value="${x.claim}" style="margin:0"></div>
+        <div class="row"><span class="small" style="width:7em">罰金（X）</span><input class="inp grow" data-k="fine" type="number" min="0" value="0" style="margin:0"></div>
+        <div class="row"><span class="small" style="width:7em">利用停止（日）</span><input class="inp grow" data-k="ban" type="number" min="0" max="365" value="0" style="margin:0"></div>
+        ${x.d_company ? `<div class="row"><span class="small" style="width:7em">会社の処分</span><select class="inp grow" data-k="corp" style="margin:0"><option value="none">なし</option><option value="suspend">休業命令</option><option value="bankrupt">倒産させる</option></select></div>` : ''}
+        <textarea class="inp" rows="3" data-k="verdict" placeholder="判決の理由（両方に届きます）"></textarea>
+        <div class="row"><button class="btn main s" data-judge="1">認める</button><button class="btn s" data-judge="0">棄却する</button></div>
+        <p class="muted small" style="margin:4px 0 0">賠償金は相手のお金→銀行の預金の順に取り、足りない分は相手にお金が入るたびに取り立てます。罰金はあるだけ国庫へ。</p>
+      </details></div>`;
+    $('#adminBox').innerHTML = `<p class="small muted" style="margin:0 0 8px">あなたは<b>${adm ? '管理者' : '副管理者'}</b>です。${adm ? '' : '国のお金のようすや手数料の設定は、管理者だけが見られます。'}</p>
+      <h3 style="margin-top:0">企業の審査</h3>
       ${d.pending.length ? d.pending.map(c => `<div class="item"><div class="row"><b>${esc(c.name)}</b>${kindTag(c)}</div>
-          <p class="small muted" style="margin:4px 0">申請者 ${esc(c.owner)}（ID ${c.owner_id}）・${c.at}・会社ID ${c.cid_full}</p>
+          <p class="small muted" style="margin:4px 0">申請者 ${nameB(c.owner, c.owner_badge)}（ID ${c.owner_id}）・${c.at}・会社ID ${c.cid_full}</p>
           ${c.description ? `<p class="small" style="white-space:pre-wrap;margin:4px 0">${esc(c.description)}</p>` : ''}
           <div class="row"><button class="btn main s" data-ok="${c.cid}">許可</button><button class="btn s" data-ng="${c.cid}">却下</button></div></div>`).join('')
         : '<p class="muted small" style="margin:0">審査待ちはありません</p>'}
-      <h3>国のお金（管理者だけに見えます）</h3>
+      <h3>訴えの審理</h3>
+      ${d.cases.length ? d.cases.map(caseForm).join('') : '<p class="muted small" style="margin:0">審理中の訴えはありません</p>'}
+      <h3>Cièlani-Nièpha との交換申請</h3>
+      ${adm ? `<p class="small muted" style="margin:0 0 4px">国が持っている Cièlani-Alpićsk：<b>${fmt(d.ca_reserve)} CA</b>（発行 ${fmt(d.ca_issued)} CA・これ以上は発行しません）／出回っている合計：<b>${fmt(d.ca_total)} CA</b></p>` : ''}
+      ${d.fx_requests.length ? d.fx_requests.map(r => `<div class="item"><div class="row"><b>${r.kind === 'in' ? 'Nièpha → Alpićsk' : 'Alpićsk → Nièpha'} ${fmt(r.amount)}</b></div>
+          <p class="small muted" style="margin:4px 0">#${r.id}・${esc(r.nickname)}（ID ${r.uid}）・${r.at}・連絡先 <b style="user-select:all">${esc(r.contact)}</b></p>
+          <p class="small" style="margin:0 0 6px">${r.kind === 'in' ? '公式サーバーで Nièpha を受け取ったら「処理した」を押すと、国の CA から渡します。' : 'CA は預かりずみ。公式サーバーで Nièpha を渡したら「処理した」を押してください（CA は国にもどります）。'}</p>
+          <div class="row"><button class="btn main s" data-fxok="${r.id}">処理した</button><button class="btn s" data-fxng="${r.id}">断る</button></div></div>`).join('')
+        : '<p class="muted small" style="margin:0">処理待ちはありません</p>'}
+      ${adm ? `<h3>国のお金（管理者だけに見えます）</h3>
       <div class="kv"><span>国庫</span><b>${fmt(t.balance)} X</b><span>発行</span><b>${fmt(t.issued_total)} X</b>
         <span>ユーザーの残高の合計</span><b>${fmt(d.supply)} X</b><span>会社のお金の合計</span><b>${fmt(d.corp_money)} X</b>
         <span>銀行預金の合計</span><b>${fmt(d.bank_money)} X</b><span class="muted">カジノのもうけ</span><b>${fmt(t.casino_total)}</b>
         <span class="muted">税収</span><b>${fmt(t.tax_total)}</b><span class="muted">給付金</span><b>${fmt(t.benefit_total)}</b>
         <span class="muted">手数料・申請料</span><b>${fmt(t.fee_total)}</b><span class="muted">給料（仕事）</span><b>${fmt(t.wage_total)}</b>
-        <span class="muted">没収</span><b>${fmt(t.confiscated_total)}</b></div>
-      <h3>Cièlani-Nièpha との交換申請</h3>
-      <p class="small muted" style="margin:0 0 4px">出回っている Cièlani-Alpićsk の合計：<b>${fmt(d.ca_total)} CA</b></p>
-      ${d.fx_requests.length ? d.fx_requests.map(r => `<div class="item"><div class="row"><b>${r.kind === 'in' ? 'Nièpha → Alpićsk' : 'Alpićsk → Nièpha'} ${fmt(r.amount)}</b></div>
-          <p class="small muted" style="margin:4px 0">#${r.id}・${esc(r.nickname)}（ID ${r.uid}）・${r.at}・連絡先 <b style="user-select:all">${esc(r.contact)}</b></p>
-          <p class="small" style="margin:0 0 6px">${r.kind === 'in' ? '公式サーバーで Nièpha を受け取ったら「処理した」を押すと、CA が入ります。' : 'CA は預かりずみ。公式サーバーで Nièpha を渡したら「処理した」を押してください。'}</p>
-          <div class="row"><button class="btn main s" data-fxok="${r.id}">処理した</button><button class="btn s" data-fxng="${r.id}">断る</button></div></div>`).join('')
-        : '<p class="muted small" style="margin:0">処理待ちはありません</p>'}
+        <span class="muted">没収・罰金</span><b>${fmt(t.confiscated_total)}</b></div>
+      <h3>取引所の手数料</h3>
+      <div class="row"><input class="inp" id="adFee" type="number" min="0" max="10" step="0.01" value="${Number(d.fee_pct)}" style="width:110px;margin:0"><span class="small">%</span><button class="btn s" id="adFeeSave">保存</button></div>
+      <p class="muted small" style="margin:4px 0 0">買った人の X と、売った人の CA から引いて、風の芽証券取引所に入ります。</p>
+      <p class="small muted">副管理者（ID）：${esc(d.subadmins || 'なし')}</p>` : ''}
       <h3>活動中の企業</h3>
-      ${d.active.map(c => `<p class="small" style="margin:4px 0">${esc(c.name)}（${esc(c.kind === '銀行' ? '銀行' : c.form)}・ID ${c.cid_full}・社長 ${esc(c.owner)}）お金 ${fmt(c.balance)} X</p>`).join('') || '<p class="muted small">まだありません</p>'}`;
+      ${d.active.map(c => `<div class="line"><span class="grow">${esc(c.name)}${c.status === 'suspended' ? `<span class="stag">${c.court_lock ? '休業命令' : '休業中'}</span>` : ''}
+          <small>${esc(c.kind === '一般' ? c.form : c.kind)}・ID ${c.cid_full}・社長 ${esc(c.owner)}${adm ? `・お金 ${fmt(c.balance)} X` : ''}</small></span>
+          ${adm ? (c.status === 'suspended' ? `<button class="btn s" data-cact="resume" data-cid="${c.cid}">再開させる</button>` : `<button class="btn s" data-cact="suspend" data-cid="${c.cid}">休業命令</button>`)
+            + `<button class="btn s" data-cact="bankrupt" data-cid="${c.cid}">倒産させる</button>` : ''}</div>`).join('') || '<p class="muted small">まだありません</p>'}`;
     $$('#adminBox [data-fxok], #adminBox [data-fxng]').forEach(b => b.onclick = async () => {
       const ok = !!b.dataset.fxok, note = prompt(ok ? 'メモ（なくてもOK）' : '断る理由（申請者に届きます）', ''); if (note === null) return;
       try { await call('admin_fx_decide', { p_id: Number(b.dataset.fxok || b.dataset.fxng), p_ok: ok, p_note: note }); toast(ok ? '処理しました' : '断りました'); adminLoad(); } catch (e) { toast(e.message); }
@@ -2008,6 +2132,24 @@ async function adminLoad() {
     $$('#adminBox [data-ok]').forEach(b => b.onclick = async () => { try { await call('admin_corp_decide', { p_cid: b.dataset.ok, p_ok: true, p_reason: null }); toast('許可しました'); adminLoad(); } catch (e) { toast(e.message); } });
     $$('#adminBox [data-ng]').forEach(b => b.onclick = async () => { const why = prompt('却下の理由（申請者に届きます）', ''); if (why === null) return;
       try { await call('admin_corp_decide', { p_cid: b.dataset.ng, p_ok: false, p_reason: why }); toast('却下しました（申請料は返しました）'); adminLoad(); } catch (e) { toast(e.message); } });
+    $$('#adminBox [data-judge]').forEach(b => b.onclick = async () => {
+      const box = b.closest('[data-case]'), v = k => { const el = box.querySelector(`[data-k="${k}"]`); return el ? el.value : null; }, ok = b.dataset.judge === '1';
+      if (!v('verdict').trim()) return toast('判決の理由を書いてください');
+      if (!confirm(ok ? '訴えを認めて、処分を行います。よろしいですか？' : '訴えを棄却します。よろしいですか？')) return;
+      try {
+        await call('admin_court_decide', { p_id: Number(box.dataset.case), p_ok: ok, p_comp: Math.max(0, Math.floor(Number(v('comp')) || 0)), p_fine: Math.max(0, Math.floor(Number(v('fine')) || 0)),
+          p_ban_days: Math.max(0, Math.floor(Number(v('ban')) || 0)), p_corp: v('corp') || 'none', p_verdict: v('verdict') });
+        toast(ok ? '認めました' : '棄却しました'); adminLoad();
+      } catch (e) { toast(e.message); }
+    });
+    $$('#adminBox [data-cact]').forEach(b => b.onclick = async () => {
+      const a = b.dataset.cact, w = { suspend: '休業命令を出し', resume: '休業命令をとき', bankrupt: '倒産させ' }[a];
+      const why = a === 'resume' ? '' : prompt(`${w}ます。理由（社長に届きます）`, ''); if (why === null) return;
+      if (a === 'bankrupt' && !confirm('本当に倒産させますか？もとに戻せません。')) return;
+      try { await call('admin_corp_action', { p_cid: b.dataset.cid, p_action: a, p_reason: why }); toast('できました'); adminLoad(); } catch (e) { toast(e.message); }
+    });
+    const fs = $('#adFeeSave');
+    if (fs) fs.onclick = async () => { try { await call('admin_fx_fee', { p_pct: Number($('#adFee').value) }); toast('手数料を変えました'); adminLoad(); } catch (e) { toast(e.message); } };
   } catch (e) { toast(e.message); }
 }
 
@@ -2016,7 +2158,7 @@ async function adminLoad() {
    ================================================================= */
 let tlScope = 'friends', tlLast = null;
 const tlItem = x => `<div class="item" data-pid="${x.id}">
-  <div class="row"><b>${esc(x.nickname)}</b><span class="muted small">ID ${x.uid}</span>
+  <div class="row"><b>${nameB(x.nickname, x.badge)}</b><span class="muted small">ID ${x.uid}</span>
     ${!x.mine && !x.friend ? (x.asked ? '<span class="muted small">申請中</span>' : `<button class="btn s" data-fr="${x.uid}" style="padding:2px 8px">＋フレンド</button>`) : ''}
     <span class="muted small" style="margin-left:auto">${x.at}</span></div>
   <p style="margin:4px 0 0;white-space:pre-wrap;word-break:break-word">${esc(x.body)}</p>
@@ -2050,11 +2192,11 @@ async function friendLoad() { try { frRender(await call('friend_list')); } catch
 function frRender(d) {
   $('#frMe').textContent = ME.account_no || '-----';
   const none = t => `<p class="muted small" style="margin:0">${t}</p>`;
-  $('#frIn').innerHTML = d.incoming.map(x => `<div class="line"><span class="grow">${esc(x.nickname)}（ID ${x.uid}）<small>${x.at}</small></span>
+  $('#frIn').innerHTML = d.incoming.map(x => `<div class="line"><span class="grow">${nameB(x.nickname, x.badge)}（ID ${x.uid}）<small>${x.at}</small></span>
     <button class="btn main s" data-ok="${x.uid}">受ける</button><button class="btn s" data-ng="${x.uid}">断る</button></div>`).join('') || none('ありません');
-  $('#frList').innerHTML = d.friends.map(x => `<div class="line"><span class="grow">${esc(x.nickname)}<small>ID ${x.uid}・${x.since}から</small></span>
+  $('#frList').innerHTML = d.friends.map(x => `<div class="line"><span class="grow">${nameB(x.nickname, x.badge)}<small>ID ${x.uid}・${x.since}から</small></span>
     <button class="btn s" data-send="${x.uid}">送金</button><button class="btn s" data-bill="${x.uid}">請求</button><button class="btn s" data-rm="${x.uid}">やめる</button></div>`).join('') || none('まだいません');
-  $('#frOut').innerHTML = d.outgoing.map(x => `<div class="line"><span class="grow">${esc(x.nickname)}（ID ${x.uid}）<small>${x.at}</small></span>
+  $('#frOut').innerHTML = d.outgoing.map(x => `<div class="line"><span class="grow">${nameB(x.nickname, x.badge)}（ID ${x.uid}）<small>${x.at}</small></span>
     <button class="btn s" data-rm="${x.uid}">取り消す</button></div>`).join('') || none('ありません');
 }
 $('#frSend').onclick = async () => {
@@ -2082,16 +2224,17 @@ function fxChart(pts) {
   const xy = pts.map((p, i) => `${(i / (pts.length - 1) * (W - 8) + 4).toFixed(1)},${(H - 6 - (p.price - lo) / sp * (H - 22)).toFixed(1)}`).join(' ');
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;margin-top:8px">
     <polyline points="${xy}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/></svg>
-    <div class="row muted small" style="justify-content:space-between"><span>最近${pts.length}回の取引</span><span>高 ${fmt(hi)}・安 ${fmt(lo)} CA</span></div>`;
+    <div class="row muted small" style="justify-content:space-between"><span>最近${pts.length}回の取引</span><span>高 ${fmtP(hi)}・安 ${fmtP(lo)} CA</span></div>`;
 }
 function fxSummary(m) {
   const base = m.prev ?? m.first, ch = m.last != null && base ? (m.last - base) / base * 100 : null;
   return `<div class="row" style="align-items:baseline;gap:8px"><span class="muted small">1 X =</span>
-      <b style="font-size:28px">${m.last != null ? fmt(m.last) : '—'}</b><span class="muted small">CA</span>
+      <b style="font-size:28px">${m.last != null ? fmtP(m.last) : '—'}</b><span class="muted small">CA</span>
       ${ch != null ? `<b style="margin-left:auto;color:${ch >= 0 ? 'var(--win)' : 'var(--lose)'}">${ch >= 0 ? '+' : ''}${ch.toFixed(2)}%</b>` : ''}</div>
-    <div class="kv" style="margin-top:6px"><span class="muted">買い（いちばん高い）</span><b>${m.bid != null ? fmt(m.bid) + ' CA' : '—'}</b>
-      <span class="muted">売り（いちばん安い）</span><b>${m.ask != null ? fmt(m.ask) + ' CA' : '—'}</b>
-      <span class="muted">24時間の取引量</span><b>${fmt(m.vol)} X</b></div>
+    <div class="kv" style="margin-top:6px"><span class="muted">買い（いちばん高い）</span><b>${m.bid != null ? fmtP(m.bid) + ' CA' : '—'}</b>
+      <span class="muted">売り（いちばん安い）</span><b>${m.ask != null ? fmtP(m.ask) + ' CA' : '—'}</b>
+      <span class="muted">24時間の取引量</span><b>${fmt(m.vol)} X</b><span class="muted">手数料</span><b>${fmtP(m.fee_pct)}%</b></div>
+    ${m.exchange && !m.exchange.open ? `<p class="notice small" style="margin:6px 0 0">取引所（${esc(m.exchange.name)}）がいま営業していないので、注文できません。</p>` : ''}
     ${m.last == null ? '<p class="muted small" style="margin:6px 0 0">まだ取引がありません</p>' : fxChart(m.chart)}`;
 }
 async function mktLoad() {
@@ -2109,11 +2252,11 @@ function fxRender() {
   const m = FX.market;
   $('#fxBal').innerHTML = `<span>AiliNaX</span><b>${fmt(FX.balance)} X</b><span>${CA_NAME}</span><b>${fmt(FX.ca)} CA</b>`;
   $('#fxMkt').innerHTML = fxSummary(m);
-  const rows = (a, cls) => a.map(x => `<div class="line"><span class="grow num" style="color:${cls}">${fmt(x.price)} CA</span><b class="num">${fmt(x.qty)} X</b></div>`).join('');
+  const rows = (a, cls) => a.map(x => `<div class="line"><span class="grow num" style="color:${cls}">${fmtP(x.price)} CA</span><b class="num">${fmt(x.qty)} X</b></div>`).join('');
   $('#fxBook').innerHTML = `<div class="small muted">売り注文</div>${rows([...m.asks].reverse(), 'var(--lose)') || '<p class="muted small" style="margin:0">なし</p>'}
     <div class="small muted" style="margin-top:6px">買い注文</div>${rows(m.bids, 'var(--win)') || '<p class="muted small" style="margin:0">なし</p>'}`;
   const ST = { open: '注文中', done: '約定', canceled: '取り消し' };
-  $('#fxMine').innerHTML = FX.orders.map(o => `<div class="line"><span class="grow">${o.side === 'buy' ? '買い' : '売り'} ${fmt(o.qty)} X @ ${fmt(o.price)} CA
+  $('#fxMine').innerHTML = FX.orders.map(o => `<div class="line"><span class="grow">${o.side === 'buy' ? '買い' : '売り'} ${fmt(o.qty)} X @ ${fmtP(o.price)} CA
       <small>${o.at}・残り ${fmt(o.remain)} X</small></span>${o.status === 'open' ? `<button class="btn s" data-fxc="${o.id}">取り消す</button>` : `<span class="tag ${o.status === 'done' ? 'good' : ''}">${ST[o.status]}</span>`}</div>`).join('')
     || '<p class="muted small" style="margin:0">ありません</p>';
   const RS = { pending: '処理待ち', done: 'できあがり', rejected: '取り消し・断り' };
@@ -2124,19 +2267,20 @@ function fxRender() {
   if (!$('#fxPrice').value && (m.last ?? m.ask ?? m.bid)) $('#fxPrice').value = m.last ?? (fxSide === 'buy' ? m.ask : m.bid) ?? '';
   fxPrev();
 }
+const fxP = () => Math.round((Number($('#fxPrice').value) || 0) * 10000) / 10000;
 function fxPrev() {
-  const p = Math.floor(Number($('#fxPrice').value) || 0), q = Math.floor(Number($('#fxQty').value) || 0);
+  const p = fxP(), q = Math.floor(Number($('#fxQty').value) || 0), fee = FX ? Number(FX.market.fee_pct) : 0;
   $('#fxPrev').innerHTML = p > 0 && q > 0 ? (fxSide === 'buy'
-      ? `${fmt(q)} X を買うのに、最大 <b>${fmt(p * q)} CA</b> を預けます（安く買えたら差額は戻ります）`
-      : `${fmt(q)} X を売って、<b>${fmt(p * q)} CA</b> 以上を受け取ります`) : '<span class="muted">値段（1 X あたりの CA）と数量を入れてください</span>';
+      ? `${fmt(q)} X を買うのに、最大 <b>${fmt(Math.ceil(p * q))} CA</b> を預けます（安く買えたら差額は戻ります）。受け取る X から手数料 ${fmtP(fee)}% が引かれます`
+      : `${fmt(q)} X を売って、<b>${fmt(Math.ceil(p * q))} CA</b> くらい以上を受け取ります（受け取る CA から手数料 ${fmtP(fee)}% が引かれます）`) : '<span class="muted">値段（1 X あたりの CA。小数第4位まで）と数量を入れてください</span>';
   $('#fxGo').textContent = fxSide === 'buy' ? 'AiliNaX を買う' : 'AiliNaX を売る';
 }
 $$('#fxSide button').forEach(b => b.onclick = () => { fxSide = b.dataset.k; $$('#fxSide button').forEach(x => x.classList.toggle('on', x === b)); fxPrev(); });
 $('#fxPrice').oninput = fxPrev; $('#fxQty').oninput = fxPrev;
 $('#fxGo').onclick = async () => {
-  const p = Math.floor(Number($('#fxPrice').value) || 0), q = Math.floor(Number($('#fxQty').value) || 0);
-  if (p < 1 || q < 1) return toast('値段と数量を入れてください');
-  if (!confirm(`${fxSide === 'buy' ? '買い' : '売り'}注文：${fmt(q)} X を 1 X = ${fmt(p)} CA で出します。よろしいですか？`)) return;
+  const p = fxP(), q = Math.floor(Number($('#fxQty').value) || 0);
+  if (!(p > 0) || q < 1) return toast('値段と数量を入れてください');
+  if (!confirm(`${fxSide === 'buy' ? '買い' : '売り'}注文：${fmt(q)} X を 1 X = ${fmtP(p)} CA で出します。よろしいですか？`)) return;
   try { FX = await call('fx_order', { p_side: fxSide, p_price: p, p_qty: q }); setBal(FX.balance); fxRender(); $('#fxQty').value = ''; fxPrev(); toast('注文しました'); }
   catch (e) { toast(e.message); }
 };
@@ -2161,33 +2305,62 @@ $('#vCorp').addEventListener('click', async ev => {
 
 /* ---------------- 株 ---------------- */
 const unitOf = c => c.form === '株式会社' ? '株' : '口';
-const holdersHtml = (c, n) => c.holders.slice(0, n).map(h => `<div class="line"><span class="grow">${esc(h.nickname)}<small>ID ${h.uid}</small></span>
+const holdersHtml = (c, n) => c.holders.slice(0, n).map(h => `<div class="line"><span class="grow">${nameB(h.nickname, h.badge)}<small>ID ${h.uid}</small></span>
   <b class="num">${fmt(h.shares)} ${unitOf(c)}</b><span class="muted small" style="width:60px;text-align:right">${Number(h.pct)}%</span></div>`).join('');
 async function stockLoad() {
   try {
     const d = await call('my_stocks');
-    $('#stList').innerHTML = d.stocks.map(x => `<div class="item"><div class="row" style="justify-content:space-between"><b>${esc(x.name)}</b><b class="num" style="margin-left:auto;white-space:nowrap">${fmt(x.shares)} ${unitOf(x)}</b></div>
+    const ST = { open: '返事待ち', done: '成立', declined: '断られた', canceled: '取り消し' };
+    $('#stList').innerHTML = (d.offers_in.length ? `<h4 style="margin:0 0 4px">届いた申し出</h4>` + d.offers_in.map(o => `<div class="item">
+        <div class="row"><b>${esc(o.company)}</b><b class="num" style="margin-left:auto">${fmt(o.shares)} ${o.unit}</b></div>
+        <div class="small muted">${nameB(o.from_name, o.from_badge)}（ID ${o.from_id}）から・代金 <b>${fmt(o.price)} X</b>（手数料 ${fmt(o.fee)} X）・${o.at}</div>
+        <div class="row" style="margin-top:6px"><button class="btn main s" data-ofok="${o.id}" data-p="${o.price}" data-f="${o.fee}">払って受け取る</button><button class="btn s" data-ofng="${o.id}">断る</button></div></div>`).join('') : '')
+      + (d.stocks.length ? `<h4 style="margin:${d.offers_in.length ? 12 : 0}px 0 4px">持っている株</h4>` : '')
+      + (d.stocks.map(x => `<div class="item"><div class="row"><b>${esc(x.name)}${x.status === 'suspended' ? '<span class="stag">休業中</span>' : ''}</b><b class="num" style="margin-left:auto">${fmt(x.shares)} ${unitOf(x)}</b></div>
       <div class="small muted">発行 ${fmt(x.total)} ${unitOf(x)} のうち ${Number(x.pct)}%・社長 ${esc(x.owner)}${x.mine ? '（あなた）' : ''}・もらった配当 ${fmt(x.dividend_total)} X</div>
-      <div class="row" style="margin-top:6px"><button class="btn s" data-give="${x.cid}" data-max="${x.shares}">ゆずる</button><button class="btn s" data-co="${x.cid}">会社を見る</button></div></div>`).join('')
-      || '<p class="muted small" style="margin:0">まだ持っていません</p>';
+      <div class="row" style="margin-top:6px"><button class="btn s" data-give="${x.cid}" data-max="${x.shares}">ゆずる・売る</button><button class="btn s" data-co="${x.cid}">会社を見る</button></div></div>`).join('')
+      || '<p class="muted small" style="margin:0">まだ持っていません</p>')
+      + (d.offers_out.length ? `<h4 style="margin:12px 0 4px">出した申し出</h4>` + d.offers_out.map(o => `<div class="line"><span class="grow">${esc(o.company)} ${fmt(o.shares)} ${o.unit} → ${esc(o.to_name)}（ID ${o.to_id}）
+          <small>代金 ${fmt(o.price)} X・${o.at}</small></span>${o.status === 'open' ? `<button class="btn s" data-ofc="${o.id}">取り消す</button>` : `<span class="tag ${o.status === 'done' ? 'good' : ''}">${ST[o.status]}</span>`}</div>`).join('') : '');
     $$('#stList [data-co]').forEach(b => b.onclick = () => corpOpen(b.dataset.co));
     $$('#stList [data-give]').forEach(b => b.onclick = async () => {
-      const to = prompt('ゆずる相手のID（ユーザー・5けた）', ''); if (!to) return;
-      const n = Math.floor(Number(prompt(`ゆずる数（持っているのは ${b.dataset.max}）`, '')) || 0); if (n < 1) return;
-      try { await call('share_give', { p_cid: b.dataset.give, p_to: to.trim(), p_shares: n }); toast('ゆずりました'); stockLoad(); } catch (e) { toast(e.message); }
+      const to = prompt('ゆずる・売る相手のID（ユーザー・5けた）', ''); if (!to) return;
+      const n = Math.floor(Number(prompt(`数（持っているのは ${b.dataset.max}）`, '')) || 0); if (n < 1) return;
+      const pv = prompt('代金（X）。0 なら無料で、すぐにゆずります。\n代金をつけると相手に申し出が届き、相手が払うと株が動きます。', '0'); if (pv === null) return;
+      const price = Math.max(0, Math.floor(Number(pv) || 0));
+      try { await call('share_offer', { p_cid: b.dataset.give, p_to: to.trim(), p_shares: n, p_price: price }); toast(price ? '申し出を送りました' : 'ゆずりました'); stockLoad(); } catch (e) { toast(e.message); }
     });
+    $$('#stList [data-ofok]').forEach(b => b.onclick = async () => {
+      if (!confirm(`代金 ${fmt(b.dataset.p)} X（手数料 ${fmt(b.dataset.f)} X）を払って、株を受け取りますか？`)) return;
+      try { const r = await call('share_offer_answer', { p_id: Number(b.dataset.ofok), p_ok: true }); setBal(r.balance); toast('受け取りました'); stockLoad(); } catch (e) { toast(e.message); }
+    });
+    $$('#stList [data-ofng]').forEach(b => b.onclick = async () => { try { await call('share_offer_answer', { p_id: Number(b.dataset.ofng), p_ok: false }); toast('断りました'); stockLoad(); } catch (e) { toast(e.message); } });
+    $$('#stList [data-ofc]').forEach(b => b.onclick = async () => { try { await call('share_offer_cancel', { p_id: Number(b.dataset.ofc) }); toast('取り消しました'); stockLoad(); } catch (e) { toast(e.message); } });
   } catch (e) { toast(e.message); }
 }
 
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当' };
+const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て' };
 async function moreLoad() {
   try {
     const [hs, me] = await Promise.all([call('my_history'), call('my_profile')]);
     setBal(me.balance);
+    const ck = me.check, row = (ok, t) => `<div class="cond"><span class="${ok ? 'y' : 'n'}">${ok ? '✓' : '×'}</span><span>${t}</span></div>`;
+    $('#chkBox').innerHTML = `<p style="margin:0 0 6px">いまの状態：${me.badge && me.badge.ok ? '<b style="color:#F08A24">チェックあり</b>' : '<b>チェックなし</b>'}${badgeH(me.badge)}</p>`
+      + row(ck.days, ck.days ? '登録から7日たっている' : `登録から7日（${ck.days_from}から）`)
+      + row(ck.debt === 0, ck.debt === 0 ? '税金の滞納がない' : `税金の滞納がある（${fmt(ck.debt)} X。納めればOK）`)
+      + row(ck.mail, ck.mail ? `メールで認証ずみ（${ck.mail_at}。${ck.mail_until}まで有効）` : (ck.mail_at ? `メールの認証が切れました（${ck.mail_at}に認証）` : 'メールでの認証がまだ'));
     $('#hist').innerHTML = hs.map(h => { const net = h.payout - h.bet; return `<li><span>${GAME[h.game] || h.game}</span><span class="v" style="color:${net > 0 ? 'var(--win)' : net < 0 ? 'var(--lose)' : 'inherit'}">${net > 0 ? '+' : ''}${fmt(net)}</span></li>`; }).join('') || '<li class="muted">まだありません</li>';
   } catch (e) { toast(e.message); }
 }
+$('#mailVerify').onclick = async () => {
+  if (!sb) return toast('この画面では使えません');
+  const { data } = await sb.auth.getUser(); const email = data && data.user && data.user.email;
+  if (!email) return toast('メールアドレスがわかりません');
+  if (!confirm(`${email} に認証のリンクを送ります。メールのリンクを押すと、認証されてこの画面にもどります。`)) return;
+  const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false, emailRedirectTo: location.origin + location.pathname } });
+  toast(error ? (/rate|limit|seconds/i.test(error.message) ? 'メールを送りすぎています（サイト全体で1時間に2通まで）。時間をおいてください' : 'エラー：' + error.message) : 'メールを送りました。リンクを押してください');
+};
 $('#nickSave').onclick = async () => {
   try { const p = await call('set_nickname', { p_name: $('#nick').value }); $('#nick').value = p.nickname; toast('変えました'); moreLoad(); }
   catch (e) { toast(e.message); }
