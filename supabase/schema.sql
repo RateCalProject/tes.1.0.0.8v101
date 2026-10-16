@@ -306,6 +306,12 @@ do $$ begin
     alter table public.companies add constraint companies_form_chk check (form in ('株式会社', '有限会社', '合同会社'));
   end if;
 end $$;
+-- 国営（公式マークつき。株式はない）
+alter table public.companies drop constraint if exists companies_form_chk;
+alter table public.companies add constraint companies_form_chk check (form in ('株式会社', '有限会社', '合同会社', '国営'));
+alter table public.companies add column if not exists official boolean not null default false;
+-- 銀行の設定（銀行が決める）：口座開設は auto（すぐ）/ approve（銀行の許可制）
+alter table public.companies add column if not exists acct_mode text not null default 'approve';
 create table if not exists public.corp_items (
   id          bigserial primary key,
   company_id  int not null references public.companies(id) on delete cascade,
@@ -354,6 +360,7 @@ create table if not exists public.bank_accounts (
   unpaid         numeric not null default 0,
   primary key (company_id, user_id)
 );
+alter table public.bank_accounts add column if not exists status text not null default 'active';   -- pending（申込中）/ active
 alter table public.companies     enable row level security;
 alter table public.corp_items    enable row level security;
 alter table public.corp_orders   enable row level security;
@@ -439,6 +446,11 @@ begin
   -- 役所の判決で払いきれていない賠償金があれば、入ってきた分から取り立てる
   if amt > 0 and exists (select 1 from court_cases where defendant_user = u and comp_unpaid > 0) then
     perform _court_collect_user(u, amt);
+    b := _bal(u);
+  end if;
+  -- 返す期限を過ぎた借入があれば、入ってきた分から銀行が取り立てる
+  if amt > 0 and exists (select 1 from loans where user_id = u and status = 'active' and due_at < _now()) then
+    perform _loan_collect(u, amt);
     b := _bal(u);
   end if;
   return b;
@@ -2271,7 +2283,7 @@ create or replace function public._bank_accrue_all(cid_int int) returns void
 language plpgsql set search_path = public as $$
 declare r record;
 begin
-  for r in select user_id from bank_accounts where company_id = cid_int loop
+  for r in select user_id from bank_accounts where company_id = cid_int and status = 'active' loop
     perform _bank_accrue(cid_int, r.user_id);
   end loop;
 end $$;
@@ -2281,7 +2293,7 @@ create or replace function public._corp_card(c companies, u uuid) returns jsonb
 language sql stable set search_path = public as $$
   select jsonb_build_object('cid', c.cid, 'cid_full', _cfull(c), 'name', c.name, 'form', c.form, 'kind', c.kind, 'description', c.description,
     'owner', (select nickname from profiles where id = c.owner), 'owner_badge', _badge(c.owner), 'rate', c.rate, 'status', c.status,
-    'exchange', c.cid = (select value from app_settings where key = 'exchange_cid'),
+    'exchange', c.cid = (select value from app_settings where key = 'exchange_cid'), 'official', c.official, 'acct_mode', c.acct_mode,
     'pinned', exists (select 1 from corp_pins where user_id = u and company_id = c.id),
     'mine', c.owner = u)
 $$;
@@ -2328,7 +2340,10 @@ begin
   return _corp_card(c, u) || jsonb_build_object(
     'items', (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'name', name, 'price', price, 'description', description) order by id), '[]'::jsonb)
                 from corp_items where company_id = c.id and active),
-    'account', case when acct.user_id is null then null else jsonb_build_object('balance', acct.balance, 'interest_total', acct.interest_total) end,
+    'account', case when acct.user_id is null then null else jsonb_build_object('balance', acct.balance, 'interest_total', acct.interest_total, 'status', acct.status) end,
+    'packs', (select coalesce(jsonb_agg(_pack_json(lp) order by lp.amount), '[]'::jsonb) from loan_packs lp where lp.company_id = c.id and lp.active),
+    'loans', (select coalesce(jsonb_agg(_loan_json(l) order by l.id desc), '[]'::jsonb) from loans l
+               where l.company_id = c.id and l.user_id = u and l.status in ('pending', 'active')),
     'shares', c.shares, 'holders', _corp_holders(c.id),
     'balance', _bal(u));
 end $$;
@@ -2377,7 +2392,13 @@ declare u uuid := _me(); c companies;
 begin
   select * into c from companies where cid = _cid_norm(p_cid) and status = 'active' and kind = '銀行';
   if not found then raise exception 'その銀行は見つかりません'; end if;
-  insert into bank_accounts(company_id, user_id, interest_day) values (c.id, u, _kb_jday(_now())) on conflict do nothing;
+  if exists (select 1 from bank_accounts where company_id = c.id and user_id = u) then raise exception 'もう口座があります（申込中をふくむ）'; end if;
+  insert into bank_accounts(company_id, user_id, interest_day, status)
+  values (c.id, u, _kb_jday(_now()), case when c.acct_mode = 'auto' or c.owner = u then 'active' else 'pending' end);
+  if c.acct_mode <> 'auto' and c.owner <> u then
+    perform _notice(c.owner, format('【口座の申込】%s さん（ID %s）が「%s」の口座を申し込みました。仕事タブの企業ページで許可できます。',
+                    (select nickname from profiles where id = u), (select account_no from profiles where id = u), c.name));
+  end if;
   return corp_page(p_cid);
 end $$;
 
@@ -2388,6 +2409,7 @@ begin
   select * into c from companies where cid = _cid_norm(p_cid) and status = 'active' and kind = '銀行';
   if not found then raise exception 'その銀行は見つかりません'; end if;
   if not exists (select 1 from bank_accounts where company_id = c.id and user_id = u) then raise exception '先に口座を開いてください'; end if;
+  if (select status from bank_accounts where company_id = c.id and user_id = u) <> 'active' then raise exception '口座はまだ銀行の許可待ちです'; end if;
   if p_amount is null or p_amount < 1 then raise exception '1 X以上にしてください'; end if;
   if _debt(u) > 0 then raise exception '税金の滞納があるので預けられません'; end if;
   perform _bank_accrue(c.id, u);
@@ -2418,10 +2440,11 @@ create or replace function public.my_banks() returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); r record;
 begin
-  for r in select company_id from bank_accounts where user_id = u loop perform _bank_accrue(r.company_id, u); end loop;
-  return (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'rate', c.rate, 'balance', a.balance,
-            'interest_total', a.interest_total, 'active', c.status = 'active') order by c.name), '[]'::jsonb)
-            from bank_accounts a join companies c on c.id = a.company_id where a.user_id = u);
+  for r in select company_id from bank_accounts where user_id = u and status = 'active' loop perform _bank_accrue(r.company_id, u); end loop;
+  return jsonb_build_object('accounts', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'rate', c.rate, 'balance', a.balance,
+            'interest_total', a.interest_total, 'active', c.status = 'active', 'status', a.status) order by c.name), '[]'::jsonb)
+            from bank_accounts a join companies c on c.id = a.company_id where a.user_id = u),
+    'loans', my_loans());
 end $$;
 
 -- 企業の申請
@@ -2437,7 +2460,7 @@ begin
   if p_kind = '銀行' and p_form <> '株式会社' then raise exception '銀行は株式会社だけです'; end if;
   if p_kind = '証券' and p_form <> '株式会社' then raise exception '証券会社は株式会社だけです'; end if;
   nm := case when coalesce(p_pre, true) then p_form || base else base || p_form end;
-  if (select count(*) from companies where owner = u and status in ('pending', 'active', 'suspended')) >= 3 then
+  if (select count(*) from companies where owner = u and status in ('pending', 'active', 'suspended') and not official) >= 3 then
     raise exception '会社は1人3つまでです';
   end if;
   if exists (select 1 from companies where lower(name) = lower(nm) and status not in ('rejected', 'closed', 'bankrupt')) then
@@ -2478,7 +2501,14 @@ begin
                  'salary', m.salary, 'paid_total', m.paid_total) order by m.joined_at), '[]'::jsonb)
                  from corp_members m join profiles p on p.id = m.user_id where m.company_id = c.id),
       'deposits', (select coalesce(sum(balance), 0) from bank_accounts where company_id = c.id),
-      'accounts', (select count(*) from bank_accounts where company_id = c.id),
+      'accounts', (select count(*) from bank_accounts where company_id = c.id and status = 'active'),
+      'official', c.official, 'acct_mode', c.acct_mode, 'fx_pairs', c.fx_pairs, 'fx_fee', c.fx_fee,
+      'fx_open_orders', (select count(*) from fx_orders where exch_id = c.id and status = 'open'),
+      'acct_requests', (select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id))), '[]'::jsonb)
+                 from bank_accounts a join profiles p on p.id = a.user_id where a.company_id = c.id and a.status = 'pending'),
+      'packs', (select coalesce(jsonb_agg(_pack_json(lp) order by lp.id), '[]'::jsonb) from loan_packs lp where lp.company_id = c.id),
+      'loan_requests', (select coalesce(jsonb_agg(_loan_json(l) order by l.id), '[]'::jsonb) from loans l where l.company_id = c.id and l.status = 'pending'),
+      'loans_active', (select coalesce(jsonb_agg(_loan_json(l) order by l.due_at), '[]'::jsonb) from loans l where l.company_id = c.id and l.status = 'active'),
       'shares', c.shares, 'holders', _corp_holders(c.id)
     ) order by c.id), '[]'::jsonb) from companies c where c.owner = u and c.status <> 'rejected'),
     'rejected', (select coalesce(jsonb_agg(jsonb_build_object('name', name, 'reason', reason) order by id desc), '[]'::jsonb)
@@ -2492,7 +2522,7 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies;
 begin
   c := _my_corp(u, p_cid);
-  if p_rate is not null and (p_rate < 0 or p_rate > 1) then raise exception '金利は1日あたり0〜1%%です'; end if;
+  if p_rate is not null and (p_rate < 0 or p_rate > 10) then raise exception '金利は1日あたり0〜10%%です'; end if;
   if c.kind = '銀行' and p_rate is not null and p_rate <> c.rate then perform _bank_accrue_all(c.id); end if;
   update companies set description = left(coalesce(p_desc, description), 1000),
          rate = case when kind = '銀行' then coalesce(p_rate, rate) else 0 end
@@ -2985,6 +3015,7 @@ create or replace function public.corp_shares_change(p_cid text, p_delta bigint)
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies; mine bigint;
 begin
+  if (select official from companies where cid = _cid_norm(p_cid)) then raise exception '国営の会社には株がありません'; end if;
   c := _my_corp(u, p_cid);
   if c.status not in ('active', 'suspended') then raise exception 'この会社はいま動かせません（審査中・廃業など）'; end if;
   if p_delta is null or p_delta = 0 then raise exception 'ふやす・へらす数を入れてください'; end if;
@@ -3008,6 +3039,7 @@ create or replace function public.share_give(p_cid text, p_to text, p_shares big
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies; mine bigint; t record; me profiles;
 begin
+  if (select official from companies where cid = _cid_norm(p_cid)) then raise exception '国営の会社には株がありません'; end if;
   select * into c from companies where cid = _cid_norm(p_cid) and status in ('active', 'suspended');
   if not found then raise exception '会社が見つかりません'; end if;
   select shares into mine from corp_holders where company_id = c.id and user_id = u for update;
@@ -3047,6 +3079,7 @@ create or replace function public.corp_dividend(p_cid text, p_amount bigint) ret
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies; h record; amt bigint; total bigint := 0; n int := 0; r jsonb;
 begin
+  if (select official from companies where cid = _cid_norm(p_cid)) then raise exception '国営の会社は配当を出せません'; end if;
   c := _my_corp(u, p_cid);
   if c.status not in ('active', 'suspended') then raise exception 'この会社はいま動かせません（審査中・廃業など）'; end if;
   if p_amount is null or p_amount < 1 or p_amount > c.balance then raise exception '配当に使えるのは会社のお金 % X までです', c.balance; end if;
@@ -3233,8 +3266,10 @@ end $$;
 --   値段は「1 X = 何 CA」（小数第4位まで）。買い注文＝CAを払ってXを買う、売り注文＝Xを売ってCAをもらう
 --   約定は先に出ていた注文の値段。動くCAは、買い注文ごとに約定の合計を切り上げた整数（端数で得をしないように）
 --   注文中のお金は預かる（買い：数量×値段を切り上げたCA、売り：数量のX）。取り消すと戻る
---   手数料（はじめ0.1%）：買った人は受け取るXから、売った人は受け取るCAから引かれ、取引所の会社に入る
---   取引所の会社（風の芽証券取引所）が休業・廃業していると注文できない
+--   取引所は「証券」の会社が開く（国営の風の芽証券取引所のほか、私営の取引所も開ける）。取引所ごとに板（注文の一覧）がある
+--   取引所ごとに、取り扱う通貨（いまは AiliNaX ⇄ Cièlani-Alpićsk だけ）と手数料（%）を決める
+--   手数料：買った人は受け取るXから、売った人は受け取るCAから引かれ、その取引所の会社に入る
+--   取引所の会社が休業していると注文できない（取り消しはできる）。廃業・倒産すると、出ている注文は全部取り消して返す
 --   CN ⇄ CA は運営者が手で交換（1万単位）：交換申請 → 管理者が処理
 -- ---------------------------------------------------------------------
 alter table public.profiles add column if not exists ca bigint not null default 0;
@@ -3249,6 +3284,9 @@ do $$ begin
     alter table public.companies add constraint companies_ca_chk check (ca >= 0);
   end if;
 end $$;
+
+alter table public.companies add column if not exists fx_fee numeric not null default 0.1;       -- 取引所の手数料（%）
+alter table public.companies add column if not exists fx_pairs text[] not null default '{}';    -- 取り扱う通貨（'X/CA'）
 
 create table if not exists public.fx_orders (
   id          bigserial primary key,
@@ -3276,6 +3314,8 @@ create table if not exists public.fx_trades (
   fee_ca     bigint not null default 0,     -- 売った人から取った手数料（CA）
   created_at timestamptz not null default now()
 );
+alter table public.fx_orders add column if not exists exch_id int references public.companies(id) on delete cascade;
+alter table public.fx_trades add column if not exists exch_id int references public.companies(id) on delete cascade;
 -- 前の形（値段が整数・預かりの列なし）からの切りかえ（1回だけ）
 do $$
 begin
@@ -3294,6 +3334,16 @@ begin
 end $$;
 alter table public.fx_orders alter column price type numeric(20,4);
 alter table public.fx_trades alter column price type numeric(20,4);
+-- 国営の取引所：株式会社ではなく「国営」（公式マーク）。AiliNaX ⇄ CA を扱う。前からある注文・取引はこの取引所のもの
+update public.companies set form = '国営', official = true,
+       name = regexp_replace(regexp_replace(name, '^株式会社', ''), '株式会社$', ''),
+       fx_pairs = case when 'X/CA' = any(fx_pairs) then fx_pairs else fx_pairs || '{X/CA}'::text[] end,
+       fx_fee = coalesce((select value::numeric from public.app_settings where key = 'fx_fee_pct'), fx_fee)
+ where cid = (select value from public.app_settings where key = 'exchange_cid') and not official;
+delete from public.corp_holders where company_id in (select id from public.companies where official);
+update public.fx_orders set exch_id = (select id from public.companies where cid = (select value from public.app_settings where key = 'exchange_cid')) where exch_id is null;
+update public.fx_trades set exch_id = (select id from public.companies where cid = (select value from public.app_settings where key = 'exchange_cid')) where exch_id is null;
+create index if not exists fx_orders_book2_idx on public.fx_orders(exch_id, side, status, price, id);
 create index if not exists fx_orders_book_idx on public.fx_orders(side, status, price, id);
 create index if not exists fx_orders_user_idx on public.fx_orders(user_id, status);
 create index if not exists fx_trades_time_idx on public.fx_trades(created_at);
@@ -3313,52 +3363,86 @@ alter table public.fx_trades enable row level security;
 alter table public.fx_requests enable row level security;
 revoke all on public.fx_orders, public.fx_trades, public.fx_requests from anon, authenticated;
 
--- 手数料（%）と、手数料を受け取る取引所の会社
+-- 国営の取引所の手数料（%）
 create or replace function public._fx_fee_pct() returns numeric
 language sql stable set search_path = public as $$
-  select coalesce((select value::numeric from app_settings where key = 'fx_fee_pct'), 0.1)
+  select coalesce((select fx_fee from companies where cid = (select value from app_settings where key = 'exchange_cid')), 0.1)
+$$;
+
+-- 取引所の一覧に出す形
+create or replace function public._fx_exch_json(c companies) returns jsonb
+language sql stable set search_path = public as $$
+  select jsonb_build_object('cid', c.cid, 'name', c.name, 'official', c.official, 'open', c.status = 'active',
+    'fee_pct', c.fx_fee, 'pairs', c.fx_pairs,
+    'last', (select price from fx_trades where exch_id = c.id order by id desc limit 1),
+    'vol', (select coalesce(sum(qty), 0) from fx_trades where exch_id = c.id and created_at > _now() - interval '1 day'))
 $$;
 
 -- 相場（だれでも見られる部分。だれが取引したかは出さない）
-create or replace function public._fx_market() returns jsonb
+create or replace function public._fx_market(eid int) returns jsonb
 language sql stable set search_path = public as $$
   select jsonb_build_object(
-    'last', (select price from fx_trades order by id desc limit 1),
-    'prev', (select price from fx_trades where created_at <= _now() - interval '1 day' order by id desc limit 1),
-    'first', (select price from fx_trades where created_at > _now() - interval '1 day' order by id limit 1),
-    'bid', (select max(price) from fx_orders where side = 'buy' and status = 'open'),
-    'ask', (select min(price) from fx_orders where side = 'sell' and status = 'open'),
-    'vol', (select coalesce(sum(qty), 0) from fx_trades where created_at > _now() - interval '1 day'),
+    'last', (select price from fx_trades where exch_id = eid order by id desc limit 1),
+    'prev', (select price from fx_trades where exch_id = eid and created_at <= _now() - interval '1 day' order by id desc limit 1),
+    'first', (select price from fx_trades where exch_id = eid and created_at > _now() - interval '1 day' order by id limit 1),
+    'bid', (select max(price) from fx_orders where exch_id = eid and side = 'buy' and status = 'open'),
+    'ask', (select min(price) from fx_orders where exch_id = eid and side = 'sell' and status = 'open'),
+    'vol', (select coalesce(sum(qty), 0) from fx_trades where exch_id = eid and created_at > _now() - interval '1 day'),
     'bids', (select coalesce(jsonb_agg(jsonb_build_object('price', price, 'qty', q) order by price desc), '[]'::jsonb) from (
-              select price, sum(remain) q from fx_orders where side = 'buy' and status = 'open' group by price order by price desc limit 8) z),
+              select price, sum(remain) q from fx_orders where exch_id = eid and side = 'buy' and status = 'open' group by price order by price desc limit 8) z),
     'asks', (select coalesce(jsonb_agg(jsonb_build_object('price', price, 'qty', q) order by price), '[]'::jsonb) from (
-              select price, sum(remain) q from fx_orders where side = 'sell' and status = 'open' group by price order by price limit 8) z),
+              select price, sum(remain) q from fx_orders where exch_id = eid and side = 'sell' and status = 'open' group by price order by price limit 8) z),
     'trades', (select coalesce(jsonb_agg(jsonb_build_object('price', price, 'qty', qty, 'ts', _kb_ms(created_at)) order by id desc), '[]'::jsonb) from (
-              select * from fx_trades order by id desc limit 20) z),
+              select * from fx_trades where exch_id = eid order by id desc limit 20) z),
     'chart', (select coalesce(jsonb_agg(jsonb_build_object('price', price, 'ts', _kb_ms(created_at)) order by id), '[]'::jsonb) from (
-              select * from fx_trades order by id desc limit 100) z),
-    'fee_pct', _fx_fee_pct(),
-    'exchange', (select jsonb_build_object('cid', cid, 'name', name, 'open', status = 'active') from companies
-                  where cid = (select value from app_settings where key = 'exchange_cid')))
+              select * from fx_trades where exch_id = eid order by id desc limit 100) z),
+    'fee_pct', (select fx_fee from companies where id = eid),
+    'exchange', (select _fx_exch_json(c) from companies c where c.id = eid))
 $$;
 
--- 情報タブの「相場」
+-- 取引所の一覧（AiliNaX ⇄ CA を扱っている「証券」の会社。国営が先）
+create or replace function public._fx_exchanges() returns jsonb
+language sql stable set search_path = public as $$
+  select coalesce(jsonb_agg(_fx_exch_json(c) order by c.official desc, c.name), '[]'::jsonb)
+    from companies c where c.kind = '証券' and c.status in ('active', 'suspended') and 'X/CA' = any(c.fx_pairs)
+$$;
+
+-- 取引所をえらぶ（ID か、なければ国営）
+create or replace function public._fx_pick(p_exch text) returns companies
+language plpgsql stable set search_path = public as $$
+declare c companies;
+begin
+  if coalesce(btrim(p_exch), '') <> '' then
+    select * into c from companies where cid = _cid_norm(p_exch) and kind = '証券' and status in ('active', 'suspended') and 'X/CA' = any(fx_pairs);
+    if found then return c; end if;
+  end if;
+  select * into c from companies where kind = '証券' and status in ('active', 'suspended') and 'X/CA' = any(fx_pairs)
+   order by official desc, (cid = (select value from app_settings where key = 'exchange_cid')) desc, id limit 1;
+  return c;
+end $$;
+
+-- 情報タブの「相場」：取引所ごとの値段
+drop function if exists public.market_info();
 create or replace function public.market_info() returns jsonb
 language plpgsql security definer set search_path = public as $$
 begin
   perform _me();
-  return jsonb_build_object('fx', _fx_market(), 'stocks', '[]'::jsonb);
+  return jsonb_build_object('exchanges', _fx_exchanges(),
+    'fx', (select _fx_market(c.id) from _fx_pick(null) c where c.id is not null), 'stocks', '[]'::jsonb);
 end $$;
 
 -- 取引所の画面（相場＋自分の残高・注文・交換申請）
-create or replace function public.fx_state() returns jsonb
+drop function if exists public.fx_state();
+create or replace function public.fx_state(p_exch text default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me();
+declare u uuid := _me(); xc companies := _fx_pick(p_exch);
 begin
-  return jsonb_build_object('market', _fx_market(),
+  return jsonb_build_object('exchanges', _fx_exchanges(), 'exch', case when xc.id is null then null else xc.cid end,
+    'market', case when xc.id is null then null else _fx_market(xc.id) end,
     'ca', (select ca from profiles where id = u), 'balance', _bal(u),
     'orders', (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'side', side, 'price', price, 'qty', qty, 'remain', remain,
-                 'spent', spent, 'status', status, 'at', _dlabel(created_at)) order by (status = 'open') desc, id desc), '[]'::jsonb) from (
+                 'spent', spent, 'status', status, 'at', _dlabel(created_at),
+                 'exch', (select name from companies where companies.id = z.exch_id)) order by (status = 'open') desc, id desc), '[]'::jsonb) from (
                select * from fx_orders where user_id = u order by (status = 'open') desc, id desc limit 30) z),
     'requests', (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'kind', kind, 'amount', amount, 'contact', contact,
                  'status', status, 'note', note, 'at', _dlabel(created_at)) order by id desc), '[]'::jsonb) from (
@@ -3367,19 +3451,21 @@ end $$;
 
 -- 注文する
 drop function if exists public.fx_order(text, bigint, bigint);
-create or replace function public.fx_order(p_side text, p_price numeric, p_qty bigint) returns jsonb
+drop function if exists public.fx_order(text, numeric, bigint);
+create or replace function public.fx_order(p_exch text, p_side text, p_price numeric, p_qty bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); o fx_orders; m fx_orders; bo fx_orders; so fx_orders; xc companies; me profiles;
   q bigint; v bigint; ex numeric; fx bigint; fc bigint; lockamt bigint; okday timestamptz;
-  pct numeric := _fx_fee_pct(); tot_x bigint := 0; tot_c bigint := 0;
+  pct numeric; tot_x bigint := 0; tot_c bigint := 0;
 begin
   if p_side not in ('buy', 'sell') then raise exception '買いか売りをえらんでください'; end if;
   if p_price is null or p_price <= 0 or p_price > 1000000000 then raise exception '値段は0より大きく、10億 CA までにしてください'; end if;
   if p_price <> round(p_price, 4) then raise exception '値段は小数第4位までです'; end if;
   if p_qty is null or p_qty < 1 or p_qty > 1000000000 then raise exception '数量は1〜10億 X にしてください'; end if;
-  select * into xc from companies where cid = (select value from app_settings where key = 'exchange_cid');
-  if found and xc.status <> 'active' then raise exception '取引所（%）がいま営業していないので、注文できません', xc.name; end if;
-  if xc.id is null then pct := 0; end if;
+  xc := _fx_pick(p_exch);
+  if xc.id is null or (coalesce(btrim(p_exch), '') <> '' and xc.cid <> _cid_norm(p_exch)) then raise exception 'その取引所は見つかりません'; end if;
+  if xc.status <> 'active' then raise exception '取引所（%）がいま営業していないので、注文できません', xc.name; end if;
+  pct := xc.fx_fee;
   select * into me from profiles where id = u for update;
   okday := me.created_at + interval '7 days';
   if _now() < okday then raise exception '登録から7日たつまで取引所は使えません（%から）', _dlabel(okday); end if;
@@ -3393,16 +3479,16 @@ begin
     update profiles set balance = balance - p_qty where id = u and balance >= p_qty;
     if not found then raise exception 'AiliNaX が足りません'; end if;
   end if;
-  insert into fx_orders(user_id, side, price, qty, remain, locked, created_at)
-  values (u, p_side, p_price, p_qty, p_qty, lockamt, _now()) returning * into o;
+  insert into fx_orders(exch_id, user_id, side, price, qty, remain, locked, created_at)
+  values (xc.id, u, p_side, p_price, p_qty, p_qty, lockamt, _now()) returning * into o;
   -- 反対側の注文と合わせる（値段の良い順・先に出た順。自分の注文とは合わせない）
   loop
     exit when o.remain = 0;
     if o.side = 'buy' then
-      select * into m from fx_orders where side = 'sell' and status = 'open' and price <= o.price and user_id <> u
+      select * into m from fx_orders where exch_id = xc.id and side = 'sell' and status = 'open' and price <= o.price and user_id <> u
        order by price, id limit 1 for update;
     else
-      select * into m from fx_orders where side = 'buy' and status = 'open' and price >= o.price and user_id <> u
+      select * into m from fx_orders where exch_id = xc.id and side = 'buy' and status = 'open' and price >= o.price and user_id <> u
        order by price desc, id limit 1 for update;
     end if;
     exit when not found;
@@ -3419,8 +3505,8 @@ begin
     fx := floor(q * pct / 100); fc := floor(v * pct / 100);
     perform _give(bo.user_id, q - fx);                                   -- 買った人に X（手数料を引く）
     update profiles set ca = ca + (v - fc) where id = so.user_id;       -- 売った人に CA（手数料を引く）
-    insert into fx_trades(buy_order, sell_order, buyer, seller, price, qty, value, fee_x, fee_ca, created_at)
-    values (bo.id, so.id, bo.user_id, so.user_id, m.price, q, v, fx, fc, _now());
+    insert into fx_trades(exch_id, buy_order, sell_order, buyer, seller, price, qty, value, fee_x, fee_ca, created_at)
+    values (xc.id, bo.id, so.id, bo.user_id, so.user_id, m.price, q, v, fx, fc, _now());
     tot_x := tot_x + fx; tot_c := tot_c + fc;
     if bo.remain = 0 and bo.locked > 0 then                              -- 買い終わったら、あまった預かりを返す
       update profiles set ca = ca + bo.locked where id = bo.user_id;
@@ -3434,7 +3520,19 @@ begin
     insert into corp_ledger(company_id, kind, amount, memo, balance_after)
     values (xc.id, 'fx_fee', 0, format('取引の手数料 %s CA', _fmt(tot_c)), (select balance from companies where id = xc.id));
   end if;
-  return fx_state();
+  return fx_state(xc.cid);
+end $$;
+
+-- 注文を1つ取り消して、預けたお金を返す（中で使う）
+create or replace function public._fx_cancel_order(oid bigint) returns void
+language plpgsql set search_path = public as $$
+declare o fx_orders;
+begin
+  select * into o from fx_orders where id = oid and status = 'open' for update;
+  if not found then return; end if;
+  update fx_orders set status = 'canceled', locked = 0 where id = o.id;
+  if o.side = 'buy' then update profiles set ca = ca + o.locked where id = o.user_id;
+  else update profiles set balance = balance + o.remain where id = o.user_id; end if;
 end $$;
 
 -- 注文を取り消す（残りの預けたお金を返す）
@@ -3444,21 +3542,35 @@ declare u uuid := _me(); o fx_orders;
 begin
   select * into o from fx_orders where id = p_id and user_id = u and status = 'open' for update;
   if not found then raise exception '取り消せる注文が見つかりません'; end if;
-  update fx_orders set status = 'canceled', locked = 0 where id = o.id;
-  if o.side = 'buy' then update profiles set ca = ca + o.locked where id = u;
-  else update profiles set balance = balance + o.remain where id = u; end if;
-  return fx_state();
+  perform _fx_cancel_order(o.id);
+  return fx_state((select cid from companies where id = o.exch_id));
 end $$;
 
--- 管理者：取引所の手数料（%）を決める
+-- 管理者：国営の取引所の手数料（%）を決める
 create or replace function public.admin_fx_fee(p_pct numeric) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me();
 begin
   if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
   if p_pct is null or p_pct < 0 or p_pct > 10 then raise exception '手数料は0〜10%%にしてください'; end if;
-  insert into app_settings values ('fx_fee_pct', round(p_pct, 4)::text) on conflict (key) do update set value = excluded.value;
+  update companies set fx_fee = round(p_pct, 4) where cid = (select value from app_settings where key = 'exchange_cid');
   return admin_state();
+end $$;
+
+-- 取引所の設定（証券の会社）：取り扱う通貨と手数料。取り扱いをやめると、その板の注文は取り消して返す
+create or replace function public.exch_settings(p_cid text, p_pairs text[], p_fee numeric) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies; r record; pairs text[] := coalesce(p_pairs, '{}');
+begin
+  c := _my_corp(u, p_cid);
+  if c.kind <> '証券' then raise exception '取引所を開けるのは証券の会社だけです'; end if;
+  if exists (select 1 from unnest(pairs) x where x not in ('X/CA')) then raise exception '取り扱える通貨は、いまは AiliNaX ⇄ Cièlani-Alpićsk だけです'; end if;
+  if p_fee is null or p_fee < 0 or p_fee > 10 then raise exception '手数料は0〜10%%にしてください'; end if;
+  if not ('X/CA' = any(pairs)) then
+    for r in select id from fx_orders where exch_id = c.id and status = 'open' loop perform _fx_cancel_order(r.id); end loop;
+  end if;
+  update companies set fx_pairs = pairs, fx_fee = round(p_fee, 4) where id = c.id;
+  return my_corps();
 end $$;
 
 -- 会社の Cièlani-Alpićsk を社長に移す
@@ -3590,7 +3702,7 @@ begin
                     label, c.name, label, r.id, _fmt(r.price), _fmt(amt)));
   end loop;
   -- 銀行：払えていない利息（割合で）と、預金を全部返す
-  for r in select * from bank_accounts where company_id = c.id loop
+  for r in select * from bank_accounts where company_id = c.id and status = 'active' loop
     amt := floor(floor(r.unpaid) * ratio);
     if amt > 0 then
       perform _corp_move(c.id, -amt, 'interest', '預金の利息（' || label || '）');
@@ -3605,6 +3717,12 @@ begin
     perform _notice(r.user_id, format('【%s】銀行「%s」が%sしたため、預金 %s X をあなたに返しました。', label, c.name, label, _fmt(r.balance)));
   end loop;
   delete from bank_accounts where company_id = c.id;
+  -- 借入の申込は取り消し、貸している分は帳消し（返さなくてよくなる）
+  update loans set status = 'canceled', closed_at = _now() where company_id = c.id and status = 'pending';
+  for r in select * from loans where company_id = c.id and status = 'active' loop
+    update loans set status = 'forgiven', closed_at = _now() where id = r.id;
+    perform _notice(r.user_id, format('【借入】「%s」が%sしたため、借入 #%s の残り %s X は返さなくてよくなりました。', c.name, label, r.id, _fmt(_loan_owed(r.id))));
+  end loop;
   -- 役所の賠償金（割合で。残りはなくなる）
   for r in select * from court_cases where defendant_comp = c.id and comp_unpaid > 0 loop
     amt := floor(r.comp_unpaid * ratio);
@@ -3616,6 +3734,8 @@ begin
     update court_cases set comp_paid = comp_paid + amt, comp_unpaid = 0 where id = r.id;
     perform _notice(r.plaintiff, format('【訴え #%s】「%s」が%sしたため、賠償金のうち %s X を受け取りました（残りはなくなりました）。', r.id, c.name, label, _fmt(amt)));
   end loop;
+  -- 取引所なら、出ている注文を全部取り消して返す
+  for r in select id from fx_orders where exch_id = c.id and status = 'open' loop perform _fx_cancel_order(r.id); end loop;
   -- 請求・求人・社員
   update invoices set status = 'canceled', done_at = _now() where status = 'open' and (from_comp = c.id or to_comp = c.id);
   update corp_jobs set active = false where company_id = c.id;
@@ -3753,6 +3873,7 @@ create or replace function public.share_offer(p_cid text, p_to text, p_shares bi
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies; mine bigint; t record; me profiles;
 begin
+  if (select official from companies where cid = _cid_norm(p_cid)) then raise exception '国営の会社には株がありません'; end if;
   if coalesce(p_price, 0) = 0 then
     perform share_give(p_cid, p_to, p_shares);
     return my_stocks();
@@ -4072,6 +4193,285 @@ begin
 end $$;
 
 
+-- ---------------------------------------------------------------------
+-- 銀行の貸出パック（借入）
+--   銀行が「パック」を作る：名前・貸す額・期間（日）・利息（期間全体で何%）・延滞の利息（1日あたり%）
+--                         ・申込をすぐ通すか（auto）・1人が同時に借りられる数・受付中か
+--   借りたい人はパックに申し込む → 銀行が許可（auto ならすぐ）→ 銀行の会社のお金から本人へ
+--   返すのはいつでも・少しずつでもOK。期限を過ぎると延滞の利息がつき、本人にお金が入るたびに銀行が取り立てる
+--   銀行が廃業・倒産したら、貸している分は帳消し
+-- ---------------------------------------------------------------------
+create table if not exists public.loan_packs (
+  id           bigserial primary key,
+  company_id   int not null references public.companies(id) on delete cascade,
+  name         text not null,
+  amount       bigint not null check (amount > 0),
+  days         int not null check (days > 0),
+  rate         numeric not null default 0 check (rate >= 0),        -- 期間全体の利息（%）
+  late_rate    numeric not null default 0 check (late_rate >= 0),   -- 延滞の利息（1日あたり%）
+  auto         boolean not null default false,
+  max_per_user int not null default 1,
+  active       boolean not null default true,
+  description  text not null default '',
+  created_at   timestamptz not null default now()
+);
+create table if not exists public.loans (
+  id          bigserial primary key,
+  pack_id     bigint references public.loan_packs(id) on delete set null,
+  company_id  int not null references public.companies(id) on delete cascade,
+  user_id     uuid not null references public.profiles(id) on delete cascade,
+  pack_name   text not null,
+  principal   bigint not null,
+  interest    bigint not null default 0,
+  days        int not null,
+  late_rate   numeric not null default 0,
+  late_fee    bigint not null default 0,
+  late_day    date,
+  repaid      bigint not null default 0,
+  status      text not null default 'pending',   -- pending / active / repaid / rejected / canceled / forgiven
+  applied_at  timestamptz not null default now(),
+  started_at  timestamptz,
+  due_at      timestamptz,
+  closed_at   timestamptz
+);
+create index if not exists loans_user_idx on public.loans(user_id, status);
+create index if not exists loans_company_idx on public.loans(company_id, status);
+alter table public.loan_packs enable row level security;
+alter table public.loans enable row level security;
+revoke all on public.loan_packs, public.loans from anon, authenticated;
+
+create or replace function public._pack_json(lp loan_packs) returns jsonb
+language sql stable set search_path = public as $$
+  select jsonb_build_object('id', lp.id, 'name', lp.name, 'amount', lp.amount, 'days', lp.days, 'rate', lp.rate, 'late_rate', lp.late_rate,
+    'auto', lp.auto, 'max_per_user', lp.max_per_user, 'active', lp.active, 'description', lp.description,
+    'repay', lp.amount + ceil(lp.amount * lp.rate / 100)::bigint)
+$$;
+
+-- 延滞の利息を、前回から今日までの分つける
+create or replace function public._loan_accrue(lid bigint) returns void
+language plpgsql set search_path = public as $$
+declare l loans; d0 date; days int; owed bigint; add bigint;
+begin
+  select * into l from loans where id = lid for update;
+  if l.status <> 'active' or l.due_at >= _now() or l.late_rate <= 0 then return; end if;
+  d0 := coalesce(l.late_day, _kb_jday(l.due_at));
+  days := _kb_jday(_now()) - d0;
+  if days <= 0 then return; end if;
+  owed := l.principal + l.interest + l.late_fee - l.repaid;
+  add := ceil(owed * l.late_rate / 100 * days)::bigint;
+  update loans set late_fee = late_fee + greatest(add, 0), late_day = _kb_jday(_now()) where id = lid;
+end $$;
+
+-- 返す残り
+create or replace function public._loan_owed(lid bigint) returns bigint
+language sql stable set search_path = public as $$
+  select greatest(principal + interest + late_fee - repaid, 0) from loans where id = lid
+$$;
+
+create or replace function public._loan_json(l loans) returns jsonb
+language sql stable set search_path = public as $$
+  select jsonb_build_object('id', l.id, 'pack', l.pack_name, 'principal', l.principal, 'interest', l.interest, 'late_fee', l.late_fee,
+    'repaid', l.repaid, 'owed', greatest(l.principal + l.interest + l.late_fee - l.repaid, 0), 'status', l.status, 'days', l.days,
+    'late_rate', l.late_rate, 'overdue', l.status = 'active' and l.due_at < _now(),
+    'applied', _dlabel(l.applied_at), 'due', case when l.due_at is null then null else _dlabel(l.due_at) end,
+    'bank', (select name from companies where id = l.company_id), 'cid', (select cid from companies where id = l.company_id),
+    'nickname', (select nickname from profiles where id = l.user_id), 'uid', (select account_no from profiles where id = l.user_id),
+    'badge', _badge(l.user_id),
+    -- 申込の審査用：この人のこれまで（返した・帳消し・いま延滞中）
+    'history', jsonb_build_object(
+      'repaid', (select count(*) from loans x where x.user_id = l.user_id and x.status = 'repaid'),
+      'active', (select count(*) from loans x where x.user_id = l.user_id and x.status = 'active'),
+      'overdue', (select count(*) from loans x where x.user_id = l.user_id and x.status = 'active' and x.due_at < _now()),
+      'forgiven', (select count(*) from loans x where x.user_id = l.user_id and x.status = 'forgiven')))
+$$;
+
+-- 貸し出す（銀行のお金 → 本人）
+create or replace function public._loan_start(lid bigint) returns void
+language plpgsql set search_path = public as $$
+declare l loans; c companies; lp loan_packs;
+begin
+  select * into l from loans where id = lid for update;
+  select * into c from companies where id = l.company_id for update;
+  if c.status <> 'active' then raise exception 'この銀行はいま営業していません'; end if;
+  if c.balance < l.principal then raise exception '銀行のお金が足りないので貸せません（%）', c.name; end if;
+  perform _corp_move(c.id, -l.principal, 'loan', format('貸出 #%s（%s さん）', l.id, (select nickname from profiles where id = l.user_id)));
+  update profiles set balance = balance + l.principal where id = l.user_id;
+  perform _log(l.user_id, 'loan', 0, l.principal, jsonb_build_object('bank', c.name, 'loan', l.id));
+  update loans set status = 'active', started_at = _now(), due_at = _now() + make_interval(days => l.days) where id = l.id;
+  perform _notice(l.user_id, format('【借入 #%s】「%s」から %s X を借りました。%s までに %s X を返してください。',
+                  l.id, c.name, _fmt(l.principal), _dlabel(_now() + make_interval(days => l.days)), _fmt(l.principal + l.interest)));
+end $$;
+
+-- 申し込む（auto のパックはすぐ借りられる）
+create or replace function public.loan_apply(p_pack bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); lp loan_packs; c companies; me profiles; lid bigint;
+begin
+  select * into lp from loan_packs where id = p_pack and active;
+  if not found then raise exception 'そのパックはいま受け付けていません'; end if;
+  select * into c from companies where id = lp.company_id and status = 'active' and kind = '銀行';
+  if not found then raise exception 'この銀行はいま営業していません'; end if;
+  if c.owner = u then raise exception '自分の銀行からは借りられません'; end if;
+  select * into me from profiles where id = u;
+  if _now() < me.created_at + interval '7 days' then raise exception '登録から7日たつまで借りられません'; end if;
+  if exists (select 1 from loans where user_id = u and pack_id = lp.id and status = 'pending') then raise exception 'このパックはもう申込中です'; end if;
+  if (select count(*) from loans where user_id = u and pack_id = lp.id and status = 'active') >= lp.max_per_user then
+    raise exception 'このパックで同時に借りられるのは %件までです', lp.max_per_user;
+  end if;
+  insert into loans(pack_id, company_id, user_id, pack_name, principal, interest, days, late_rate, applied_at)
+  values (lp.id, c.id, u, lp.name, lp.amount, ceil(lp.amount * lp.rate / 100)::bigint, lp.days, lp.late_rate, _now()) returning id into lid;
+  if lp.auto then
+    perform _loan_start(lid);
+  else
+    perform _notice(c.owner, format('【借入の申込】%s さん（ID %s）が「%s」の「%s」（%s X）を申し込みました。仕事タブの企業ページで審査できます。',
+                    me.nickname, me.account_no, c.name, lp.name, _fmt(lp.amount)));
+  end if;
+  return corp_page(c.cid) || jsonb_build_object('started', lp.auto);
+end $$;
+
+-- 申込を取り消す（本人）
+create or replace function public.loan_cancel(p_loan bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me();
+begin
+  update loans set status = 'canceled', closed_at = _now() where id = p_loan and user_id = u and status = 'pending';
+  if not found then raise exception '取り消せる申込が見つかりません'; end if;
+  return my_banks();
+end $$;
+
+-- 返す（いつでも・少しずつでもOK）
+create or replace function public.loan_repay(p_loan bigint, p_amount bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); l loans; owed bigint; pay bigint; c companies;
+begin
+  perform _loan_accrue(p_loan);
+  select * into l from loans where id = p_loan and user_id = u and status = 'active' for update;
+  if not found then raise exception '返せる借入が見つかりません'; end if;
+  owed := _loan_owed(l.id);
+  pay := least(coalesce(p_amount, owed), owed);
+  if pay < 1 then raise exception '1 X以上にしてください'; end if;
+  perform _take(u, pay);
+  select * into c from companies where id = l.company_id;
+  perform _corp_move(c.id, pay, 'loan_repay', format('返済 #%s（%s さん）', l.id, (select nickname from profiles where id = u)));
+  update loans set repaid = repaid + pay where id = l.id;
+  perform _log(u, 'loan_repay', pay, 0, jsonb_build_object('bank', c.name, 'loan', l.id));
+  if pay >= owed then
+    update loans set status = 'repaid', closed_at = _now() where id = l.id;
+    perform _notice(c.owner, format('【返済】%s さんが借入 #%s（%s）を返し終わりました。', (select nickname from profiles where id = u), l.id, l.pack_name));
+  end if;
+  return my_banks() || jsonb_build_object('balance', _bal(u), 'paid', pay);
+end $$;
+
+-- 期限を過ぎた借入を、入ってきたお金から取り立てる
+create or replace function public._loan_collect(u uuid, amt bigint) returns void
+language plpgsql set search_path = public as $$
+declare l loans; left_amt bigint := amt; pay bigint; owed bigint; b bigint;
+begin
+  for l in select * from loans where user_id = u and status = 'active' and due_at < _now() order by due_at for update loop
+    exit when left_amt <= 0;
+    perform _loan_accrue(l.id);
+    owed := _loan_owed(l.id);
+    select balance into b from profiles where id = u;
+    pay := least(owed, left_amt, b);
+    exit when pay <= 0;
+    update profiles set balance = balance - pay where id = u;
+    update loans set repaid = repaid + pay where id = l.id;
+    perform _log(u, 'loan_collect', pay, 0, jsonb_build_object('loan', l.id));
+    if exists (select 1 from companies where id = l.company_id and status in ('active', 'suspended')) then
+      perform _corp_move(l.company_id, pay, 'loan_repay', format('返済 #%s（期限切れの取り立て）', l.id));
+    end if;
+    if pay >= owed then update loans set status = 'repaid', closed_at = _now() where id = l.id; end if;
+    perform _notice(u, format('【借入 #%s】返す期限を過ぎているので、入ってきたお金から %s X を取り立てました（残り %s X）。', l.id, _fmt(pay), _fmt(owed - pay)));
+    left_amt := left_amt - pay;
+  end loop;
+end $$;
+
+-- 自分の借入（全部の銀行）
+create or replace function public.my_loans() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); r record;
+begin
+  for r in select id from loans where user_id = u and status = 'active' and due_at < _now() loop perform _loan_accrue(r.id); end loop;
+  return (select coalesce(jsonb_agg(_loan_json(l) order by (l.status in ('pending', 'active')) desc, l.id desc), '[]'::jsonb) from (
+            select * from loans where user_id = u order by id desc limit 30) l);
+end $$;
+
+-- 銀行（社長）：口座の申込を許可・断る
+create or replace function public.bank_acct_answer(p_cid text, p_user text, p_ok boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies; t uuid;
+begin
+  c := _my_corp(u, p_cid);
+  select id into t from profiles where account_no = btrim(coalesce(p_user, ''));
+  if t is null or not exists (select 1 from bank_accounts where company_id = c.id and user_id = t and status = 'pending') then raise exception '申込が見つかりません'; end if;
+  if p_ok then
+    update bank_accounts set status = 'active', interest_day = _kb_jday(_now()) where company_id = c.id and user_id = t;
+    perform _notice(t, format('【口座】「%s」の口座ができました。預けられます。', c.name));
+  else
+    delete from bank_accounts where company_id = c.id and user_id = t;
+    perform _notice(t, format('【口座】「%s」の口座の申込は断られました。', c.name));
+  end if;
+  return my_corps();
+end $$;
+
+-- 銀行（社長）：口座開設のしかたを決める（auto / approve）
+create or replace function public.bank_settings(p_cid text, p_acct_mode text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies;
+begin
+  c := _my_corp(u, p_cid);
+  if c.kind <> '銀行' then raise exception '銀行だけの設定です'; end if;
+  if p_acct_mode not in ('auto', 'approve') then raise exception '口座開設は「すぐ」か「許可制」です'; end if;
+  update companies set acct_mode = p_acct_mode where id = c.id;
+  return my_corps();
+end $$;
+
+-- 銀行（社長）：パックを作る・変える
+create or replace function public.loan_pack_save(p_cid text, p_pack bigint, p_name text, p_amount bigint, p_days int, p_rate numeric,
+  p_late_rate numeric, p_auto boolean, p_max int, p_active boolean, p_desc text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies; nm text := btrim(coalesce(p_name, ''));
+begin
+  c := _my_corp(u, p_cid);
+  if c.kind <> '銀行' then raise exception '貸出パックは銀行だけです'; end if;
+  if char_length(nm) < 1 or char_length(nm) > 40 then raise exception 'パックの名前は1〜40文字です'; end if;
+  if p_amount is null or p_amount < 1 or p_amount > 1000000000000 then raise exception '貸す額は1 X以上にしてください'; end if;
+  if p_days is null or p_days < 1 or p_days > 365 then raise exception '期間は1〜365日です'; end if;
+  if p_rate is null or p_rate < 0 or p_rate > 1000 then raise exception '利息は0〜1000%%です'; end if;
+  if p_late_rate is null or p_late_rate < 0 or p_late_rate > 100 then raise exception '延滞の利息は1日0〜100%%です'; end if;
+  if p_max is null or p_max < 1 or p_max > 100 then raise exception '同時に借りられる数は1〜100です'; end if;
+  if p_pack is null then
+    if (select count(*) from loan_packs where company_id = c.id) >= 20 then raise exception 'パックは20個までです'; end if;
+    insert into loan_packs(company_id, name, amount, days, rate, late_rate, auto, max_per_user, active, description)
+    values (c.id, nm, p_amount, p_days, p_rate, p_late_rate, coalesce(p_auto, false), p_max, coalesce(p_active, true), left(coalesce(p_desc, ''), 300));
+  else
+    update loan_packs set name = nm, amount = p_amount, days = p_days, rate = p_rate, late_rate = p_late_rate, auto = coalesce(p_auto, auto),
+           max_per_user = p_max, active = coalesce(p_active, active), description = left(coalesce(p_desc, ''), 300)
+     where id = p_pack and company_id = c.id;
+    if not found then raise exception 'そのパックはありません'; end if;
+  end if;
+  return my_corps();
+end $$;
+
+-- 銀行（社長）：借入の申込を許可・断る
+create or replace function public.loan_answer(p_loan bigint, p_ok boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); l loans; c companies;
+begin
+  select * into l from loans where id = p_loan and status = 'pending' for update;
+  if not found then raise exception '申込が見つかりません'; end if;
+  select * into c from companies where id = l.company_id and owner = u;
+  if not found then raise exception 'あなたの銀行への申込ではありません'; end if;
+  if p_ok then
+    perform _loan_start(l.id);
+  else
+    update loans set status = 'rejected', closed_at = _now() where id = l.id;
+    perform _notice(l.user_id, format('【借入】「%s」への「%s」の申込は断られました。', c.name, l.pack_name));
+  end if;
+  return my_corps();
+end $$;
+
+
 -- 前の5けたの会社IDを、3けたの会社番号に変える（何度流しても同じ）
 do $$
 declare r record; nc text;
@@ -4112,10 +4512,12 @@ begin
             '_corp_holders','_add_shares','corp_shares_change','share_give','my_stocks','corp_dividend','corp_owner_set',
             '_is_friend','friend_list','friend_request','friend_answer','friend_remove','tl_list','tl_post','tl_delete',
             '_fx_market','market_info','fx_state','fx_order','fx_cancel','fx_request','fx_request_cancel','admin_fx_decide',
-            '_fx_fee_pct','admin_fx_fee','corp_ca_withdraw','_role','_is_staff','_badge','_mail_seen','_cstat','_corp_close',
+            '_fx_fee_pct','admin_fx_fee','corp_ca_withdraw','_fx_exch_json','_fx_exchanges','_fx_pick','_fx_cancel_order','exch_settings','_role','_is_staff','_badge','_mail_seen','_cstat','_corp_close',
             'corp_suspend','corp_close','admin_corp_action','_offer_json','share_offer','share_offer_answer','share_offer_cancel',
             '_case_def_owner','_case_json','court_list','court_file','court_defend','court_withdraw','_court_collect_user',
             '_court_collect_comp','admin_court_decide',
+            '_pack_json','_loan_accrue','_loan_owed','_loan_json','_loan_start','loan_apply','loan_cancel','loan_repay','_loan_collect',
+            'my_loans','bank_acct_answer','bank_settings','loan_pack_save','loan_answer',
             '_kb_norm','_kb_gumbel','_kb_midx','_kb_jday','_kb_ms','_kb_agef','_kb_fit','_kb_name','_kb_new_horse',
             '_kb_make_race','_kb_make_day','_kb_seq','_kb_prob','_kb_prob_trio','_kb_rate','_kb_odds','_kb_check_sel',
             '_kb_hit','_kb_settle','_kb_month','_kb_seed','_kb_tick','_kb_status',

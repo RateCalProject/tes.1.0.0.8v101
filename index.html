@@ -202,6 +202,8 @@ h3{font-size:15px;margin:16px 0 8px}
 .chk{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:#F08A24;color:#fff;font-size:10px;font-weight:900;margin-left:3px;vertical-align:-2px}
 .admtag{display:inline-block;font-size:10px;line-height:1;padding:3px 5px;border-radius:5px;background:#1C1C1A;color:#fff;margin-left:4px;vertical-align:1px;font-weight:800}
 .admtag.sub{background:#6B6A64}
+.offtag{font-size:11px;font-weight:900;border-radius:4px;padding:1px 6px;background:#1F5FA8;color:#fff;margin-left:6px}
+.offtag::before{content:'✓ '}
 .cond{display:flex;gap:8px;align-items:center;padding:4px 0;font-size:14px}
 .cond .y{color:var(--win);font-weight:900}.cond .n{color:var(--lose);font-weight:900}
 .case h4{margin:8px 0 2px}
@@ -342,8 +344,13 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <div id="jbList"></div>
   </div>
   <div class="card" data-sub="bank"><h3 style="margin-top:0">銀行口座</h3><div id="bkList"></div>
-    <p class="muted small" style="margin:8px 0 0">銀行の会社を開くと口座を作れます。利息は銀行が決めた1日あたりの％で、毎日つきます。</p></div>
+    <p class="muted small" style="margin:8px 0 0">銀行の会社のページから口座を開けます（銀行によっては許可制）。利息は銀行が決めた1日あたりの％で、毎日つきます。お金を借りるのも銀行のページの「貸出パック」から。</p></div>
   <div class="card" data-sub="order"><h3 style="margin-top:0">買ったもの</h3><div id="odList"></div></div>
+  <div class="card" data-sub="invest">
+    <h3 style="margin-top:0">取引所をえらぶ</h3>
+    <div id="fxExList"></div>
+    <p class="muted small" style="margin:6px 0 0">取引所ごとに注文の一覧（板）と手数料がちがいます。証券の会社なら、だれでも取引所を開けます（私営）。</p>
+  </div>
   <div class="card" data-sub="invest">
     <h3 style="margin-top:0">通貨の取引（AiliNaX ⇄ Cièlani-Alpićsk）</h3>
     <div class="kv" id="fxBal"></div>
@@ -1797,7 +1804,7 @@ $('#xSend').onclick = async () => {
 /* =================================================================
    企業（さがす・ピン留め・求人・銀行・買ったもの・会社のページ）
    ================================================================= */
-const kindTag = c => (c.exchange ? '<span class="kindtag">取引所</span>' : c.kind === '銀行' ? '<span class="kindtag">銀行</span>' : c.kind === '証券' ? '<span class="kindtag">証券</span>' : '')
+const kindTag = c => (c.official ? '<span class="offtag">公式</span>' : '') + (c.exchange ? '<span class="kindtag">取引所</span>' : c.kind === '銀行' ? '<span class="kindtag">銀行</span>' : c.kind === '証券' ? '<span class="kindtag">証券</span>' : '')
   + (c.status === 'suspended' ? '<span class="stag">休業中</span>' : '');
 const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>${esc(c.name)}${kindTag(c)}</b>
   <small>ID ${c.cid_full || c.cid}・社長 ${nameB(c.owner, c.owner_badge)}${c.description ? '・' + esc(c.description) : ''}</small></span>${c.pinned ? '📌' : ''}</div>`;
@@ -1814,10 +1821,13 @@ async function corpLoad(sub) {
     if (sub === 'job') await jbSearch();
     if (sub === 'bank') {
       const d = await call('my_banks');
-      $('#bkList').innerHTML = d.length ? d.map(b => `<div class="co-row" data-cid="${b.cid}"><span class="nm"><b>${esc(b.name)}</b>
-          <small>金利 1日 ${Number(b.rate)}%・もらった利息 ${fmt(b.interest_total)} X${b.active ? '' : '・営業停止中'}</small></span><b class="num">${fmt(b.balance)} X</b></div>`).join('')
-        : '<p class="muted small" style="margin:0">口座はまだありません</p>';
+      $('#bkList').innerHTML = (d.accounts.length ? d.accounts.map(b => `<div class="co-row" data-cid="${b.cid}"><span class="nm"><b>${esc(b.name)}</b>
+          <small>${b.status === 'pending' ? '口座は申込中（銀行の許可待ち）' : `金利 1日 ${Number(b.rate)}%・もらった利息 ${fmt(b.interest_total)} X`}${b.active ? '' : '・休業中'}</small></span><b class="num">${fmt(b.balance)} X</b></div>`).join('')
+        : '<p class="muted small" style="margin:0">口座はまだありません</p>')
+        + `<h4 style="margin:12px 0 4px">借入</h4>` + (d.loans.map(l => loanRow(l, true)).join('') || '<p class="muted small" style="margin:0">借りていません。銀行のページの「貸出パック」から申し込めます。</p>');
       bindRows($('#bkList'));
+      $$('#bkList [data-repay]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); if (await loanRepay(b.dataset.repay, b.dataset.owed)) corpLoad('bank'); });
+      $$('#bkList [data-lcancel]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); try { await call('loan_cancel', { p_loan: Number(b.dataset.lcancel) }); toast('取り消しました'); corpLoad('bank'); } catch (e) { toast(e.message); } });
     }
     if (sub === 'stock') await stockLoad();
     if (sub === 'invest') await fxLoad();
@@ -1872,12 +1882,21 @@ async function corpOpen(cid) {
     ${c.description ? `<p style="white-space:pre-wrap;margin:8px 0">${esc(c.description)}</p>` : ''}
     <div class="row" style="margin:8px 0"><button class="btn s" data-pin>${c.pinned ? '📌 ピン留めをやめる' : '📌 ピン留め'}</button>
       ${c.mine || c.status !== 'active' ? '' : '<button class="btn s" data-send>この会社に送金</button>'}</div>
-    ${bank ? `<h3>銀行</h3><p class="small" style="margin:0 0 6px">預金の金利：1日 <b>${Number(c.rate)}%</b>（毎日つきます）</p>
-      ${c.account ? `<div class="kv"><span>あなたの預金</span><b>${fmt(c.account.balance)} X</b><span class="muted">もらった利息</span><b>${fmt(c.account.interest_total)} X</b></div>
-        <div class="row" style="margin-top:8px">${c.status === 'active' ? '<button class="btn main s" data-dep>預ける</button>' : ''}<button class="btn s" data-wd>引き出す</button></div>`
-        : (c.mine || c.status !== 'active' ? '' : '<button class="btn main s" data-open-acct>口座を開く（無料）</button>')}` : ''}
-    <h3>${unitOf(c) === '株' ? '株主' : '出資者'}</h3>
-    <p class="small muted" style="margin:0 0 4px">発行 ${fmt(c.shares)} ${unitOf(c)}</p>${holdersHtml(c, 10)}
+    ${bank ? `<h3>銀行</h3><p class="small" style="margin:0 0 6px">預金の金利：1日 <b>${Number(c.rate)}%</b>（毎日つきます）・口座開設：${c.acct_mode === 'auto' ? 'すぐ' : '銀行の許可制'}</p>
+      ${c.account ? (c.account.status === 'pending' ? '<p class="small"><span class="tag">口座は申込中（銀行の許可待ち）</span></p>'
+        : `<div class="kv"><span>あなたの預金</span><b>${fmt(c.account.balance)} X</b><span class="muted">もらった利息</span><b>${fmt(c.account.interest_total)} X</b></div>
+        <div class="row" style="margin-top:8px">${c.status === 'active' ? '<button class="btn main s" data-dep>預ける</button>' : ''}<button class="btn s" data-wd>引き出す</button></div>`)
+        : (c.mine || c.status !== 'active' ? '' : `<button class="btn main s" data-open-acct>${c.acct_mode === 'auto' ? '口座を開く（無料）' : '口座を申し込む（無料）'}</button>`)}
+      <h3>借りる（貸出パック）</h3>
+      ${c.loans.map(l => loanRow(l, false)).join('')}
+      ${c.packs.length ? c.packs.map(pk => `<div class="item"><div class="row"><b>${esc(pk.name)}</b><b class="num" style="margin-left:auto">${fmt(pk.amount)} X</b></div>
+          <div class="small muted">${pk.days}日で <b>${fmt(pk.repay)} X</b> を返す（利息 ${fmtP(pk.rate)}%）・期限を過ぎると1日 ${fmtP(pk.late_rate)}%・${pk.auto ? 'すぐ借りられる' : '銀行の審査あり'}</div>
+          ${pk.description ? `<p class="small" style="margin:4px 0;white-space:pre-wrap">${esc(pk.description)}</p>` : ''}
+          ${c.mine || c.status !== 'active' ? '' : `<button class="btn main s" data-loan="${pk.id}" data-name="${esc(pk.name)}" data-amt="${pk.amount}" data-ret="${pk.repay}" data-days="${pk.days}" data-auto="${pk.auto ? 1 : 0}">申し込む</button>`}</div>`).join('')
+        : '<p class="muted small" style="margin:0">いまは貸出パックがありません</p>'}
+      <p class="muted small">期限を過ぎると延滞の利息がつき、あなたにお金が入るたびに銀行が取り立てます。</p>` : ''}
+    ${c.official ? '<p class="small muted">国営の会社です（株はありません）。</p>' : `<h3>${unitOf(c) === '株' ? '株主' : '出資者'}</h3>
+    <p class="small muted" style="margin:0 0 4px">発行 ${fmt(c.shares)} ${unitOf(c)}</p>${holdersHtml(c, 10)}`}
     <h3>商品</h3>
     ${c.items.length ? c.items.map(it => `<div class="item"><div class="row" style="justify-content:space-between"><b>${esc(it.name)}</b><b class="num" style="margin-left:auto;white-space:nowrap">${fmt(it.price)} X</b></div>
         ${it.description ? `<p class="small muted" style="margin:4px 0;white-space:pre-wrap">${esc(it.description)}</p>` : ''}
@@ -1890,7 +1909,12 @@ async function corpOpen(cid) {
   m.querySelector('[data-pin]').onclick = () => act('corp_pin', { p_cid: cid, p_on: !c.pinned }, c.pinned ? 'ピン留めをやめました' : 'ピン留めしました');
   const sendB = m.querySelector('[data-send]');
   if (sendB) sendB.onclick = () => { m.remove(); go('vTax', 'xfer'); $('#xTo').value = cid; $('#xAmt').focus(); xferInput(); };
-  const oa = m.querySelector('[data-open-acct]'); if (oa) oa.onclick = () => act('bank_open', { p_cid: cid }, '口座を開きました');
+  const oa = m.querySelector('[data-open-acct]'); if (oa) oa.onclick = () => act('bank_open', { p_cid: cid }, c.acct_mode === 'auto' ? '口座を開きました' : '口座を申し込みました。銀行の許可を待ちましょう');
+  m.querySelectorAll('[data-loan]').forEach(b => b.onclick = () => {
+    if (!confirm(`「${b.dataset.name}」で ${fmt(b.dataset.amt)} X を借ります。${b.dataset.days}日以内に ${fmt(b.dataset.ret)} X を返してください。${b.dataset.auto === '1' ? '' : '\n（銀行の審査があります）'}`)) return;
+    act('loan_apply', { p_pack: Number(b.dataset.loan) }, b.dataset.auto === '1' ? '借りました' : '申し込みました。銀行の審査を待ちましょう');
+  });
+  m.querySelectorAll('[data-repay]').forEach(b => b.onclick = async () => { if (await loanRepay(b.dataset.repay, b.dataset.owed)) corpOpen(cid); });
   const dep = m.querySelector('[data-dep]');
   if (dep) dep.onclick = () => { const a = Math.floor(Number(prompt('預ける額（X）', '')) || 0); if (a > 0) act('bank_deposit', { p_cid: cid, p_amount: a }, `${fmt(a)} X 預けました`); };
   const wd = m.querySelector('[data-wd]');
@@ -1901,6 +1925,19 @@ async function corpOpen(cid) {
     if (note === null) return;
     act('corp_buy', { p_item: Number(b.dataset.buy), p_note: note }, '買いました。会社が品物を渡すのを待ちましょう');
   });
+}
+
+/* ---------------- 借入 ---------------- */
+const LOAN_ST = { pending: '審査中', active: '借りている', repaid: '返し終わった', rejected: '断られた', canceled: '取り消し', forgiven: '帳消し' };
+const loanRow = (l, showBank) => `<div class="item"><div class="row"><b>${showBank ? esc(l.bank) + '・' : ''}${esc(l.pack)}</b>
+    <span class="tag ${l.overdue ? '' : l.status === 'repaid' ? 'good' : ''}" style="margin-left:auto;${l.overdue ? 'background:#F8D7D0;color:#9A2A14' : ''}">${l.overdue ? '期限切れ' : LOAN_ST[l.status]}</span></div>
+  <div class="small muted">#${l.id}・借りた ${fmt(l.principal)} X・利息 ${fmt(l.interest)} X${l.late_fee ? `・延滞の利息 ${fmt(l.late_fee)} X` : ''}・返した ${fmt(l.repaid)} X${l.due ? '・期限 ' + l.due : ''}</div>
+  ${l.status === 'active' ? `<div class="row" style="margin-top:6px"><span class="small">残り <b>${fmt(l.owed)} X</b></span><button class="btn main s" data-repay="${l.id}" data-owed="${l.owed}" style="margin-left:auto">返す</button></div>` : ''}
+  ${l.status === 'pending' && showBank ? `<button class="btn s" data-lcancel="${l.id}" style="margin-top:6px">申込を取り消す</button>` : ''}</div>`;
+async function loanRepay(id, owed) {
+  const v = prompt(`返す額（X）。残りは ${fmt(owed)} X です`, String(owed)); if (v === null) return false;
+  const n = Math.floor(Number(v) || 0); if (n < 1) return false;
+  try { const r = await call('loan_repay', { p_loan: Number(id), p_amount: n }); setBal(r.balance); toast(`${fmt(r.paid)} X 返しました`); return true; } catch (e) { toast(e.message); return false; }
 }
 
 /* =================================================================
@@ -1953,11 +1990,17 @@ function ownRender() {
         <p class="muted small" style="margin:0">利息は会社のお金から毎日払います。会社のお金が足りないと払えません。</p>` : ''}
       <button class="btn s" data-act="save">保存</button>
 
-      <h4>${unitOf(c) === '株' ? '株・株主' : '出資・出資者'}</h4>
+      ${c.official ? '<h4>国営</h4><p class="muted small" style="margin:0">国営の会社なので、株はありません。</p>' : `<h4>${unitOf(c) === '株' ? '株・株主' : '出資・出資者'}</h4>
       <p class="small" style="margin:0 0 4px">発行 <b>${fmt(c.shares)} ${unitOf(c)}</b></p>${holdersHtml(c, 20)}
       <div class="row" style="margin-top:6px;flex-wrap:wrap"><button class="btn s" data-act="sh_add">発行をふやす</button><button class="btn s" data-act="sh_sub">へらす</button>
         <button class="btn main s" data-act="dividend">配当を出す</button><button class="btn s" data-act="owner">社長を交代</button></div>
-      <p class="muted small" style="margin:6px 0 0">ふやした分は社長のものになります。へらせるのは社長が持っている分だけ。株をほかの人にゆずるのは「企業 → 持ち株」から。配当は会社のお金から持ち分に合わせて配り、もらった人の所得になります。</p>
+      <p class="muted small" style="margin:6px 0 0">ふやした分は社長のものになります。へらせるのは社長が持っている分だけ。株をほかの人にゆずるのは「企業 → 持ち株」から。配当は会社のお金から持ち分に合わせて配り、もらった人の所得になります。</p>`}
+      ${c.kind === '証券' ? `<h4>取引所の設定</h4>
+      <label class="small" style="display:block;margin:4px 0"><input type="checkbox" data-f="pair_xca" ${c.fx_pairs.includes('X/CA') ? 'checked' : ''}> AiliNaX ⇄ Cièlani-Alpićsk を取り扱う（取引所を開く）</label>
+      <div class="row"><span class="small">手数料</span><input class="inp" style="width:90px;margin:0" data-f="fx_fee" type="number" step="0.01" min="0" max="10" value="${Number(c.fx_fee)}"><span class="small">%（0〜10）</span>
+        <button class="btn s" data-act="exch">保存</button></div>
+      <p class="muted small" style="margin:6px 0 0">手数料は、買った人の X と売った人の CA から引いて、この会社に入ります。取り扱いをやめると、出ている注文（いま ${c.fx_open_orders}件）は取り消して返します。</p>` : ''}
+      ${bank ? bankAdmin(c) : ''}
 
       <h4>商品（購入ボタン）</h4>
       ${c.items.map(it => itemForm(it)).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
@@ -1996,6 +2039,36 @@ function ownRender() {
   }).join('');
   if (OW.rejected.length) h += `<div class="card"><h3 style="margin-top:0">却下された申請</h3>${OW.rejected.map(r => `<p class="small" style="margin:4px 0">${esc(r.name)}${r.reason ? '：' + esc(r.reason) : ''}</p>`).join('')}</div>`;
   $('#owCorp').innerHTML = h;
+}
+function bankAdmin(c) {
+  const packForm = pk => `<div class="item" data-form="pack" data-id="${pk ? pk.id : ''}">
+    <input class="inp" data-f="name" maxlength="40" placeholder="パックの名前（例：はじめての1000 X）" value="${pk ? esc(pk.name) : ''}">
+    <div class="row"><span class="small" style="width:7.5em">貸す額（X）</span><input class="inp grow" data-f="amount" type="number" min="1" value="${pk ? pk.amount : ''}" style="margin:0"></div>
+    <div class="row"><span class="small" style="width:7.5em">期間（日）</span><input class="inp grow" data-f="days" type="number" min="1" max="365" value="${pk ? pk.days : 7}" style="margin:0"></div>
+    <div class="row"><span class="small" style="width:7.5em">利息（期間で%）</span><input class="inp grow" data-f="rate" type="number" min="0" step="0.01" value="${pk ? Number(pk.rate) : 10}" style="margin:0"></div>
+    <div class="row"><span class="small" style="width:7.5em">延滞（1日%）</span><input class="inp grow" data-f="late" type="number" min="0" step="0.01" value="${pk ? Number(pk.late_rate) : 1}" style="margin:0"></div>
+    <div class="row"><span class="small" style="width:7.5em">1人あたり</span><input class="inp grow" data-f="max" type="number" min="1" max="100" value="${pk ? pk.max_per_user : 1}" style="margin:0"><span class="small">件まで</span></div>
+    <textarea class="inp" data-f="desc" rows="2" maxlength="300" placeholder="説明（なくてもOK）">${pk ? esc(pk.description) : ''}</textarea>
+    <div class="row"><label class="small"><input type="checkbox" data-f="auto" ${pk && pk.auto ? 'checked' : ''}> 審査なし（すぐ貸す）</label>
+      <label class="small"><input type="checkbox" data-f="active" ${!pk || pk.active ? 'checked' : ''}> 受付中</label>
+      <button class="btn main s" data-act="pack" style="margin-left:auto">${pk ? '保存' : '作る'}</button></div></div>`;
+  const hist = h => `これまで：返した ${h.repaid}件・借りている ${h.active}件${h.overdue ? `・<b style="color:var(--lose)">延滞 ${h.overdue}件</b>` : ''}${h.forgiven ? `・帳消し ${h.forgiven}件` : ''}`;
+  return `<h4>銀行の設定</h4>
+    <div class="row"><span class="small">口座開設</span>
+      <div class="seg"><button data-act="acct_mode" data-v="auto" class="${c.acct_mode === 'auto' ? 'on' : ''}">すぐ開ける</button><button data-act="acct_mode" data-v="approve" class="${c.acct_mode !== 'auto' ? 'on' : ''}">許可制</button></div></div>
+    <h4>口座の申込</h4>
+    ${c.acct_requests.map(a => `<div class="line"><span class="grow">${nameB(a.nickname, a.badge)}（ID ${a.uid}）</span>
+      <button class="btn main s" data-act="acct_ok" data-uid="${a.uid}">許可</button><button class="btn s" data-act="acct_ng" data-uid="${a.uid}">断る</button></div>`).join('') || '<p class="muted small" style="margin:0">いまはありません</p>'}
+    <h4>貸出パック</h4>
+    ${c.packs.map(packForm).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
+    <details class="ed"><summary>＋ パックを作る</summary>${packForm(null)}</details>
+    <p class="muted small" style="margin:4px 0 0">貸すお金は会社のお金から出ます。返してもらったお金（利息こみ）は会社に入ります。期限を過ぎると、借りた人にお金が入るたびに自動で取り立てます。</p>
+    <h4>借入の申込</h4>
+    ${c.loan_requests.map(l => `<div class="item"><div class="row"><b>${nameB(l.nickname, l.badge)}（ID ${l.uid}）</b><b class="num" style="margin-left:auto">${fmt(l.principal)} X</b></div>
+      <div class="small muted">「${esc(l.pack)}」・${l.applied}・${hist(l.history)}</div>
+      <div class="row" style="margin-top:6px"><button class="btn main s" data-act="loan_ok" data-id="${l.id}">貸す</button><button class="btn s" data-act="loan_ng" data-id="${l.id}">断る</button></div></div>`).join('') || '<p class="muted small" style="margin:0">いまはありません</p>'}
+    <h4>貸している分</h4>
+    ${c.loans_active.map(l => `<div class="line"><span class="grow">${nameB(l.nickname, l.badge)}「${esc(l.pack)}」<small>残り ${fmt(l.owed)} X・期限 ${l.due}${l.overdue ? '・<b style="color:var(--lose)">期限切れ</b>' : ''}</small></span></div>`).join('') || '<p class="muted small" style="margin:0">いまはありません</p>'}`;
 }
 function itemForm(it) {
   return `<div class="item" data-form="item" data-id="${it ? it.id : ''}">
@@ -2042,6 +2115,13 @@ $('#owCorp').onclick = async ev => {
     else if (a === 'owner') { const to = prompt('新しい社長のID（ユーザー・5けた）。交代すると、あなたはこの会社を動かせなくなります', ''); if (!to) return;
         if (!confirm(`ID ${to} の人に社長を交代します。もとに戻すには新しい社長に頼む必要があります。よろしいですか？`)) return;
         r = await call('corp_owner_set', { p_cid: cid, p_to: to.trim() }); }
+    else if (a === 'exch') r = await call('exch_settings', { p_cid: cid, p_pairs: f(card, 'pair_xca') ? ['X/CA'] : [], p_fee: Number(f(card, 'fx_fee')) });
+    else if (a === 'acct_mode') r = await call('bank_settings', { p_cid: cid, p_acct_mode: b.dataset.v });
+    else if (a === 'acct_ok' || a === 'acct_ng') r = await call('bank_acct_answer', { p_cid: cid, p_user: b.dataset.uid, p_ok: a === 'acct_ok' });
+    else if (a === 'pack') { const box = b.closest('[data-form]'); r = await call('loan_pack_save', { p_cid: cid, p_pack: box.dataset.id ? Number(box.dataset.id) : null,
+        p_name: f(box, 'name'), p_amount: Math.floor(Number(f(box, 'amount')) || 0), p_days: Math.floor(Number(f(box, 'days')) || 0), p_rate: Number(f(box, 'rate')) || 0,
+        p_late_rate: Number(f(box, 'late')) || 0, p_auto: f(box, 'auto'), p_max: Math.floor(Number(f(box, 'max')) || 1), p_active: f(box, 'active'), p_desc: f(box, 'desc') }); }
+    else if (a === 'loan_ok' || a === 'loan_ng') { if (a === 'loan_ok' && !confirm('会社のお金から貸します。よろしいですか？')) return; r = await call('loan_answer', { p_loan: Number(b.dataset.id), p_ok: a === 'loan_ok' }); }
     else if (a === 'suspend') { if (!confirm('休業します。休業中は買い物・送金などを受けられません。よろしいですか？')) return; r = await call('corp_suspend', { p_cid: cid, p_on: true }); }
     else if (a === 'resume') r = await call('corp_suspend', { p_cid: cid, p_on: false });
     else if (a === 'close' || a === 'bankrupt') {
@@ -2234,22 +2314,30 @@ function fxSummary(m) {
     <div class="kv" style="margin-top:6px"><span class="muted">買い（いちばん高い）</span><b>${m.bid != null ? fmtP(m.bid) + ' CA' : '—'}</b>
       <span class="muted">売り（いちばん安い）</span><b>${m.ask != null ? fmtP(m.ask) + ' CA' : '—'}</b>
       <span class="muted">24時間の取引量</span><b>${fmt(m.vol)} X</b><span class="muted">手数料</span><b>${fmtP(m.fee_pct)}%</b></div>
-    ${m.exchange && !m.exchange.open ? `<p class="notice small" style="margin:6px 0 0">取引所（${esc(m.exchange.name)}）がいま営業していないので、注文できません。</p>` : ''}
+    ${m.exchange && !m.exchange.open ? `<p class="notice small" style="margin:6px 0 0">取引所（${esc(m.exchange.name)}）がいま休業中なので、注文できません（取り消しはできます）。</p>` : ''}
     ${m.last == null ? '<p class="muted small" style="margin:6px 0 0">まだ取引がありません</p>' : fxChart(m.chart)}`;
 }
 async function mktLoad() {
   try {
     const d = await call('market_info');
-    $('#mktFx').innerHTML = `<h3 style="margin-top:0">AiliNaX / ${CA_NAME}</h3>${fxSummary(d.fx)}
-      <p class="muted small" style="margin:8px 0 0">CA（${CA_NAME}）は ${CN_NAME}（風の芽公式サーバーの通貨）と同じ価値です。企業タブの「取引所」で売り買いできます${d.fx.exchange ? `（運営：${esc(d.fx.exchange.name)}）` : ''}。</p>`;
+    $('#mktFx').innerHTML = `<h3 style="margin-top:0">AiliNaX / ${CA_NAME}</h3>${d.fx ? fxSummary(d.fx) : '<p class="muted small">いま開いている取引所はありません</p>'}
+      ${d.exchanges.length > 1 ? `<h4 style="margin:12px 0 4px">取引所ごとの値段</h4>` + d.exchanges.map(e => exRow(e, false)).join('') : ''}
+      <p class="muted small" style="margin:8px 0 0">CA（${CA_NAME}）は ${CN_NAME}（風の芽公式サーバーの通貨）と同じ価値です。企業タブの「取引所」で売り買いできます${d.fx && d.fx.exchange ? `（上のグラフ：${esc(d.fx.exchange.name)}）` : ''}。</p>`;
+    $$('#mktFx [data-fxex]').forEach(r => r.onclick = () => { fxEx = r.dataset.fxex; try { localStorage.setItem('fxEx', fxEx); } catch (e) {} go('vCorp', 'invest'); });
     $('#mktStock').innerHTML = `<h3 style="margin-top:0">株価</h3>` + (d.stocks.length ? '' :
       '<p class="muted small" style="margin:0">上場している会社はまだありません。株式の売り買いは、風の芽証券取引所で準備中です。</p>');
   } catch (e) { toast(e.message); }
 }
-let FX = null, fxSide = 'buy', fxKind = 'in';
-async function fxLoad() { try { FX = await call('fx_state'); fxRender(); } catch (e) { toast(e.message); } }
+let FX = null, fxSide = 'buy', fxKind = 'in', fxEx = (() => { try { return localStorage.getItem('fxEx') || ''; } catch (e) { return ''; } })();
+async function fxLoad() { try { FX = await call('fx_state', { p_exch: fxEx || null }); fxRender(); } catch (e) { toast(e.message); } }
+const exRow = (e, on) => `<div class="co-row" data-fxex="${e.cid}" style="${on ? 'background:var(--soft);border-radius:10px;padding:10px 8px' : ''}">
+  <span class="nm"><b>${esc(e.name)}${e.official ? '<span class="offtag">公式</span>' : ''}${e.open ? '' : '<span class="stag">休業中</span>'}</b>
+  <small>手数料 ${fmtP(e.fee_pct)}%・いまの値段 ${e.last != null ? '1 X = ' + fmtP(e.last) + ' CA' : '—'}・24時間 ${fmt(e.vol)} X</small></span>${on ? '<b>えらんでいる</b>' : ''}</div>`;
 function fxRender() {
   const m = FX.market;
+  $('#fxExList').innerHTML = FX.exchanges.map(e => exRow(e, e.cid === FX.exch)).join('') || '<p class="muted small" style="margin:0">いま開いている取引所はありません</p>';
+  $$('#fxExList [data-fxex]').forEach(r => r.onclick = () => { fxEx = r.dataset.fxex; try { localStorage.setItem('fxEx', fxEx); } catch (e) {} $('#fxPrice').value = ''; fxLoad(); });
+  if (!m) { $('#fxBal').innerHTML = `<span>AiliNaX</span><b>${fmt(FX.balance)} X</b><span>${CA_NAME}</span><b>${fmt(FX.ca)} CA</b>`; $('#fxMkt').innerHTML = ''; $('#fxBook').innerHTML = ''; fxPrev(); return; }
   $('#fxBal').innerHTML = `<span>AiliNaX</span><b>${fmt(FX.balance)} X</b><span>${CA_NAME}</span><b>${fmt(FX.ca)} CA</b>`;
   $('#fxMkt').innerHTML = fxSummary(m);
   const rows = (a, cls) => a.map(x => `<div class="line"><span class="grow num" style="color:${cls}">${fmtP(x.price)} CA</span><b class="num">${fmt(x.qty)} X</b></div>`).join('');
@@ -2257,7 +2345,7 @@ function fxRender() {
     <div class="small muted" style="margin-top:6px">買い注文</div>${rows(m.bids, 'var(--win)') || '<p class="muted small" style="margin:0">なし</p>'}`;
   const ST = { open: '注文中', done: '約定', canceled: '取り消し' };
   $('#fxMine').innerHTML = FX.orders.map(o => `<div class="line"><span class="grow">${o.side === 'buy' ? '買い' : '売り'} ${fmt(o.qty)} X @ ${fmtP(o.price)} CA
-      <small>${o.at}・残り ${fmt(o.remain)} X</small></span>${o.status === 'open' ? `<button class="btn s" data-fxc="${o.id}">取り消す</button>` : `<span class="tag ${o.status === 'done' ? 'good' : ''}">${ST[o.status]}</span>`}</div>`).join('')
+      <small>${esc(o.exch || '')}・${o.at}・残り ${fmt(o.remain)} X</small></span>${o.status === 'open' ? `<button class="btn s" data-fxc="${o.id}">取り消す</button>` : `<span class="tag ${o.status === 'done' ? 'good' : ''}">${ST[o.status]}</span>`}</div>`).join('')
     || '<p class="muted small" style="margin:0">ありません</p>';
   const RS = { pending: '処理待ち', done: 'できあがり', rejected: '取り消し・断り' };
   $('#fxReqs').innerHTML = FX.requests.map(r => `<div class="line"><span class="grow">${r.kind === 'in' ? 'CN → CA' : 'CA → CN'} ${fmt(r.amount)}
@@ -2269,7 +2357,7 @@ function fxRender() {
 }
 const fxP = () => Math.round((Number($('#fxPrice').value) || 0) * 10000) / 10000;
 function fxPrev() {
-  const p = fxP(), q = Math.floor(Number($('#fxQty').value) || 0), fee = FX ? Number(FX.market.fee_pct) : 0;
+  const p = fxP(), q = Math.floor(Number($('#fxQty').value) || 0), fee = FX && FX.market ? Number(FX.market.fee_pct) : 0;
   $('#fxPrev').innerHTML = p > 0 && q > 0 ? (fxSide === 'buy'
       ? `${fmt(q)} X を買うのに、最大 <b>${fmt(Math.ceil(p * q))} CA</b> を預けます（安く買えたら差額は戻ります）。受け取る X から手数料 ${fmtP(fee)}% が引かれます`
       : `${fmt(q)} X を売って、<b>${fmt(Math.ceil(p * q))} CA</b> くらい以上を受け取ります（受け取る CA から手数料 ${fmtP(fee)}% が引かれます）`) : '<span class="muted">値段（1 X あたりの CA。小数第4位まで）と数量を入れてください</span>';
@@ -2281,7 +2369,7 @@ $('#fxGo').onclick = async () => {
   const p = fxP(), q = Math.floor(Number($('#fxQty').value) || 0);
   if (!(p > 0) || q < 1) return toast('値段と数量を入れてください');
   if (!confirm(`${fxSide === 'buy' ? '買い' : '売り'}注文：${fmt(q)} X を 1 X = ${fmtP(p)} CA で出します。よろしいですか？`)) return;
-  try { FX = await call('fx_order', { p_side: fxSide, p_price: p, p_qty: q }); setBal(FX.balance); fxRender(); $('#fxQty').value = ''; fxPrev(); toast('注文しました'); }
+  try { FX = await call('fx_order', { p_exch: FX.exch, p_side: fxSide, p_price: p, p_qty: q }); setBal(FX.balance); fxRender(); $('#fxQty').value = ''; fxPrev(); toast('注文しました'); }
   catch (e) { toast(e.message); }
 };
 $$('#fxKind button').forEach(b => b.onclick = () => { fxKind = b.dataset.k; $$('#fxKind button').forEach(x => x.classList.toggle('on', x === b)); });
