@@ -196,7 +196,25 @@ h3{font-size:15px;margin:16px 0 8px}
 .game-row .nm small{display:block;color:var(--muted);margin-top:2px}
 .game-row .go{color:var(--muted);font-size:20px}
 .game-row.soon{opacity:.55;cursor:default}
-.rv{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;background:#0E4D2E;padding:4px;border-radius:10px;width:min(100%,420px);aspect-ratio:1}
+.chb{display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);width:min(100%,420px);aspect-ratio:1;border:3px solid #6B4A2B;border-radius:6px;overflow:hidden;margin:0 auto}
+.chb .c{min-height:0;min-width:0;overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative;font-size:min(9.4vw,42px);line-height:1;user-select:none}
+.chb .c.l{background:#EED9B6}.chb .c.d{background:#B58863}
+.chb .c.sel{background:#F2D16B !important}.chb .c.last{box-shadow:inset 0 0 0 3px rgba(242,193,78,.9)}.chb .c.chk{background:#E0705C !important}
+.chb .c.to::after{content:'';position:absolute;width:28%;height:28%;border-radius:50%;background:rgba(30,60,30,.35)}
+.chb .c.to.cap::after{width:86%;height:86%;background:none;border:4px solid rgba(30,60,30,.35)}
+.chb .pw{color:#fff;text-shadow:0 0 1px #000,0 0 1px #000,0 1px 2px #000}.chb .pb{color:#1b1b1b;text-shadow:0 1px 1px rgba(255,255,255,.4)}
+.chb .crd{position:absolute;font-size:9px;color:rgba(0,0,0,.45);left:2px;bottom:1px}
+.sgb{display:grid;grid-template-columns:repeat(9,1fr);grid-template-rows:repeat(9,1fr);width:min(100%,420px);aspect-ratio:1/1.08;background:#E8C27A;border:3px solid #8B5A2B;gap:1px;margin:0 auto}
+.sgb .c{min-height:0;min-width:0;background:#F1D08F;display:flex;align-items:center;justify-content:center;position:relative;user-select:none}
+.sgb .c.sel{background:#F6E27A}.sgb .c.last{background:#F5C76A}.sgb .c.to::after{content:'';position:absolute;width:26%;height:26%;border-radius:50%;background:rgba(80,40,0,.35)}
+.sgb .c.chk{background:#E8907C}
+.kp{width:84%;height:90%;background:#F9E7B8;clip-path:polygon(50% 0,88% 18%,100% 100%,0 100%,12% 18%);display:flex;align-items:center;justify-content:center;
+  font-weight:900;font-size:min(5.2vw,23px);color:#222;font-family:'Hiragino Mincho ProN','Yu Mincho',serif;padding-top:8%}
+.kp.go{transform:rotate(180deg)}.kp.pro{color:#C0281E}
+.hand{display:flex;flex-wrap:wrap;gap:4px;min-height:34px;align-items:center;margin:6px auto;width:min(100%,420px);font-size:13px}
+.hand .hp{display:inline-flex;align-items:center;gap:2px;border:1px solid #C9A86A;background:#F9E7B8;border-radius:6px;padding:2px 6px;font-weight:900;cursor:default}
+.hand .hp.on{cursor:pointer;border-color:#8B5A2B}.hand .hp.sel{background:#F6E27A}
+.rv{display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);gap:2px;background:#0E4D2E;padding:4px;border-radius:10px;width:min(100%,420px);aspect-ratio:1}
 .rv .c{background:#1E7A4A;border-radius:3px;display:flex;align-items:center;justify-content:center;position:relative;cursor:default}
 .rv .c.can{cursor:pointer}
 .rv .c.can::after{content:'';width:26%;height:26%;border-radius:50%;background:rgba(255,255,255,.35)}
@@ -467,6 +485,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <div class="row"><button class="btn s" id="rmBack">‹ 部屋の一覧</button><b id="rmTitle" style="margin-left:6px"></b><span class="muted small" id="rmNo" style="margin-left:auto"></span></div>
     <div id="rmPlayers" style="margin-top:8px"></div>
     <div id="rmBoard" style="margin:8px auto 0"></div>
+    <div id="rmKifu"></div>
     <p class="small" id="rmMsg" style="text-align:center;margin:8px 0 0;min-height:20px"></p>
     <div class="row" style="justify-content:center;margin-top:6px" id="rmBtns"></div>
   </div>
@@ -858,12 +877,12 @@ const GAME_LIST = [
   ['vRou', '◎', 'ルーレット', '数字や色に賭けて、玉の止まる場所を当てる'],
   ['vHilo', '↕', 'ハイ＆ロー', '次のカードが上か下か。当てるたびに倍率アップ、好きなときに受け取れる'],
   ['reversi', '◐', 'リバーシ', 'ふたりで対戦。相手の石をはさんでひっくり返す。観戦して、勝つ人に賭けることもできる'],
-  ['chess', '♞', 'チェス', '準備中'],
-  ['shogi', '☗', '将棋', '準備中'],
+  ['chess', '♞', 'チェス', 'ふたりで対戦。相手のキングをチェックメイトしたら勝ち。観戦して賭けることもできる'],
+  ['shogi', '☗', '将棋', 'ふたりで対戦。とった駒を自分の駒として使える。観戦して賭けることもできる'],
   ['onecard', '🃏', 'ワンカード', '準備中（UNOと同じ遊び方。本人どうしで賭ける）'],
   ['mahjong', '🀄', '麻雀', '準備中（人数が足りないときはコンピューターが入る）'],
 ];
-const BOARD_GAMES = { reversi: 'リバーシ' };
+const BOARD_GAMES = { reversi: 'リバーシ', chess: 'チェス', shogi: '将棋' };
 $('#gameList').innerHTML = GAME_LIST.filter(g => g[0] !== 'vRace' || RACE_ON).map(g => {
   const soon = g[3] === '準備中' || g[3].startsWith('準備中（');
   return `<div class="game-row ${soon ? 'soon' : ''}" data-g="${g[0]}">
@@ -2561,6 +2580,30 @@ const HOWTO = {
     <li>ふたりとも置けなくなったら終わり。<b>石の多いほうが勝ち</b>です。</li>
   </ol>
   <p class="small"><b>コツ</b>：四すみ（かど）は二度とひっくり返されないので、とても強い場所です。かどのとなりに置くと、相手にかどを取られやすいので気をつけましょう。</p>`,
+  chess: `<ol>
+    <li>白と黒にわかれて、<b>交互に駒を1つ動かします</b>（白が先）。動かしたい駒を押すと、動ける場所に点が出ます。</li>
+    <li>相手の駒がいる場所に動くと、その駒を<b>とれます</b>（とった駒は使えません）。</li>
+    <li>相手の<b>キング（♚）</b>をとれる形にすることを「チェック」といいます。チェックされたら、すぐに逃げるか守らなければいけません。</li>
+    <li>どうやっても逃げられないチェックが<b>チェックメイト</b>。チェックメイトした人の勝ちです。</li>
+  </ol>
+  <p class="small"><b>駒の動き</b><br>
+    ♚ キング：まわり8マスに1マスずつ<br>♛ クイーン：たて・よこ・ななめに何マスでも<br>♜ ルーク：たて・よこに何マスでも<br>
+    ♝ ビショップ：ななめに何マスでも<br>♞ ナイト：「2マス進んで1マスよこ」に飛ぶ（ほかの駒を飛びこえられる）<br>
+    ♟ ポーン：前に1マス（最初だけ2マスも）。とるときはななめ前。いちばん奥まで行くと、クイーンなどに変われます</p>
+  <p class="small"><b>特別なルール</b>：キャスリング（キングとルークを同時に動かす。キングを2マス横に動かすとできます）、アンパッサン（となりに2マス進んできたポーンを、ななめ後ろからとれる）もあります。
+    動ける手がないのにチェックされていない「ステイルメイト」や、同じ形が3回などは<b>引き分け</b>です。</p>`,
+  shogi: `<ol>
+    <li>先手（▲）と後手（△）にわかれて、<b>交互に駒を1つ動かします</b>（先手が先）。動かしたい駒を押すと、動ける場所に点が出ます。</li>
+    <li>相手の駒がいる場所に動くと、その駒を<b>とれます</b>。とった駒は「持ち駒」になり、あとで<b>自分の駒として好きな空いている場所に打てます</b>。</li>
+    <li>相手の<b>玉（王）</b>をとれる形にすることを「王手」といいます。どうやっても王手から逃げられない形が<b>詰み</b>で、詰ませた人の勝ちです。</li>
+    <li>相手の陣地（向こう側の3段）に入る・出る・中で動くと、駒を<b>成る</b>（裏返して強くなる）ことができます。</li>
+  </ol>
+  <p class="small"><b>駒の動き</b><br>
+    玉：まわり8マス／飛：たて・よこに何マスでも／角：ななめに何マスでも<br>
+    金：前・ななめ前・よこ・後ろに1マス（ななめ後ろはだめ）／銀：前とななめ4方向に1マス<br>
+    桂：「2マス前の左か右」に飛ぶ／香：前に何マスでも／歩：前に1マス<br>
+    龍（成った飛）：飛＋ななめ1マス／馬（成った角）：角＋たて・よこ1マス／と・成銀・成桂・成香：金と同じ動き</p>
+  <p class="small"><b>してはいけないこと</b>：同じ列に自分の歩を2つ置く「二歩」、歩を打って詰ませる「打ち歩詰め」、動けなくなる場所に駒を打つこと（1段目の歩・香、1〜2段目の桂）。この画面では、できない手は最初から選べません。同じ形が4回くり返すと<b>千日手</b>で引き分けです。</p>`,
 };
 const ROOM_RULES = `<p class="small muted" style="margin:6px 0 0">
   ・持ち時間は1人ずつ。自分の番のあいだだけ減り、0になると負けです。<br>
@@ -2623,23 +2666,30 @@ function roomRender() {
   const d = RM.data, st = d.state || {};
   $('#rmTitle').textContent = `${d.game_name}${d.title ? '・' + d.title : ''}`;
   $('#rmNo').textContent = `部屋 #${d.id}`;
-  const col = ['B', 'W'], colName = ['黒（先手）', '白（後手）'];
+  const colName = GCOL[d.game] || ['先手', '後手'];
+  const icon = seat => d.game === 'reversi' ? `<span class="stone ${seat === 0 ? 'B' : 'W'}"></span>` : d.game === 'chess' ? (seat === 0 ? '♔\uFE0E ' : '♚\uFE0E ') : (seat === 0 ? '▲' : '△');
   $('#rmPlayers').innerHTML = d.status === 'waiting' ? `<p class="small" style="margin:0">主催 ${nameB(d.host, d.host_badge)}。相手が入るのを待っています…${d.invite ? `（招待：ID ${d.invite}）` : ''}</p>`
     : `<div class="pl-bar">${[0, 1].map(seat => { const p = d.players.find(x => x.seat === seat) || {};
-        return `<div class="pl ${d.status === 'playing' && d.turn === seat ? 'turn' : ''}"><div class="small muted"><span class="stone ${col[seat]}"></span>${colName[seat]}${d.me === seat ? '（あなた）' : ''}</div>
+        return `<div class="pl ${d.status === 'playing' && d.turn === seat ? 'turn' : ''}"><div class="small muted">${icon(seat)}${colName[seat]}${d.me === seat ? '（あなた）' : ''}</div>
           <div class="nm">${nameB(p.nickname || '', p.badge)}</div><div class="row" style="justify-content:space-between"><span class="ck" data-seat="${seat}"></span>
-          <b>${seat === 0 ? (st.black ?? 2) : (st.white ?? 2)}</b></div></div>`; }).join('')}</div>`;
+          <b>${d.game === 'reversi' ? (seat === 0 ? (st.black ?? 2) : (st.white ?? 2)) : ''}</b></div></div>`; }).join('')}</div>`;
   roomClock();
-  if (d.status !== 'waiting') rvBoard(d);
+  if (d.status !== 'waiting') ({ reversi: rvBoard, chess: chBoard, shogi: sgBoard })[d.game](d);
+  $('#rmKifu').innerHTML = d.game === 'reversi' || !d.moves.length ? '' : `<div class="small muted" style="margin-top:6px;max-height:64px;overflow:auto">${kifuText(d)}</div>`;
   let msg = '';
   if (d.status === 'waiting') msg = d.mine_host ? '相手が入るのを待っています。' : '';
-  else if (d.status === 'playing') msg = d.me == null ? `観戦中・${d.move_no}手目・${colName[d.turn]}の番` : d.me === d.turn ? '<b>あなたの番です</b>' + (st.pass ? '（相手はパスしました）' : '') : '相手の番です…';
+  else if (d.status === 'playing') msg = (st.check ? `<b style="color:var(--lose)">${d.game === 'chess' ? 'チェック！' : '王手！'}</b> ` : '')
+      + (d.me == null ? `観戦中・${d.move_no}手目・${colName[d.turn]}の番` : d.me === d.turn ? '<b>あなたの番です</b>' + (st.pass ? '（相手はパスしました）' : '') : '相手の番です…')
+      + (d.draw_offer != null ? (d.me != null && d.draw_offer !== d.me ? '<br><b>相手から引き分けの申し出があります</b>' : d.me === d.draw_offer ? '<br>引き分けを申し出ています…' : '') : '');
   else if (d.status === 'finished') msg = `<b>${d.winner === -1 ? '引き分け' : colName[d.winner] + 'の勝ち'}</b>（${esc(d.reason || '')}）` + (d.me != null && d.winner !== -1 ? (d.me === d.winner ? '　あなたの勝ち！' : '　あなたの負け') : '');
   else if (d.status === 'canceled') msg = 'この部屋はなくなりました';
   $('#rmMsg').innerHTML = msg;
   $('#rmBtns').innerHTML = d.status === 'playing' && d.me != null ? '<button class="btn s" id="rmResign">投了する</button>'
+      + (d.draw_offer != null && d.draw_offer !== d.me ? '<button class="btn main s" data-draw="accept">引き分けを受ける</button><button class="btn s" data-draw="decline">断る</button>'
+        : d.draw_offer === d.me ? '<button class="btn s" data-draw="decline">申し出をやめる</button>' : '<button class="btn s" data-draw="offer">引き分けを申し出る</button>')
     : d.status === 'waiting' && d.mine_host ? '<button class="btn s" id="rmLeave">部屋をやめる</button>'
     : d.status === 'waiting' && d.me == null ? '<button class="btn main s" id="rmJoin">この部屋に入る</button>' : '';
+  $$('#rmBtns [data-draw]').forEach(b => b.onclick = async () => { try { RM.data = await call('room_draw', { p_room: d.id, p_action: b.dataset.draw }); RM.data.got = Date.now(); roomRender(); } catch (e) { toast(e.message); } });
   const rs = $('#rmResign'); if (rs) rs.onclick = async () => { if (!confirm('投了しますか？（負けになります）')) return; try { RM.data = await call('room_resign', { p_room: d.id }); RM.data.got = Date.now(); roomRender(); } catch (e) { toast(e.message); } };
   const lv = $('#rmLeave'); if (lv) lv.onclick = async () => { if (!confirm('この部屋をやめますか？')) return; try { await call('room_leave', { p_room: d.id }); go('vLobby'); } catch (e) { toast(e.message); } };
   const jn = $('#rmJoin'); if (jn) jn.onclick = async () => { try { RM.data = await call('room_join', { p_room: d.id }); RM.data.got = Date.now(); roomRender(); } catch (e) { toast(e.message); } };
@@ -2648,10 +2698,10 @@ function roomRender() {
   const myb = d.my_bets.reduce((a, b) => a + b.amount, 0), mySeat = d.my_bets.length ? d.my_bets[0].seat : null, myPay = d.my_bets.reduce((a, b) => a + (b.payout || 0), 0);
   $('#rmBetCard').classList.toggle('hidden', !d.bets_on);
   if (d.bets_on) $('#rmBetCard').innerHTML = `<h3 style="margin-top:0">観戦の賭け</h3>
-    <div class="kv"><span><span class="stone B"></span>黒に</span><b>${fmt(pool(0).amount)} X（${pool(0).people}人）</b><span><span class="stone W"></span>白に</span><b>${fmt(pool(1).amount)} X（${pool(1).people}人）</b>
-      ${myb ? `<span>あなた</span><b>${mySeat === 0 ? '黒' : '白'}に ${fmt(myb)} X${d.status === 'finished' ? `→ ${fmt(myPay)} X` : ''}</b>` : ''}</div>
+    <div class="kv"><span>${icon(0)}${colName[0]}に</span><b>${fmt(pool(0).amount)} X（${pool(0).people}人）</b><span>${icon(1)}${colName[1]}に</span><b>${fmt(pool(1).amount)} X（${pool(1).people}人）</b>
+      ${myb ? `<span>あなた</span><b>${colName[mySeat]}に ${fmt(myb)} X${d.status === 'finished' ? `→ ${fmt(myPay)} X` : ''}</b>` : ''}</div>
     ${d.bet_open && d.me == null && d.status === 'playing' ? `<div class="row" style="margin-top:8px"><input class="inp grow" id="rmBetAmt" type="number" min="1" placeholder="賭ける額（X）" style="margin:0">
-        ${mySeat !== 1 ? '<button class="btn s" data-bseat="0">黒に賭ける</button>' : ''}${mySeat !== 0 ? '<button class="btn s" data-bseat="1">白に賭ける</button>' : ''}</div>
+        ${mySeat !== 1 ? `<button class="btn s" data-bseat="0">${colName[0].replace(/（.*）/, '')}に賭ける</button>` : ''}${mySeat !== 0 ? `<button class="btn s" data-bseat="1">${colName[1].replace(/（.*）/, '')}に賭ける</button>` : ''}</div>
         <p class="muted small" style="margin:4px 0 0">10手目まで賭けられます（いま ${d.move_no}手目）。勝った側に賭けた人で山分け（国庫5%）。</p>`
       : `<p class="muted small" style="margin:6px 0 0">${d.status === 'waiting' ? '対局が始まると賭けられます。' : d.me != null ? '対局している本人は賭けられません。' : d.status === 'playing' ? '賭けは締め切りました（10手目まで）。' : ''}</p>`}`;
   $$('#rmBetCard [data-bseat]').forEach(b => b.onclick = async () => {
@@ -2678,6 +2728,106 @@ function rvBoard(d) {
     catch (e) { RM.sending = false; toast(e.message); }
   });
 }
+
+/* ---------- チェス・将棋の盤 ---------- */
+const GCOL = { reversi: ['黒（先手）', '白（後手）'], chess: ['白（先手）', '黒（後手）'], shogi: ['先手', '後手'] };
+const CH_GLYPH = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
+const SG_KANJI = { K: '玉', R: '飛', B: '角', G: '金', S: '銀', N: '桂', L: '香', P: '歩', D: '龍', H: '馬', V: '全', M: '圭', Y: '杏', T: 'と' };
+const SG_NAME = { K: '玉', R: '飛', B: '角', G: '金', S: '銀', N: '桂', L: '香', P: '歩', D: '龍', H: '馬', V: '成銀', M: '成桂', Y: '成香', T: 'と' };
+const KANSUJI = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
+const chSq = i => 'abcdefgh'[i % 8] + (8 - Math.floor(i / 8));
+function kifuText(d) {
+  if (d.game === 'chess') return d.moves.map(m => `${m.n}. ${chSq(m.move.f)}→${chSq(m.move.t)}${m.move.p ? '=' + m.move.p.toUpperCase() : ''}`).slice(-40).join('　');
+  // 将棋：盤の記録から駒をたどる
+  let b = 'lnsgkgsnl.r.....b.ppppppppp' + '.'.repeat(27) + 'PPPPPPPPP.B.....R.LNSGKGSNL';
+  const out = [];
+  for (const m of d.moves) {
+    const mv = m.move, t = mv.t, mark = m.seat === 0 ? '▲' : '△', pos = `${9 - t % 9}${KANSUJI[Math.floor(t / 9)]}`;
+    if (mv.d) { out.push(`${mark}${pos}${SG_NAME[mv.d]}打`); b = b.slice(0, t) + (m.seat === 0 ? mv.d : mv.d.toLowerCase()) + b.slice(t + 1); continue; }
+    let pc = b[mv.f]; const name = SG_NAME[pc.toUpperCase()];
+    if (mv.pr) { const pr = { R: 'D', B: 'H', S: 'V', N: 'M', L: 'Y', P: 'T' }[pc.toUpperCase()]; pc = m.seat === 0 ? pr : pr.toLowerCase(); }
+    out.push(`${mark}${pos}${name}${mv.pr ? '成' : ''}`);
+    b = b.slice(0, mv.f) + '.' + b.slice(mv.f + 1); b = b.slice(0, t) + pc + b.slice(t + 1);
+  }
+  return out.slice(-40).join('　');
+}
+async function sendMove(d, mv) {
+  if (RM.sending) return; RM.sending = true;
+  try { RM.data = await call('room_move', { p_room: d.id, p_move: mv }); RM.data.got = Date.now(); RM.sel = null; RM.sending = false; roomRender(); }
+  catch (e) { RM.sending = false; toast(e.message); }
+}
+function chBoard(d) {
+  const st = d.state, b = st.board, flip = d.me === 1, myTurn = d.status === 'playing' && d.me === d.turn;
+  if (RM.selMove !== d.move_no) { RM.sel = null; RM.selMove = d.move_no; }
+  const legal = myTurn ? d.legal : [], targets = new Set(legal.filter(m => m.f === RM.sel).map(m => m.t));
+  const last = st.last || [], kingSq = st.check ? b.indexOf(d.turn === 0 ? 'K' : 'k') : -1;
+  let h = '<div class="chb">';
+  for (let k = 0; k < 64; k++) {
+    const i = flip ? 63 - k : k, r = Math.floor(i / 8), c = i % 8, p = b[i];
+    const cls = ['c', (r + c) % 2 ? 'd' : 'l', RM.sel === i ? 'sel' : '', last.includes(i) ? 'last' : '', i === kingSq ? 'chk' : '', targets.has(i) ? 'to' : '', targets.has(i) && p !== '.' ? 'cap' : ''].join(' ');
+    const piece = p === '.' ? '' : `<span class="${p === p.toUpperCase() ? 'pw' : 'pb'}">${CH_GLYPH[p.toLowerCase()]}︎</span>`;
+    const crd = (flip ? r === 0 : r === 7) ? `<span class="crd">${'abcdefgh'[c]}</span>` : '';
+    h += `<div class="${cls}" data-i="${i}">${piece}${crd}</div>`;
+  }
+  $('#rmBoard').innerHTML = h + '</div>';
+  if (!myTurn) return;
+  $$('#rmBoard .c').forEach(el => el.onclick = () => {
+    const i = Number(el.dataset.i), p = b[i];
+    if (targets.has(i)) {
+      const opts = legal.filter(m => m.f === RM.sel && m.t === i);
+      if (opts.length > 1) {
+        const ch = prompt('ポーンが何になりますか？\nq：クイーン　r：ルーク　b：ビショップ　n：ナイト', 'q'); if (ch === null) return;
+        const pp = ch.trim().toLowerCase()[0]; if (!'qrbn'.includes(pp)) return toast('q・r・b・n から選んでください');
+        return sendMove(d, { f: RM.sel, t: i, p: pp });
+      }
+      return sendMove(d, { f: RM.sel, t: i });
+    }
+    const mine = p !== '.' && (d.me === 0 ? p === p.toUpperCase() : p === p.toLowerCase());
+    RM.sel = mine && RM.sel !== i ? i : null; chBoard(d);
+  });
+}
+function sgBoard(d) {
+  const st = d.state, b = st.board, flip = d.me === 1, myTurn = d.status === 'playing' && d.me === d.turn;
+  if (RM.selMove !== d.move_no) { RM.sel = null; RM.selMove = d.move_no; }
+  const legal = myTurn ? d.legal : [];
+  const sel = RM.sel, targets = new Set(legal.filter(m => (typeof sel === 'number' && m.f === sel) || (typeof sel === 'string' && m.d === sel)).map(m => m.t));
+  const kingSq = st.check ? b.indexOf(d.turn === 0 ? 'K' : 'k') : -1;
+  const handHtml = seat => {
+    const hs = (st.hand && st.hand[String(seat)]) || '', cnt = {};
+    for (const x of hs) cnt[x] = (cnt[x] || 0) + 1;
+    const order = ['R', 'B', 'G', 'S', 'N', 'L', 'P'].filter(x => cnt[x]);
+    const can = myTurn && seat === d.me;
+    return `<div class="hand"><span class="small muted">${seat === 0 ? '▲先手' : '△後手'}の持ち駒：</span>${order.map(x => `<span class="hp ${can ? 'on' : ''} ${sel === x && can ? 'sel' : ''}" data-hand="${can ? x : ''}">${SG_KANJI[x]}${cnt[x] > 1 ? '×' + cnt[x] : ''}</span>`).join('') || '<span class="small muted">なし</span>'}</div>`;
+  };
+  const top = flip ? 0 : 1, bottom = flip ? 1 : 0;
+  let h = handHtml(top) + '<div class="sgb">';
+  for (let k = 0; k < 81; k++) {
+    const i = flip ? 80 - k : k, p = b[i];
+    const cls = ['c', sel === i ? 'sel' : '', st.last === i ? 'last' : '', i === kingSq ? 'chk' : '', targets.has(i) ? 'to' : ''].join(' ');
+    let piece = '';
+    if (p !== '.') {
+      const go = p === p.toLowerCase(), up = p.toUpperCase(), rot = flip ? !go : go;
+      const kanji = up === 'K' ? (go ? '王' : '玉') : SG_KANJI[up];
+      piece = `<div class="kp ${rot ? 'go' : ''} ${'DHVMYT'.includes(up) ? 'pro' : ''}">${kanji}</div>`;
+    }
+    h += `<div class="${cls}" data-i="${i}">${piece}</div>`;
+  }
+  $('#rmBoard').innerHTML = h + '</div>' + handHtml(bottom);
+  if (!myTurn) return;
+  $$('#rmBoard [data-hand]').forEach(el => el.onclick = () => { if (!el.dataset.hand) return; RM.sel = RM.sel === el.dataset.hand ? null : el.dataset.hand; sgBoard(d); });
+  $$('#rmBoard .sgb .c').forEach(el => el.onclick = () => {
+    const i = Number(el.dataset.i), p = b[i];
+    if (targets.has(i)) {
+      if (typeof sel === 'string') return sendMove(d, { d: sel, t: i });
+      const opts = legal.filter(m => m.f === sel && m.t === i);
+      if (opts.length > 1) return sendMove(d, { f: sel, t: i, pr: confirm('成りますか？\n（OK＝成る／キャンセル＝成らない）') });
+      return sendMove(d, { f: sel, t: i, pr: opts[0].pr });
+    }
+    const mine = p !== '.' && (d.me === 0 ? p === p.toUpperCase() : p === p.toLowerCase());
+    RM.sel = mine && RM.sel !== i ? i : null; sgBoard(d);
+  });
+}
+
 $('#rmBack').onclick = () => { LB.game = RM.data ? RM.data.game : LB.game; go('vLobby'); };
 $('#rmChatSend').onclick = async () => {
   const t = $('#rmChatIn').value.trim(); if (!t || !RM.id) return;

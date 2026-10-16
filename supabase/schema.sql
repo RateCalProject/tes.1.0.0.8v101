@@ -4551,6 +4551,7 @@ create table if not exists public.game_chat (
   at      timestamptz not null default now()
 );
 create index if not exists game_chat_room_idx on public.game_chat(room_id, id desc);
+alter table public.game_rooms add column if not exists draw_offer int;    -- 引き分けを申し出た席
 alter table public.game_rooms enable row level security;
 alter table public.game_moves enable row level security;
 alter table public.game_bets  enable row level security;
@@ -4611,6 +4612,389 @@ begin
   return jsonb_build_object('board', b, 'last', pos, 'flips', to_jsonb(fl), 'next', nxt, 'pass', passed, 'over', false, 'black', nb, 'white', nw);
 end $$;
 
+-- ---------- チェス（8×8。盤は64文字：白は大文字 KQRBNP、黒は小文字。. は空き。0 番が a8、63 番が h1。白が先手＝席0） ----------
+create or replace function public._ch_at(b text, r int, c int) returns text
+language sql immutable as $$ select case when r between 0 and 7 and c between 0 and 7 then substr(b, r * 8 + c + 1, 1) else '#' end $$;
+
+-- sq が byw（白なら true）の駒にきかれているか
+create or replace function public._ch_attacked(b text, sq int, byw boolean) returns boolean
+language plpgsql immutable as $$
+declare r int := sq / 8; c int := sq % 8; d int[]; rr int; cc int; p text; i int;
+  kn int[] := array[-2,-1, -2,1, -1,-2, -1,2, 1,-2, 1,2, 2,-1, 2,1];
+  kg int[] := array[-1,-1, -1,0, -1,1, 0,-1, 0,1, 1,-1, 1,0, 1,1];
+  orth int[] := array[-1,0, 1,0, 0,-1, 0,1]; diag int[] := array[-1,-1, -1,1, 1,-1, 1,1];
+begin
+  -- ポーン
+  if byw then
+    if _ch_at(b, r + 1, c - 1) = 'P' or _ch_at(b, r + 1, c + 1) = 'P' then return true; end if;
+  else
+    if _ch_at(b, r - 1, c - 1) = 'p' or _ch_at(b, r - 1, c + 1) = 'p' then return true; end if;
+  end if;
+  for i in 0..7 loop
+    if _ch_at(b, r + kn[i * 2 + 1], c + kn[i * 2 + 2]) = (case when byw then 'N' else 'n' end) then return true; end if;
+    if _ch_at(b, r + kg[i * 2 + 1], c + kg[i * 2 + 2]) = (case when byw then 'K' else 'k' end) then return true; end if;
+  end loop;
+  for i in 0..3 loop
+    rr := r + orth[i * 2 + 1]; cc := c + orth[i * 2 + 2];
+    loop
+      p := _ch_at(b, rr, cc);
+      exit when p <> '.';
+      rr := rr + orth[i * 2 + 1]; cc := cc + orth[i * 2 + 2];
+    end loop;
+    if p in (case when byw then 'R' else 'r' end, case when byw then 'Q' else 'q' end) then return true; end if;
+    rr := r + diag[i * 2 + 1]; cc := c + diag[i * 2 + 2];
+    loop
+      p := _ch_at(b, rr, cc);
+      exit when p <> '.';
+      rr := rr + diag[i * 2 + 1]; cc := cc + diag[i * 2 + 2];
+    end loop;
+    if p in (case when byw then 'B' else 'b' end, case when byw then 'Q' else 'q' end) then return true; end if;
+  end loop;
+  return false;
+end $$;
+
+-- 盤の上で手を動かす（アンパッサン・キャスリング・成りもふくむ）
+create or replace function public._ch_make(b text, f int, t int, promo text, ep int) returns text
+language plpgsql immutable as $$
+declare p text := substr(b, f + 1, 1); w boolean := p = upper(p);
+begin
+  b := overlay(b placing '.' from f + 1 for 1);
+  if lower(p) = 'p' and t = ep and ep >= 0 then        -- アンパッサン：うしろのポーンをとる
+    b := overlay(b placing '.' from (case when w then t + 8 else t - 8 end) + 1 for 1);
+  end if;
+  if lower(p) = 'k' and abs(t - f) = 2 then             -- キャスリング：ルークも動かす
+    if t > f then b := overlay(overlay(b placing '.' from f + 3 + 1 for 1) placing (case when w then 'R' else 'r' end) from f + 1 + 1 for 1);
+    else b := overlay(overlay(b placing '.' from f - 4 + 1 for 1) placing (case when w then 'R' else 'r' end) from f - 1 + 1 for 1); end if;
+  end if;
+  if lower(p) = 'p' and (t / 8 = 0 or t / 8 = 7) then p := case when w then upper(coalesce(promo, 'q')) else lower(coalesce(promo, 'q')) end; end if;
+  return overlay(b placing p from t + 1 for 1);
+end $$;
+
+-- 指せる手（{f, t, p}）。p は成るときの駒（q/r/b/n）
+create or replace function public._ch_legal(st jsonb, w boolean) returns jsonb
+language plpgsql immutable as $$
+declare b text := st->>'board'; cas text := coalesce(st->>'castle', ''); ep int := coalesce((st->>'ep')::int, -1);
+  res jsonb := '[]'::jsonb; sq int; r int; c int; p text; t int; rr int; cc int; i int; k int; dir int; q text; nb text; ks int;
+  mine text := case when w then 'KQRBNP' else 'kqrbnp' end; theirs text := case when w then 'kqrbnp' else 'KQRBNP' end;
+  kn int[] := array[-2,-1, -2,1, -1,-2, -1,2, 1,-2, 1,2, 2,-1, 2,1];
+  kg int[] := array[-1,-1, -1,0, -1,1, 0,-1, 0,1, 1,-1, 1,0, 1,1];
+  pseudo int[] := '{}';   -- f, t, 成り（0=なし 1=q 2=r 3=b 4=n）を3つずつ
+begin
+  for sq in 0..63 loop
+    p := substr(b, sq + 1, 1);
+    continue when strpos(mine, p) = 0;
+    r := sq / 8; c := sq % 8;
+    if lower(p) = 'p' then
+      dir := case when w then -1 else 1 end;
+      rr := r + dir;
+      if _ch_at(b, rr, c) = '.' then
+        if rr = 0 or rr = 7 then pseudo := pseudo || array[sq, rr * 8 + c, 1, sq, rr * 8 + c, 2, sq, rr * 8 + c, 3, sq, rr * 8 + c, 4];
+        else pseudo := pseudo || array[sq, rr * 8 + c, 0]; end if;
+        if (w and r = 6 or not w and r = 1) and _ch_at(b, r + 2 * dir, c) = '.' then pseudo := pseudo || array[sq, (r + 2 * dir) * 8 + c, 0]; end if;
+      end if;
+      foreach k in array array[-1, 1] loop
+        cc := c + k;
+        continue when cc < 0 or cc > 7;
+        if strpos(theirs, _ch_at(b, rr, cc)) > 0 or rr * 8 + cc = ep then
+          if rr = 0 or rr = 7 then pseudo := pseudo || array[sq, rr * 8 + cc, 1, sq, rr * 8 + cc, 2, sq, rr * 8 + cc, 3, sq, rr * 8 + cc, 4];
+          else pseudo := pseudo || array[sq, rr * 8 + cc, 0]; end if;
+        end if;
+      end loop;
+    elsif lower(p) = 'n' or lower(p) = 'k' then
+      for i in 0..7 loop
+        if lower(p) = 'n' then rr := r + kn[i * 2 + 1]; cc := c + kn[i * 2 + 2]; else rr := r + kg[i * 2 + 1]; cc := c + kg[i * 2 + 2]; end if;
+        q := _ch_at(b, rr, cc);
+        if q = '.' or strpos(theirs, q) > 0 then pseudo := pseudo || array[sq, rr * 8 + cc, 0]; end if;
+      end loop;
+      if lower(p) = 'k' then   -- キャスリング
+        if w and sq = 60 and not _ch_attacked(b, 60, false) then
+          if strpos(cas, 'K') > 0 and substr(b, 62, 2) = '..' and substr(b, 64, 1) = 'R' and not _ch_attacked(b, 61, false) and not _ch_attacked(b, 62, false) then pseudo := pseudo || array[60, 62, 0]; end if;
+          if strpos(cas, 'Q') > 0 and substr(b, 58, 3) = '...' and substr(b, 57, 1) = 'R' and not _ch_attacked(b, 59, false) and not _ch_attacked(b, 58, false) then pseudo := pseudo || array[60, 58, 0]; end if;
+        elsif not w and sq = 4 and not _ch_attacked(b, 4, true) then
+          if strpos(cas, 'k') > 0 and substr(b, 6, 2) = '..' and substr(b, 8, 1) = 'r' and not _ch_attacked(b, 5, true) and not _ch_attacked(b, 6, true) then pseudo := pseudo || array[4, 6, 0]; end if;
+          if strpos(cas, 'q') > 0 and substr(b, 2, 3) = '...' and substr(b, 1, 1) = 'r' and not _ch_attacked(b, 3, true) and not _ch_attacked(b, 2, true) then pseudo := pseudo || array[4, 2, 0]; end if;
+        end if;
+      end if;
+    else
+      for i in 0..7 loop
+        continue when lower(p) = 'r' and kg[i * 2 + 1] <> 0 and kg[i * 2 + 2] <> 0;
+        continue when lower(p) = 'b' and (kg[i * 2 + 1] = 0 or kg[i * 2 + 2] = 0);
+        rr := r + kg[i * 2 + 1]; cc := c + kg[i * 2 + 2];
+        loop
+          q := _ch_at(b, rr, cc);
+          exit when q = '#' or strpos(mine, q) > 0;
+          pseudo := pseudo || array[sq, rr * 8 + cc, 0];
+          exit when q <> '.';
+          rr := rr + kg[i * 2 + 1]; cc := cc + kg[i * 2 + 2];
+        end loop;
+      end loop;
+    end if;
+  end loop;
+  -- 自分のキングがきかれたままになる手はだめ
+  for i in 0..(cardinality(pseudo) / 3 - 1) loop
+    nb := _ch_make(b, pseudo[i * 3 + 1], pseudo[i * 3 + 2], (array['q', 'r', 'b', 'n'])[nullif(pseudo[i * 3 + 3], 0)], ep);
+    ks := strpos(nb, case when w then 'K' else 'k' end) - 1;
+    if not _ch_attacked(nb, ks, not w) then
+      res := res || jsonb_build_array(jsonb_build_object('f', pseudo[i * 3 + 1], 't', pseudo[i * 3 + 2])
+             || case when pseudo[i * 3 + 3] > 0 then jsonb_build_object('p', (array['q', 'r', 'b', 'n'])[pseudo[i * 3 + 3]]) else '{}'::jsonb end);
+    end if;
+  end loop;
+  return res;
+end $$;
+
+create or replace function public._ch_init() returns jsonb
+language sql immutable as $$
+  select jsonb_build_object('board', 'rnbqkbnr' || 'pppppppp' || repeat('.', 32) || 'PPPPPPPP' || 'RNBQKBNR',
+    'castle', 'KQkq', 'ep', -1, 'half', 0, 'rep', '{}'::jsonb, 'check', false,
+    'legal', _ch_legal(jsonb_build_object('board', 'rnbqkbnr' || 'pppppppp' || repeat('.', 32) || 'PPPPPPPP' || 'RNBQKBNR', 'castle', 'KQkq', 'ep', -1), true))
+$$;
+
+create or replace function public._ch_apply(st jsonb, seat int, mv jsonb) returns jsonb
+language plpgsql immutable as $$
+declare w boolean := seat = 0; b text := st->>'board'; f int; t int; pr text; ok boolean := false; m jsonb; p text; cap text;
+  nb text; cas text := coalesce(st->>'castle', ''); nep int := -1; half int := coalesce((st->>'half')::int, 0) + 1;
+  rep jsonb := coalesce(st->'rep', '{}'::jsonb); key text; nlegal jsonb; chk boolean; ns jsonb; mat text;
+begin
+  f := (mv->>'f')::int; t := (mv->>'t')::int; pr := lower(coalesce(mv->>'p', ''));
+  for m in select * from jsonb_array_elements(coalesce(st->'legal', _ch_legal(st, w))) loop
+    if (m->>'f')::int = f and (m->>'t')::int = t and coalesce(m->>'p', '') = (case when m ? 'p' then coalesce(nullif(pr, ''), 'q') else '' end) then ok := true; exit; end if;
+  end loop;
+  if not ok then raise exception 'その手は指せません'; end if;
+  p := substr(b, f + 1, 1); cap := substr(b, t + 1, 1);
+  nb := _ch_make(b, f, t, nullif(pr, ''), coalesce((st->>'ep')::int, -1));
+  if lower(p) = 'p' or cap <> '.' or (lower(p) = 'p' and t = coalesce((st->>'ep')::int, -1)) then half := 0; end if;
+  if lower(p) = 'p' and abs(t - f) = 16 then nep := (f + t) / 2; end if;
+  -- キャスリングの権利
+  if p = 'K' then cas := replace(replace(cas, 'K', ''), 'Q', ''); end if;
+  if p = 'k' then cas := replace(replace(cas, 'k', ''), 'q', ''); end if;
+  if f = 63 or t = 63 then cas := replace(cas, 'K', ''); end if;
+  if f = 56 or t = 56 then cas := replace(cas, 'Q', ''); end if;
+  if f = 7 or t = 7 then cas := replace(cas, 'k', ''); end if;
+  if f = 0 or t = 0 then cas := replace(cas, 'q', ''); end if;
+  key := md5(nb || case when w then 'b' else 'w' end || cas || nep);
+  rep := jsonb_set(rep, array[key], to_jsonb(coalesce((rep->>key)::int, 0) + 1));
+  ns := jsonb_build_object('board', nb, 'castle', cas, 'ep', nep);
+  nlegal := _ch_legal(ns, not w);
+  chk := _ch_attacked(nb, strpos(nb, case when w then 'k' else 'K' end) - 1, w);
+  ns := ns || jsonb_build_object('half', half, 'rep', rep, 'check', chk, 'last', jsonb_build_array(f, t), 'legal', nlegal, 'next', 1 - seat, 'over', false);
+  if jsonb_array_length(nlegal) = 0 then
+    if chk then return ns || jsonb_build_object('over', true, 'winner', seat, 'reason', 'チェックメイト'); end if;
+    return ns || jsonb_build_object('over', true, 'winner', -1, 'reason', 'ステイルメイト（引き分け）');
+  end if;
+  if half >= 100 then return ns || jsonb_build_object('over', true, 'winner', -1, 'reason', '50手ルール（引き分け）'); end if;
+  if (rep->>key)::int >= 3 then return ns || jsonb_build_object('over', true, 'winner', -1, 'reason', '同じ形が3回（引き分け）'); end if;
+  mat := regexp_replace(nb, '[.kK]', '', 'g');
+  if mat = '' or mat in ('B', 'b', 'N', 'n') then return ns || jsonb_build_object('over', true, 'winner', -1, 'reason', '駒が足りない（引き分け）'); end if;
+  return ns;
+end $$;
+
+-- ---------- 将棋（9×9。盤は81文字：先手は大文字、後手は小文字。. は空き。0 番が左上（後手の陣・9一）、80 番が右下（1九）。先手＝席0）
+--   駒：K 玉 / R 飛 / B 角 / G 金 / S 銀 / N 桂 / L 香 / P 歩 / D 龍 / H 馬 / V 成銀 / M 成桂 / Y 成香 / T と
+--   持ち駒：hand.0（先手）・hand.1（後手）に駒の文字をならべる（例 'PPS'）
+--   手：盤の駒を動かす {f, t, pr（成る）} ／ 打つ {d: 駒, t}
+create or replace function public._sg_promo(p text) returns text
+language sql immutable as $$ select case upper(p) when 'R' then 'D' when 'B' then 'H' when 'S' then 'V' when 'N' then 'M' when 'L' then 'Y' when 'P' then 'T' end $$;
+create or replace function public._sg_base(p text) returns text
+language sql immutable as $$ select case upper(p) when 'D' then 'R' when 'H' then 'B' when 'V' then 'S' when 'M' then 'N' when 'Y' then 'L' when 'T' then 'P' else upper(p) end $$;
+
+-- 1マスずつ動く向き（先手の向き。dr, dc を2つずつ）
+create or replace function public._sg_steps(pu text) returns int[]
+language sql immutable as $$
+  select case pu
+    when 'K' then array[-1,-1, -1,0, -1,1, 0,-1, 0,1, 1,-1, 1,0, 1,1]
+    when 'G' then array[-1,-1, -1,0, -1,1, 0,-1, 0,1, 1,0]
+    when 'V' then array[-1,-1, -1,0, -1,1, 0,-1, 0,1, 1,0]
+    when 'M' then array[-1,-1, -1,0, -1,1, 0,-1, 0,1, 1,0]
+    when 'Y' then array[-1,-1, -1,0, -1,1, 0,-1, 0,1, 1,0]
+    when 'T' then array[-1,-1, -1,0, -1,1, 0,-1, 0,1, 1,0]
+    when 'S' then array[-1,-1, -1,0, -1,1, 1,-1, 1,1]
+    when 'N' then array[-2,-1, -2,1]
+    when 'P' then array[-1,0]
+    when 'D' then array[-1,-1, -1,1, 1,-1, 1,1]
+    when 'H' then array[-1,0, 1,0, 0,-1, 0,1]
+    else '{}'::int[] end
+$$;
+-- まっすぐ何マスも動く向き
+create or replace function public._sg_slides(pu text) returns int[]
+language sql immutable as $$
+  select case pu
+    when 'R' then array[-1,0, 1,0, 0,-1, 0,1]
+    when 'D' then array[-1,0, 1,0, 0,-1, 0,1]
+    when 'B' then array[-1,-1, -1,1, 1,-1, 1,1]
+    when 'H' then array[-1,-1, -1,1, 1,-1, 1,1]
+    when 'L' then array[-1,0]
+    else '{}'::int[] end
+$$;
+
+-- sq が「先手（bys）の駒」にきかれているか
+create or replace function public._sg_attacked(b text, sq int, bys boolean) returns boolean
+language plpgsql immutable as $$
+declare s int; p text; pu text; dr int; dc int; st int[]; sl int[]; i int; rr int; cc int; ok boolean; k int; tr int := sq / 9; tc int := sq % 9;
+begin
+  for s in 0..80 loop
+    p := substr(b, s + 1, 1);
+    continue when p = '.' or (bys and p <> upper(p)) or (not bys and p <> lower(p));
+    pu := upper(p);
+    dr := tr - s / 9; dc := tc - s % 9;
+    if not bys then dr := -dr; end if;
+    st := _sg_steps(pu);
+    for i in 0..(coalesce(cardinality(st), 0) / 2 - 1) loop
+      if st[i * 2 + 1] = dr and st[i * 2 + 2] = dc then return true; end if;
+    end loop;
+    sl := _sg_slides(pu);
+    for i in 0..(coalesce(cardinality(sl), 0) / 2 - 1) loop
+      -- 向きが合っていて、あいだに駒がない
+      if (sl[i * 2 + 1] = sign(dr) and sl[i * 2 + 2] = sign(dc)) and (dr = 0 or dc = 0 or abs(dr) = abs(dc)) and (dr <> 0 or dc <> 0) then
+        ok := true;
+        for k in 1..(greatest(abs(dr), abs(dc)) - 1) loop
+          rr := s / 9 + (case when bys then sign(dr) else -sign(dr) end) * k; cc := s % 9 + sign(dc) * k;
+          if substr(b, rr * 9 + cc + 1, 1) <> '.' then ok := false; exit; end if;
+        end loop;
+        if ok then return true; end if;
+      end if;
+    end loop;
+  end loop;
+  return false;
+end $$;
+
+-- 手を動かした後の盤と持ち駒
+create or replace function public._sg_make(st jsonb, side int, mv jsonb) returns jsonb
+language plpgsql immutable as $$
+declare b text := st->>'board'; h0 text := coalesce(st->'hand'->>'0', ''); h1 text := coalesce(st->'hand'->>'1', '');
+  f int; t int; p text; cap text; d text;
+begin
+  t := (mv->>'t')::int;
+  if mv ? 'd' then
+    d := upper(mv->>'d');
+    if side = 0 then h0 := regexp_replace(h0, d, ''); b := overlay(b placing d from t + 1 for 1);
+    else h1 := regexp_replace(h1, d, ''); b := overlay(b placing lower(d) from t + 1 for 1); end if;
+  else
+    f := (mv->>'f')::int; p := substr(b, f + 1, 1); cap := substr(b, t + 1, 1);
+    if cap <> '.' then
+      if side = 0 then h0 := h0 || _sg_base(cap); else h1 := h1 || _sg_base(cap); end if;
+    end if;
+    if coalesce((mv->>'pr')::boolean, false) then p := case when side = 0 then _sg_promo(p) else lower(_sg_promo(p)) end; end if;
+    b := overlay(overlay(b placing '.' from f + 1 for 1) placing p from t + 1 for 1);
+  end if;
+  return jsonb_build_object('board', b, 'hand', jsonb_build_object('0', h0, '1', h1));
+end $$;
+
+-- 指せる手。one = true なら、1つ見つかったらすぐ返す（詰みの判定用）
+create or replace function public._sg_legal(st jsonb, side int, one boolean default false) returns jsonb
+language plpgsql immutable as $$
+declare b text := st->>'board'; hand text := coalesce(st->'hand'->>side::text, ''); res jsonb := '[]'::jsonb;
+  sente boolean := side = 0; s int; p text; pu text; r int; c int; i int; k int; st2 int[]; sl int[]; rr int; cc int; t int; q text;
+  cand jsonb := '[]'::jsonb; mv jsonb; ns jsonb; nb text; ks int; canpr boolean; mustpr boolean; inz boolean; d text; col int; nifu boolean;
+  ek int; ns2 jsonb;
+begin
+  for s in 0..80 loop
+    p := substr(b, s + 1, 1);
+    continue when p = '.' or (sente and p <> upper(p)) or (not sente and p <> lower(p));
+    pu := upper(p); r := s / 9; c := s % 9;
+    st2 := _sg_steps(pu); sl := _sg_slides(pu);
+    -- 1マス・桂馬
+    for i in 0..(coalesce(cardinality(st2), 0) / 2 - 1) loop
+      rr := r + case when sente then st2[i * 2 + 1] else -st2[i * 2 + 1] end; cc := c + st2[i * 2 + 2];
+      continue when rr < 0 or rr > 8 or cc < 0 or cc > 8;
+      q := substr(b, rr * 9 + cc + 1, 1);
+      continue when q <> '.' and ((sente and q = upper(q)) or (not sente and q = lower(q)));
+      cand := cand || jsonb_build_array(jsonb_build_array(s, rr * 9 + cc));
+    end loop;
+    -- 飛・角・香（龍・馬）
+    for i in 0..(coalesce(cardinality(sl), 0) / 2 - 1) loop
+      rr := r; cc := c;
+      loop
+        rr := rr + case when sente then sl[i * 2 + 1] else -sl[i * 2 + 1] end; cc := cc + sl[i * 2 + 2];
+        exit when rr < 0 or rr > 8 or cc < 0 or cc > 8;
+        q := substr(b, rr * 9 + cc + 1, 1);
+        exit when q <> '.' and ((sente and q = upper(q)) or (not sente and q = lower(q)));
+        cand := cand || jsonb_build_array(jsonb_build_array(s, rr * 9 + cc));
+        exit when q <> '.';
+      end loop;
+    end loop;
+  end loop;
+  -- 成り・成らず
+  for mv in select * from jsonb_array_elements(cand) loop
+    s := (mv->>0)::int; t := (mv->>1)::int; p := substr(b, s + 1, 1); pu := upper(p);
+    canpr := pu in ('R', 'B', 'S', 'N', 'L', 'P') and (case when sente then s / 9 <= 2 or t / 9 <= 2 else s / 9 >= 6 or t / 9 >= 6 end);
+    mustpr := case when sente then (pu in ('P', 'L') and t / 9 = 0) or (pu = 'N' and t / 9 <= 1)
+                   else (pu in ('P', 'L') and t / 9 = 8) or (pu = 'N' and t / 9 >= 7) end;
+    foreach k in array case when mustpr then array[1] when canpr then array[0, 1] else array[0] end loop
+      ns := _sg_make(st, side, jsonb_build_object('f', s, 't', t, 'pr', k = 1));
+      nb := ns->>'board'; ks := strpos(nb, case when sente then 'K' else 'k' end) - 1;
+      if ks < 0 or not _sg_attacked(nb, ks, not sente) then
+        res := res || jsonb_build_array(jsonb_build_object('f', s, 't', t, 'pr', k = 1));
+        if one then return res; end if;
+      end if;
+    end loop;
+  end loop;
+  -- 打つ
+  foreach d in array array['R', 'B', 'G', 'S', 'N', 'L', 'P'] loop
+    continue when strpos(hand, d) = 0;
+    for t in 0..80 loop
+      continue when substr(b, t + 1, 1) <> '.';
+      r := t / 9;
+      continue when d in ('P', 'L') and r = (case when sente then 0 else 8 end);
+      continue when d = 'N' and (case when sente then r <= 1 else r >= 7 end);
+      if d = 'P' then   -- 二歩
+        col := t % 9; nifu := false;
+        for k in 0..8 loop
+          if substr(b, k * 9 + col + 1, 1) = (case when sente then 'P' else 'p' end) then nifu := true; exit; end if;
+        end loop;
+        continue when nifu;
+      end if;
+      ns := _sg_make(st, side, jsonb_build_object('d', d, 't', t));
+      nb := ns->>'board'; ks := strpos(nb, case when sente then 'K' else 'k' end) - 1;
+      continue when ks >= 0 and _sg_attacked(nb, ks, not sente);
+      if d = 'P' then   -- 打ち歩詰め
+        ek := strpos(nb, case when sente then 'k' else 'K' end) - 1;
+        if ek >= 0 and _sg_attacked(nb, ek, sente) then
+          ns2 := _sg_legal(ns, 1 - side, true);
+          continue when jsonb_array_length(ns2) = 0;
+        end if;
+      end if;
+      res := res || jsonb_build_array(jsonb_build_object('d', d, 't', t));
+      if one then return res; end if;
+    end loop;
+  end loop;
+  return res;
+end $$;
+
+create or replace function public._sg_init() returns jsonb
+language plpgsql immutable as $$
+declare b text := 'lnsgkgsnl' || '.r.....b.' || 'ppppppppp' || repeat('.', 27) || 'PPPPPPPPP' || '.B.....R.' || 'LNSGKGSNL'; st jsonb;
+begin
+  st := jsonb_build_object('board', b, 'hand', jsonb_build_object('0', '', '1', ''), 'rep', '{}'::jsonb, 'check', false);
+  return st || jsonb_build_object('legal', _sg_legal(st, 0));
+end $$;
+
+create or replace function public._sg_apply(st jsonb, seat int, mv jsonb) returns jsonb
+language plpgsql immutable as $$
+declare ok boolean := false; m jsonb; ns jsonb; nb text; rep jsonb := coalesce(st->'rep', '{}'::jsonb); key text; nlegal jsonb; chk boolean; ek int;
+  h0 text; h1 text; norm jsonb;
+begin
+  if mv ? 'd' then norm := jsonb_build_object('d', upper(mv->>'d'), 't', (mv->>'t')::int);
+  else norm := jsonb_build_object('f', (mv->>'f')::int, 't', (mv->>'t')::int, 'pr', coalesce((mv->>'pr')::boolean, false)); end if;
+  for m in select * from jsonb_array_elements(coalesce(st->'legal', _sg_legal(st, seat))) loop
+    if m = norm then ok := true; exit; end if;
+  end loop;
+  if not ok then raise exception 'その手は指せません'; end if;
+  ns := _sg_make(st, seat, norm);
+  nb := ns->>'board';
+  h0 := (select string_agg(x, '' order by x) from regexp_split_to_table(ns->'hand'->>'0', '') x);
+  h1 := (select string_agg(x, '' order by x) from regexp_split_to_table(ns->'hand'->>'1', '') x);
+  ns := jsonb_build_object('board', nb, 'hand', jsonb_build_object('0', coalesce(h0, ''), '1', coalesce(h1, '')));
+  key := md5(nb || '|' || coalesce(h0, '') || '|' || coalesce(h1, '') || '|' || (1 - seat));
+  rep := jsonb_set(rep, array[key], to_jsonb(coalesce((rep->>key)::int, 0) + 1));
+  nlegal := _sg_legal(ns, 1 - seat);
+  ek := strpos(nb, case when seat = 0 then 'k' else 'K' end) - 1;
+  chk := ek >= 0 and _sg_attacked(nb, ek, seat = 0);
+  ns := ns || jsonb_build_object('rep', rep, 'check', chk, 'last', norm->'t', 'lastmv', norm, 'legal', nlegal, 'next', 1 - seat, 'over', false);
+  if jsonb_array_length(nlegal) = 0 then return ns || jsonb_build_object('over', true, 'winner', seat, 'reason', '詰み'); end if;
+  if (rep->>key)::int >= 4 then return ns || jsonb_build_object('over', true, 'winner', -1, 'reason', '千日手（引き分け）'); end if;
+  return ns;
+end $$;
+
 -- ---------- ゲームごとの入り口 ----------
 create or replace function public._game_init(g text) returns jsonb
 language plpgsql immutable as $$
@@ -4618,6 +5002,8 @@ begin
   if g = 'reversi' then
     return jsonb_build_object('board', repeat('.', 27) || 'WB' || repeat('.', 6) || 'BW' || repeat('.', 27), 'black', 2, 'white', 2);
   end if;
+  if g = 'chess' then return _ch_init(); end if;
+  if g = 'shogi' then return _sg_init(); end if;
   raise exception 'そのゲームはまだ遊べません';
 end $$;
 
@@ -4625,6 +5011,7 @@ create or replace function public._game_legal(g text, st jsonb, seat int) return
 language plpgsql immutable as $$
 begin
   if g = 'reversi' then return to_jsonb(_rv_legal(st->>'board', case seat when 0 then 'B' else 'W' end)); end if;
+  if g in ('chess', 'shogi') then return coalesce(st->'legal', '[]'::jsonb); end if;
   return '[]'::jsonb;
 end $$;
 
@@ -4632,6 +5019,8 @@ create or replace function public._game_apply(g text, st jsonb, seat int, mv jso
 language plpgsql immutable as $$
 begin
   if g = 'reversi' then return _rv_apply(st, seat, mv); end if;
+  if g = 'chess' then return _ch_apply(st, seat, mv); end if;
+  if g = 'shogi' then return _sg_apply(st, seat, mv); end if;
   raise exception 'そのゲームはまだ遊べません';
 end $$;
 
@@ -4704,7 +5093,7 @@ begin
     'players', (select coalesce(jsonb_agg(jsonb_build_object('seat', s.n - 1, 'nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id)) order by s.n), '[]'::jsonb)
                   from unnest(r.seats) with ordinality s(uid, n) join profiles p on p.id = s.uid),
     'me', me, 'time_ms', r.time_ms, 'clock_ms', to_jsonb(clocks), 'turn', r.turn, 'move_no', r.move_no,
-    'state', r.state, 'winner', r.winner, 'reason', r.reason, 'bets_on', r.bets_on,
+    'state', r.state - 'rep' - 'legal', 'winner', r.winner, 'reason', r.reason, 'bets_on', r.bets_on, 'draw_offer', r.draw_offer,
     'bet_open', r.bets_on and r.status in ('waiting', 'playing') and r.move_no < 10,
     'legal', case when r.status = 'playing' and me = r.turn then _game_legal(r.game, r.state, me) else '[]'::jsonb end,
     'at', _dlabel(r.created_at));
@@ -4734,7 +5123,7 @@ create or replace function public.room_create(p_game text, p_title text, p_time_
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); inv uuid; rid bigint;
 begin
-  if p_game not in ('reversi') then raise exception 'そのゲームはまだ遊べません'; end if;
+  if p_game not in ('reversi', 'chess', 'shogi') then raise exception 'そのゲームはまだ遊べません'; end if;
   if p_time_min is null or p_time_min < 1 or p_time_min > 180 then raise exception '持ち時間は1〜180分（3時間）です'; end if;
   if (select count(*) from game_rooms where host = u and status = 'waiting') >= 3 then raise exception '待っている部屋は3つまでです'; end if;
   if coalesce(btrim(p_invite), '') <> '' then
@@ -4822,7 +5211,7 @@ begin
   left_ms := greatest(r.clock_ms[me + 1] - used, 0);
   ns := _game_apply(r.game, r.state, me, p_move);
   insert into game_moves(room_id, n, seat, move, at) values (r.id, r.move_no + 1, me, p_move, _now());
-  update game_rooms set state = ns, move_no = move_no + 1, clock_ms[me + 1] = left_ms,
+  update game_rooms set state = ns, move_no = move_no + 1, clock_ms[me + 1] = left_ms, draw_offer = null,
          turn = coalesce((ns->>'next')::int, turn), turn_at = _now()
    where id = r.id;
   if (ns->>'over')::boolean then perform _room_finish(r.id, (ns->>'winner')::int, ns->>'reason'); end if;
@@ -4839,6 +5228,27 @@ begin
   me := case when r.seats[1] = u then 0 when r.seats[2] = u then 1 else null end;
   if me is null then raise exception 'あなたは対局していません'; end if;
   perform _room_finish(r.id, 1 - me, '投了');
+  return room_state(r.id);
+end $$;
+
+-- 引き分けの申し出（offer）・受ける（accept）・断る／取り消す（decline）
+create or replace function public.room_draw(p_room bigint, p_action text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); r game_rooms; me int;
+begin
+  select * into r from game_rooms where id = p_room for update;
+  if not found or r.status <> 'playing' then raise exception 'この対局はもう終わっています'; end if;
+  me := case when r.seats[1] = u then 0 when r.seats[2] = u then 1 else null end;
+  if me is null then raise exception 'あなたは対局していません'; end if;
+  if p_action = 'offer' then
+    update game_rooms set draw_offer = me where id = r.id;
+  elsif p_action = 'accept' then
+    if r.draw_offer is null or r.draw_offer = me then raise exception '相手からの申し出がありません'; end if;
+    update game_rooms set draw_offer = null where id = r.id;
+    perform _room_finish(r.id, -1, '合意の引き分け');
+  else
+    update game_rooms set draw_offer = null where id = r.id;
+  end if;
   return room_state(r.id);
 end $$;
 
@@ -5181,7 +5591,9 @@ begin
             '_pack_json','_loan_accrue','_loan_owed','_loan_json','_loan_start','loan_apply','loan_cancel','loan_repay','_loan_collect',
             'my_loans','bank_acct_answer','bank_settings','loan_pack_save','loan_answer',
             '_rv_flips','_rv_legal','_rv_apply','_game_init','_game_legal','_game_apply','_game_name','_room_finish','_room_tick','_room_json',
-            'room_list','room_create','room_join','room_leave','room_state','room_move','room_resign','room_bet','room_chat',
+            'room_list','room_create','room_join','room_leave','room_state','room_move','room_resign','room_bet','room_chat','room_draw',
+            '_ch_at','_ch_attacked','_ch_make','_ch_legal','_ch_init','_ch_apply','_sg_promo','_sg_base','_sg_steps','_sg_slides',
+            '_sg_attacked','_sg_make','_sg_legal','_sg_init','_sg_apply',
             '_pub_mine','_pub_can_read','_pub_json','pub_list','news_list','pub_page','pub_read','pub_buy','pub_save','pub_item_save',
             'pub_item_delete','my_pubs','admin_pub_hide',
             '_kb_norm','_kb_gumbel','_kb_midx','_kb_jday','_kb_ms','_kb_agef','_kb_fit','_kb_name','_kb_new_horse',
