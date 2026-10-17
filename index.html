@@ -109,6 +109,9 @@ h3{font-size:15px;margin:16px 0 8px}
 .kb-table td{padding:7px 3px;border-top:1px solid var(--line);vertical-align:middle}
 .kb-table .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .kb-table .hn{font-weight:800;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
+.kb-table tr.kb-scr td{opacity:.45}
+.tag.scr{color:var(--lose);border-color:var(--lose)}
+.kb-note{font-size:12px;color:var(--lose);margin:6px 0 0;line-height:1.5}
 .kb-table small{color:var(--muted);display:block;font-size:11px;white-space:nowrap}
 .kb-table .nmcol small{white-space:normal}
 .kb-table .nmcol .hn{word-break:keep-all}
@@ -1268,18 +1271,29 @@ $('#kbBack').onclick = () => {
 };
 $('#kbReplay').onclick = () => { kbReplay = Date.now(); kbCam = null; };
 
+// 近5走のひとつ（中＝競走中止、除＝競走除外）
+const kbForm = f => f.pos == null
+  ? `<i title="${f.venue} ${f.surface}${f.dist} ${f.inc === 'jogai' ? '競走除外' : '競走中止'}">${f.inc === 'jogai' ? '除' : '中'}</i>`
+  : `<i class="p${f.pos <= 3 ? f.pos : 0}" title="${f.venue} ${f.surface}${f.dist} ${f.n}頭${f.inc === 'kouchaku' ? '・降着' : ''}">${f.pos}</i>`;
+// その枠で走る馬の数（競走除外をのぞく）
+const kbWakuRun = w => KR.entries.filter(e => e.waku === w && !e.scratched).length;
+// 競走除外で返すことになる馬券か
+function kbRefundable(t) {
+  if (t.kind === 'waku') return t.sel.some(w => kbWakuRun(w) < (t.sel[0] === t.sel[1] ? 2 : 1));
+  return t.sel.some(u => KR.entries.some(e => e.uma === u && e.scratched));
+}
 function kbRenderRace() {
   const R = KR.race;
   kbRenderHead();
-  const fav = Math.min(...KR.entries.map(e => e.ninki));
+  const fav = Math.min(...KR.entries.filter(e => e.ninki != null).map(e => e.ninki));
   $('#kbCard').innerHTML = `<tr><th>番</th><th>馬名</th><th>近5走</th><th class="num">単勝</th></tr>` +
-    KR.entries.map(e => `<tr>
+    KR.entries.map(e => `<tr${e.scratched ? ' class="kb-scr"' : ''}>
       <td>${waku(e.waku, e.uma)}</td>
-      <td class="nmcol">${silk(e)}<span class="hn" data-h="${e.horse_id}">${esc(e.name)}</span>
+      <td class="nmcol">${silk(e)}<span class="hn" data-h="${e.horse_id}">${esc(e.name)}</span>${e.scratched ? '<span class="tag scr">競走除外</span>' : ''}
         <small>${e.sex}${e.age} ${esc(e.jockey)} ${Number(e.kinryo).toFixed(1)}　${e.body}(${e.body_diff > 0 ? '+' : ''}${e.body_diff})</small></td>
-      <td><span class="form">${[0, 1, 2, 3, 4].map(i => { const f = e.last5[i]; return f ? `<i class="p${f.pos <= 3 ? f.pos : 0}" title="${f.venue} ${f.surface}${f.dist} ${f.n}頭">${f.pos}</i>` : '<i>・</i>'; }).join('')}</span>
+      <td><span class="form">${[0, 1, 2, 3, 4].map(i => { const f = e.last5[i]; return f ? kbForm(f) : '<i>・</i>'; }).join('')}</span>
         <small>${STYLE[e.style]}・${e.record}${e.graded ? `・重賞${e.graded}勝` : ''}</small></td>
-      <td class="num"><b style="${e.ninki === fav ? 'color:var(--lose)' : ''}">${Number(e.odds_win).toFixed(1)}</b><small>${e.ninki}人気</small></td></tr>`).join('');
+      <td class="num">${e.scratched ? '<b class="muted">除外</b>' : `<b style="${e.ninki === fav ? 'color:var(--lose)' : ''}">${Number(e.odds_win).toFixed(1)}</b><small>${e.ninki}人気</small>`}</td></tr>`).join('');
   $$('#kbCard .hn').forEach(el => el.onclick = () => kbHorse(Number(el.dataset.h)));
   kbRenderBet(); kbRenderMine(); kbRenderResult();
 }
@@ -1290,7 +1304,8 @@ function kbRenderHead() {
       <b>${v.name} ${R.rnum}R</b><span class="muted small">発走 ${hhmm(R.post_ms)}</span>
       <span class="chip ${s === 'sale' ? 'sale' : s === 'running' ? 'run' : ''}">${KB_STATUS[s]}${s === 'sale' || s === 'closed' ? ' ' + mmss(left) : ''}</span>
       <h2>${esc(R.name)}${gradeTag(R.grade)}${R.handicap ? '<span class="tag">ハンデ</span>' : ''}</h2></div>
-    <p class="kb-cond">${R.surface === '芝' ? '芝' : 'ダート'}${R.dist}m（${v.turn}回り・直線${v.straight}m${v.slope ? '・坂あり' : ''}）・${R.weather}・馬場 ${R.going}・${KR.entries.length}頭・払戻率 単勝${Math.round(R.rates.tan * 100)}%</p>`;
+    <p class="kb-cond">${R.surface === '芝' ? '芝' : 'ダート'}${R.dist}m（${v.turn}回り・直線${v.straight}m${v.slope ? '・坂あり' : ''}）・${R.weather}・馬場 ${R.going}・${KR.entries.length - KR.entries.filter(e => e.scratched).length}頭・払戻率 単勝${Math.round(R.rates.tan * 100)}%</p>
+    ${KR.entries.some(e => e.scratched) ? `<p class="kb-note">⚠ ${KR.entries.filter(e => e.scratched).map(e => `${e.uma}番 ${esc(e.name)}`).join('、')}は<b>競走除外</b>になりました。この馬をふくむ馬券は${R.status === 'final' ? '返しました' : '、レースのあとで返します'}</p>` : ''}`;
   $('#kbReplay').classList.toggle('hidden', !(s === 'judging' || s === 'final'));
 }
 
@@ -1307,6 +1322,10 @@ function kbRenderBet() {
   if (!open) return;
   const N = KR.entries.length;
   if (kbPick.kind === 'waku' && N < 9) kbPick = { kind: 'tan', sel: [] };
+  const bad = kbPick.kind === 'waku'
+    ? kbPick.sel.some(v => kbWakuRun(v) < kbPick.sel.filter(x => x === v).length)
+    : kbPick.sel.some(v => KR.entries.some(e => e.uma === v && e.scratched));
+  if (bad) { kbPick.sel = []; kbOdds = null; }
   $('#kbKinds').innerHTML = KINDS.filter(k => k[0] !== 'waku' || N >= 9)
     .map(k => `<button data-k="${k[0]}" class="${k[0] === kbPick.kind ? 'on' : ''}">${k[1]}</button>`).join('');
   $$('#kbKinds button').forEach(b => b.onclick = () => { kbPick = { kind: b.dataset.k, sel: [] }; kbOdds = null; kbRenderBet(); });
@@ -1319,17 +1338,17 @@ function kbRenderPicks() {
   $('#kbSlots').classList.toggle('hidden', !K.ordered);
   $$('#kbSlots div').forEach(d => d.onclick = () => { sel.splice(Number(d.dataset.i), 1); kbOdds = null; kbRenderPicks(); kbFetchOdds(); });
   const items = kbPick.kind === 'waku'
-    ? [...new Set(KR.entries.map(e => e.waku))].map(w => ({ v: w, w }))
-    : KR.entries.map(e => ({ v: e.uma, w: e.waku }));
-  $('#kbPicks').innerHTML = items.map(it => `<button data-v="${it.v}" class="${sel.includes(it.v) ? 'on' : ''}"
-      style="background:${WAKU[it.w - 1][0]};color:${WAKU[it.w - 1][1]}">${it.v}</button>`).join('');
+    ? [...new Set(KR.entries.map(e => e.waku))].map(w => ({ v: w, w, x: kbWakuRun(w) === 0 }))
+    : KR.entries.map(e => ({ v: e.uma, w: e.waku, x: e.scratched }));
+  $('#kbPicks').innerHTML = items.map(it => `<button data-v="${it.v}" class="${sel.includes(it.v) ? 'on' : ''}" ${it.x ? 'disabled title="競走除外"' : ''}
+      style="background:${WAKU[it.w - 1][0]};color:${WAKU[it.w - 1][1]}${it.x ? ';opacity:.25;text-decoration:line-through' : ''}">${it.v}</button>`).join('');
   $$('#kbPicks button').forEach(b => b.onclick = () => kbTap(Number(b.dataset.v)));
   kbOddsLine();
 }
 function kbTap(v) {
   const K = KIND[kbPick.kind], sel = kbPick.sel;
   if (kbPick.kind === 'waku') {
-    const same = KR.entries.filter(e => e.waku === v).length >= 2;
+    const same = kbWakuRun(v) >= 2;
     if (sel.length >= 2) kbPick.sel = [v];
     else if (sel.length === 1 && sel[0] === v && !same) kbPick.sel = [];
     else sel.push(v);
@@ -1384,7 +1403,7 @@ function kbRenderMine() {
   $('#kbMine').innerHTML = `<h3 style="margin-top:0">あなたの馬券</h3>` + (M.length
     ? `<ul class="tickets">${M.map(t => `<li><b>${KIND[t.kind].label}</b><span class="grow">${selText(t.kind, t.sel)}</span>
         <span class="num">${fmt(t.amount)}</span><span class="muted small">${Number(t.odds).toFixed(1)}倍</span>
-        ${t.payout == null ? '' : t.payout > 0 ? `<b style="color:var(--win)">+${fmt(t.payout)}</b>` : '<span class="muted small">はずれ</span>'}</li>`).join('')}</ul>
+        ${t.payout == null ? (kbRefundable(t) ? '<span class="muted small">返還予定</span>' : '') : t.refund ? `<span class="muted small">返還</span> <b>+${fmt(t.payout)}</b>` : t.payout > 0 ? `<b style="color:var(--win)">+${fmt(t.payout)}</b>` : '<span class="muted small">はずれ</span>'}</li>`).join('')}</ul>
        <p class="small" style="margin:8px 0 0">合計 ${fmt(sum)}${fin ? `　払戻 <b style="color:${pay > 0 ? 'var(--win)' : 'inherit'}">${fmt(pay)}</b>` : ''}</p>`
     : '<p class="muted small" style="margin:0">まだ買っていません</p>');
 }
@@ -1396,12 +1415,18 @@ function kbRenderResult() {
   el.classList.toggle('hidden', !done);
   if (!done) return;
   const fin = R.status === 'final';
-  const rows = [...KR.entries].sort((a, b) => a.run.pos - b.run.pos);
-  let h = `<h3 style="margin-top:0">${fin ? '結果（確定）' : '着順（確定待ち）'}</h3>
-    <div class="scrollx"><table class="kb-table"><tr><th>着</th><th>馬</th><th class="num">タイム</th><th>着差</th><th class="num">上がり</th><th class="num">人気</th></tr>` +
-    rows.map(e => `<tr><td><b>${e.run.pos}</b></td><td>${waku(e.waku, e.uma)} ${esc(e.name)}<small>${esc(e.jockey)}</small></td>
-      <td class="num">${ftime(e.run.time_ms)}</td><td style="white-space:nowrap">${e.run.margin ?? ''}</td><td class="num">${Number(e.run.last3f).toFixed(1)}</td>
-      <td class="num">${e.ninki}</td></tr>`).join('') + `</table></div>`;
+  const rows = KR.entries.filter(e => e.run && !e.run.scratched).sort((a, b) => (a.run.pos ?? 99) - (b.run.pos ?? 99));
+  const scr = KR.entries.filter(e => e.run && e.run.scratched), kou = rows.find(e => e.run.line != null);
+  let h = `<h3 style="margin-top:0">${fin ? '結果（確定）' : R.inquiry ? '着順（審議中）' : '着順（確定待ち）'}</h3>`;
+  if (!fin && R.inquiry) h += `<p class="kb-note" style="margin:0 0 6px">🚩 審議：ほかの馬の進路をじゃましていないか調べています。着順が変わることがあります</p>`;
+  if (fin && kou) h += `<p class="kb-note" style="margin:0 0 6px">⚠ ${kou.uma}番 ${esc(kou.name)}は、ほかの馬の進路をじゃましたため、${kou.run.line}位で入線しましたが<b>${kou.run.pos}着に降着</b>になりました</p>`;
+  h += `<div class="scrollx"><table class="kb-table"><tr><th>着</th><th>馬</th><th class="num">タイム</th><th>着差</th><th class="num">上がり</th><th class="num">人気</th></tr>` +
+    rows.map(e => { const r = e.run, out = r.pos == null;
+      return `<tr><td style="white-space:nowrap"><b>${out ? '中止' : r.pos}</b></td><td>${waku(e.waku, e.uma)} ${esc(e.name)}${r.line != null ? '<span class="tag scr">降着</span>' : ''}${r.delay != null ? '<span class="tag">出遅れ</span>' : ''}<small>${esc(e.jockey)}</small></td>
+      <td class="num">${out ? '—' : ftime(r.time_ms)}</td><td style="white-space:nowrap">${out ? '—' : r.line != null ? `<small>入線${r.line}位</small>` : r.margin ?? ''}</td>
+      <td class="num">${out || r.last3f == null ? '—' : Number(r.last3f).toFixed(1)}</td><td class="num">${e.ninki ?? '—'}</td></tr>`; }).join('') +
+    scr.map(e => `<tr class="kb-scr"><td style="white-space:nowrap"><b>除外</b></td><td>${waku(e.waku, e.uma)} ${esc(e.name)}<small>${esc(e.jockey)}</small></td>
+      <td class="num">—</td><td>—</td><td class="num">—</td><td class="num">—</td></tr>`).join('') + `</table></div>`;
   if (R.pace) h += `<p class="small muted" style="margin:8px 0 0">ペース：${R.pace}</p>`;
   if (fin && KR.payouts.length) {
     h += `<h3>払戻金（100あたり）</h3><div class="pay">` +
@@ -1421,10 +1446,11 @@ async function kbHorse(id) {
       <div class="kv"><span>成績</span><b>${h.starts}戦${h.wins}勝${h.graded ? `（重賞${h.graded}勝）` : ''}</b><span>獲得賞金</span><b>${fmt(h.prize)}万</b></div>
       <h3>これまでのレース</h3>
       <div class="scrollx"><table class="kb-table"><tr><th>日付</th><th>レース</th><th>条件</th><th class="num">着</th><th class="num">人気</th><th class="num">タイム</th><th>着差</th><th>騎手</th></tr>
-      ${h.runs.length ? h.runs.map(r => `<tr><td>${r.day.slice(5).replace('-', '/')}</td><td>${esc(r.venue)} ${esc(r.name)}${gradeTag(r.grade)}</td>
-        <td>${r.surface}${r.dist}・${r.going}<small>${r.n}頭 ${r.uma}番</small></td><td class="num"><b>${r.pos}</b></td><td class="num">${r.ninki}</td>
-        <td class="num">${ftime(r.time_ms)}<small>上がり ${Number(r.last3f).toFixed(1)}</small></td><td>${r.margin ?? ''}</td>
-        <td>${esc(r.jockey)}<small>${Number(r.kinryo).toFixed(1)}</small></td></tr>`).join('') : '<tr><td colspan="8" class="muted">まだ走っていません</td></tr>'}
+      ${h.runs.length ? h.runs.map(r => { const out = r.pos == null; return `<tr><td>${r.day.slice(5).replace('-', '/')}</td><td>${esc(r.venue)} ${esc(r.name)}${gradeTag(r.grade)}</td>
+        <td>${r.surface}${r.dist}・${r.going}<small>${r.n}頭 ${r.uma}番</small></td>
+        <td class="num" style="white-space:nowrap"><b>${out ? (r.inc === 'jogai' ? '除外' : '中止') : r.pos}</b>${r.inc === 'kouchaku' ? `<small>降着（入線${r.line}位）</small>` : ''}</td><td class="num">${r.ninki ?? '—'}</td>
+        <td class="num">${out ? '—' : `${ftime(r.time_ms)}<small>上がり ${Number(r.last3f).toFixed(1)}</small>`}</td><td>${out ? '—' : r.inc === 'kouchaku' ? '降着' : r.margin ?? ''}</td>
+        <td>${esc(r.jockey)}<small>${Number(r.kinryo).toFixed(1)}</small></td></tr>`; }).join('') : '<tr><td colspan="8" class="muted">まだ走っていません</td></tr>'}
       </table></div></div>`;
     m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) m.remove(); };
     document.body.appendChild(m);
@@ -1454,13 +1480,29 @@ function kbFrame() {
 /* ---------- レースの絵：上にコース全体図、下に中継 ---------- */
 const kbCan = $('#kbCanvas');
 let kbCam = null, kbLanes = {}, kbLastDraw = 0;
+// 走った割合 x のときの「時間の割合」と、その逆
+const kbTau = (a, x) => a * x * x + (1 - a) * x;
+const kbX = (a, tau) => Math.abs(a) < 1e-6 ? tau : (-(1 - a) + Math.sqrt((1 - a) * (1 - a) + 4 * a * tau)) / (2 * a);
+// 落馬：落ちた時刻（ts）・そのときの速さ（v）・止まった時刻（te）。8m進んで止まる
+function kbFall(e, D) {
+  const r = e.run, T = r.time_ms / 1000, a = Number(r.shape), s = Number(r.stop);
+  const ts = T * kbTau(a, s), v = D / T / (2 * a * s + 1 - a);
+  return { ts, v, L: 8, te: ts + 16 / v };
+}
 function kbPos(e, t, D) {
-  const T = e.run.time_ms / 1000, a = Number(e.run.shape);
+  const r = e.run, T = r.time_ms / 1000, a = Number(r.shape);
   if (t <= 0) return 0;
-  if (t >= T) return D + Math.min(14, (t - T) * (D / T) * 0.4);
-  const tau = t / T;
-  const x = Math.abs(a) < 1e-6 ? tau : (-(1 - a) + Math.sqrt((1 - a) * (1 - a) + 4 * a * tau)) / (2 * a);
-  return x * D;
+  if (r.stop != null) {
+    const f = kbFall(e, D), s = Number(r.stop);
+    if (t < f.ts) return kbX(a, t / T) * D;
+    const u = Math.min(t - f.ts, 2 * f.L / f.v);
+    return s * D + f.v * u - f.v * f.v / (4 * f.L) * u * u;
+  }
+  const dl = Number(r.delay || 0);
+  if (t <= dl) return 0;
+  const Tr = T - dl, tt = t - dl;
+  if (tt >= Tr) return D + Math.min(14, (tt - Tr) * (D / Tr) * 0.4);
+  return kbX(a, tt / Tr) * D;
 }
 function kbOval(s, C, Ls, Rr, o) {
   s = ((s % C) + C) % C; const R = Rr + o;
@@ -1480,7 +1522,7 @@ function kbSky(hour, weather) {
 }
 function kbDraw() {
   const now = Date.now(), dtSec = Math.min(0.1, (now - (kbLastDraw || now)) / 1000); kbLastDraw = now;
-  const R = KR.race, E = KR.entries, D = R.dist, V = R.venue;
+  const R = KR.race, E = KR.entries.filter(e => !e.scratched), D = R.dist, V = R.venue;
   const W = kbCan.clientWidth; if (!W) return;
   const H = 300, dpr = window.devicePixelRatio || 1;
   if (kbCan.width !== Math.round(W * dpr)) { kbCan.width = Math.round(W * dpr); kbCan.height = Math.round(H * dpr); kbCan.style.height = H + 'px'; }
@@ -1489,7 +1531,11 @@ function kbDraw() {
   let t = (kbNow() - R.post_ms) / 1000;
   if (kbReplay) { t = (now - kbReplay) / 1000 - 3; if (t > R.finish_ms / 1000 + 6) kbReplay = null; }
   const run = R.finish_ms != null && E.every(e => e.run);
-  const pos = E.map(e => ({ e, d: run ? kbPos(e, t, D) : 0 }));
+  const pos = E.map(e => {
+    const f = run && e.run.stop != null ? kbFall(e, D) : null;
+    return { e, d: run ? kbPos(e, t, D) : 0, fell: !!f && t >= f.ts, still: !!f && t >= f.te,
+             gate: run && e.run.delay != null && t < Number(e.run.delay) };
+  });
   const order = [...pos].sort((a, b) => b.d - a.d);
   const dir = V.turn === '左' ? 1 : -1;
   const hour = Number(new Date(R.post_ms).toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'Asia/Tokyo' }));
@@ -1501,10 +1547,11 @@ function kbDraw() {
   let gr = g.createLinearGradient(0, y0, 0, top); gr.addColorStop(0, s1); gr.addColorStop(1, s2);
   g.fillStyle = gr; g.fillRect(0, y0, W, top - y0);
   // カメラ
-  const lead = order[0].d, tail = order[Math.min(order.length - 1, 7)].d;
+  const act = order.filter(o => !o.fell), lead = act[0].d, tail = act[Math.min(act.length - 1, 7)].d;
   const want = Math.max(W / 120, Math.min(W / 38, W / (lead - tail + 28)));
   if (!kbCam || kbCam.race !== R.id) kbCam = { race: R.id, d: lead, ppm: want };
-  const camT = Math.min(lead, D + 6);
+  const fo = pos.find(o => o.fell);
+  const camT = fo && t < kbFall(fo.e, D).ts + 3.5 ? fo.d + 6 : Math.min(lead, D + 6);
   kbCam.d = Math.abs(camT - kbCam.d) > 150 ? camT : kbCam.d + (camT - kbCam.d) * Math.min(1, dtSec * 4);
   kbCam.ppm += (want - kbCam.ppm) * Math.min(1, dtSec * 1.5);
   const ppm = kbCam.ppm, ax = dir > 0 ? W * 0.66 : W * 0.34;
@@ -1567,21 +1614,26 @@ function kbDraw() {
   // 馬（奥から）
   const laneT = o => {
     const x = o.d / D, r2 = D - o.d;
-    if (x < 0.06) return o.e.run ? Number(o.e.run.lane) : (o.e.uma - 1) / Math.max(1, E.length - 1);
+    if (x < 0.06) return o.e.run ? Number(o.e.run.lane) : E.indexOf(o.e) / Math.max(1, E.length - 1);
     const rank = order.indexOf(o);
     if (r2 > V.straight) return Math.min(0.85, 0.08 + (rank % 3) * 0.12 + Math.floor(rank / 3) * 0.05);
     return Math.min(0.92, 0.1 + ((o.e.uma * 37) % 17) / 17 * 0.8);
   };
   for (const o of pos) {
-    const k = R.id + ':' + o.e.uma, target = laneT(o);
+    const k = R.id + ':' + o.e.uma, target = o.fell && kbLanes[k] != null ? kbLanes[k] : laneT(o);
     kbLanes[k] = kbLanes[k] == null ? target : kbLanes[k] + (target - kbLanes[k]) * Math.min(1, dtSec * 0.9);
     o.lane = kbLanes[k];
   }
   const vis = [...pos].sort((a, b) => a.lane - b.lane);
+  for (const o of vis) {          // 落ちた騎手
+    if (!o.fell) continue;
+    const x = X(Number(o.e.run.stop) * D + 2); if (x < -40 || x > W + 40) continue;
+    kbJockeyDown(g, x, top + 28 + o.lane * (bot - top - 40), 0.72 + 0.42 * o.lane, dir, o.e);
+  }
   for (const o of vis) {
     const x = X(o.d); if (x < -40 || x > W + 40) continue;
     const y = top + 22 + o.lane * (bot - top - 40), sc = 0.72 + 0.42 * o.lane;
-    kbHorseDraw(g, x, y, sc, dir, o.d / 6.6 * Math.PI * 2 + o.e.uma, t > 0 && o.d < D + 13.5, o.e, ff);
+    kbHorseDraw(g, x, y, sc, dir, o.d / 6.6 * Math.PI * 2 + o.e.uma, t > 0 && o.d < D + 13.5 && !o.still && !o.gate, o.e, ff, !o.fell);
   }
   if (R.weather === '雨' || R.weather === '小雨') {
     g.strokeStyle = 'rgba(220,230,255,.35)'; g.lineWidth = 1;
@@ -1631,12 +1683,23 @@ function kbCaption(t, order, R, run) {
     return 'スタートしました！';
   }
   if (t < 0) return t > -20 ? '各馬ゲートに入りました…' : `発走まで ${mmss(-t)}`;
-  if (t < 3) return 'スタートしました！';
-  const w = order.find(o => o.e.run.pos === 1), s2 = order.find(o => o.e.run.pos === 2);
+  const late = order.find(o => o.e.run.delay != null), fall = order.find(o => o.e.run.stop != null);
+  if (t < 3) return late ? `スタートしました！ ${nm(late)}は出遅れ` : 'スタートしました！';
+  if (late && t < 6) return `${nm(late)}が出遅れました。うしろからの競馬になります`;
+  // ゴールした順（降着の前の、入線の順）
+  const fin = order.filter(o => o.e.run.pos != null).sort((a, b) => a.e.run.time_ms - b.e.run.time_ms);
+  const w = fin[0], s2 = fin[1];
   const wt = w.e.run.time_ms / 1000, photo = s2 && s2.e.run.time_ms - w.e.run.time_ms < 60;
+  if (fall && t < wt) { const f = kbFall(fall.e, D); if (t >= f.ts && t < f.ts + 6) return `あっと、${nm(fall)}が落馬！ 競走中止です`; }
   if (t >= wt) {
     if (photo && t < wt + 6) return '写真判定です！';
-    if (t > R.finish_ms / 1000 + 2) return R.status === 'final' ? `確定！ 1着 ${nm(w)}` : `1着は${nm(w)}。確定までお待ちください`;
+    if (t > R.finish_ms / 1000 + 2) {
+      if (R.status === 'final') {
+        const ow = order.find(o => o.e.run.pos === 1), k = order.find(o => o.e.run.line != null);
+        return `確定！ 1着 ${nm(ow)}${k ? `（${nm(k)}は${k.e.run.pos}着に降着）` : ''}`;
+      }
+      return R.inquiry ? '🚩 審議のランプがついています。確定までお待ちください' : `1着は${nm(w)}。確定までお待ちください`;
+    }
     return `${nm(w)}、1着でゴールイン！`;
   }
   const a = order[0], b = order[1], rem = D - a.d;
@@ -1647,7 +1710,18 @@ function kbCaption(t, order, R, run) {
   const gap = (a.d - b.d) / 2.4;
   return `先頭は${nm(a)}、${gap >= 1 ? Math.round(gap) + '馬身' : 'わずかに'}リード。ペースは${R.pace || '平均'}`;
 }
-function kbHorseDraw(g, x, y, s, dir, ph, moving, e, ff) {
+function kbJockeyDown(g, x, y, s, dir, e) {
+  g.save(); g.translate(x, y); g.scale(s * dir, s);
+  g.fillStyle = 'rgba(0,0,0,.25)'; g.beginPath(); g.ellipse(0, 4, 13, 2.5, 0, 0, 7); g.fill();
+  g.fillStyle = '#F2F2F2'; g.fillRect(-12, -1, 8, 3.5);
+  g.fillStyle = '#2B2B2B'; g.fillRect(-14, -1, 3, 3.5);
+  g.fillStyle = e.silk1; g.fillRect(-4, -2.5, 10, 5);
+  g.fillStyle = e.silk2; g.fillRect(-1, -2.5, 2, 5);
+  g.fillStyle = WAKU[e.waku - 1][0]; g.strokeStyle = 'rgba(0,0,0,.6)'; g.lineWidth = 0.8;
+  g.beginPath(); g.arc(9, 0, 3.3, 0, 7); g.fill(); g.stroke();
+  g.restore();
+}
+function kbHorseDraw(g, x, y, s, dir, ph, moving, e, ff, rider = true) {
   const coat = COAT[e.coat][1], cap = WAKU[e.waku - 1][0];
   const sw = moving ? Math.sin(ph) : 0, bob = moving ? -Math.abs(Math.sin(ph)) * 1.6 : 0;
   g.save(); g.translate(x, y + bob); g.scale(s * dir, s);
@@ -1663,6 +1737,7 @@ function kbHorseDraw(g, x, y, s, dir, ph, moving, e, ff) {
   g.strokeStyle = coat; g.lineWidth = 3; g.beginPath(); g.moveTo(-17, -3); g.quadraticCurveTo(-26, -2 + sw * 2, -27, 7 + sw * 2); g.stroke();
   leg(-8, -sw * 0.9 + 0.3, coat); leg(14, sw * 0.9 - 0.3, coat);
   g.fillStyle = '#FFFFFF'; g.fillRect(-8, -7, 12, 9);
+  if (rider) {
   g.fillStyle = e.silk1;
   g.beginPath(); g.moveTo(-3, -7); g.lineTo(5, -19); g.lineTo(10, -16); g.lineTo(3, -6); g.closePath(); g.fill();
   g.fillStyle = e.silk2;
@@ -1675,6 +1750,7 @@ function kbHorseDraw(g, x, y, s, dir, ph, moving, e, ff) {
   g.fillStyle = '#2B2B2B'; g.fillRect(-1, -6, 3, 6);
   g.fillStyle = cap; g.strokeStyle = 'rgba(0,0,0,.6)'; g.lineWidth = 0.8;
   g.beginPath(); g.arc(10, -21, 3.6, 0, 7); g.fill(); g.stroke();
+  }
   g.restore();
   g.fillStyle = '#111'; g.font = `800 ${Math.round(8 * s)}px ${ff}`; g.textAlign = 'center'; g.textBaseline = 'middle';
   g.fillText(String(e.uma), x - 2 * s * dir, y + bob - 2.5 * s);

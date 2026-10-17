@@ -163,6 +163,15 @@ create table if not exists public.keiba_entries (
   primary key (race_id, uma)
 );
 create index if not exists keiba_entries_horse_idx on public.keiba_entries(horse_id, race_id desc);
+-- ハプニング（5レースに1回くらい）
+--   deokure 出遅れ（inc_val＝ゲートを出るのが遅れた秒）／rakuba 落馬・競走中止（inc_val＝止まった場所 0〜1）
+--   jogai 競走除外（scratch_at に発表。その馬をふくむ馬券は返す）／kouchaku 降着（inc_val＝入線した順位。審議のあと下がる）
+alter table public.keiba_entries add column if not exists incident text;
+alter table public.keiba_entries add column if not exists inc_val numeric;
+alter table public.keiba_entries add column if not exists scratch_at timestamptz;
+alter table public.keiba_entries add column if not exists line_pos int;          -- 入線した順位（降着の前）
+alter table public.keiba_entries add column if not exists line_margin text;      -- 入線したときの着差（降着のあるレースだけ）
+create index if not exists keiba_entries_scr_idx on public.keiba_entries(scratch_at) where incident = 'jogai' and odds_win is not null;
 -- 馬券
 create table if not exists public.keiba_tickets (
   id         bigserial primary key,
@@ -176,6 +185,7 @@ create table if not exists public.keiba_tickets (
   created_at timestamptz not null default now()
 );
 create index if not exists keiba_tickets_race_idx on public.keiba_tickets(race_id);
+alter table public.keiba_tickets add column if not exists refund boolean not null default false;   -- 競走除外で返した馬券
 create index if not exists keiba_tickets_user_idx on public.keiba_tickets(user_id, race_id desc);
 
 -- 税と給付金 ----------------------------------------------------------
@@ -1429,6 +1439,16 @@ begin
 end $$;
 
 -- 出走表をつくって、レースの結果も先に計算しておく（結果は発走まで見せない）
+-- 着差の言い方（馬身から）
+create or replace function public._kb_margin(lens numeric) returns text
+language sql immutable as $$
+  select case when lens < 0.06 then 'ハナ' when lens < 0.15 then 'アタマ' when lens < 0.3 then 'クビ'
+              when lens < 0.6 then '1/2' when lens < 0.85 then '3/4' when lens < 1.1 then '1'
+              when lens < 1.35 then '1 1/4' when lens < 1.6 then '1 1/2' when lens < 1.85 then '1 3/4'
+              when lens < 2.25 then '2' when lens < 2.75 then '2 1/2' when lens < 3.25 then '3'
+              when lens < 3.75 then '3 1/2' when lens < 10.5 then round(lens)::int::text else '大差' end
+$$;
+
 create or replace function public._kb_make_race(d date, no int, vid int, rnum int, posttime timestamptz,
   nm text, grade text, cls int, cond text, surface text, dist int, going text, weather text, tier text,
   handicap boolean, nmin int, nmax int) returns void
@@ -1443,7 +1463,7 @@ declare
   i int; k int; c int; need int; base int; extra int; age int; n0 int; n1 int; nige int;
   p numeric; beta numeric; t0 numeric; spd numeric; tw numeric; rmax numeric; med numeric; cnd numeric; pe numeric;
   js numeric; sz int; order_ix int[]; tms numeric[]; prev numeric; dt numeric; spl numeric; lens numeric; a numeric;
-  x0 numeric; lbl text;
+  x0 numeric; lbl text; inc text; iu int; m int; k0 int; vv int; xr numeric; force text; er record;
 begin
   if exists (select 1 from keiba_races where id = rid) then return; end if;
   select * into v from keiba_venues where id = vid;
@@ -1540,12 +1560,26 @@ begin
             round(((i - 1)::numeric / greatest(n - 1, 1)) * 0.85 + random()::numeric * 0.15, 3));
   end loop;
 
+  -- ハプニング（5レースに1回くらい）：出遅れ 35%・競走除外 25%・落馬 20%・降着 20%
+  --   app_settings の kb_incident で決められる（テスト用。none なら起こさない）
+  force := coalesce((select value from app_settings where key = 'kb_incident'), '');
+  if force in ('deokure', 'jogai', 'rakuba', 'kouchaku') then inc := force;
+  elsif force <> 'none' and random() < 0.2 then
+    xr := random();
+    inc := case when xr < 0.35 then 'deokure' when xr < 0.6 then 'jogai' when xr < 0.8 then 'rakuba' else 'kouchaku' end;
+  end if;
+  iu := 1 + floor(random() * n)::int;
+
   -- 着順（本当の力＋運）。運はガンベル分布なので、勝つ確率は人気（オッズ）と同じ形の式になる
   beta := 0.55 * sqrt(dist / 1000.0);
   for i in 1..n loop
     raw[i] := -(rtrue[i] - 50) * 0.1 * dist / 1000.0 - beta * _kb_gumbel();
   end loop;
-  select array_agg(g order by raw[g]) into order_ix from generate_series(1, n) g;
+  if inc = 'deokure' then raw[iu] := raw[iu] + 0.8 + random() * 1.5; end if;      -- 出遅れた分だけ遅い
+  -- ゴールする馬（除外・落馬の馬はのぞく）の着順
+  select array_agg(g order by raw[g]) into order_ix from generate_series(1, n) g
+   where not (inc in ('jogai', 'rakuba') and g = iu);
+  m := array_length(order_ix, 1);
 
   -- タイム（表示用。着差は本物らしい大きさにちぢめる）
   spd := (17.9 - 0.00052 * dist) * case when surface = '芝' then 1 else 0.965 end
@@ -1556,7 +1590,7 @@ begin
   spl := 2.4 * tw / dist;                      -- 1馬身あたりの秒
   x0 := 1 - 600.0 / dist;
   prev := null;
-  for k in 1..n loop
+  for k in 1..m loop
     i := order_ix[k];
     dt := raw[i] - raw[order_ix[1]];
     tms[i] := tw + 0.3 * dt + 0.04 * dt * dt;
@@ -1564,11 +1598,7 @@ begin
       lbl := null;
     else
       lens := (tms[i] - prev) / spl;
-      lbl := case when lens < 0.06 then 'ハナ' when lens < 0.15 then 'アタマ' when lens < 0.3 then 'クビ'
-                  when lens < 0.6 then '1/2' when lens < 0.85 then '3/4' when lens < 1.1 then '1'
-                  when lens < 1.35 then '1 1/4' when lens < 1.6 then '1 1/2' when lens < 1.85 then '1 3/4'
-                  when lens < 2.25 then '2' when lens < 2.75 then '2 1/2' when lens < 3.25 then '3'
-                  when lens < 3.75 then '3 1/2' when lens < 10.5 then round(lens)::int::text else '大差' end;
+      lbl := _kb_margin(lens);
     end if;
     prev := tms[i];
     select style into c from keiba_horses where id = perm[i];
@@ -1579,6 +1609,44 @@ begin
            last3f = round(tms[i] * (600.0 / dist + a * x0 * (1 - x0)), 1)
      where race_id = rid and uma = i;
   end loop;
+  update keiba_entries set line_pos = pos where race_id = rid;
+  -- ハプニングの記録
+  if inc = 'deokure' then
+    update keiba_entries set incident = 'deokure', inc_val = round((0.4 + random() * 0.7)::numeric, 2) where race_id = rid and uma = iu;
+  elsif inc = 'jogai' then         -- 発走の3〜15分前に発表（それまでは買える。その馬をふくむ馬券は返す）
+    update keiba_entries set incident = 'jogai', margin = '除外',
+           scratch_at = greatest(posttime - make_interval(secs => 180 + floor(random() * 720)), least(_now(), posttime - interval '90 seconds'))
+     where race_id = rid and uma = iu;
+  elsif inc = 'rakuba' then        -- 走っていたらのタイムで途中まで走り、そこで止まる
+    dt := raw[iu] - raw[order_ix[1]];
+    select style into c from keiba_horses where id = perm[iu];
+    a := (array[0.045, 0.02, -0.012, -0.035])[c + 1] + 0.012 * p * case when c <= 1 then 1 else -1 end;
+    update keiba_entries set incident = 'rakuba', inc_val = round((0.2 + random() * 0.6)::numeric, 3), margin = '中止',
+           time_ms = round((tw + 0.3 * dt + 0.04 * dt * dt) * 1000)::int, shape = round(a, 4)
+     where race_id = rid and uma = iu;
+  elsif inc = 'kouchaku' and m >= 3 then
+    -- 1〜3位で入線した馬が、すぐうしろ（0.5秒以内）でゴールした馬の進路をじゃまして、その馬のうしろに下がる
+    for er in select k1, k1 + 1 + case when k1 + 2 <= m and tms[order_ix[k1 + 2]] - tms[order_ix[k1]] <= 0.5 and random() < 0.3 then 1 else 0 end v1
+                from generate_series(1, least(3, m - 1)) k1
+               where tms[order_ix[k1 + 1]] - tms[order_ix[k1]] <= 0.5
+               order by random() * (array[2, 3, 2])[k1] desc limit 1 loop
+      k0 := er.k1; vv := er.v1;
+    end loop;
+  end if;
+  if k0 is not null then
+    update keiba_entries set line_margin = margin,
+           pos = case when line_pos = k0 then vv when line_pos > k0 and line_pos <= vv then line_pos - 1 else line_pos end
+     where race_id = rid;
+    update keiba_entries set incident = 'kouchaku', inc_val = k0, margin = null where race_id = rid and line_pos = k0;
+    -- 着差は確定の着順でつけなおす（降着の馬はとばす）
+    prev := null;
+    for er in select e.uma, e.time_ms, e.incident from keiba_entries e where e.race_id = rid order by e.pos loop
+      continue when er.incident = 'kouchaku';
+      update keiba_entries set margin = case when prev is null then null else _kb_margin((er.time_ms - prev) / 1000.0 / spl) end
+       where race_id = rid and uma = er.uma;
+      prev := er.time_ms;
+    end loop;
+  end if;
 
   -- 人気（みんなの見立て）からオッズ
   select max(x) into rmax from unnest(rpub) x;
@@ -1592,7 +1660,7 @@ begin
    where e.race_id = rid and e.uma = z.uma;
   update keiba_races
      set pace = case when p > 0.6 then 'ハイ' when p < -0.6 then 'スロー' else '平均' end,
-         finish_ms = (select max(time_ms) from keiba_entries where race_id = rid)
+         finish_ms = (select max(time_ms) from keiba_entries where race_id = rid and pos is not null)
    where id = rid;
 end $$;
 
@@ -1763,7 +1831,8 @@ create or replace function public._kb_prob(rid bigint, kind text, sel int[]) ret
 language plpgsql stable set search_path = public as $$
 declare w numeric[]; wk int[]; n int; tw numeric := 0; p numeric := 0; i int; j int; x int; y int; a int; b int; c int;
 begin
-  select array_agg(e.w order by e.uma), array_agg(e.waku order by e.uma) into w, wk from keiba_entries e where e.race_id = rid;
+  select array_agg(case when e.scratch_at is not null and e.scratch_at <= _now() then 0 else e.w end order by e.uma),
+         array_agg(e.waku order by e.uma) into w, wk from keiba_entries e where e.race_id = rid;
   n := array_length(w, 1);
   for i in 1..n loop tw := tw + w[i]; end loop;
   a := sel[1]; b := sel[2]; c := sel[3];
@@ -1846,10 +1915,17 @@ begin
     if s[1] = s[2] and (select count(*) from unnest(wk) z where z = s[1]) < 2 then
       raise exception 'この枠には1頭しかいません';
     end if;
+    if exists (select 1 from unnest(s) w0 where (select count(*) from keiba_entries e where e.race_id = rid and e.waku = w0
+                 and not (e.scratch_at is not null and e.scratch_at <= _now())) < case when s[1] = s[2] then 2 else 1 end) then
+      raise exception 'この枠は競走除外で、走る馬が足りません';
+    end if;
     return s;
   end if;
   foreach x in array sel loop
     if x < 1 or x > n then raise exception '馬番は1〜%です', n; end if;
+    if exists (select 1 from keiba_entries where race_id = rid and uma = x and scratch_at is not null and scratch_at <= _now()) then
+      raise exception '%番は競走除外になりました', x;
+    end if;
   end loop;
   if (select count(distinct z) from unnest(sel) z) <> need then raise exception '同じ馬は2回えらべません'; end if;
   if kind in ('umaren', 'wide', 'trio') then
@@ -1857,6 +1933,20 @@ begin
     return s;
   end if;
   return sel;
+end $$;
+
+-- 競走除外を発表したら：その馬のオッズと人気を消し、ほかの馬のオッズと人気をつけなおす
+create or replace function public._kb_scratch(rid bigint) returns void
+language plpgsql volatile set search_path = public as $$
+begin
+  update keiba_entries set odds_win = null, odds_place = null, ninki = null
+   where race_id = rid and incident = 'jogai' and scratch_at <= _now() and odds_win is not null;
+  if not found then return; end if;
+  update keiba_entries set odds_win = _kb_odds(rid, 'tan', array[uma]), odds_place = _kb_odds(rid, 'fuku', array[uma])
+   where race_id = rid and odds_win is not null;
+  update keiba_entries e set ninki = z.rk
+    from (select uma, row_number() over (order by odds_win, uma) rk from keiba_entries where race_id = rid and odds_win is not null) z
+   where e.race_id = rid and e.uma = z.uma;
 end $$;
 
 -- 当たったか
@@ -1879,17 +1969,19 @@ create or replace function public._kb_settle(rid bigint) returns void
 language plpgsql volatile set search_path = public as $$
 declare
   r keiba_races; e record; t keiba_tickets; res int[]; wk int[]; hit boolean; pay bigint; prize1 numeric;
-  sh numeric[] := array[1, 0.4, 0.25, 0.15, 0.1];
+  sh numeric[] := array[1, 0.4, 0.25, 0.15, 0.1]; scr int[]; rf boolean;
 begin
   select * into r from keiba_races where id = rid for update;
   if not found or r.settled then return; end if;
-  select array_agg(uma order by pos) into res from keiba_entries where race_id = rid;
+  perform _kb_scratch(rid);
+  select array_agg(uma order by pos) into res from keiba_entries where race_id = rid and pos is not null;
+  select coalesce(array_agg(uma), '{}') into scr from keiba_entries where race_id = rid and incident = 'jogai';
   select array_agg(waku order by uma) into wk from keiba_entries where race_id = rid;
   prize1 := case coalesce(r.grade, '')
               when 'G1' then case when r.name like '%ダービー%' or r.name like '%グランプリ%' then 30000 else 15000 end
               when 'G2' then 5800 when 'G3' then 4100 when 'L' then 2400 when 'OP' then 2200
               else (array[550, 800, 1100, 1500])[coalesce(r.cls, 0) + 1] end;
-  for e in select * from keiba_entries where race_id = rid loop
+  for e in select * from keiba_entries where race_id = rid and incident is distinct from 'jogai' loop
     update keiba_horses
        set starts = starts + 1,
            wins   = wins + case when e.pos = 1 then 1 else 0 end,
@@ -1900,11 +1992,16 @@ begin
      where id = e.horse_id;
   end loop;
   for t in select * from keiba_tickets where race_id = rid and payout is null order by id for update loop
-    hit := _kb_hit(t.kind, t.sel, res, wk);
-    pay := case when hit then floor(t.amount * t.odds) else 0 end;
-    update keiba_tickets set payout = pay where id = t.id;
+    -- 競走除外の馬をふくむ馬券は返す（枠連は、その枠に走る馬がいなくなったときだけ）
+    rf := case when t.kind = 'waku' then exists (select 1 from unnest(t.sel) w0
+                 where (select count(*) from keiba_entries x where x.race_id = rid and x.waku = w0 and x.incident is distinct from 'jogai')
+                       < case when t.sel[1] = t.sel[2] then 2 else 1 end)
+               else t.sel && scr end;
+    hit := not rf and _kb_hit(t.kind, t.sel, res, wk);
+    pay := case when rf then t.amount when hit then floor(t.amount * t.odds) else 0 end;
+    update keiba_tickets set payout = pay, refund = rf where id = t.id;
     perform _give(t.user_id, pay);
-    perform _log(t.user_id, 'race', t.amount, pay, jsonb_build_object('race', rid, 'kind', t.kind, 'sel', t.sel));
+    perform _log(t.user_id, 'race', t.amount, pay, jsonb_build_object('race', rid, 'kind', t.kind, 'sel', t.sel) || case when rf then '{"refund": true}'::jsonb else '{}'::jsonb end);
   end loop;
   update keiba_races set settled = true where id = rid;
 end $$;
@@ -1949,9 +2046,14 @@ language plpgsql volatile set search_path = public as $$
 declare r record; cur int := _kb_midx(_now()); last int; today date := _kb_jday(_now());
 begin
   if not exists (select 1 from keiba_horses limit 1) then perform _kb_seed(); end if;
-  for r in select id from keiba_races
-            where not settled and post + make_interval(secs => (coalesce(finish_ms, 0) + 20000) / 1000.0) <= _now()
-            order by id loop
+  for r in select distinct e.race_id from keiba_entries e where e.incident = 'jogai' and e.odds_win is not null and e.scratch_at <= _now() loop
+    perform _kb_scratch(r.race_id);
+  end loop;
+  for r in select k.id from keiba_races k
+            where not k.settled
+              and k.post + make_interval(secs => (coalesce(k.finish_ms, 0)
+                    + case when exists (select 1 from keiba_entries e where e.race_id = k.id and e.incident = 'kouchaku') then 50000 else 20000 end) / 1000.0) <= _now()
+            order by k.id loop
     perform _kb_settle(r.id);
   end loop;
   select value::int into last from app_settings where key = 'keiba_month';
@@ -1993,9 +2095,9 @@ begin
         'id', r.id, 'no', r.no, 'rnum', r.rnum, 'post_ms', _kb_ms(r.post), 'venue', v.name,
         'name', r.name, 'grade', r.grade, 'surface', r.surface, 'dist', r.dist, 'going', r.going,
         'weather', r.weather, 'status', _kb_status(r),
-        'part', case when r.no = 29 then 'main' when r.no >= 44 then 'noon' when r.no >= 30 then 'night' else 'day' end,
-        'sess', case when r.no <= 28 then (r.no - 1) / 7 when r.no = 29 then 4 when r.no >= 44 then 7 else 5 + (r.no - 30) / 7 end,
-        'n', (select count(*) from keiba_entries e where e.race_id = r.id),
+        'part', case when r.no = 29 then 'main' when r.no >= 60 then 'extra' when r.no >= 44 then 'noon' when r.no >= 30 then 'night' else 'day' end,
+        'sess', case when r.no <= 28 then (r.no - 1) / 7 when r.no = 29 then 4 when r.no >= 60 then 100 + r.no when r.no >= 44 then 7 else 5 + (r.no - 30) / 7 end,
+        'n', (select count(*) from keiba_entries e where e.race_id = r.id and not (e.scratch_at is not null and e.scratch_at <= _now())),
         'winner', case when r.settled then (select jsonb_build_object('uma', e.uma, 'name', h.name, 'ninki', e.ninki)
                                               from keiba_entries e join keiba_horses h on h.id = e.horse_id
                                              where e.race_id = r.id and e.pos = 1) end,
@@ -2010,7 +2112,7 @@ create or replace function public.keiba_race(p_race bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   u uuid := _me(); r keiba_races; v keiba_venues; st text; started boolean; ent jsonb; pays jsonb := '[]'::jsonb;
-  mine jsonb; res int[]; wk int[]; n int; s int[];
+  mine jsonb; res int[]; wk int[]; n int; s int[]; kou boolean;
 begin
   perform _kb_tick();
   select * into r from keiba_races where id = p_race;
@@ -2018,29 +2120,38 @@ begin
   select * into v from keiba_venues where id = r.venue;
   st := _kb_status(r);
   started := r.post <= _now();
+  kou := exists (select 1 from keiba_entries e where e.race_id = r.id and e.incident = 'kouchaku');
 
   select jsonb_agg(jsonb_build_object(
       'uma', e.uma, 'waku', e.waku, 'horse_id', h.id, 'name', h.name, 'sex', h.sex, 'age', e.age,
       'kinryo', e.kinryo, 'jockey', j.name, 'body', e.body, 'body_diff', e.body_diff, 'style', h.style,
       'coat', h.coat, 'silk1', h.silk1, 'silk2', h.silk2, 'silk_pat', h.silk_pat,
       'odds_win', e.odds_win, 'odds_place', e.odds_place, 'ninki', e.ninki,
+      'scratched', e.scratch_at is not null and e.scratch_at <= _now(),
       'record', format('%s戦%s勝', h.starts, h.wins), 'graded', h.graded,
-      'last5', (select coalesce(jsonb_agg(jsonb_build_object('pos', x.pos, 'n', x.n, 'grade', x.grade,
+      'last5', (select coalesce(jsonb_agg(jsonb_build_object('pos', x.pos, 'n', x.n, 'grade', x.grade, 'inc', x.incident,
                          'dist', x.dist, 'surface', x.surface, 'venue', x.venue) order by x.race_id desc), '[]'::jsonb)
-                  from (select e2.race_id, e2.pos, r2.grade, r2.dist, r2.surface, v2.name venue,
-                               (select count(*) from keiba_entries e3 where e3.race_id = e2.race_id) n
+                  from (select e2.race_id, e2.pos, e2.incident, r2.grade, r2.dist, r2.surface, v2.name venue,
+                               (select count(*) from keiba_entries e3 where e3.race_id = e2.race_id and e3.incident is distinct from 'jogai') n
                           from keiba_entries e2 join keiba_races r2 on r2.id = e2.race_id
                           join keiba_venues v2 on v2.id = r2.venue
                          where e2.horse_id = h.id and e2.race_id < r.id and r2.settled
                          order by e2.race_id desc limit 5) x),
-      'run', case when started then jsonb_build_object('pos', e.pos, 'time_ms', e.time_ms, 'margin', e.margin,
-                                                       'last3f', e.last3f, 'shape', e.shape, 'lane', e.lane) end
+      'run', case when not started then null
+                  when e.incident = 'jogai' then jsonb_build_object('scratched', true)
+                  else jsonb_build_object('pos', case when r.settled then e.pos else coalesce(e.line_pos, e.pos) end, 'time_ms', e.time_ms,
+                         'margin', case when kou and not r.settled then e.line_margin else e.margin end,
+                         'last3f', e.last3f, 'shape', e.shape, 'lane', e.lane,
+                         'delay', case when e.incident = 'deokure' then e.inc_val end,      -- 出遅れ（秒）
+                         'stop', case when e.incident = 'rakuba' then e.inc_val end,        -- 落馬して止まった場所（0〜1）
+                         'line', case when r.settled and e.incident = 'kouchaku' then e.line_pos end) end   -- 降着：入線した順位
     ) order by e.uma) into ent
     from keiba_entries e join keiba_horses h on h.id = e.horse_id join keiba_jockeys j on j.id = e.jockey
    where e.race_id = r.id;
 
   if r.settled then
-    select array_agg(uma order by pos), count(*) into res, n from keiba_entries where race_id = r.id;
+    select array_agg(uma order by pos) into res from keiba_entries where race_id = r.id and pos is not null;
+    select count(*) into n from keiba_entries where race_id = r.id;
     select array_agg(waku order by uma) into wk from keiba_entries where race_id = r.id;
     pays := jsonb_build_array(
       jsonb_build_object('kind', 'tan', 'sel', array[res[1]], 'odds', _kb_odds(r.id, 'tan', array[res[1]])),
@@ -2065,7 +2176,7 @@ begin
   end if;
 
   select coalesce(jsonb_agg(jsonb_build_object('kind', t.kind, 'sel', t.sel, 'amount', t.amount, 'odds', t.odds,
-                                               'payout', t.payout) order by t.id), '[]'::jsonb) into mine
+                                               'payout', t.payout, 'refund', t.refund) order by t.id), '[]'::jsonb) into mine
     from keiba_tickets t where t.race_id = r.id and t.user_id = u;
 
   return jsonb_build_object(
@@ -2075,6 +2186,7 @@ begin
       'name', r.name, 'grade', r.grade, 'cls', r.cls, 'cond', r.cond, 'surface', r.surface, 'dist', r.dist,
       'going', r.going, 'weather', r.weather, 'tier', r.tier, 'handicap', r.handicap,
       'pace', case when started then r.pace end, 'finish_ms', case when started then r.finish_ms end,
+      'inquiry', kou and started and _now() >= r.post + make_interval(secs => coalesce(r.finish_ms, 0) / 1000.0),   -- 審議（ゴールのあと）
       'venue', jsonb_build_object('name', v.name, 'turn', v.turn, 'straight', v.straight, 'slope', v.slope, 'circuit', v.circuit),
       'rates', jsonb_build_object('tan', _kb_rate(r.tier, 'tan'), 'umaren', _kb_rate(r.tier, 'umaren'),
                                   'trio', _kb_rate(r.tier, 'trio'), 'trifecta', _kb_rate(r.tier, 'trifecta'))),
@@ -2126,8 +2238,9 @@ begin
     'class', h.class, 'starts', h.starts, 'wins', h.wins, 'prize', h.prize, 'graded', h.graded, 'retired', h.retired,
     'runs', (select coalesce(jsonb_agg(jsonb_build_object(
                  'day', r.day, 'venue', v.name, 'name', r.name, 'grade', r.grade, 'surface', r.surface, 'dist', r.dist,
-                 'going', r.going, 'n', (select count(*) from keiba_entries e3 where e3.race_id = r.id),
+                 'going', r.going, 'n', (select count(*) from keiba_entries e3 where e3.race_id = r.id and e3.incident is distinct from 'jogai'),
                  'uma', e.uma, 'ninki', e.ninki, 'pos', e.pos, 'time_ms', e.time_ms, 'margin', e.margin,
+                 'inc', e.incident, 'line', case when e.incident = 'kouchaku' then e.line_pos end,
                  'last3f', e.last3f, 'jockey', j.name, 'kinryo', e.kinryo, 'body', e.body, 'body_diff', e.body_diff
                ) order by r.id desc), '[]'::jsonb)
                from keiba_entries e join keiba_races r on r.id = e.race_id join keiba_venues v on v.id = r.venue
@@ -2406,7 +2519,7 @@ begin
     'week_from', _dlabel((_kb_jday(_now()) - (extract(isodow from _kb_jday(_now()))::int - 1))::timestamp at time zone 'Asia/Tokyo'),
     'jackpots', (select coalesce(jsonb_agg(z order by z.net desc), '[]'::jsonb) from (
         select p.nickname, _badge(p.id) badge, sum(t.payout - t.amount)::bigint net, sum(t.payout)::bigint payout, sum(t.amount)::bigint bet,
-               count(*) filter (where t.payout > 0) hits, max(t.payout)::bigint best
+               count(*) filter (where t.payout > 0 and not t.refund) hits, max(t.payout)::bigint best
           from keiba_tickets t join profiles p on p.id = t.user_id join keiba_races r on r.id = t.race_id
          where t.payout is not null and r.day >= _kb_jday(_now()) - (extract(isodow from _kb_jday(_now()))::int - 1)
          group by p.id, p.nickname having sum(t.payout - t.amount) > 0
@@ -9118,7 +9231,7 @@ begin
               from companies c where c.decided_at >= t0 and c.decided_at < t1 and c.status in ('active', 'suspended')),
     'fx', fxj,
     -- 競馬（その日の番組。メインレースと、きょうなら次のレース）
-    'keiba', (select jsonb_build_object('n', count(*), 'night', count(*) filter (where r.no between 30 and 43), 'noon', count(*) filter (where r.no >= 44),
+    'keiba', (select jsonb_build_object('n', count(*), 'night', count(*) filter (where r.no between 30 and 43), 'noon', count(*) filter (where r.no between 44 and 59), 'extra', count(*) filter (where r.no >= 60),
                 'settled', count(*) filter (where r.settled),
                 'first', to_char(min(r.post) at time zone 'Asia/Tokyo', 'HH24:MI'), 'last', to_char(max(r.post) at time zone 'Asia/Tokyo', 'HH24:MI'),
                 'main', (select jsonb_build_object('id', m.id, 'name', m.name, 'grade', m.grade, 'venue', v.name, 'rnum', m.rnum,
@@ -10414,7 +10527,7 @@ begin
             'pub_item_delete','my_pubs','admin_pub_hide',
             '_kb_norm','_kb_gumbel','_kb_midx','_kb_jday','_kb_ms','_kb_agef','_kb_fit','_kb_name','_kb_new_horse',
             '_kb_make_race','_kb_make_day','_kb_make_night','_kb_make_noon','_kb_seq','_kb_prob','_kb_prob_trio','_kb_rate','_kb_odds','_kb_check_sel',
-            '_kb_hit','_kb_settle','_kb_month','_kb_seed','_kb_tick','_kb_status',
+            '_kb_hit','_kb_settle','_kb_month','_kb_seed','_kb_tick','_kb_status','_kb_scratch','_kb_margin',
             '_ind_norm','corp_set_industries','_srv_norm','corp_set_servers','admin_corp_servers_clear',
             '_desk_staff','_desk_json','_desk_people','_desk_unread','desk_thread','desk_open','desk_send','desk_close','desk_list',
             'desk_settings','corp_member_desk','_user_row','admin_users','admin_user',
