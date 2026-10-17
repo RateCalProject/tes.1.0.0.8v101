@@ -555,6 +555,8 @@ $$;
 -- プロフィール
 -- ---------------------------------------------------------------------
 -- ログインしたら毎回呼ぶ。初めての人にだけ 1000 AiliNaX を配る（1回きり）
+alter table public.profiles add column if not exists prefs jsonb not null default '{}'::jsonb;   -- ショートカット・テーマ・色覚サポート・言語
+
 create or replace function public.ensure_profile() returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me();
@@ -574,8 +576,39 @@ begin
     raise warning 'tax tick failed: %', sqlerrm;
   end;
   return (select jsonb_build_object('nickname', nickname, 'balance', balance, 'tax', _tax_badge(u), 'account_no', account_no,
-            'is_admin', _is_admin(u), 'role', _role(u), 'badge', _badge(u))
+            'is_admin', _is_admin(u), 'role', _role(u), 'badge', _badge(u), 'prefs', prefs)
             from profiles where id = u);
+end $$;
+
+-- 設定を保存（わたしたものだけ上書き）
+create or replace function public.prefs_save(p_prefs jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); p jsonb := coalesce(p_prefs, '{}'::jsonb); cur jsonb; x jsonb;
+begin
+  if jsonb_typeof(p) <> 'object' then raise exception '設定が正しくありません'; end if;
+  select prefs into cur from profiles where id = u;
+  cur := coalesce(cur, '{}'::jsonb);
+  if p ? 'shortcuts' then
+    if jsonb_typeof(p->'shortcuts') <> 'array' or jsonb_array_length(p->'shortcuts') > 16 then raise exception 'ショートカットは16個までです'; end if;
+    for x in select * from jsonb_array_elements(p->'shortcuts') loop
+      if jsonb_typeof(x) <> 'string' or (x #>> '{}') !~ '^[A-Za-z0-9_]{1,30}(:[A-Za-z0-9_]{1,30})?$' then raise exception 'ショートカットが正しくありません'; end if;
+    end loop;
+    cur := cur || jsonb_build_object('shortcuts', p->'shortcuts');
+  end if;
+  if p ? 'theme' then
+    if coalesce(p->>'theme', '') not in ('std', 'net2000', 'famicom', 'wa', 'night', 'neon', 'pastel') then raise exception 'テーマが正しくありません'; end if;
+    cur := cur || jsonb_build_object('theme', p->>'theme');
+  end if;
+  if p ? 'cvd' then
+    if coalesce(p->>'cvd', '') not in ('off', 'mark', 'safe') then raise exception '色覚サポートの設定が正しくありません'; end if;
+    cur := cur || jsonb_build_object('cvd', p->>'cvd');
+  end if;
+  if p ? 'lang' then
+    if coalesce(p->>'lang', '') not in ('ja', 'en') then raise exception '言語が正しくありません'; end if;
+    cur := cur || jsonb_build_object('lang', p->>'lang');
+  end if;
+  update profiles set prefs = cur where id = u;
+  return cur;
 end $$;
 
 drop function if exists public.my_profile();
@@ -5212,9 +5245,9 @@ end $$;
 
 
 -- ---------------------------------------------------------------------
--- 対戦ゲーム（リバーシ・チェス・将棋・ワンカード・麻雀）
+-- 対戦ゲーム（オセロ・チェス・将棋・ワンカード・麻雀）
 --   部屋：主催が作る（ゲーム・持ち時間・招待・観戦の賭けあり／なし）。だれでも入れる部屋と、IDで招待した人だけの部屋
---   リバーシ・チェス・将棋：ふたりそろうと始まる（先手・後手はランダム）。持ち時間は1人ずつ（最大3時間）。切れたら負け
+--   オセロ・チェス・将棋：ふたりそろうと始まる（先手・後手はランダム）。持ち時間は1人ずつ（最大3時間）。切れたら負け
 --     本人どうしは賭けない（無料）。観戦する人は、どちらが勝つかに賭けられる（山分け。国庫が5%。登録から7日たってから）
 --     ・賭けられるのは10手目まで（それ以降は締め切り）・対局している本人は賭けられない
 --     ・引き分け・片方にしか賭けがないときは全部返す
@@ -5302,7 +5335,7 @@ create table if not exists public.game_stakes (
 alter table public.game_stakes enable row level security;
 revoke all on public.game_stakes from anon, authenticated;
 
--- ---------- リバーシ（8×8。盤は64文字：. 空き / B 黒 / W 白。黒が先手＝席0） ----------
+-- ---------- オセロ（8×8。盤は64文字：. 空き / B 黒 / W 白。黒が先手＝席0） ----------
 create or replace function public._rv_flips(b text, pos int, me text) returns int[]
 language plpgsql immutable as $$
 declare op text := case me when 'B' then 'W' else 'B' end; r int := pos / 8; c int := pos % 8;
@@ -7173,7 +7206,7 @@ end $$;
 
 create or replace function public._game_name(g text) returns text
 language sql immutable as $$
-  select case g when 'reversi' then 'リバーシ' when 'chess' then 'チェス' when 'shogi' then '将棋'
+  select case g when 'reversi' then 'オセロ' when 'chess' then 'チェス' when 'shogi' then '将棋'
                 when 'onecard' then 'ワンカード' when 'mahjong' then '麻雀' else g end $$;
 
 -- 4人までのゲーム（ワンカード・麻雀）
@@ -8181,7 +8214,10 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); n record;
 begin
   select id, body into n from notices where user_id = u order by id desc limit 1;
-  return jsonb_build_object('unread', (select count(*) from notices where user_id = u and not seen), 'latest', n.id, 'latest_body', n.body);
+  return jsonb_build_object('unread', (select count(*) from notices where user_id = u and not seen), 'latest', n.id, 'latest_body', n.body,
+    'msg', _msg_unread(u),
+    'staff', case when _is_admin(u) then (select count(*) from support_threads t
+                  where exists (select 1 from support_msgs m where m.thread_id = t.id and not m.from_staff and m.id > t.staff_seen)) end);
 end $$;
 
 create or replace function public.notice_read_all() returns jsonb
@@ -8620,6 +8656,270 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
+-- 連絡（メイン → 連絡）
+--   メッセージ：フレンドどうしの1対1。ふたりだけが見られる。フレンドでなくなると送れない（前のものは読める）
+--   問い合わせ：運営（管理者）への相談。本人と管理者だけが見られる。どちらからでも「解決済み」にできる
+-- ---------------------------------------------------------------------
+create table if not exists public.dm_threads (
+  id         bigserial primary key,
+  a          uuid not null references public.profiles(id) on delete cascade,     -- a < b
+  b          uuid not null references public.profiles(id) on delete cascade,
+  a_seen     bigint not null default 0,              -- a が読んだ最後のメッセージ
+  b_seen     bigint not null default 0,
+  last_at    timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  check (a < b),
+  unique (a, b)
+);
+create index if not exists dm_threads_a_idx on public.dm_threads(a, last_at desc);
+create index if not exists dm_threads_b_idx on public.dm_threads(b, last_at desc);
+create table if not exists public.dm_msgs (
+  id         bigserial primary key,
+  thread_id  bigint not null references public.dm_threads(id) on delete cascade,
+  author     uuid references public.profiles(id) on delete set null,
+  body       text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists dm_msgs_thread_idx on public.dm_msgs(thread_id, id);
+create index if not exists dm_msgs_author_idx on public.dm_msgs(author, created_at);
+create table if not exists public.support_threads (
+  id         bigserial primary key,
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  subject    text not null,
+  status     text not null default 'open' check (status in ('open', 'closed')),
+  closed_by  text,                                   -- user / staff
+  user_seen  bigint not null default 0,
+  staff_seen bigint not null default 0,
+  last_at    timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+create index if not exists support_threads_user_idx on public.support_threads(user_id, last_at desc);
+create index if not exists support_threads_last_idx on public.support_threads(last_at desc);
+create table if not exists public.support_msgs (
+  id         bigserial primary key,
+  thread_id  bigint not null references public.support_threads(id) on delete cascade,
+  from_staff boolean not null,
+  author     uuid references public.profiles(id) on delete set null,
+  body       text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists support_msgs_thread_idx on public.support_msgs(thread_id, id);
+create index if not exists support_msgs_author_idx on public.support_msgs(author, created_at);
+alter table public.dm_threads enable row level security;
+alter table public.dm_msgs enable row level security;
+alter table public.support_threads enable row level security;
+alter table public.support_msgs enable row level security;
+revoke all on public.dm_threads, public.dm_msgs, public.support_threads, public.support_msgs from anon, authenticated;
+
+-- 管理者のみなさん
+create or replace function public._admin_ids() returns setof uuid
+language sql stable set search_path = public as $$
+  select btrim(x)::uuid from app_settings, unnest(string_to_array(value, ',')) x
+   where key = 'admins' and btrim(x) ~ '^[0-9a-fA-F-]{36}$'
+$$;
+
+-- まだ読んでいない連絡の数（メッセージの相手の数＋運営から返事が来た問い合わせの数）
+create or replace function public._msg_unread(u uuid) returns int
+language sql stable set search_path = public as $$
+  select ((select count(*) from dm_threads t where (t.a = u or t.b = u)
+             and exists (select 1 from dm_msgs m where m.thread_id = t.id and m.author is distinct from u
+                           and m.id > case when t.a = u then t.a_seen else t.b_seen end))
+        + (select count(*) from support_threads t where t.user_id = u
+             and exists (select 1 from support_msgs m where m.thread_id = t.id and m.from_staff and m.id > t.user_seen)))::int
+$$;
+
+-- メッセージの一覧（相手ごと）と、送れる相手（フレンド）
+create or replace function public.dm_list() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me();
+begin
+  return jsonb_build_object(
+    'threads', (select coalesce(jsonb_agg(z.j order by z.last_at desc), '[]'::jsonb) from (
+        select t.last_at, jsonb_build_object('uid', p.account_no, 'nickname', p.nickname, 'badge', _badge(p.id), 'friend', _is_friend(u, p.id),
+          'unread', (select count(*) from dm_msgs m where m.thread_id = t.id and m.author is distinct from u
+                       and m.id > case when t.a = u then t.a_seen else t.b_seen end),
+          'last', (select left(m.body, 60) from dm_msgs m where m.thread_id = t.id order by m.id desc limit 1),
+          'last_mine', (select m.author = u from dm_msgs m where m.thread_id = t.id order by m.id desc limit 1),
+          'at', _dlabel(t.last_at), 'time', to_char(t.last_at at time zone 'Asia/Tokyo', 'HH24:MI')) j
+          from dm_threads t join profiles p on p.id = case when t.a = u then t.b else t.a end
+         where t.a = u or t.b = u order by t.last_at desc limit 100) z),
+    'friends', (select coalesce(jsonb_agg(jsonb_build_object('uid', p.account_no, 'nickname', p.nickname, 'badge', _badge(p.id)) order by p.nickname), '[]'::jsonb)
+                  from friends f join profiles p on p.id = case when f.from_user = u then f.to_user else f.from_user end
+                 where f.status = 'ok' and (f.from_user = u or f.to_user = u)));
+end $$;
+
+-- 相手とのやりとり（新しい200通。開くと既読）
+create or replace function public.dm_thread(p_uid text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pr profiles; t dm_threads; mx bigint;
+begin
+  select * into pr from profiles where account_no = btrim(coalesce(p_uid, '')) and ai is null;
+  if not found or pr.id = u then raise exception '相手が見つかりません'; end if;
+  select * into t from dm_threads where a = least(u, pr.id) and b = greatest(u, pr.id);
+  if found then
+    select max(id) into mx from dm_msgs where thread_id = t.id;
+    if t.a = u and coalesce(mx, 0) > t.a_seen then update dm_threads set a_seen = mx where id = t.id;
+    elsif t.b = u and coalesce(mx, 0) > t.b_seen then update dm_threads set b_seen = mx where id = t.id; end if;
+  end if;
+  return jsonb_build_object('uid', pr.account_no, 'nickname', pr.nickname, 'badge', _badge(pr.id), 'friend', _is_friend(u, pr.id),
+    'msgs', (select coalesce(jsonb_agg(jsonb_build_object('id', m.id, 'mine', m.author = u, 'body', m.body,
+               'at', _dlabel(m.created_at), 'time', to_char(m.created_at at time zone 'Asia/Tokyo', 'HH24:MI')) order by m.id), '[]'::jsonb)
+             from (select * from dm_msgs where thread_id = t.id order by id desc limit 200) m));
+end $$;
+
+-- メッセージを送る（フレンドだけ。1000文字まで・1時間に120通まで）
+create or replace function public.dm_send(p_uid text, p_body text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pr profiles; me profiles; t dm_threads; mid bigint; quiet boolean; bd text := btrim(coalesce(p_body, ''));
+begin
+  select * into pr from profiles where account_no = btrim(coalesce(p_uid, '')) and ai is null;
+  if not found or pr.id = u then raise exception '相手が見つかりません'; end if;
+  if not _is_friend(u, pr.id) then raise exception 'メッセージを送れるのはフレンドだけです'; end if;
+  if char_length(bd) < 1 or char_length(bd) > 1000 then raise exception 'メッセージは1〜1000文字です'; end if;
+  if (select count(*) from dm_msgs where author = u and created_at > _now() - interval '1 hour') >= 120 then
+    raise exception '少し時間をおいてください（1時間に120通まで）';
+  end if;
+  insert into dm_threads(a, b, last_at, created_at) values (least(u, pr.id), greatest(u, pr.id), _now(), _now()) on conflict (a, b) do nothing;
+  select * into t from dm_threads where a = least(u, pr.id) and b = greatest(u, pr.id) for update;
+  -- 相手がまだ読んでいないメッセージがあれば、通知はもう届いているので送らない
+  quiet := exists (select 1 from dm_msgs m where m.thread_id = t.id and m.author = u and m.id > case when t.a = pr.id then t.a_seen else t.b_seen end);
+  insert into dm_msgs(thread_id, author, body, created_at) values (t.id, u, bd, _now()) returning id into mid;
+  update dm_threads set last_at = _now(), a_seen = case when a = u then mid else a_seen end, b_seen = case when b = u then mid else b_seen end
+   where id = t.id;
+  if not quiet then
+    select * into me from profiles where id = u;
+    perform _notice_l(pr.id, format('【メッセージ】%s さん（ID %s）からメッセージが届きました', me.nickname, me.account_no),
+                      jsonb_build_object('go', 'dm', 'u', me.account_no), u);
+  end if;
+  return dm_thread(pr.account_no);
+end $$;
+
+-- 問い合わせの一覧の1行（side = user：本人から見る／staff：管理者から見る）
+create or replace function public._sp_json(t public.support_threads, side text) returns jsonb
+language sql stable set search_path = public as $$
+  select jsonb_build_object('id', t.id, 'subject', t.subject, 'status', t.status, 'closed_by', t.closed_by,
+    'user', case when side = 'staff' then jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id)) end,
+    'unread', exists (select 1 from support_msgs m where m.thread_id = t.id and m.from_staff = (side = 'user')
+                        and m.id > case when side = 'user' then t.user_seen else t.staff_seen end),
+    'last', (select left(m.body, 60) from support_msgs m where m.thread_id = t.id order by m.id desc limit 1),
+    'n', (select count(*) from support_msgs m where m.thread_id = t.id),
+    'at', _dlabel(t.last_at), 'time', to_char(t.last_at at time zone 'Asia/Tokyo', 'HH24:MI'))
+  from profiles p where p.id = t.user_id
+$$;
+
+-- 問い合わせの一覧（自分のもの。管理者には、みんなからの問い合わせも）
+create or replace function public.support_list() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); adm boolean := _is_admin(u);
+begin
+  return jsonb_build_object('admin', adm,
+    'threads', (select coalesce(jsonb_agg(_sp_json(t, 'user') order by (t.status = 'open') desc, t.last_at desc), '[]'::jsonb)
+                  from (select * from support_threads where user_id = u order by (status = 'open') desc, last_at desc limit 50) t),
+    'inbox', case when adm then (select coalesce(jsonb_agg(_sp_json(t, 'staff') order by (t.status = 'open') desc, t.last_at desc), '[]'::jsonb)
+                  from (select * from support_threads order by (status = 'open') desc, last_at desc limit 100) t) end);
+end $$;
+
+-- 問い合わせのやりとり（開くと既読）
+create or replace function public.support_thread(p_id bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); t support_threads; side text; mx bigint;
+begin
+  select * into t from support_threads where id = p_id;
+  if not found then raise exception '問い合わせが見つかりません'; end if;
+  side := case when t.user_id = u then 'user' when _is_admin(u) then 'staff' end;
+  if side is null then raise exception '問い合わせが見つかりません'; end if;
+  select max(id) into mx from support_msgs where thread_id = t.id;
+  if side = 'user' and coalesce(mx, 0) > t.user_seen then update support_threads set user_seen = mx where id = t.id;
+  elsif side = 'staff' and coalesce(mx, 0) > t.staff_seen then update support_threads set staff_seen = mx where id = t.id; end if;
+  select * into t from support_threads where id = p_id;
+  return _sp_json(t, side) || jsonb_build_object('side', side, 'can_send', t.status = 'open',
+    'msgs', (select coalesce(jsonb_agg(jsonb_build_object('id', m.id, 'staff', m.from_staff, 'body', m.body,
+               'who', case when side = 'staff' and m.from_staff then (select nickname from profiles where id = m.author) end,
+               'mine', m.author = u, 'at', _dlabel(m.created_at), 'time', to_char(m.created_at at time zone 'Asia/Tokyo', 'HH24:MI')) order by m.id), '[]'::jsonb)
+             from support_msgs m where m.thread_id = t.id));
+end $$;
+
+-- 問い合わせる（受付中は3件まで・新しいものは1日5件まで）
+create or replace function public.support_open(p_subject text, p_body text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); me profiles; tid bigint; mid bigint; who uuid;
+  sj text := btrim(regexp_replace(coalesce(p_subject, ''), '[[:cntrl:]]', ' ', 'g')); bd text := btrim(coalesce(p_body, ''));
+begin
+  if char_length(sj) < 1 or char_length(sj) > 40 then raise exception '件名は1〜40文字です'; end if;
+  if char_length(bd) < 1 or char_length(bd) > 2000 then raise exception '内容は1〜2000文字です'; end if;
+  perform pg_advisory_xact_lock(7310, hashtext(u::text));
+  if (select count(*) from support_threads where user_id = u and status = 'open') >= 3 then
+    raise exception '受付中の問い合わせは3件までです（解決済みにすると、新しく問い合わせられます）';
+  end if;
+  if (select count(*) from support_threads where user_id = u and created_at > _now() - interval '1 day') >= 5 then
+    raise exception '新しい問い合わせは1日5件までです';
+  end if;
+  select * into me from profiles where id = u;
+  insert into support_threads(user_id, subject, last_at, created_at) values (u, sj, _now(), _now()) returning id into tid;
+  insert into support_msgs(thread_id, from_staff, author, body, created_at) values (tid, false, u, bd, _now()) returning id into mid;
+  update support_threads set user_seen = mid where id = tid;
+  for who in select * from _admin_ids() loop
+    continue when who = u;
+    perform _notice_l(who, format('【問い合わせ】%s さん（ID %s）から問い合わせが届きました：%s', me.nickname, me.account_no, sj),
+                      jsonb_build_object('go', 'sp', 't', tid), u);
+  end loop;
+  return support_thread(tid);
+end $$;
+
+-- 返事を書く（本人も管理者も）
+create or replace function public.support_send(p_id bigint, p_body text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); t support_threads; side text; me profiles; mid bigint; who uuid; quiet boolean; bd text := btrim(coalesce(p_body, ''));
+begin
+  select * into t from support_threads where id = p_id for update;
+  if not found then raise exception '問い合わせが見つかりません'; end if;
+  side := case when t.user_id = u then 'user' when _is_admin(u) then 'staff' end;
+  if side is null then raise exception '問い合わせが見つかりません'; end if;
+  if t.status <> 'open' then raise exception 'この問い合わせは解決済みです（つづきは新しく問い合わせてください）'; end if;
+  if char_length(bd) < 1 or char_length(bd) > 2000 then raise exception '内容は1〜2000文字です'; end if;
+  if (select count(*) from support_msgs where thread_id = t.id) >= 300 then raise exception 'この問い合わせはやりとりが多くなりました（つづきは新しく問い合わせてください）'; end if;
+  if (select count(*) from support_msgs where author = u and created_at > _now() - interval '1 hour') >= 60 then
+    raise exception '少し時間をおいてください（1時間に60通まで）';
+  end if;
+  quiet := exists (select 1 from support_msgs m where m.thread_id = t.id and m.from_staff = (side = 'staff')
+                     and m.id > case when side = 'staff' then t.user_seen else t.staff_seen end);
+  insert into support_msgs(thread_id, from_staff, author, body, created_at) values (t.id, side = 'staff', u, bd, _now()) returning id into mid;
+  update support_threads set last_at = _now(),
+         user_seen = case when side = 'user' then mid else user_seen end,
+         staff_seen = case when side = 'staff' then mid else staff_seen end
+   where id = t.id;
+  if quiet then
+    null;
+  elsif side = 'staff' then
+    perform _notice_l(t.user_id, format('【問い合わせ】運営から返事が届きました：%s', t.subject), jsonb_build_object('go', 'sp', 't', t.id), null);
+  else
+    select * into me from profiles where id = u;
+    for who in select * from _admin_ids() loop
+      continue when who = u;
+      perform _notice_l(who, format('【問い合わせ】%s さんから、問い合わせ「%s」に返事が届きました', me.nickname, t.subject), jsonb_build_object('go', 'sp', 't', t.id), u);
+    end loop;
+  end if;
+  return support_thread(t.id);
+end $$;
+
+-- 解決済みにする（どちらからでも）
+create or replace function public.support_close(p_id bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); t support_threads; side text;
+begin
+  select * into t from support_threads where id = p_id for update;
+  if not found then raise exception '問い合わせが見つかりません'; end if;
+  side := case when t.user_id = u then 'user' when _is_admin(u) then 'staff' end;
+  if side is null then raise exception '問い合わせが見つかりません'; end if;
+  if t.status <> 'open' then raise exception 'この問い合わせはもう解決済みです'; end if;
+  update support_threads set status = 'closed', closed_by = side where id = t.id;
+  if side = 'staff' then
+    perform _notice_l(t.user_id, format('【問い合わせ】問い合わせ「%s」は、運営が解決済みにしました', t.subject), jsonb_build_object('go', 'sp', 't', t.id), null);
+  end if;
+  return support_thread(t.id);
+end $$;
+
+-- ---------------------------------------------------------------------
 -- 窓口（会社への相談）
 --   だれでも会社に相談できる（件名と内容）。会社は社長と「窓口担当」の社員が返事する
 --   相談した人と会社だけが見られる。どちらからでも「解決済み」にできる（そのあとは読むだけ）
@@ -9053,6 +9353,34 @@ begin
               select * from stock_trades where company_id = cid_int
                  and created_at >= coalesce((select coalesce(price_from, listed_at) from companies where id = cid_int), '-infinity'::timestamptz) order by id desc limit 100) z),
     'shares', (select shares from companies where id = cid_int));
+end $$;
+
+-- 株価のグラフ（p_span：recent＝最近100回の取引／1d・1w・1m＝その期間／all＝はじめての取引から全部）
+--   期間のものは、時間で120本までに区切って、終値・高値・安値・出来高にまとめる
+create or replace function public.stock_chart(p_cid text, p_span text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare c companies; t1 timestamptz := _now(); t0 timestamptz; bk double precision; pts jsonb;
+begin
+  perform _me();
+  select * into c from companies where cid = _cid_norm(p_cid);
+  if not found then raise exception '会社が見つかりません'; end if;
+  if coalesce(p_span, '') not in ('recent', '1d', '1w', '1m', 'all') then raise exception '期間が正しくありません'; end if;
+  if p_span = 'recent' then
+    return jsonb_build_object('span', p_span, 'points',
+      (select coalesce(jsonb_agg(jsonb_build_object('ts', _kb_ms(z.created_at), 'price', z.price, 'hi', z.price, 'lo', z.price, 'vol', z.qty) order by z.id), '[]'::jsonb)
+         from (select * from stock_trades where company_id = c.id and created_at >= coalesce(c.price_from, c.listed_at, '-infinity'::timestamptz)
+               order by id desc limit 100) z));
+  end if;
+  t0 := case p_span when '1d' then t1 - interval '1 day' when '1w' then t1 - interval '7 days' when '1m' then t1 - interval '30 days'
+                    else (select min(created_at) from stock_trades where company_id = c.id) end;
+  if t0 is null then return jsonb_build_object('span', p_span, 'points', '[]'::jsonb); end if;
+  bk := greatest(60, extract(epoch from (t1 - t0)) / 120);          -- 1本の長さ（秒）
+  select coalesce(jsonb_agg(jsonb_build_object('ts', _kb_ms(z.last_at), 'price', z.cl, 'hi', z.hi, 'lo', z.lo, 'vol', z.vol) order by z.b), '[]'::jsonb) into pts
+    from (select floor(extract(epoch from (created_at - t0)) / bk)::int b, (array_agg(price order by id desc))[1] cl,
+                 max(price) hi, min(price) lo, sum(qty) vol, max(created_at) last_at
+            from stock_trades where company_id = c.id and created_at >= t0 and created_at <= t1 group by 1) z;
+  return jsonb_build_object('span', p_span, 'from_ms', _kb_ms(t0), 'to_ms', _kb_ms(t1), 'bucket_s', round(bk), 'points', pts,
+    'first', (select _dlabel(min(created_at)) from stock_trades where company_id = c.id));
 end $$;
 
 -- 上場している株の一覧（相場・取引所に出す）
@@ -10721,12 +11049,13 @@ begin
             '_desk_staff','_desk_json','_desk_people','_desk_unread','desk_thread','desk_open','desk_send','desk_close','desk_list',
             'desk_settings','corp_member_desk','_user_row','admin_users','admin_user',
             '_holdings','_stock_exch','_stock_market','_stock_list','_stock_cancel_order','_stock_delist','stock_list','stock_state',
-            '_stock_width','_jday_start','_stock_base','_stock_band','_stock_day','_tnow','info_today','_stock_exec',
+            '_stock_width','_jday_start','_stock_base','_stock_band','_stock_day','_tnow','info_today','_stock_exec','stock_chart',
             '_ai_uid','_randn','_ai_name','_ai_account','_ai_fund','_ai_hire','_ai_ceo','_ai_stock_value','_ai_fair','_ai_article','_ai_event',
             '_ai_business','_ai_settle_week','_ai_news_morning','_ai_news_items','_ai_news_flash','_ai_invest','_ai_market','_ai_market_cancel',
             '_ai_setup','_ai_add_investors','_ai_tick','_fx_exec','_stock_width_x','_ai_buzz_target','_ai_fair_p','_ai_found','_ok7_ins','_stock_last','_stock_cancel_all','stock_split','admin_stock_reprice','admin_gov_share_give','admin_ai_news','_gov_uid','_gov_sweep','_fx_last','admin_iv_state','admin_intervene','_ai_err','admin_ai','admin_ai_set','admin_ai_fund',
             'stock_order','stock_cancel','stock_list_apply','stock_list_withdraw','admin_stock_decide','admin_stock_delist','_unlock_orders',
             '_kb_wx','admin_kb_extras','admin_kb_extra','admin_kb_extra_cancel','banner_list','admin_banners','admin_banner_save','admin_banner_end',
+            'prefs_save','_admin_ids','_msg_unread','dm_list','dm_thread','dm_send','_sp_json','support_list','support_thread','support_open','support_send','support_close',
             'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then

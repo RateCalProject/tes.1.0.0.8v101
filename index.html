@@ -48,6 +48,16 @@ nav.tabs .wrap{display:flex;padding:0}
 nav.tabs button{flex:1;border:0;background:none;padding:8px 0 9px;font-size:11px;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:2px}
 nav.tabs button b{font-size:19px;line-height:1.1;font-weight:700}
 nav.tabs button.on{color:var(--accent)}
+nav.tabs button.tb-mid b{width:42px;height:42px;margin-top:-16px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:flex;align-items:center;justify-content:center;font-size:21px;border:3px solid var(--panel);box-shadow:0 2px 6px rgba(0,0,0,.18)}
+nav.tabs .tb-n{position:absolute;top:2px;left:calc(50% + 9px);min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--red);color:#fff;font-size:10px;font-style:normal;font-weight:800;line-height:17px;text-align:center}
+.hm-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+.hm-tile{border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:12px 4px 10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-weight:700;font-size:13px;text-align:center;min-height:86px;position:relative}
+.hm-tile .ic{font-size:26px;line-height:1.1}
+.hm-tile small{font-weight:400;font-size:10px;color:var(--muted)}
+.hm-tile .tb-n{position:absolute;top:6px;right:8px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--red);color:#fff;font-size:10px;font-style:normal;font-weight:800;line-height:17px}
+.dm-n{display:inline-block;min-width:18px;padding:0 5px;margin-left:6px;border-radius:9px;background:var(--red);color:#fff;font-size:11px;text-align:center;line-height:18px;vertical-align:middle;font-weight:800}
+.hm-ed .line{gap:6px}
+body{padding-bottom:calc(84px + env(safe-area-inset-bottom))}
 
 h2{font-size:18px;margin:18px 0 10px}
 h3{font-size:15px;margin:16px 0 8px}
@@ -467,20 +477,40 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <div id="tlList"></div>
     <button class="btn wide hidden" id="tlMore" style="margin-top:8px">もっと見る</button>
   </div>
-  <div class="card" data-sub="friend">
-    <h3 style="margin-top:0">フレンド申請</h3>
-    <div class="row"><input class="inp grow" id="frTo" inputmode="numeric" maxlength="6" placeholder="相手のID（5けた）" style="margin:0"><button class="btn main s" id="frSend">申請</button></div>
-    <p class="muted small" style="margin:6px 0 0">あなたのID：<b id="frMe" style="user-select:all">-----</b>（TLの「＋フレンド」からも申請できます）</p>
-  </div>
   <div class="card" data-sub="people">
     <h3 style="margin-top:0">人をさがす</h3>
     <input class="inp" id="ppQ" placeholder="ニックネームの一部か、ID（5けた）">
     <div id="ppList"></div>
     <p class="muted small" style="margin:8px 0 0">何も入れないと、フレンドが並びます。人のページでは、ニックネーム・ID・バッジ・社長をしている会社・書いた本・TLの投稿が見られます（所持金は見えません）。</p>
   </div>
+</section>
+
+<!-- メイン（下のメニューのまん中） -->
+<section id="vHome" class="view hidden">
+  <div class="card" data-sub="menu">
+    <div class="row"><h3 style="margin:0" class="grow">よく使うメニュー</h3><button class="btn s" id="hmEdit">編集</button></div>
+    <div class="hm-grid" id="hmGrid"></div>
+    <div class="hm-ed hidden" id="hmEd"></div>
+  </div>
+  <div class="card" data-sub="friend">
+    <h3 style="margin-top:0">フレンド申請</h3>
+    <div class="row"><input class="inp grow" id="frTo" inputmode="numeric" maxlength="6" placeholder="相手のID（5けた）" style="margin:0"><button class="btn main s" id="frSend">申請</button></div>
+    <p class="muted small" style="margin:6px 0 0">あなたのID：<b id="frMe" style="user-select:all">-----</b>（TLの「＋フレンド」や、人のページからも申請できます）</p>
+  </div>
   <div class="card" data-sub="friend"><h3 style="margin-top:0">届いた申請</h3><div id="frIn"></div></div>
   <div class="card" data-sub="friend"><h3 style="margin-top:0">フレンド</h3><div id="frList"></div></div>
   <div class="card" data-sub="friend"><h3 style="margin-top:0">返事待ち</h3><div id="frOut"></div></div>
+  <div class="card" data-sub="msg">
+    <div class="row"><h3 style="margin:0" class="grow">メッセージ</h3><button class="btn main s" id="dmNew">新しく送る</button></div>
+    <div id="dmList" style="margin-top:6px"></div>
+    <p class="muted small" style="margin:8px 0 0">フレンドと1対1でやりとりできます。ふたりだけが見られます。</p>
+  </div>
+  <div class="card" data-sub="msg">
+    <div class="row"><h3 style="margin:0" class="grow">運営への問い合わせ</h3><button class="btn s" id="spNew">問い合わせる</button></div>
+    <div id="spList" style="margin-top:6px"></div>
+    <p class="muted small" style="margin:8px 0 0">こまったこと・不具合・ルール違反の通報などを、運営（管理者）に送れます。あなたと管理者だけが見られます。</p>
+  </div>
+  <div class="card hidden" data-sub="msg" id="spInboxCard"><h3 style="margin-top:0">みんなからの問い合わせ（管理者）</h3><div id="spInbox"></div></div>
 </section>
 
 <!-- 仕事 -->
@@ -1078,29 +1108,30 @@ async function enter() {
   entered = true;
   try {
     const p = await call('ensure_profile');
-    ME = p; setBal(p.balance); $('#nick').value = p.nickname; setTaxDot(p.tax);
+    ME = p; ME.prefs = p.prefs || {}; setBal(p.balance); $('#nick').value = p.nickname; setTaxDot(p.tax);
     if (p.role && !MENU_OF.vMore[3].some(x => x[0] === 'admin')) MENU_OF.vMore[3].push(['admin', '管理']);
     if (p.role === 'admin' && !MENU_OF.vMore[3].some(x => x[0] === 'users')) MENU_OF.vMore[3].push(['users', '登録者']);   // 登録者の情報は管理者だけ
     if (p.role === 'admin') $('#auQ').placeholder = 'ID・ニックネーム・メールで検索'; else { const db = $('#auF [data-k="debt"]'); if (db) db.remove(); }
   } catch (e) { toast(e.message); show('vLogin'); entered = false; return; }
   if (location.hash.includes('access_token')) history.replaceState(null, '', location.pathname);
   $('#bal').classList.remove('hidden'); $('#tabs').classList.remove('hidden'); $('#bell').classList.remove('hidden'); bellPoll();
-  go(sessionStorageGet('view') || 'vInfo');
+  go(sessionStorageGet('view') || 'vHome');
 }
 function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
 const GAMES = ['vGameList', 'vRace', 'vSlot', 'vBj', 'vRou', 'vHilo', 'vLobby', 'vRoom'];
 const HIDDEN_SUBS = ['vLobby', 'vRoom'];
 // メインメニュー（左から）とサブメニュー
 const MENU = [
-  ['vInfo', '情報', 'i', [['today', '今日'], ['cur', '通貨'], ['pub', '広報・書籍'], ['mkt', '相場'], ['tl', 'TL'], ['friend', 'フレンド'], ['people', '人をさがす'], ['jack', '競馬億万長者']]],
+  ['vInfo', '情報', 'i', [['today', '今日'], ['cur', '通貨'], ['pub', '広報・書籍'], ['mkt', '相場'], ['tl', 'TL'], ['people', '人をさがす'], ['jack', '競馬億万長者']]],
   ['vWork', '仕事', '✎', [['jobs', '仕事をえらぶ'], ['stat', '給料'], ['corp', '企業ページ'], ['mywork', '勤め先']]],
   ['vGame', '遊戯', '♠', [['vGameList', '≡ 一覧'], ['vRace', '🏇 競馬'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
+  ['vHome', 'メイン', '◉', [['menu', 'メニュー'], ['friend', 'フレンド'], ['msg', '連絡']]],
   ['vCorp', '企業', '社', [['search', '会社検索'], ['review', '評価（500 X）'], ['pin', 'ピン留め'], ['desk', '相談'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所']]],
   ['vTax', '役所', '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['court', '訴え'], ['kokko', '国庫・番付']]],
   ['vMore', '設定', '⚙', [['prof', 'プロフィール'], ['hist', '記録'], ['rule', '規約']]],
 ];
 const MENU_OF = Object.fromEntries(MENU.map(m => [m[0], m]));
-$('#tabs .wrap').innerHTML = MENU.map(m => `<button data-v="${m[0]}"><b>${m[2]}</b>${m[1]}</button>`).join('');
+$('#tabs .wrap').innerHTML = MENU.map(m => `<button data-v="${m[0]}" class="${m[0] === 'vHome' ? 'tb-mid' : ''}"><b>${m[2]}</b>${m[1]}${m[0] === 'vHome' ? '<i class="tb-n hidden" id="msgN"></i>' : ''}</button>`).join('');
 function go(v, sub) {
   const main = GAMES.includes(v) ? 'vGame' : (MENU_OF[v] ? v : 'vInfo');
   const subs = MENU_OF[main][3].filter(x => x[0] !== 'vRace' || RACE_ON);
@@ -1115,10 +1146,11 @@ function go(v, sub) {
   $$(`#${main} [data-sub]`).forEach(el => el.classList.toggle('subhide', !el.dataset.sub.split(' ').includes(sub)));
   $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === main));
   $('#subNav').classList.remove('hidden');
-  $('#subNav').innerHTML = subs.map(x => `<button data-s="${x[0]}" class="${x[0] === sub ? 'on' : ''}">${x[1]}</button>`).join('');
+  $('#subNav').innerHTML = subs.map(x => `<button data-s="${x[0]}" class="${x[0] === sub ? 'on' : ''}">${x[1]}${main === 'vHome' && x[0] === 'msg' && MSGN ? `<span class="dm-n">${MSGN}</span>` : ''}</button>`).join('');
   $$('#subNav button').forEach(b => b.onclick = () => go(main, b.dataset.s));
   window.scrollTo(0, 0);
-  if (sec === 'vInfo') { if (sub === 'today') todayLoad(); if (sub === 'cur' || sub === 'jack') infoLoad(); if (sub === 'tl') tlLoad(true); if (sub === 'mkt') mktLoad(); if (sub === 'pub') pubLoad(); if (sub === 'friend') friendLoad(); if (sub === 'people') peopleLoad(); }
+  if (sec === 'vInfo') { if (sub === 'today') todayLoad(); if (sub === 'cur' || sub === 'jack') infoLoad(); if (sub === 'tl') tlLoad(true); if (sub === 'mkt') mktLoad(); if (sub === 'pub') pubLoad(); if (sub === 'people') peopleLoad(); }
+  if (sec === 'vHome') homeLoad(sub);
   if (sec === 'vWork') workLoad();
   if (sec === 'vRace') kbLoad();
   if (sec === 'vLobby') lobbyLoad();
@@ -3285,8 +3317,8 @@ function frRender(d) {
   const none = t => `<p class="muted small" style="margin:0">${t}</p>`;
   $('#frIn').innerHTML = d.incoming.map(x => `<div class="line"><span class="grow">${nameB(x.nickname, x.badge)}（ID ${x.uid}）<small>${x.at}</small></span>
     <button class="btn main s" data-ok="${x.uid}">受ける</button><button class="btn s" data-ng="${x.uid}">断る</button></div>`).join('') || none('ありません');
-  $('#frList').innerHTML = d.friends.map(x => `<div class="line"><span class="grow"><b class="plink" data-person="${x.uid}">${nameB(x.nickname, x.badge)}</b><small>ID ${x.uid}・${x.since}から</small></span>
-    <button class="btn s" data-send="${x.uid}">送金</button><button class="btn s" data-bill="${x.uid}">請求</button><button class="btn s" data-rm="${x.uid}">やめる</button></div>`).join('') || none('まだいません');
+  $('#frList').innerHTML = d.friends.map(x => `<div class="line" style="flex-wrap:wrap;row-gap:6px"><span class="grow" style="flex-basis:100%"><b class="plink" data-person="${x.uid}">${nameB(x.nickname, x.badge)}</b><small>ID ${x.uid}・${x.since}から</small></span>
+    <button class="btn main s" data-dm="${x.uid}">メッセージ</button><button class="btn s" data-send="${x.uid}">送金</button><button class="btn s" data-bill="${x.uid}">請求</button><button class="btn s" data-rm="${x.uid}">やめる</button></div>`).join('') || none('まだいません');
   $('#frOut').innerHTML = d.outgoing.map(x => `<div class="line"><span class="grow">${nameB(x.nickname, x.badge)}（ID ${x.uid}）<small>${x.at}</small></span>
     <button class="btn s" data-rm="${x.uid}">取り消す</button></div>`).join('') || none('ありません');
 }
@@ -3294,8 +3326,9 @@ $('#frSend').onclick = async () => {
   const to = $('#frTo').value.trim(); if (!/^\d{5,6}$/.test(to)) return toast('相手のID（5けた）を入れてください');
   try { frRender(await call('friend_request', { p_to: to })); $('#frTo').value = ''; toast('申請しました'); } catch (e) { toast(e.message); }
 };
-$('#vInfo').addEventListener('click', async ev => {
-  const b = ev.target.closest('#frIn [data-ok], #frIn [data-ng], #vInfo [data-rm], #frList [data-send], #frList [data-bill]'); if (!b) return;
+$('#vHome').addEventListener('click', async ev => {
+  const b = ev.target.closest('#frIn [data-ok], #frIn [data-ng], #frList [data-rm], #frOut [data-rm], #frList [data-send], #frList [data-bill], #frList [data-dm]'); if (!b) return;
+  if (b.dataset.dm) return dmOpen(b.dataset.dm);
   try {
     if (b.dataset.ok) { frRender(await call('friend_answer', { p_from: b.dataset.ok, p_ok: true })); toast('フレンドになりました'); }
     else if (b.dataset.ng) frRender(await call('friend_answer', { p_from: b.dataset.ng, p_ok: false }));
@@ -3304,6 +3337,205 @@ $('#vInfo').addEventListener('click', async ev => {
     else if (b.dataset.bill) { go('vTax', 'bill'); $('#bTo').value = b.dataset.bill; $('#bAmt').focus(); }
   } catch (e) { toast(e.message); }
 });
+
+/* =================================================================
+   メイン：よく使うメニュー・連絡（メッセージ／運営への問い合わせ）
+   ================================================================= */
+var MSGN = 0;
+function setMsgN(n) {
+  MSGN = n || 0;
+  const b = $('#msgN'); if (b) { b.textContent = MSGN > 99 ? '99+' : MSGN; b.classList.toggle('hidden', !MSGN); }
+  const sb2 = $('#subNav [data-s="msg"]');
+  if (sb2 && view === 'vHome') sb2.innerHTML = `連絡${MSGN ? `<span class="dm-n">${MSGN}</span>` : ''}`;
+  const tl = $('#hmGrid [data-hm="vHome:msg"] .tb-n'); if (tl) { tl.textContent = MSGN; tl.classList.toggle('hidden', !MSGN); }
+}
+function homeLoad(sub) {
+  if (sub === 'menu') hmRender();
+  if (sub === 'friend') friendLoad();
+  if (sub === 'msg') msgLoad();
+}
+// よく使うメニュー：えらべるもの（メニューのサブメニューと、対戦ゲーム）
+const HM_IC = { 'vInfo:today': '📰', 'vInfo:cur': '💱', 'vInfo:pub': '📚', 'vInfo:mkt': '📈', 'vInfo:tl': '💬', 'vInfo:people': '🔍', 'vInfo:jack': '🏆',
+  'vWork:jobs': '🛠️', 'vWork:stat': '💴', 'vWork:corp': '🏢', 'vWork:mywork': '👔', 'vCorp:search': '🔎', 'vCorp:review': '⭐', 'vCorp:pin': '📌',
+  'vCorp:desk': '🗨️', 'vCorp:job': '📋', 'vCorp:bank': '🏦', 'vCorp:order': '🛍️', 'vCorp:stock': '📊', 'vCorp:invest': '💹', 'vTax:tax': '🧾',
+  'vTax:xfer': '💸', 'vTax:bill': '📨', 'vTax:court': '⚖️', 'vTax:kokko': '🏛️', 'vMore:prof': '👤', 'vMore:hist': '📜', 'vMore:rule': '📖',
+  'vMore:admin': '🛡️', 'vMore:users': '🗂️', 'vHome:friend': '👥', 'vHome:msg': '✉️', 'vGame:vGameList': '🎮' };
+const HM_DEF = ['vGame:vRace', 'vInfo:today', 'vHome:msg', 'vWork:jobs', 'vTax:xfer', 'vCorp:invest'];
+function hmCatalog() {
+  const L = [];
+  for (const m of MENU) for (const x of m[3]) {
+    if (m[0] === 'vHome' && x[0] === 'menu') continue;
+    if (x[0] === 'vRace' && !RACE_ON) continue;
+    let label = x[1], ic = HM_IC[m[0] + ':' + x[0]] || m[2];
+    if (m[0] === 'vGame' && x[0] !== 'vGameList') { const i = label.indexOf(' '); ic = label.slice(0, i); label = label.slice(i + 1); }
+    if (x[0] === 'vGameList') label = 'ゲーム一覧';
+    L.push({ k: m[0] + ':' + x[0], label, ic, group: m[1] });
+  }
+  for (const g of GAME_LIST) if (!g[0].startsWith('v') && BOARD_GAMES[g[0]]) L.push({ k: 'g:' + g[0], label: g[2], ic: g[1], group: '遊戯' });
+  return L;
+}
+function hmList() {
+  const cat = hmCatalog(), keys = Array.isArray((ME.prefs || {}).shortcuts) ? ME.prefs.shortcuts : HM_DEF;
+  return keys.map(k => cat.find(c => c.k === k)).filter(Boolean);
+}
+function hmGo(k) {
+  const [a, b] = k.split(':');
+  if (a === 'g') { LB.game = b; return go('vLobby'); }
+  go(a, b);
+}
+function hmRender() {
+  const L = hmList();
+  $('#hmGrid').innerHTML = L.map(c => `<button class="hm-tile" data-hm="${c.k}"><span class="ic">${c.ic}</span>${esc(c.label)}<small>${esc(c.group)}</small>
+      ${c.k === 'vHome:msg' ? `<i class="tb-n ${MSGN ? '' : 'hidden'}">${MSGN}</i>` : ''}</button>`).join('')
+    || '<p class="muted small" style="grid-column:1/-1;margin:0">「編集」から、よく使うメニューを足せます。</p>';
+  $$('#hmGrid [data-hm]').forEach(b => b.onclick = () => hmGo(b.dataset.hm));
+}
+let HM_EDIT = null;
+$('#hmEdit').onclick = () => {
+  if (HM_EDIT) { HM_EDIT = null; $('#hmEd').classList.add('hidden'); $('#hmGrid').classList.remove('hidden'); $('#hmEdit').textContent = '編集'; return; }
+  HM_EDIT = hmList().map(c => c.k);
+  $('#hmGrid').classList.add('hidden'); $('#hmEd').classList.remove('hidden'); $('#hmEdit').textContent = 'やめる';
+  hmEdRender();
+};
+function hmEdRender() {
+  const cat = hmCatalog(), sel = HM_EDIT, groups = [...new Set(cat.map(c => c.group))];
+  $('#hmEd').innerHTML = `<h4 style="margin:10px 0 4px">ならべる順（${sel.length} / 16）</h4>
+    ${sel.map((k, i) => { const c = cat.find(x => x.k === k); return c ? `<div class="line"><span class="grow">${c.ic} ${esc(c.label)}<small>${esc(c.group)}</small></span>
+      <button class="btn s" data-up="${i}" ${i ? '' : 'disabled'}>↑</button><button class="btn s" data-dn="${i}" ${i < sel.length - 1 ? '' : 'disabled'}>↓</button><button class="btn s" data-hmrm="${i}">✕</button></div>` : ''; }).join('')
+      || '<p class="muted small" style="margin:0">まだありません</p>'}
+    <h4 style="margin:12px 0 4px">足せるもの</h4>
+    ${groups.map(g => `<p class="small muted" style="margin:8px 0 2px">${esc(g)}</p>` + cat.filter(c => c.group === g && !sel.includes(c.k)).map(c =>
+      `<button class="btn s" data-add="${c.k}" style="margin:0 4px 4px 0">＋ ${c.ic} ${esc(c.label)}</button>`).join('')).join('')}
+    <div class="row" style="margin-top:12px"><button class="btn main" id="hmSave">保存</button><button class="btn s" id="hmReset" style="margin-left:auto">はじめの並びにもどす</button></div>
+    <p class="muted small" style="margin:6px 0 0">16個まで。保存すると、ほかの端末でも同じになります。</p>`;
+  const mv = (i, j) => { const t = sel[i]; sel[i] = sel[j]; sel[j] = t; hmEdRender(); };
+  $$('#hmEd [data-up]').forEach(b => b.onclick = () => mv(Number(b.dataset.up), Number(b.dataset.up) - 1));
+  $$('#hmEd [data-dn]').forEach(b => b.onclick = () => mv(Number(b.dataset.dn), Number(b.dataset.dn) + 1));
+  $$('#hmEd [data-hmrm]').forEach(b => b.onclick = () => { sel.splice(Number(b.dataset.hmrm), 1); hmEdRender(); });
+  $$('#hmEd [data-add]').forEach(b => b.onclick = () => { if (sel.length >= 16) return toast('16個までです'); sel.push(b.dataset.add); hmEdRender(); });
+  $('#hmReset').onclick = () => { HM_EDIT = [...HM_DEF]; hmEdRender(); };
+  $('#hmSave').onclick = async () => {
+    try {
+      ME.prefs = await call('prefs_save', { p_prefs: { shortcuts: sel } });
+      HM_EDIT = null; $('#hmEd').classList.add('hidden'); $('#hmGrid').classList.remove('hidden'); $('#hmEdit').textContent = '編集';
+      hmRender(); toast('保存しました');
+    } catch (e) { toast(e.message); }
+  };
+}
+// 連絡：一覧
+function msgLoad() { dmListLoad(); spListLoad(); }
+async function dmListLoad() {
+  let d; try { d = await call('dm_list'); } catch (e) { return toast(e.message); }
+  $('#dmList').innerHTML = d.threads.length ? d.threads.map(t => `<div class="co-row" data-dmu="${t.uid}"><span class="nm"><b>${nameB(t.nickname, t.badge)}${t.unread ? `<span class="dm-n">${t.unread}</span>` : ''}</b>
+      <small>${t.last_mine ? 'あなた：' : ''}${esc(t.last || '')}</small><small>${t.at} ${t.time}${t.friend ? '' : '・いまはフレンドではありません'}</small></span><span style="color:var(--muted);font-size:20px">›</span></div>`).join('')
+    : '<p class="muted small" style="margin:0">まだやりとりはありません。「新しく送る」か、フレンドの「メッセージ」から始められます。</p>';
+  $$('#dmList [data-dmu]').forEach(el => el.onclick = () => dmOpen(el.dataset.dmu));
+}
+async function spListLoad() {
+  let d; try { d = await call('support_list'); } catch (e) { return toast(e.message); }
+  const row = (t, staff) => `<div class="co-row" data-spt="${t.id}"><span class="nm"><b>${esc(t.subject)}${t.unread ? '<span class="dm-n">!</span>' : ''}</b>
+      <small>${staff ? `${nameB(t.user.nickname, t.user.badge)}（ID ${t.user.uid}）・` : ''}${esc(t.last || '')}</small>
+      <small>${t.status === 'open' ? '受付中' : '解決済み'}・${t.at} ${t.time}・${t.n}通</small></span><span style="color:var(--muted);font-size:20px">›</span></div>`;
+  $('#spList').innerHTML = d.threads.length ? d.threads.map(t => row(t, false)).join('') : '<p class="muted small" style="margin:0">まだ問い合わせはありません</p>';
+  $('#spInboxCard').classList.toggle('hidden', !d.admin);
+  if (d.admin) $('#spInbox').innerHTML = d.inbox.length ? d.inbox.map(t => row(t, true)).join('') : '<p class="muted small" style="margin:0">問い合わせはありません</p>';
+  $$('#vHome [data-spt]').forEach(el => el.onclick = () => spOpen(Number(el.dataset.spt)));
+}
+// やりとりの画面（下から出るシート）。閉じたら一覧と数を新しくする
+const MG = { timer: null, key: null };
+function mgSheet(html) {
+  $$('.modal').forEach(m => m.remove()); clearTimeout(MG.timer); MG.key = null;
+  const m = document.createElement('div'); m.className = 'modal';
+  m.innerHTML = `<div class="sheet">${html}</div>`;
+  m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) { m.remove(); mgAfter(); } };
+  document.body.appendChild(m);
+  return m;
+}
+function mgAfter() {
+  clearTimeout(MG.timer); MG.key = null;
+  if (view === 'vHome' && sessionStorageGet('sub:vHome') === 'msg') msgLoad();
+  bellPoll();
+}
+// 一定時間ごとに新しいメッセージを見る（開いているあいだだけ）
+function mgPoll(m, key, fetch, same, redraw) {
+  MG.key = key;
+  const tick = async () => {
+    if (MG.key !== key || !document.body.contains(m)) return;
+    if (!document.hidden) { try { const n = await fetch(); if (MG.key !== key || !document.body.contains(m)) return; if (!same(n)) redraw(n); } catch (e) {} }
+    MG.timer = setTimeout(tick, 5000);
+  };
+  MG.timer = setTimeout(tick, 5000);
+}
+$('#dmNew').onclick = async () => {
+  let d; try { d = await call('dm_list'); } catch (e) { return toast(e.message); }
+  const m = mgSheet(`<div class="row"><b style="font-size:19px" class="grow">だれに送りますか？</b><button class="btn s" data-x>とじる</button></div>
+    <div style="margin-top:6px">${d.friends.length ? d.friends.map(f => `<div class="line"><span class="grow">${nameB(f.nickname, f.badge)}<small>ID ${f.uid}</small></span><button class="btn main s" data-to="${f.uid}">えらぶ</button></div>`).join('')
+      : '<p class="muted small">メッセージを送れるのはフレンドだけです。まず「フレンド」から申請してみましょう。</p>'}</div>`);
+  m.querySelectorAll('[data-to]').forEach(b => b.onclick = () => dmOpen(b.dataset.to));
+};
+async function dmOpen(uid) { try { dmShow(await call('dm_thread', { p_uid: uid })); } catch (e) { toast(e.message); } }
+function dmShow(t, draft) {
+  const msgs = t => t.msgs.map(x => `<div class="dk-m ${x.mine ? 'me' : ''}">${esc(x.body)}<small>${x.mine ? 'あなた' : esc(t.nickname)}・${x.at} ${x.time}</small></div>`).join('')
+    || '<p class="muted small" style="margin:0">まだメッセージはありません</p>';
+  const m = mgSheet(`<div class="row"><b style="font-size:18px" class="grow">${nameB(t.nickname, t.badge)}</b><button class="btn s" data-x>とじる</button></div>
+    <p class="small muted" style="margin:4px 0">ID ${t.uid}・ふたりだけのメッセージ</p>
+    <div class="dk-msgs">${msgs(t)}</div>
+    ${t.friend ? `<textarea class="inp" id="dmMsg" rows="2" maxlength="1000" placeholder="メッセージを書く"></textarea><button class="btn main" id="dmSend">送る</button>`
+      : '<p class="muted small" style="margin:6px 0 0">いまはフレンドではないので送れません（前のメッセージは読めます）。</p>'}`);
+  const box = m.querySelector('.dk-msgs'), tx = m.querySelector('#dmMsg');
+  if (tx && draft) tx.value = draft;
+  m.querySelector('.sheet').scrollTop = box.scrollHeight;
+  const send = m.querySelector('#dmSend');
+  if (send) send.onclick = async () => {
+    const v = tx.value; if (!v.trim()) return toast('メッセージを書いてください');
+    send.disabled = true;
+    try { dmShow(await call('dm_send', { p_uid: t.uid, p_body: v })); } catch (e) { toast(e.message); send.disabled = false; }
+  };
+  mgPoll(m, 'dm:' + t.uid, () => call('dm_thread', { p_uid: t.uid }), n => n.msgs.length === t.msgs.length && n.friend === t.friend,
+    n => { if (n.friend !== t.friend) return dmShow(n, tx ? tx.value : ''); t = n; box.innerHTML = msgs(n); box.lastElementChild && box.lastElementChild.scrollIntoView({ block: 'nearest' }); });
+}
+$('#spNew').onclick = () => {
+  const m = mgSheet(`<div class="row"><b style="font-size:19px" class="grow">運営に問い合わせる</b><button class="btn s" data-x>とじる</button></div>
+    <input class="inp" id="spSub" maxlength="40" placeholder="件名（例：送金ができない）" style="margin-top:8px">
+    <textarea class="inp" id="spBody" rows="6" maxlength="2000" placeholder="こまっていること・くわしい内容（いつ・どの画面で・なにが起きたか）"></textarea>
+    <button class="btn main wide" id="spGo">送る</button>
+    <p class="muted small" style="margin:8px 0 0">あなたと管理者だけが見られます。返事が来ると通知が届きます。受付中の問い合わせは3件まで・新しいものは1日5件までです。</p>`);
+  m.querySelector('#spGo').onclick = async ev => {
+    ev.target.disabled = true;
+    try { const t = await call('support_open', { p_subject: m.querySelector('#spSub').value, p_body: m.querySelector('#spBody').value }); toast('問い合わせを送りました'); spShow(t); }
+    catch (e) { toast(e.message); ev.target.disabled = false; }
+  };
+};
+async function spOpen(id) { try { spShow(await call('support_thread', { p_id: id })); } catch (e) { toast(e.message); } }
+function spShow(t, draft) {
+  const staff = t.side === 'staff';
+  const who = x => x.staff ? '運営' + (staff && x.who ? `（${esc(x.who)}）` : '') : staff ? esc(t.user.nickname) : 'あなた';
+  const msgs = t => t.msgs.map(x => `<div class="dk-m ${x.staff === staff ? 'me' : ''}">${esc(x.body)}<small>${who(x)}・${x.at} ${x.time}</small></div>`).join('');
+  const m = mgSheet(`<div class="row"><b style="font-size:18px;word-break:break-word" class="grow">${esc(t.subject)}</b><button class="btn s" data-x>とじる</button></div>
+    <p class="small muted" style="margin:4px 0">${staff ? `${nameB(t.user.nickname, t.user.badge)}（ID ${t.user.uid}）からの問い合わせ` : '運営への問い合わせ'}
+      <span class="tag ${t.status === 'open' ? 'good' : ''}">${t.status === 'open' ? '受付中' : '解決済み'}</span></p>
+    <div class="dk-msgs">${msgs(t)}</div>
+    ${t.can_send ? `<textarea class="inp" id="spMsg" rows="3" maxlength="2000" placeholder="${staff ? '運営として返事を書く' : 'つづきを書く'}"></textarea>
+      <div class="row"><button class="btn main" id="spSend">送る</button><button class="btn s" id="spClose" style="margin-left:auto">解決済みにする</button></div>
+      ${staff ? '<p class="muted small" style="margin:6px 0 0">返事は「運営」の名前で届きます（あなたの名前は出ません）。</p>' : ''}`
+      : `<p class="muted small" style="margin:6px 0 0">この問い合わせは${t.closed_by === 'staff' ? (staff ? '運営が' : '運営が') : t.closed_by === 'user' ? (staff ? '本人が' : 'あなたが') : ''}解決済みにしました。${staff ? '' : 'つづきは、新しく問い合わせてください。'}</p>`}`);
+  const box = m.querySelector('.dk-msgs'), tx = m.querySelector('#spMsg');
+  if (tx && draft) tx.value = draft;
+  m.querySelector('.sheet').scrollTop = box.scrollHeight;
+  const send = m.querySelector('#spSend');
+  if (send) send.onclick = async () => {
+    const v = tx.value; if (!v.trim()) return toast('内容を書いてください');
+    send.disabled = true;
+    try { spShow(await call('support_send', { p_id: t.id, p_body: v })); } catch (e) { toast(e.message); send.disabled = false; }
+  };
+  const clo = m.querySelector('#spClose');
+  if (clo) clo.onclick = async () => {
+    if (!confirm('この問い合わせを「解決済み」にしますか？（そのあとは読むだけになります）')) return;
+    try { spShow(await call('support_close', { p_id: t.id })); toast('解決済みにしました'); } catch (e) { toast(e.message); }
+  };
+  mgPoll(m, 'sp:' + t.id, () => call('support_thread', { p_id: t.id }), n => n.msgs.length === t.msgs.length && n.status === t.status,
+    n => { if (n.status !== t.status) return spShow(n, tx ? tx.value : ''); t = n; box.innerHTML = msgs(n); box.lastElementChild && box.lastElementChild.scrollIntoView({ block: 'nearest' }); });
+}
 
 /* =================================================================
    相場・取引所（AiliNaX ⇄ Cièlani-Alpićsk）
@@ -3416,7 +3648,42 @@ async function stkListLoad() {
   } catch (e) { toast(e.message); }
 }
 document.addEventListener('click', ev => { const r = ev.target.closest('[data-stk]'); if (!r) return; ev.stopPropagation(); stkOpen(r.dataset.stk); }, true);
-const STK = { cid: null, d: null, side: 'buy', timer: null };
+const STK = { cid: null, d: null, side: 'buy', timer: null, span: 'recent', ch: null };
+const STK_SPANS = [['recent', '最近'], ['1d', '1日'], ['1w', '1週間'], ['1m', '1か月'], ['all', '全期間']];
+// 株価のグラフ（最近＝最近の取引ごと／ほか＝時間ごとにまとめたもの）
+async function stkChart(force) {
+  const box = $('#stkChart'); if (!box || !STK.d) return;
+  const mk = STK.d.market;
+  $('#stkSpan').classList.toggle('hidden', mk.last == null);
+  if (mk.last == null) { box.innerHTML = ''; return; }
+  if (STK.span === 'recent') { box.innerHTML = fxChart(mk.chart, 'X'); return; }
+  const key = STK.cid + ':' + STK.span;
+  if (!force && STK.ch && STK.ch.key === key && Date.now() - STK.ch.at < 60000) return;
+  if (!STK.ch || STK.ch.key !== key) box.innerHTML = '<p class="muted small" style="margin:8px 0 0">読みこみ中…</p>';
+  try {
+    const d = await call('stock_chart', { p_cid: STK.cid, p_span: STK.span });
+    STK.ch = { key, at: Date.now() };
+    if ($('#stkChart') && STK.cid + ':' + STK.span === key) $('#stkChart').innerHTML = tsChart(d, 'X');
+  } catch (e) { box.innerHTML = `<p class="muted small" style="margin:8px 0 0">${esc(e.message)}</p>`; }
+}
+// 時間を横軸にしたグラフ（終値の線と、高値〜安値の幅）
+function tsChart(d, unit) {
+  const P = d.points;
+  if (P.length < 2) return '<p class="muted small" style="margin:8px 0 0">この期間の取引は、まだ少ししかありません</p>';
+  const W = 320, H = 120, x0 = d.from_ms, sp = (d.to_ms - x0) || 1;
+  const hi = Math.max(...P.map(p => p.hi)), lo = Math.min(...P.map(p => p.lo)), vs = hi - lo || 1;
+  const X = t => ((t - x0) / sp * (W - 8) + 4).toFixed(1), Y = v => (H - 6 - (v - lo) / vs * (H - 22)).toFixed(1);
+  const band = P.map(p => p.hi > p.lo ? `<line x1="${X(p.ts)}" x2="${X(p.ts)}" y1="${Y(p.hi)}" y2="${Y(p.lo)}" stroke="var(--accent)" stroke-opacity=".28" stroke-width="2.4"/>` : '').join('');
+  const day = ms => new Date(ms).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric', timeZone: 'Asia/Tokyo' });
+  const f = ms => d.span === '1d' ? `${day(ms)} ${hhmm(ms)}` : day(ms);
+  const a = P[0].price, b = P[P.length - 1].price, ch = (b - a) / a * 100;
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;margin-top:8px">${band}
+      <polyline points="${P.map(p => `${X(p.ts)},${Y(p.price)}`).join(' ')}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/></svg>
+    <div class="row muted small" style="justify-content:space-between"><span>${f(x0)}</span><span>${f(d.to_ms)}</span></div>
+    <div class="row small" style="justify-content:space-between"><span style="color:${ch >= 0 ? 'var(--up)' : 'var(--down)'}">この期間 ${ch >= 0 ? '+' : ''}${ch.toFixed(1)}%</span>
+      <span class="muted">高 ${fmt(hi)}・安 ${fmt(lo)} ${unit}</span></div>
+    ${d.span === 'all' && d.first ? `<p class="muted small" style="margin:2px 0 0">${d.first}の最初の取引から（株式分割の前の値段は、分割にあわせて直してあります）</p>` : ''}`;
+}
 async function stkOpen(cid) {
   let d; try { d = await call('stock_state', { p_cid: cid }); } catch (e) { return toast(e.message); }
   $$('.modal').forEach(m => m.remove()); clearTimeout(STK.timer);
@@ -3426,6 +3693,8 @@ async function stkOpen(cid) {
     <div class="row"><b style="font-size:19px" class="grow">${esc(d.name)}${d.ai ? AITAG : ''}<span class="kindtag">株式</span></b><button class="btn s" data-x>とじる</button></div>
     <p class="small muted" style="margin:2px 0 6px"><a class="men" data-stkco>会社のページ</a>・風の芽証券取引所</p>
     <div id="stkTop"></div>
+    <div class="seg sm hidden" id="stkSpan" style="margin-top:8px">${STK_SPANS.map(([k, t]) => `<button data-k="${k}" class="${k === STK.span ? 'on' : ''}">${t}</button>`).join('')}</div>
+    <div id="stkChart"></div>
     <h4 style="margin:12px 0 4px">注文する</h4>
     <div id="stkNote"></div>
     <div class="seg" id="stkSide" style="margin-bottom:6px"><button data-k="buy" class="on">買う</button><button data-k="sell">売る</button></div>
@@ -3441,6 +3710,7 @@ async function stkOpen(cid) {
   m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) { m.remove(); clearTimeout(STK.timer); STK.cid = null; } };
   document.body.appendChild(m);
   m.querySelector('[data-stkco]').onclick = () => corpOpen(STK.cid);
+  m.querySelectorAll('#stkSpan button').forEach(b => b.onclick = () => { STK.span = b.dataset.k; m.querySelectorAll('#stkSpan button').forEach(x => x.classList.toggle('on', x === b)); stkChart(true); });
   m.querySelectorAll('#stkSide button').forEach(b => b.onclick = () => { STK.side = b.dataset.k; m.querySelectorAll('#stkSide button').forEach(x => x.classList.toggle('on', x === b)); stkPrev(); });
   m.querySelector('#stkPrice').oninput = stkPrev; m.querySelector('#stkQty').oninput = stkPrev;
   m.querySelector('#stkGo').onclick = async () => {
@@ -3484,7 +3754,8 @@ function stkRender() {
       <span class="muted">手数料</span><b>${fmtP(fee)}%</b>
       <span>あなたの持ち株</span><b>${fmt(d.shares_mine)}株${d.on_sale ? `（＋売り注文中 ${fmt(d.on_sale)}）` : ''}</b>
       <span>あなたの AiliNaX</span><b>${fmt(d.balance)} X</b></div>
-    ${mk.last == null ? '<p class="muted small" style="margin:6px 0 0">まだ取引がありません</p>' : fxChart(mk.chart, 'X')}`;
+    ${mk.last == null ? '<p class="muted small" style="margin:6px 0 0">まだ取引がありません</p>' : ''}`;
+  stkChart();
   $('#stkNote').innerHTML = !d.listed ? '<p class="notice small" style="margin:0 0 6px">この会社は上場していないので、売り買いできません。</p>'
     : !d.can_trade ? `<p class="notice small" style="margin:0 0 6px">いまは売買が止まっています（${d.status === 'suspended' ? '会社が休業中' : '取引所が休業中'}）。取り消しはできます。</p>`
     : d.ok_from ? `<p class="notice small" style="margin:0 0 6px">登録から7日たつまで売り買いできません（${d.ok_from}から）。</p>`
@@ -4492,7 +4763,7 @@ async function bellPoll() {
   bnLoad();
   if (!document.hidden || ntLocal('ntPush') === '1') {
     try {
-      const d = await call('notice_count'); setBell(d.unread);
+      const d = await call('notice_count'); setBell(d.unread); setMsgN((d.msg || 0) + (d.staff || 0));
       const seen = Number(ntLocal('ntLatest') || 0);
       if (d.latest && d.latest > seen) {
         if (seen && document.hidden && ntLocal('ntPush') === '1' && 'Notification' in window && Notification.permission === 'granted') {
@@ -4508,7 +4779,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && en
 // 【カテゴリ】をとった本文と、カテゴリ
 const noticeTag = b => { const m = /^【([^】]+)】/.exec(b || ''); return m ? m[1].replace(/\s*#\d+$/, '') : /届きました|入りました|返しました/.test(b) ? 'お金' : 'お知らせ'; };
 const noticeText = b => (b || '').replace(/^【[^】]+】/, '');
-const NT_GO = { フレンド: ['vInfo', 'friend'], メンション: ['vInfo', 'tl'], 請求: ['vTax', 'bill'], 訴え: ['vTax', 'court'], 税務調査: ['vTax', 'tax'], 決定: ['vTax', 'tax'],
+const NT_GO = { フレンド: ['vHome', 'friend'], メッセージ: ['vHome', 'msg'], 問い合わせ: ['vHome', 'msg'], メンション: ['vInfo', 'tl'], 請求: ['vTax', 'bill'], 訴え: ['vTax', 'court'], 税務調査: ['vTax', 'tax'], 決定: ['vTax', 'tax'],
   没収: ['vTax', 'tax'], 企業申請: ['vWork', 'corp'], 社長交代: ['vWork', 'corp'], 命令: ['vWork', 'corp'], 応募: ['vWork', 'corp'], 口座の申込: ['vWork', 'corp'],
   借入の申込: ['vWork', 'corp'], 返済: ['vWork', 'corp'], 採用: ['vWork', 'mywork'], 株: ['vCorp', 'stock'], 株の譲渡: ['vCorp', 'stock'], 配当: ['vCorp', 'stock'],
   口座: ['vCorp', 'bank'], 借入: ['vCorp', 'bank'], 交換: ['vCorp', 'invest'], 本: ['vInfo', 'pub'], '広報・書籍': ['vInfo', 'pub'], 対戦: ['vGame', 'vGameList'],
@@ -4519,6 +4790,8 @@ function noticeGo(n) {
   if (L.go === 'room' || (tag === '対戦' && /部屋 #(\d+)/.test(b))) { RM.id = Number(L.room || /部屋 #(\d+)/.exec(b)[1]); return go('vRoom'); }
   if (L.go === 'corp' && L.cid) return corpOpen(L.cid);
   if (L.go === 'desk' && L.t) return deskOpen(Number(L.t));
+  if (L.go === 'dm' && L.u) return dmOpen(L.u);
+  if (L.go === 'sp' && L.t) return spOpen(Number(L.t));
   if (L.go === 'stock' && L.cid) return stkOpen(L.cid);
   if (L.go === 'mywork') return go('vWork', 'mywork');
   if (L.go === 'tl') { tlScope = 'mention'; $$('#tlScope button').forEach(x => x.classList.toggle('on', x.dataset.k === 'mention')); return go('vInfo', 'tl'); }
@@ -4614,7 +4887,7 @@ async function personOpen(uid) {
   m.innerHTML = `<div class="sheet"><div class="row"><b style="font-size:20px">${nameB(d.nickname, d.badge)}</b><button class="btn s" style="margin-left:auto" data-x>とじる</button></div>
     <p class="muted small" style="margin:4px 0">ID <b style="user-select:all">${d.uid}</b>・${d.since}から${d.me ? '・あなたです' : ''} ${friendTag(d.friend)}</p>
     ${d.me ? '' : `<div class="row" style="margin:8px 0;flex-wrap:wrap;gap:6px">
-      ${d.friend === 'ok' ? '' : d.friend === 'out' ? '' : d.friend === 'in' ? '<button class="btn main s" data-pa="ok">フレンド申請を受ける</button>' : '<button class="btn main s" data-pa="fr">フレンド申請</button>'}
+      ${d.friend === 'ok' ? '<button class="btn main s" data-pa="dm">メッセージ</button>' : d.friend === 'out' ? '' : d.friend === 'in' ? '<button class="btn main s" data-pa="ok">フレンド申請を受ける</button>' : '<button class="btn main s" data-pa="fr">フレンド申請</button>'}
       <button class="btn s" data-pa="men">メンションする</button><button class="btn s" data-pa="send">送金</button><button class="btn s" data-pa="bill">請求</button></div>`}
     <h3>社長をしている会社</h3>${d.companies.map(coRow).join('') || '<p class="muted small" style="margin:0">ありません</p>'}
     <h3>書いた本</h3>${d.books.map(b => `<div class="co-row" data-pubopen="${b.id}"><span class="nm"><b>${esc(b.title)}</b><small>${b.price ? fmt(b.price) + ' X' : '無料'}・章 ${b.items}</small></span><span style="color:var(--muted);font-size:20px">›</span></div>`).join('') || '<p class="muted small" style="margin:0">ありません</p>'}
@@ -4628,6 +4901,7 @@ async function personOpen(uid) {
     try {
       if (a === 'fr') { await call('friend_request', { p_to: d.uid }); toast('フレンド申請しました'); personOpen(d.uid); }
       if (a === 'ok') { await call('friend_answer', { p_from: d.uid, p_ok: true }); toast('フレンドになりました'); personOpen(d.uid); }
+      if (a === 'dm') { m.remove(); return dmOpen(d.uid); }
       if (a === 'men') { m.remove(); go('vInfo', 'tl'); const t = $('#tlBody'); t.value = `@${d.uid} ` + t.value; t.focus(); t.dispatchEvent(new Event('input')); }
       if (a === 'send') { m.remove(); go('vTax', 'xfer'); $('#xTo').value = d.uid; $('#xAmt').focus(); xferInput(); }
       if (a === 'bill') { m.remove(); go('vTax', 'bill'); $('#bTo').value = d.uid; $('#bAmt').focus(); }
