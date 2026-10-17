@@ -39,6 +39,7 @@ body{min-height:100vh;padding-bottom:calc(64px + env(safe-area-inset-bottom))}
 button{font:inherit;color:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent}
 input{font:inherit;color:inherit}
 .wrap{max-width:760px;margin:0 auto;padding:0 16px}
+.lg-lang{margin:0 auto 14px;width:max-content}
 header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
 header .wrap{display:flex;align-items:center;gap:12px;height:52px}
 .bnbar{border-bottom:1px solid var(--line)}
@@ -612,6 +613,8 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     var F = { famicom: 'DotGothic16', wa: 'Shippori+Mincho:wght@400;700;800', pastel: 'M+PLUS+Rounded+1c:wght@400;700;800' };
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
+  /* 言語：English をえらんだ端末では、英語の辞書（i18n/en.js）を先に読みこむ */
+  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=910d0a86"><\/script>'); } } catch (e) {}
 })();
 </script>
 </head>
@@ -802,6 +805,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 
 <!-- ログイン -->
 <section id="vLogin" class="center hidden">
+  <div class="seg sm lg-lang" id="lgLang" translate="no"><button type="button" data-k="ja">日本語</button><button type="button" data-k="en">English</button></div>
   <h1>風の芽経済組</h1>
   <p class="notice">架空通貨 <b>AiliNaX</b>（単位 X）で、働く・会社をつくる・競馬やカジノで遊ぶ経済ゲームです。<br>はじめてログインした人に 1,000 X を配ります（1回だけ）。</p>
   <div class="mailform hidden" id="oauthBox"></div>
@@ -1049,6 +1053,11 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <p class="muted small" style="margin:8px 0 0">色の見分けがむずかしい人のための設定です。ワンカードの色に記号（●赤・★黄・▲緑・■青）がつき、ルーレットの赤（◆）と麻雀の赤ドラ（赤）にも印がつきます。「見分けやすい色」では、カードの色と、株の上がり下がり・勝ち負けの色も見分けやすい組み合わせ（青とオレンジなど）になります。</p>
   </div>
   <div class="card" data-sub="style">
+    <h3 style="margin-top:0">言語 / Language</h3>
+    <div class="seg sm" id="langSeg" translate="no"><button data-k="ja">日本語</button><button data-k="en">English</button></div>
+    <p class="muted small" style="margin:6px 0 0">画面の言葉を英語にできます。みんなの投稿・名前・ニュースなどは、書かれたままです。この端末と、ログインしているアカウントに保存します。</p>
+  </div>
+  <div class="card" data-sub="style" id="numFCard">
     <h3 style="margin-top:0">数字の表示</h3>
     <div class="seg sm" id="numF"><button data-k="comma">1,234,567</button><button data-k="jp">123万4567</button><button data-k="four">123&#8239;4567</button></div>
     <p class="muted small" id="numFEx" style="margin:6px 0 0"></p>
@@ -1121,7 +1130,16 @@ const CFG = window.AILINAX_CONFIG || {};
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 // 数字の表示（設定 → プロフィール でえらぶ。この端末に保存）：comma 1,234,567／jp 123万4567（日本式）／four 123 4567（4けたごとに細い空白）
-const NUMF = (() => { try { const v = localStorage.getItem('numfmt'); return ['comma', 'jp', 'four'].includes(v) ? v : 'comma'; } catch (e) { return 'comma'; } })();
+// 言語（ja／en）。英語の画面では、文字は i18n/en.js が英語にする。キャンバスなど画面の外の文字は tr() を通す
+const LANG = window.I18N ? 'en' : 'ja';
+const tr = s => window.I18N ? I18N.t(s) : s;
+async function setLang(l) {
+  if (l === LANG) return;
+  try { localStorage.setItem('lang', l); } catch (e) { return toast('この端末では保存できませんでした'); }
+  if (entered) { try { await call('prefs_save', { p_prefs: { lang: l } }); } catch (e) {} }
+  location.reload();
+}
+const NUMF = LANG === 'en' ? 'comma' : (() => { try { const v = localStorage.getItem('numfmt'); return ['comma', 'jp', 'four'].includes(v) ? v : 'comma'; } catch (e) { return 'comma'; } })();
 function numStr(n, fd) {
   const x = Number(n || 0);
   if (NUMF === 'comma' || !isFinite(x)) return x.toLocaleString('ja-JP', { maximumFractionDigits: fd });
@@ -1188,6 +1206,9 @@ function applyLook(theme, cvd) {
 function lookFromServer() {
   const p = ME.prefs || {};
   applyLook(p.theme || lookLocal('theme') || 'std', p.cvd || lookLocal('cvd') || 'off');
+  const ll = lookLocal('lang');
+  if (!ll && p.lang && p.lang !== LANG) { try { localStorage.setItem('lang', p.lang); if (localStorage.getItem('lang') === p.lang) location.reload(); } catch (e) {} }
+  else if (ll && ll !== (p.lang || 'ja')) call('prefs_save', { p_prefs: { lang: ll } }).then(x => { ME.prefs = x; }).catch(() => {});
 }
 async function lookSave(k, v) {
   const theme = k === 'theme' ? v : (document.documentElement.dataset.theme || 'std'), cvd = k === 'cvd' ? v : (document.documentElement.dataset.cvd || 'off');
@@ -1204,7 +1225,9 @@ function styleLoad() {
   $('#cvdEx').innerHTML = [0, 26, 52, 78].map(c => ocCard(c)).join('') + `<span class="small muted" style="margin-left:6px">← ワンカードの色（赤・黄・緑・青）</span>`;
 }
 
-/* ---------------- 数字の表示（設定） ---------------- */
+/* ---------------- 言語・数字の表示（設定） ---------------- */
+$$('#langSeg button, #lgLang button').forEach(b => { b.classList.toggle('on', b.dataset.k === LANG); b.onclick = () => setLang(b.dataset.k); });
+if (LANG === 'en') $('#numFCard').classList.add('hidden');
 $$('#numF button').forEach(b => {
   b.classList.toggle('on', b.dataset.k === NUMF);
   b.onclick = () => { if (b.dataset.k === NUMF) return; try { localStorage.setItem('numfmt', b.dataset.k); } catch (e) { return toast('この端末では保存できませんでした'); } location.reload(); };
@@ -1356,8 +1379,8 @@ const MENU = [
   ['vWork', '仕事', '✎', [['jobs', '仕事をえらぶ'], ['stat', '給料'], ['corp', '企業ページ'], ['mywork', '勤め先']]],
   ['vGame', '遊戯', '♠', [['vGameList', '≡ 一覧'], ['vRace', '🏇 競馬'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
   ['vHome', 'メイン', '◉', [['menu', 'メニュー'], ['friend', 'フレンド'], ['msg', '連絡']]],
-  ['vCorp', '企業', '社', [['search', '会社検索'], ['review', '評価（500 X）'], ['pin', 'ピン留め'], ['desk', '相談'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所']]],
-  ['vTax', '役所', '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['court', '訴え'], ['kokko', '国庫・番付']]],
+  ['vCorp', '企業', LANG === 'en' ? '🏢' : '社', [['search', '会社検索'], ['review', '評価（500 X）'], ['pin', 'ピン留め'], ['desk', '相談'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所']]],
+  ['vTax', '役所', LANG === 'en' ? '🏛' : '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['court', '訴え'], ['kokko', '国庫・番付']]],
   ['vMore', '設定', '⚙', [['prof', 'プロフィール'], ['style', 'スタイル'], ['hist', '記録'], ['rule', '規約']]],
 ];
 const MENU_OF = Object.fromEntries(MENU.map(m => [m[0], m]));
@@ -1962,7 +1985,7 @@ function kbDraw() {
   // 残り距離
   g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(8, y0 + 8, 92, 22);
   g.fillStyle = '#fff'; g.font = `800 12px ${ff}`; g.textAlign = 'left'; g.textBaseline = 'middle';
-  g.fillText(t < 0 ? `発走前` : order[0].d >= D ? 'ゴール' : `残り ${Math.max(0, Math.ceil((D - order[0].d) / 10) * 10)}m`, 14, y0 + 19);
+  g.fillText(tr(t < 0 ? `発走前` : order[0].d >= D ? 'ゴール' : `残り ${Math.max(0, Math.ceil((D - order[0].d) / 10) * 10)}m`), 14, y0 + 19);
   if (t > 0 && run) { g.textAlign = 'right'; g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(W - 76, y0 + 8, 68, 22); g.fillStyle = '#fff'; g.fillText(ftime(Math.min(t, R.finish_ms / 1000) * 1000), W - 14, y0 + 19); }
 
   /* ===== コース全体図 ===== */
@@ -1979,7 +2002,7 @@ function kbDraw() {
   const sF = Ls * 0.82;
   { const [x1, y1] = P(sF, -2), [x2, y2] = P(sF, 14); g.strokeStyle = '#fff'; g.lineWidth = 2; g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke(); }
   g.font = `700 9px ${ff}`; g.fillStyle = 'rgba(255,255,255,.8)'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText(`${V.name} ${R.surface === '芝' ? '芝' : 'ダ'}${D}m（${V.turn}回り）`, cx, cy);
+  g.fillText(tr(`${V.name} ${R.surface === '芝' ? '芝' : 'ダ'}${D}m（${V.turn}回り）`), cx, cy);
   const dots = [...pos].sort((a, b) => a.d - b.d);
   for (const o of dots) {
     const [x, y] = P(sF - (D - Math.min(o.d, D + 40)), 3 + o.lane * 8);
@@ -1989,7 +2012,7 @@ function kbDraw() {
 
   /* ===== 実況 ===== */
   const cap = kbCaption(t, order, R, run);
-  if ($('#kbCap').textContent !== cap) $('#kbCap').textContent = cap;
+  if ($('#kbCap').textContent !== tr(cap)) $('#kbCap').textContent = tr(cap);
 }
 function kbCaption(t, order, R, run) {
   const D = R.dist, nm = o => `${o.e.uma}番${o.e.name}`;
@@ -5092,7 +5115,7 @@ async function bellPoll() {
       const seen = Number(ntLocal('ntLatest') || 0);
       if (d.latest && d.latest > seen) {
         if (seen && document.hidden && ntLocal('ntPush') === '1' && 'Notification' in window && Notification.permission === 'granted') {
-          try { new Notification('風の芽経済組', { body: noticeText(d.latest_body), tag: 'kz-' + d.latest }); } catch (e) {}
+          try { new Notification('風の芽経済組', { body: tr(noticeText(d.latest_body)), tag: 'kz-' + d.latest }); } catch (e) {}
         }
         ntLocal('ntLatest', String(d.latest));
       }

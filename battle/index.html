@@ -903,6 +903,7 @@ function okLang(s){ return LANGS.some(l=>l[0]===s)||JAV.includes(s); }
 const I18N=typeof I18NDATA==='object'&&I18NDATA?I18NDATA:{};
 function pickLang(){
   try{ const s=localStorage.getItem('kb-lang'); if(s&&okLang(s)) return s; }catch(e){}
+  try{ const m=localStorage.getItem('lang'); if(m==='en'||m==='ja') return m; }catch(e){} // 風の芽経済組の言語の設定に合わせる
   for(const n of (navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language||''])){
     const x=String(n).toLowerCase();
     if(x.startsWith('ja')) return 'ja'; if(x.startsWith('zh')) return 'zh-TW'; if(x.startsWith('en')) return 'en';
