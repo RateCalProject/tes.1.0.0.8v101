@@ -1066,7 +1066,8 @@ async function enter() {
   try {
     const p = await call('ensure_profile');
     ME = p; setBal(p.balance); $('#nick').value = p.nickname; setTaxDot(p.tax);
-    if (p.role && !MENU_OF.vMore[3].some(x => x[0] === 'admin')) MENU_OF.vMore[3].push(['admin', '管理'], ['users', '登録者']);
+    if (p.role && !MENU_OF.vMore[3].some(x => x[0] === 'admin')) MENU_OF.vMore[3].push(['admin', '管理']);
+    if (p.role === 'admin' && !MENU_OF.vMore[3].some(x => x[0] === 'users')) MENU_OF.vMore[3].push(['users', '登録者']);   // 登録者の情報は管理者だけ
     if (p.role === 'admin') $('#auQ').placeholder = 'ID・ニックネーム・メールで検索'; else { const db = $('#auF [data-k="debt"]'); if (db) db.remove(); }
   } catch (e) { toast(e.message); show('vLogin'); entered = false; return; }
   if (location.hash.includes('access_token')) history.replaceState(null, '', location.pathname);

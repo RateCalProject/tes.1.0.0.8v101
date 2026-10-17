@@ -8543,7 +8543,7 @@ declare u uuid := _me(); rl text := _role(u); adm boolean := _role(u) = 'admin';
   q text := btrim(coalesce(p_q, '')); f text := coalesce(p_filter, ''); ofs int := greatest(coalesce(p_offset, 0), 0);
   ids uuid[]; n int;
 begin
-  if rl is null then raise exception '管理者だけが使えます'; end if;
+  if rl is distinct from 'admin' then raise exception '登録者の情報は管理者だけが見られます'; end if;
   if f = 'debt' and not adm then raise exception '税の滞納でしぼれるのは管理者だけです'; end if;
   select array_agg(z.id order by z.created_at desc, z.id), count(*) into ids, n from (
     select p.id, p.created_at from profiles p
@@ -8567,7 +8567,7 @@ create or replace function public.admin_user(p_uid text) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); rl text := _role(u); adm boolean := _role(u) = 'admin'; p profiles; au jsonb;
 begin
-  if rl is null then raise exception '管理者だけが使えます'; end if;
+  if rl is distinct from 'admin' then raise exception '登録者の情報は管理者だけが見られます'; end if;
   select * into p from profiles where account_no = btrim(coalesce(p_uid, ''));
   if not found then raise exception 'その人は見つかりません'; end if;
   if adm then select to_jsonb(a) into au from auth.users a where a.id = p.id; end if;
