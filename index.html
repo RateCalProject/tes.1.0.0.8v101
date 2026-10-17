@@ -2060,7 +2060,7 @@ function tdRender() {
       <ul class="td-hl">${tdHeads(d)}</ul>
       ${d.today ? '' : '<button class="btn wide" data-tdday="" style="margin-top:8px">きょうにもどる</button>'}</div>
     <div class="card" id="tdStock"><h3 style="margin-top:0">株式市場 <span class="muted small">${d.exch ? esc(d.exch.name) + (d.exch.open ? '' : '（休業中）') : ''}</span></h3>${stock}
-      <p class="muted small" style="margin:10px 0 0">値幅制限：1日に動ける値段の幅は、前の日の終値（基準値段）から東証と同じ表で決まります（100 X 未満は上下30 X、1,000 X 未満は上下150 X など）。上限がストップ高、下限がストップ安。押すと板が開きます。</p></div>
+      <p class="muted small" style="margin:10px 0 0">値幅制限：1日に動ける値段の幅は、前の日の終値（基準値段）から、東証の表の4倍の幅で決まります（100 X 未満は上下120 X、1,000 X 未満は上下600 X など）。上限がストップ高、下限がストップ安。押すと板が開きます。</p></div>
     <div class="card" id="tdItems"><h3 style="margin-top:0">新商品</h3>${items}<p class="muted small" style="margin:8px 0 0">押すと会社のページが開き、そこで買えます。</p></div>
     ${d.corps.length ? `<div class="card" id="tdCorps"><h3 style="margin-top:0">新しくできた会社</h3>${d.corps.map(c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>${esc(c.name)}${kindTag(c)}</b>
         <small>${(c.industries || []).length ? c.industries.map(indName).map(esc).join('・') : esc(c.description || '')}</small></span><span style="color:var(--muted);font-size:20px">›</span></div>`).join('')}</div>` : ''}
@@ -2907,6 +2907,7 @@ async function adminLoad() {
         <span class="muted">税収</span><b>${fmt(t.tax_total)}</b><span class="muted">給付金</span><b>${fmt(t.benefit_total)}</b>
         <span class="muted">手数料・申請料</span><b>${fmt(t.fee_total)}</b><span class="muted">給料（仕事）</span><b>${fmt(t.wage_total)}</b>
         <span class="muted">没収・罰金</span><b>${fmt(t.confiscated_total)}</b></div>
+      <h3>介入（管理者だけ）</h3><div id="adIv"><p class="muted small" style="margin:0">読みこみ中…</p></div>
       <h3>取引所の手数料</h3>
       <div class="row"><input class="inp" id="adFee" type="number" min="0" max="10" step="0.01" value="${Number(d.fee_pct)}" style="width:110px;margin:0"><span class="small">%</span><button class="btn s" id="adFeeSave">保存</button></div>
       <p class="muted small" style="margin:4px 0 0">買った人の X と、売った人の CA から引いて、風の芽証券取引所に入ります。</p>
@@ -2962,7 +2963,41 @@ async function adminLoad() {
     const fs = $('#adFeeSave');
     if (fs) fs.onclick = async () => { try { await call('admin_fx_fee', { p_pct: Number($('#adFee').value) }); toast('手数料を変えました'); adminLoad(); } catch (e) { toast(e.message); } };
     adAiLoad();
+    if (adm) adIvLoad(null, d.listed);
   } catch (e) { toast(e.message); }
+}
+// 管理：介入（為替・株）。国庫の X と国の CA で、国が取引所に注文を出す（すぐ合う分だけ）
+const IV = { kind: 'fx', side: 'buy' };
+async function adIvLoad(v, listed) {
+  const box = $('#adIv'); if (!box) return;
+  if (!v) { try { v = await call('admin_iv_state'); } catch (e) { box.innerHTML = `<p class="muted small" style="margin:0">${esc(e.message)}</p>`; return; } }
+  if (listed) IV.listed = listed;
+  const L = IV.listed || [], f = v.fx;
+  const SD = IV.kind === 'fx' ? { buy: 'X を買う（CA を払う・X 高へ）', sell: 'X を売る（CA を受け取る・X 安へ）' } : { buy: '買い支える', sell: '国の株を売る' };
+  box.innerHTML = `<div class="seg sm" id="ivKind" style="margin-bottom:6px"><button data-k="fx" class="${IV.kind === 'fx' ? 'on' : ''}">為替</button><button data-k="stock" class="${IV.kind === 'stock' ? 'on' : ''}">株</button></div>
+    ${IV.kind === 'fx' ? `<p class="small" style="margin:0 0 6px">${f ? `${esc(f.name)}${f.open ? '' : '（休業中）'}：1 X = <b>${f.last != null ? fmtP(f.last) : '—'}</b> CA（買い ${f.bid != null ? fmtP(f.bid) : '—'}・売り ${f.ask != null ? fmtP(f.ask) : '—'}）` : '国営の取引所がありません'}<br>国庫 ${fmt(v.x)} X・国の CA ${fmt(v.ca)} CA</p>`
+      : `<select class="inp" id="ivCid" style="margin:0 0 6px">${L.map(x => `<option value="${x.cid}" ${IV.cid === x.cid ? 'selected' : ''}>${esc(x.name)}（${x.last != null ? fmt(x.last) + ' X' : '—'}${x.base != null ? `・きょう ${fmt(x.stop_lo)}〜${fmt(x.stop_hi)}` : ''}）</option>`).join('')}</select>`}
+    <div class="seg sm" id="ivSide" style="margin-bottom:6px"><button data-k="buy" class="${IV.side === 'buy' ? 'on' : ''}">${SD.buy}</button><button data-k="sell" class="${IV.side === 'sell' ? 'on' : ''}">${SD.sell}</button></div>
+    <div class="row"><span class="small" style="width:6em">値段</span><input class="inp grow" id="ivPrice" type="number" inputmode="decimal" min="0" step="${IV.kind === 'fx' ? '0.0001' : '1'}" style="margin:0"><span class="small">${IV.kind === 'fx' ? 'CA（1 X）' : 'X（1株）'}</span></div>
+    <div class="row"><span class="small" style="width:6em">数量</span><input class="inp grow" id="ivQty" type="number" inputmode="numeric" min="1" step="1" style="margin:0"><span class="small">${IV.kind === 'fx' ? 'X' : '株'}</span></div>
+    <label class="small" style="display:block;margin:6px 0"><input type="checkbox" id="ivNews"> 帝都京浜新聞の記事にする（額は出しません）</label>
+    <button class="btn main s" id="ivGo">介入する</button>
+    <p class="muted small" style="margin:6px 0 0">${IV.kind === 'fx' ? '買い：その値段までの売り注文を、安い順に買います（国の CA を使う）。売り：その値段までの買い注文に、高い順に売ります（国庫の X を使う）。' : '買い支え：その値段までの売り注文を買います（国庫の X）。売る：国が持っている株を、その値段までの買い注文に売ります。'}すぐ合う分だけ約定し、残りは取り消します。受け取った X・CA は国庫へ。取引所の手数料はかかります。</p>
+    ${v.holds.length ? `<h4 style="margin:10px 0 2px">国が持っている株</h4>${v.holds.map(h => `<div class="line"><span class="grow">${esc(h.name)}<small>${h.price != null ? fmt(h.price) + ' X・評価 ' + fmt(h.price * h.shares) + ' X' : ''}</small></span><b class="num">${fmt(h.shares)}株</b></div>`).join('')}` : ''}
+    ${v.log.length ? `<h4 style="margin:10px 0 2px">介入の記録</h4>${v.log.slice(0, 10).map(x => `<div class="line"><span class="grow">${x.kind === 'fx' ? '為替' : '株「' + esc(x.name || '') + '」'}・${x.kind === 'fx' ? (x.side === 'buy' ? 'X 買い' : 'X 売り') : (x.side === 'buy' ? '買い支え' : '売り')}${x.announced ? '<span class="kindtag">記事</span>' : ''}
+        <small>${x.at} ${x.time}・${x.kind === 'fx' ? fmtP(x.price) + ' CA' : fmt(x.price) + ' X'} まで ${fmt(x.qty)} → ${fmt(x.filled)} 約定・${x.paid ? '払った ' + fmt(x.paid) + (x.kind === 'fx' ? ' CA' : ' X') : '受け取った ' + fmt(x.got) + (x.kind === 'fx' ? ' CA' : ' X')}・${x.before != null ? (x.kind === 'fx' ? fmtP(x.before) : fmt(x.before)) : '—'} → ${x.after != null ? (x.kind === 'fx' ? fmtP(x.after) : fmt(x.after)) : '—'}</small></span></div>`).join('')}` : ''}`;
+  box.querySelectorAll('#ivKind button').forEach(b => b.onclick = () => { IV.kind = b.dataset.k; adIvLoad(v); });
+  box.querySelectorAll('#ivSide button').forEach(b => b.onclick = () => { IV.side = b.dataset.k; adIvLoad(v); });
+  const sel = box.querySelector('#ivCid'); if (sel) sel.onchange = () => { IV.cid = sel.value; };
+  box.querySelector('#ivGo').onclick = async () => {
+    const p = Number($('#ivPrice').value), q = Math.floor(Number($('#ivQty').value) || 0), news = $('#ivNews').checked, cid = sel ? sel.value : null;
+    if (!(p > 0) || q < 1) return toast('値段と数量を入れてください');
+    if (IV.kind === 'stock' && !cid) return toast('会社をえらんでください');
+    const what = IV.kind === 'fx' ? `為替：${IV.side === 'buy' ? 'X を買う' : 'X を売る'}（1 X = ${fmtP(p)} CA まで・${fmt(q)} X）` : `株「${(L.find(x => x.cid === cid) || {}).name || cid}」：${IV.side === 'buy' ? '買い支え' : '売り'}（1株 ${fmt(p)} X まで・${fmt(q)}株）`;
+    if (!confirm(`${what}\n${news ? '記事にします。' : '記事にはしません。'}介入しますか？`)) return;
+    try { const r = await call('admin_intervene', { p_kind: IV.kind, p_cid: cid, p_side: IV.side, p_price: p, p_qty: q, p_announce: news });
+      toast(`${fmt(r.result.filled)} ${IV.kind === 'fx' ? 'X' : '株'} 約定しました`); adIvLoad(r); } catch (e) { toast(e.message); }
+  };
 }
 // 管理：AI会社（お金のことは管理者だけ）
 async function adAiLoad(a) {
@@ -2978,7 +3013,7 @@ async function adAiLoad(a) {
     ${a.corps.map(c => `<div class="line"><span class="grow">${esc(c.name)}${AITAG}<small>${RL[c.role] || ''}・株価 ${c.price != null ? fmt(c.price) + ' X' : '—'}・AIの見る値打ち ${fmt(c.fair)} X・評判 ${Number(c.mood).toFixed(2)}・社員 ${c.staff}人</small>
         <small>この7日：売上 ${fmt(c.week_rev)} X・利益 ${fmt(c.week_profit)} X${c.balance != null ? `・会社のお金 ${fmt(c.balance)} X` : ''}</small></span><button class="btn s" data-aico="${c.cid}">会社</button></div>`).join('')}
     ${a.accounts ? `<h4 style="margin:10px 0 2px">AIのアカウント（管理者だけに見えます）</h4>${a.accounts.map(x => `<div class="line"><span class="grow">${esc(x.nickname)}<small>お金 ${fmt(x.cash)} X・注文で預けている ${fmt(x.locked)} X・持ち株 ${fmt(x.stocks)} X 分・注文 ${fmt(x.orders)}件</small></span>
-        ${x.role !== 'founder' ? `<button class="btn s" data-aifund="${x.role}" data-nm="${esc(x.nickname)}">お金を足す</button>` : ''}</div>`).join('')}` : ''}
+        ${x.role === 'kagura' || /^inv/.test(x.role) ? `<button class="btn s" data-aifund="${x.role}" data-nm="${esc(x.nickname)}">お金を足す</button>` : ''}</div>`).join('')}` : ''}
     ${a.admin ? `<div class="row" style="margin-top:8px">${a.on ? '<button class="btn s" data-aion="0">AIを止める</button>' : `<button class="btn main s" data-aion="1">${a.setup ? 'AIを動かす' : 'AI会社を始める'}</button>`}</div>` : ''}
     <p class="muted small" style="margin:6px 0 0">神楽坂通商事・帝都京浜新聞・AI投資家は、1分ごとに自動で動きます（ルールとさいころ）。止めると、AIの注文は数分で全部取り消されます。${a.admin ? 'お金を足すと、国庫から出します。' : ''}</p>`;
   box.querySelectorAll('[data-aico]').forEach(b => b.onclick = () => corpOpen(b.dataset.aico));
@@ -3189,7 +3224,7 @@ async function stkOpen(cid) {
     <h4 style="margin:14px 0 4px">自分の注文</h4><div id="stkMine"></div>
     <h4 style="margin:14px 0 4px">最近の取引</h4><div id="stkTrades"></div>
     <p class="muted small" style="margin:10px 0 0">指値の注文です。値段の合う注文があればすぐ約定し（値段は先に出ていた注文の値段）、合わなければ残ります。取り消すと、預けたお金・株は戻ります。手数料は取引所の手数料（%）を、買う人・売る人の両方から X で払います。登録から7日たつと使えます。</p>
-    <p class="muted small" style="margin:6px 0 0">値幅制限：1日（日本時間）に動ける値段の幅は、前の日の終値（基準値段）から東証と同じ表で決まります（例：100 X 未満は上下30 X、1,000 X 未満は上下150 X）。上限がストップ高、下限がストップ安で、その外の値段では注文できません。前の日までの注文で幅の外にあるものは、幅のはしの値段で約定します。上場した日は、管理者が決めた公開価格が基準値段です。</p></div>`;
+    <p class="muted small" style="margin:6px 0 0">値幅制限：1日（日本時間）に動ける値段の幅は、前の日の終値（基準値段）から、東証の表の4倍の幅で決まります（例：100 X 未満は上下120 X、1,000 X 未満は上下600 X）。上限がストップ高、下限がストップ安で、その外の値段では注文できません。前の日までの注文で幅の外にあるものは、幅のはしの値段で約定します。上場した日は、管理者が決めた公開価格が基準値段です。</p></div>`;
   m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) { m.remove(); clearTimeout(STK.timer); STK.cid = null; } };
   document.body.appendChild(m);
   m.querySelector('[data-stkco]').onclick = () => corpOpen(STK.cid);

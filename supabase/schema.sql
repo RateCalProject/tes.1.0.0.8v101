@@ -3827,24 +3827,12 @@ end $$;
 -- 注文する
 drop function if exists public.fx_order(text, bigint, bigint);
 drop function if exists public.fx_order(text, numeric, bigint);
-create or replace function public.fx_order(p_exch text, p_side text, p_price numeric, p_qty bigint) returns jsonb
-language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); o fx_orders; m fx_orders; bo fx_orders; so fx_orders; xc companies; me profiles;
-  q bigint; v bigint; ex numeric; fx bigint; fc bigint; lockamt bigint; okday timestamptz;
-  pct numeric; tot_x bigint := 0; tot_c bigint := 0;
+-- 為替の注文を出して、合う注文とすぐ約定する（中で使う。画面からの注文も、国の介入もこれを通る）。注文の id を返す。ioc なら残りは取り消す
+create or replace function public._fx_exec(u uuid, xc companies, p_side text, p_price numeric, p_qty bigint, ioc boolean) returns bigint
+language plpgsql set search_path = public as $$
+declare o fx_orders; m fx_orders; bo fx_orders; so fx_orders;
+  q bigint; v bigint; ex numeric; fx bigint; fc bigint; lockamt bigint; pct numeric := xc.fx_fee; tot_x bigint := 0; tot_c bigint := 0;
 begin
-  if p_side not in ('buy', 'sell') then raise exception '買いか売りをえらんでください'; end if;
-  if p_price is null or p_price <= 0 or p_price > 1000000000 then raise exception '値段は0より大きく、10億 CA までにしてください'; end if;
-  if p_price <> round(p_price, 4) then raise exception '値段は小数第4位までです'; end if;
-  if p_qty is null or p_qty < 1 or p_qty > 1000000000 then raise exception '数量は1〜10億 X にしてください'; end if;
-  xc := _fx_pick(p_exch);
-  if xc.id is null or (coalesce(btrim(p_exch), '') <> '' and xc.cid <> _cid_norm(p_exch)) then raise exception 'その取引所は見つかりません'; end if;
-  if xc.status <> 'active' then raise exception '取引所（%）がいま営業していないので、注文できません', xc.name; end if;
-  pct := xc.fx_fee;
-  select * into me from profiles where id = u for update;
-  okday := coalesce(me.ok7_at, me.created_at + interval '7 days');
-  if _now() < okday then raise exception '登録から7日たつまで取引所は使えません（%から）', _dlabel(okday); end if;
-  if (select count(*) from fx_orders where user_id = u and status = 'open') >= 30 then raise exception '出せる注文は30件までです'; end if;
   if p_side = 'buy' then
     lockamt := ceil(p_price * p_qty)::bigint;
     update profiles set ca = ca - lockamt where id = u and ca >= lockamt;
@@ -3889,12 +3877,32 @@ begin
     end if;
     if o.side = 'buy' then o := bo; else o := so; end if;
   end loop;
+  if ioc and o.remain > 0 then perform _fx_cancel_order(o.id); end if;   -- すぐ合わなかった残りは取り消す
   if tot_x > 0 then perform _corp_move(xc.id, tot_x, 'fx_fee', format('取引の手数料 %s X', _fmt(tot_x))); end if;
   if tot_c > 0 then
     update companies set ca = ca + tot_c where id = xc.id;
     insert into corp_ledger(company_id, kind, amount, memo, balance_after)
     values (xc.id, 'fx_fee', 0, format('取引の手数料 %s CA', _fmt(tot_c)), (select balance from companies where id = xc.id));
   end if;
+  return o.id;
+end $$;
+
+create or replace function public.fx_order(p_exch text, p_side text, p_price numeric, p_qty bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); xc companies; me profiles; okday timestamptz;
+begin
+  if p_side not in ('buy', 'sell') then raise exception '買いか売りをえらんでください'; end if;
+  if p_price is null or p_price <= 0 or p_price > 1000000000 then raise exception '値段は0より大きく、10億 CA までにしてください'; end if;
+  if p_price <> round(p_price, 4) then raise exception '値段は小数第4位までです'; end if;
+  if p_qty is null or p_qty < 1 or p_qty > 1000000000 then raise exception '数量は1〜10億 X にしてください'; end if;
+  xc := _fx_pick(p_exch);
+  if xc.id is null or (coalesce(btrim(p_exch), '') <> '' and xc.cid <> _cid_norm(p_exch)) then raise exception 'その取引所は見つかりません'; end if;
+  if xc.status <> 'active' then raise exception '取引所（%）がいま営業していないので、注文できません', xc.name; end if;
+  select * into me from profiles where id = u for update;
+  okday := coalesce(me.ok7_at, me.created_at + interval '7 days');
+  if _now() < okday then raise exception '登録から7日たつまで取引所は使えません（%から）', _dlabel(okday); end if;
+  if (select count(*) from fx_orders where user_id = u and status = 'open') >= 30 then raise exception '出せる注文は30件までです'; end if;
+  perform _fx_exec(u, xc, p_side, p_price, p_qty, false);
   return fx_state(xc.cid);
 end $$;
 
@@ -8648,12 +8656,18 @@ language sql stable set search_path = public as $$
     (select c.ipo_price from companies c where c.id = cid_int and c.listed and c.listed_at < _jday_start(d + 1)))   -- 上場した日は公開価格
 $$;
 
+-- 実際の値幅：東証の表の何倍か（app_settings の stock_band_x。ないときは4倍）
+create or replace function public._stock_width_x(b bigint) returns bigint
+language sql stable set search_path = public as $$
+  select floor(_stock_width(b) * coalesce((select value::numeric from app_settings where key = 'stock_band_x'), 4))::bigint
+$$;
+
 -- その日の値幅：基準値段・ストップ安・ストップ高（基準値段がなければ、どれも null＝値幅制限なし）
 create or replace function public._stock_band(cid_int int, d date, out base bigint, out lo bigint, out hi bigint)
 language plpgsql stable set search_path = public as $$
 begin
   base := _stock_base(cid_int, d);
-  if base is not null then lo := greatest(base - _stock_width(base), 1); hi := base + _stock_width(base); end if;
+  if base is not null then lo := greatest(base - _stock_width_x(base), 1); hi := base + _stock_width_x(base); end if;
 end $$;
 
 -- 取引の時刻：ロックを取ったあとの実際の時刻（日付の変わり目で、前の日の取引があとから入らないように）。テストの fake_now があればその時刻
@@ -8963,7 +8977,7 @@ begin
     update companies set listed = true, listed_at = _now(), ipo_price = p_price where id = c.id;
     update stock_list_apps set status = 'approved', reason = why, decided_by = u, decided_at = _now() where id = a.id;
     perform _notice_l(c.owner, format('【上場】「%s」が風の芽証券取引所に上場しました。公開価格は1株 %s X で、きょうはこの値段を基準に値幅制限（%s〜%s X）がかかります。株は「企業 → 取引所」で売り買いできます。%s',
-                      c.name, _fmt(p_price), _fmt(greatest(p_price - _stock_width(p_price), 1)), _fmt(p_price + _stock_width(p_price)),
+                      c.name, _fmt(p_price), _fmt(greatest(p_price - _stock_width_x(p_price), 1)), _fmt(p_price + _stock_width_x(p_price)),
                       coalesce('（' || why || '）', '')), jsonb_build_object('go', 'stock', 'cid', c.cid), u);
   else
     update stock_list_apps set status = 'rejected', reason = why, decided_by = u, decided_at = _now() where id = a.id;
@@ -9892,6 +9906,171 @@ begin
   end if;
 end $$;
 
+-- =====================================================================
+-- 介入（管理者だけ）：国庫の X と、国が持つ CA で、国が取引所に注文を出す（為替介入・株の買い支え／売り）
+--   注文は「国（介入）」のアカウント（AIと同じく、IDなし・ログインできない）から出す。すぐ合う分だけ約定し、残りは取り消す
+--   終わったら、国のアカウントの X と CA は国庫へもどす（株は国のアカウントが持ち続け、あとで売れる）
+--   記事にするかは、そのつど選ぶ（帝都京浜新聞の速報。額は出さない）。記録は管理者だけが見られる
+-- =====================================================================
+create table if not exists public.interventions (
+  id         bigserial primary key,
+  kind       text not null check (kind in ('fx', 'stock')),
+  company_id int references public.companies(id) on delete set null,   -- 為替なら取引所、株ならその会社
+  side       text not null check (side in ('buy', 'sell')),
+  price      numeric(20,4) not null,
+  qty        bigint not null,
+  filled     bigint not null default 0,      -- 約定した数量（X か 株）
+  paid       bigint not null default 0,      -- 払った額（為替の買い：CA／株の買い：X）
+  got        bigint not null default 0,      -- 受け取った額（為替の売り：CA／株の売り：X）
+  before_p   numeric(20,4),
+  after_p    numeric(20,4),
+  announced  boolean not null default false,
+  by_user    uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+alter table public.interventions enable row level security;
+revoke all on public.interventions from anon, authenticated;
+
+-- 国（介入）のアカウント（なければ作る）
+create or replace function public._gov_uid() returns uuid
+language plpgsql set search_path = public as $$
+declare g uuid := 'a1000000-0000-4000-8000-000000000099';
+begin
+  if not exists (select 1 from profiles where id = g) then perform _ai_account(g, '国（介入）', 'gov'); end if;
+  return g;
+end $$;
+
+-- 国のアカウントの X と CA を、国庫へもどす
+create or replace function public._gov_sweep() returns void
+language plpgsql set search_path = public as $$
+declare g uuid := _gov_uid(); x bigint; c bigint;
+begin
+  select balance, ca into x, c from profiles where id = g for update;
+  if x > 0 or c > 0 then
+    update profiles set balance = 0, ca = 0 where id = g;
+    update treasury set balance = balance + x, ca_balance = ca_balance + c where id = 1;
+  end if;
+end $$;
+
+-- 為替の最後の値段（1 X あたりの CA）
+create or replace function public._fx_last(xid int) returns numeric
+language sql stable set search_path = public as $$
+  select price from fx_trades where exch_id = xid order by id desc limit 1
+$$;
+
+-- 管理者：介入の画面（国営の取引所の為替・国の持ち株・記録）
+create or replace function public.admin_iv_state() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); xc companies; g uuid := 'a1000000-0000-4000-8000-000000000099';
+begin
+  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  select * into xc from companies where cid = (select value from app_settings where key = 'exchange_cid');
+  return jsonb_build_object(
+    'fx', case when xc.id is null then null else jsonb_build_object('cid', xc.cid, 'name', xc.name, 'open', xc.status = 'active' and 'X/CA' = any(xc.fx_pairs),
+            'last', _fx_last(xc.id),
+            'bid', (select max(price) from fx_orders where exch_id = xc.id and side = 'buy' and status = 'open'),
+            'ask', (select min(price) from fx_orders where exch_id = xc.id and side = 'sell' and status = 'open')) end,
+    'x', (select balance from treasury where id = 1), 'ca', (select ca_balance from treasury where id = 1),
+    'holds', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'shares', h.shares,
+                'price', coalesce((select price from stock_trades t where t.company_id = c.id order by t.id desc limit 1), c.ipo_price)) order by c.name), '[]'::jsonb)
+              from corp_holders h join companies c on c.id = h.company_id where h.user_id = g),
+    'log', (select coalesce(jsonb_agg(jsonb_build_object('id', i.id, 'kind', i.kind, 'side', i.side, 'name', c.name, 'price', i.price, 'qty', i.qty,
+                'filled', i.filled, 'paid', i.paid, 'got', i.got, 'before', i.before_p, 'after', i.after_p, 'announced', i.announced,
+                'by', p.nickname, 'at', _dlabel(i.created_at), 'time', to_char(i.created_at at time zone 'Asia/Tokyo', 'HH24:MI')) order by i.id desc), '[]'::jsonb)
+            from (select * from interventions order by id desc limit 30) i left join companies c on c.id = i.company_id left join profiles p on p.id = i.by_user));
+end $$;
+
+-- 管理者：介入する
+--   p_kind：fx（為替。buy＝X を買って CA を払う＝X 高へ／sell＝X を売って CA を受け取る＝X 安へ。値段は 1 X あたりの CA）
+--           stock（株。p_cid の株を buy＝買い支え／sell＝国が持っている株を売る。値段は1株の X）
+--   p_price までの値段で、すぐ合う分だけ約定（残りは取り消し）。p_announce なら記事にする
+create or replace function public.admin_intervene(p_kind text, p_cid text, p_side text, p_price numeric, p_qty bigint, p_announce boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); g uuid; xc companies; c companies; o bigint; fo fx_orders; so stock_orders; bef numeric; aft numeric;
+  need bigint; x0 bigint; c0 bigint; x1 bigint; c1 bigint; iv interventions; t text; b text; nm text;
+begin
+  if not _is_admin(u) then raise exception '介入は管理者だけができます'; end if;
+  if p_side not in ('buy', 'sell') then raise exception '買いか売りをえらんでください'; end if;
+  if p_qty is null or p_qty < 1 or p_qty > 1000000000 then raise exception '数量は1〜10億にしてください'; end if;
+  if p_price is null or p_price <= 0 or p_price > 1000000000 then raise exception '値段を入れてください'; end if;
+  g := _gov_uid();
+  perform _gov_sweep();
+  if p_kind = 'fx' then
+    if p_price <> round(p_price, 4) then raise exception '値段は小数第4位までです'; end if;
+    select * into xc from companies where cid = (select value from app_settings where key = 'exchange_cid');
+    if xc.id is null or xc.status <> 'active' or not ('X/CA' = any(xc.fx_pairs)) then raise exception '国営の取引所がいま開いていません'; end if;
+    bef := _fx_last(xc.id);
+    -- 国庫から国のアカウントへ（買い：CA／売り：X）
+    if p_side = 'buy' then
+      need := ceil(p_price * p_qty)::bigint;
+      update treasury set ca_balance = ca_balance - need where id = 1 and ca_balance >= need;
+      if not found then raise exception '国が持っている CA が足りません（% CA 必要です）', _fmt(need); end if;
+      update profiles set ca = ca + need where id = g;
+    else
+      update treasury set balance = balance - p_qty where id = 1 and balance >= p_qty;
+      if not found then raise exception '国庫の X が足りません'; end if;
+      update profiles set balance = balance + p_qty where id = g;
+    end if;
+    select balance, ca into x0, c0 from profiles where id = g;
+    o := _fx_exec(g, xc, p_side, p_price, p_qty, true);
+    select * into fo from fx_orders where id = o;
+    select balance, ca into x1, c1 from profiles where id = g;
+    aft := _fx_last(xc.id);
+    insert into interventions(kind, company_id, side, price, qty, filled, paid, got, before_p, after_p, announced, by_user, created_at)
+    values ('fx', xc.id, p_side, p_price, p_qty, fo.qty - fo.remain,
+            case when p_side = 'buy' then fo.spent else 0 end, case when p_side = 'sell' then greatest(c1 - c0, 0) else 0 end,
+            bef, aft, coalesce(p_announce, false), u, _now()) returning * into iv;
+    if coalesce(p_announce, false) and iv.filled > 0 then
+      t := case when p_side = 'buy' then '【速報】国が為替介入　AiliNaX 買い・CA 売り' else '【速報】国が為替介入　AiliNaX 売り・CA 買い' end;
+      b := format('国は、%sで %s の為替介入を行った。%s', xc.name,
+                  case when p_side = 'buy' then 'AiliNaX を買い、Cièlani-Alpićsk を売る' else 'AiliNaX を売り、Cièlani-Alpićsk を買う' end,
+                  case when bef is not null and aft is not null then format('1 X の値段は、介入の前の %s CA から %s CA になった。', to_char(bef, 'FM999999990.0000'), to_char(aft, 'FM999999990.0000'))
+                       when aft is not null then format('介入のあと、1 X は %s CA になった。', to_char(aft, 'FM999999990.0000')) else '' end)
+           || '介入の額は明らかにしていない。';
+      perform _ai_article(t, b, '経済部');
+    end if;
+  elsif p_kind = 'stock' then
+    if p_price <> round(p_price) then raise exception '株の値段は整数（X）です'; end if;
+    select * into c from companies where cid = _cid_norm(p_cid) for key share;
+    if not found or not c.listed or c.status <> 'active' then raise exception 'その会社は上場していないか、売買が止まっています'; end if;
+    xc := _stock_exch();
+    if xc.id is null or xc.status <> 'active' then raise exception '取引所がいま開いていません'; end if;
+    perform pg_advisory_xact_lock(7400, c.id);
+    bef := coalesce((select price from stock_trades where company_id = c.id order by id desc limit 1), c.ipo_price);
+    if p_side = 'buy' then
+      need := p_price::bigint * p_qty + ceil(p_price * p_qty * xc.fx_fee / 100)::bigint;
+      update treasury set balance = balance - need where id = 1 and balance >= need;
+      if not found then raise exception '国庫の X が足りません（% X 必要です）', _fmt(need); end if;
+      update profiles set balance = balance + need where id = g;
+    else
+      if coalesce((select shares from corp_holders where company_id = c.id and user_id = g), 0) < p_qty then
+        raise exception '国が持っている「%」の株は %株です', c.name, coalesce((select shares from corp_holders where company_id = c.id and user_id = g), 0);
+      end if;
+    end if;
+    select balance into x0 from profiles where id = g;
+    o := _stock_exec(g, c.id, p_side, p_price::bigint, p_qty, true);
+    select * into so from stock_orders where id = o;
+    select balance into x1 from profiles where id = g;
+    aft := coalesce((select price from stock_trades where company_id = c.id order by id desc limit 1), c.ipo_price);
+    insert into interventions(kind, company_id, side, price, qty, filled, paid, got, before_p, after_p, announced, by_user, created_at)
+    values ('stock', c.id, p_side, p_price, p_qty, so.qty - so.remain,
+            case when p_side = 'buy' then greatest(x0 - x1, 0) else 0 end, case when p_side = 'sell' then greatest(x1 - x0, 0) else 0 end,
+            bef, aft, coalesce(p_announce, false), u, _now()) returning * into iv;
+    if coalesce(p_announce, false) and iv.filled > 0 then
+      t := case when p_side = 'buy' then format('【速報】国が「%s」の株を買い支え', c.name) else format('【速報】国が「%s」の株を売却', c.name) end;
+      b := format('国は、%s の株を%s。株価は、介入の前の %s X から %s X になった。%s', c.name,
+                  case when p_side = 'buy' then '市場で買い入れた' else '市場で売った' end, _fmt(bef::bigint), _fmt(aft::bigint),
+                  '買い入れ・売却の株数は明らかにしていない。');
+      perform _ai_article(t, b, '市場部');
+    end if;
+  else
+    raise exception '為替か株をえらんでください';
+  end if;
+  perform _gov_sweep();     -- のこった X・CA は国庫へ
+  return admin_iv_state() || jsonb_build_object('result', jsonb_build_object('filled', iv.filled, 'paid', iv.paid, 'got', iv.got,
+           'before', iv.before_p, 'after', iv.after_p, 'kind', iv.kind, 'side', iv.side));
+end $$;
+
 -- ---------------------------------------------------------------------
 -- 実行権限：内部用（_ではじまる）は画面から呼べないようにする
 -- ---------------------------------------------------------------------
@@ -9953,7 +10132,7 @@ begin
             '_stock_width','_jday_start','_stock_base','_stock_band','_stock_day','_tnow','info_today','_stock_exec',
             '_ai_uid','_randn','_ai_name','_ai_account','_ai_fund','_ai_hire','_ai_ceo','_ai_stock_value','_ai_fair','_ai_article','_ai_event',
             '_ai_business','_ai_settle_week','_ai_news_morning','_ai_news_items','_ai_news_flash','_ai_invest','_ai_market','_ai_market_cancel',
-            '_ai_setup','_ai_add_investors','_ai_tick','_ai_err','admin_ai','admin_ai_set','admin_ai_fund',
+            '_ai_setup','_ai_add_investors','_ai_tick','_fx_exec','_stock_width_x','_gov_uid','_gov_sweep','_fx_last','admin_iv_state','admin_intervene','_ai_err','admin_ai','admin_ai_set','admin_ai_fund',
             'stock_order','stock_cancel','stock_list_apply','stock_list_withdraw','admin_stock_decide','admin_stock_delist','_unlock_orders',
             'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse') loop
     execute format('revoke all on function %s from public, anon', f.sig);
