@@ -1178,7 +1178,8 @@ begin
     'treasury', jsonb_build_object('casino', coalesce(tr.casino_total, 0),
                                    'tax', coalesce(tr.tax_total, 0), 'benefit', coalesce(tr.benefit_total, 0),
                                    'confiscated', coalesce(tr.confiscated_total, 0),
-                                   'wage', coalesce(tr.wage_total, 0), 'fee', coalesce(tr.fee_total, 0), 'review', coalesce(tr.review_total, 0)),
+                                   'wage', coalesce(tr.wage_total, 0), 'fee', coalesce(tr.fee_total, 0), 'review', coalesce(tr.review_total, 0),
+                                   'consumption', coalesce(tr.consumption_total, 0)),
     'top', top, 'top_month', topm,
     'balance', _bal(u));
 end $$;
@@ -2123,6 +2124,13 @@ end $$;
 create or replace function public._xfer_fee(amt bigint) returns bigint
 language sql immutable as $$ select greatest(1, floor(amt * 0.01))::bigint $$;
 
+-- 消費税：会社の商品・新聞／本・請求の支払いの値段（請求額）の中にふくまれる。税ぬきの2%（値段の102分の2・切り捨て）、1回 1,500 X まで
+--   買う人・払う人の払う額は変わらない。売る側（会社・書いた人・請求した人）に入る額から引いて国庫へ
+create or replace function public._ctax(p bigint) returns bigint
+language sql immutable as $$ select least(floor(greatest(coalesce(p, 0), 0) * 2 / 102.0), 1500)::bigint $$;
+alter table public.treasury add column if not exists consumption_total bigint not null default 0;   -- 消費税（累計）
+alter table public.corp_orders add column if not exists tax bigint not null default 0;              -- 注文の消費税
+
 -- IDから相手（ユーザーか会社）をさがす
 create or replace function public._find_id(p_to text, out rid uuid, out rcomp int, out rname text, out rcreated timestamptz)
 language plpgsql stable set search_path = public as $$
@@ -2593,7 +2601,7 @@ end $$;
 -- 買う（代金は会社へ。手数料1%・最低1 Xは買う人が払って国庫へ）
 create or replace function public.corp_buy(p_item bigint, p_note text) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); it corp_items; c companies; me profiles; fee bigint; okday timestamptz; oid bigint;
+declare u uuid := _me(); it corp_items; c companies; me profiles; fee bigint; tax bigint; okday timestamptz; oid bigint;
 begin
   select * into it from corp_items where id = p_item and active;
   if not found then raise exception 'その商品は売っていません'; end if;
@@ -2608,14 +2616,16 @@ begin
   if me.balance < it.price + fee then
     raise exception 'AiliNaXが足りません（手数料 % X をふくめて % X 必要です）', fee, it.price + fee;
   end if;
+  tax := _ctax(it.price);                         -- 消費税（値段にふくまれる。会社に入る額から国庫へ）
   update profiles set balance = balance - (it.price + fee) where id = u;
-  update treasury set balance = balance + fee, fee_total = fee_total + fee where id = 1;
-  insert into corp_orders(item_id, company_id, buyer, item_name, price, fee, note)
-  values (it.id, c.id, u, it.name, it.price, fee, nullif(left(btrim(coalesce(p_note, '')), 200), '')) returning id into oid;
-  perform _corp_move(c.id, it.price, 'sale', format('「%s」の売上（注文 #%s）', it.name, oid));
-  perform _log(u, 'buy', it.price + fee, 0, jsonb_build_object('company', c.name, 'item', it.name, 'order', oid));
-  perform _notice(c.owner, format('【注文 #%s】%s さんが「%s」を %s X で買いました。会社のページから品物を渡してください。', oid, me.nickname, it.name, _fmt(it.price)));
-  return jsonb_build_object('order', oid, 'price', it.price, 'fee', fee, 'balance', _bal(u));
+  update treasury set balance = balance + fee + tax, fee_total = fee_total + fee, consumption_total = consumption_total + tax where id = 1;
+  insert into corp_orders(item_id, company_id, buyer, item_name, price, fee, tax, note)
+  values (it.id, c.id, u, it.name, it.price, fee, tax, nullif(left(btrim(coalesce(p_note, '')), 200), '')) returning id into oid;
+  perform _corp_move(c.id, it.price - tax, 'sale', format('「%s」の売上（注文 #%s・消費税 %s X をのぞく）', it.name, oid, _fmt(tax)));
+  perform _log(u, 'buy', it.price + fee, 0, jsonb_build_object('company', c.name, 'item', it.name, 'order', oid, 'tax', tax));
+  perform _notice(c.owner, format('【注文 #%s】%s さんが「%s」を %s X で買いました（消費税 %s X をのぞいた %s X が会社に入りました）。会社のページから品物を渡してください。',
+                                  oid, me.nickname, it.name, _fmt(it.price), _fmt(tax), _fmt(it.price - tax)));
+  return jsonb_build_object('order', oid, 'price', it.price, 'fee', fee, 'tax', tax, 'balance', _bal(u));
 end $$;
 
 create or replace function public.my_orders() returns jsonb
@@ -2623,7 +2633,7 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me();
 begin
   return (select coalesce(jsonb_agg(jsonb_build_object('id', o.id, 'company', c.name, 'cid', c.cid, 'item', o.item_name,
-            'price', o.price, 'fee', o.fee, 'note', o.note, 'status', o.status, 'at', _dlabel(o.created_at)) order by o.id desc), '[]'::jsonb)
+            'price', o.price, 'fee', o.fee, 'tax', o.tax, 'note', o.note, 'status', o.status, 'at', _dlabel(o.created_at)) order by o.id desc), '[]'::jsonb)
             from (select * from corp_orders where buyer = u order by id desc limit 50) o join companies c on c.id = o.company_id);
 end $$;
 
@@ -2744,7 +2754,7 @@ begin
       'items', (select coalesce(jsonb_agg(jsonb_build_object('id', i.id, 'name', i.name, 'price', i.price,
                   'description', i.description, 'active', i.active) order by i.id), '[]'::jsonb) from corp_items i where i.company_id = c.id),
       'orders', (select coalesce(jsonb_agg(z order by z.id desc), '[]'::jsonb) from (
-                  select o.id, o.item_name item, o.price, o.note, o.status, _dlabel(o.created_at) at, p.nickname buyer, p.account_no buyer_id
+                  select o.id, o.item_name item, o.price, o.tax, o.note, o.status, _dlabel(o.created_at) at, p.nickname buyer, p.account_no buyer_id
                     from corp_orders o join profiles p on p.id = o.buyer where o.company_id = c.id order by o.id desc limit 30) z),
       'ledger', (select coalesce(jsonb_agg(z order by z.id desc), '[]'::jsonb) from (
                   select id, kind, amount, memo, balance_after, _dlabel(created_at) at from corp_ledger where company_id = c.id order by id desc limit 20) z),
@@ -3161,10 +3171,12 @@ alter table public.invoices enable row level security;
 revoke all on public.invoices from anon, authenticated;
 
 -- 請求の1件を画面用に
+alter table public.invoices add column if not exists tax bigint;   -- 払ったときの消費税
 create or replace function public._inv_json(i invoices) returns jsonb
 language sql stable set search_path = public as $$
   select jsonb_build_object('id', i.id, 'amount', i.amount, 'memo', i.memo, 'status', i.status,
-    'fee', _xfer_fee(i.amount), 'at', _dlabel(i.created_at),
+    'tax', coalesce(i.tax, _ctax(i.amount)), 'net', i.amount - coalesce(i.tax, _ctax(i.amount)),
+    'fee', _xfer_fee(i.amount - _ctax(i.amount)), 'at', _dlabel(i.created_at),
     'from_name', coalesce((select nickname from profiles where id = i.from_user), (select name from companies where id = i.from_comp)),
     'from_id',   coalesce((select account_no from profiles where id = i.from_user), (select _cfull(c) from companies c where c.id = i.from_comp)),
     'from_cid',  (select cid from companies where id = i.from_comp),
@@ -3225,24 +3237,33 @@ end $$;
 -- 払う（自分あてなら自分のお金から、会社あてなら会社のお金から）
 create or replace function public.invoice_pay(p_id bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); i invoices; to_id text; payer text; notify uuid;
+declare u uuid := _me(); i invoices; to_id text; payer text; notify uuid; ctx bigint;
 begin
   select * into i from invoices where id = p_id for update;
   if not found or not (i.to_user = u or i.to_comp in (select id from companies where owner = u)) then raise exception '請求が見つかりません'; end if;
   if i.status <> 'open' then raise exception 'この請求はもう終わっています'; end if;
   to_id := coalesce((select account_no from profiles where id = i.from_user), (select cid from companies where id = i.from_comp and status = 'active'));
   if to_id is null then raise exception '請求した会社が活動していないので払えません'; end if;
+  -- 消費税（請求額にふくまれる）：相手には消費税を引いた額を送り、消費税は払う側から国庫へ（払う額の合計は同じ）
+  ctx := _ctax(i.amount);
   if i.to_user is not null then
-    perform transfer_send(to_id, i.amount);
+    perform transfer_send(to_id, i.amount - ctx);
+    if ctx > 0 then
+      update profiles set balance = balance - ctx where id = u and balance >= ctx;
+      if not found then raise exception 'AiliNaXが足りません（消費税 % X）', ctx; end if;
+      perform _log(u, 'ctax', ctx, 0, jsonb_build_object('invoice', i.id));
+    end if;
     payer := (select nickname from profiles where id = u) || ' さん';
   else
-    perform corp_send((select cid from companies where id = i.to_comp), to_id, i.amount);
+    perform corp_send((select cid from companies where id = i.to_comp), to_id, i.amount - ctx);
+    if ctx > 0 then perform _corp_move(i.to_comp, -ctx, 'ctax', format('請求 #%s の消費税', i.id)); end if;
     payer := '会社「' || (select name from companies where id = i.to_comp) || '」';
   end if;
-  update invoices set status = 'paid', done_at = _now() where id = i.id;
+  if ctx > 0 then update treasury set balance = balance + ctx, consumption_total = consumption_total + ctx where id = 1; end if;
+  update invoices set status = 'paid', done_at = _now(), tax = ctx where id = i.id;
   notify := coalesce(i.from_user, (select owner from companies where id = i.from_comp));
-  perform _notice(notify, format('【請求】%s が請求 #%s（%s X%s）を払いました。', payer, i.id, _fmt(i.amount),
-    case when i.memo <> '' then '・' || i.memo else '' end));
+  perform _notice(notify, format('【請求】%s が請求 #%s（%s X%s）を払いました（消費税 %s X をのぞいた %s X が入りました）。', payer, i.id, _fmt(i.amount),
+    case when i.memo <> '' then '・' || i.memo else '' end, _fmt(ctx), _fmt(i.amount - ctx)));
   return invoice_list();
 end $$;
 
@@ -4003,7 +4024,7 @@ begin
     perform _bank_accrue_all(c.id);
     select * into c from companies where id = cid_int;
   end if;
-  owed_orders := coalesce((select sum(price) from corp_orders where company_id = c.id and status = 'paid'), 0);
+  owed_orders := coalesce((select sum(price - tax) from corp_orders where company_id = c.id and status = 'paid'), 0);
   owed_int    := coalesce((select sum(floor(unpaid))::bigint from bank_accounts where company_id = c.id), 0);
   owed_court  := coalesce((select sum(comp_unpaid) from court_cases where defendant_comp = c.id and comp_unpaid > 0), 0);
   claims := owed_orders + owed_int + owed_court;
@@ -4016,9 +4037,13 @@ begin
   ratio := case when claims = 0 then 1 else least(1, c.balance::numeric / claims) end;
   -- 渡していない注文の代金を返す
   for r in select * from corp_orders where company_id = c.id and status = 'paid' order by id loop
-    amt := floor(r.price * ratio);
+    amt := floor((r.price - r.tax) * ratio);
+    if amt > 0 then perform _corp_move(c.id, -amt, 'refund', format('注文 #%s の返金（%s）', r.id, label)); end if;
+    if r.tax > 0 then   -- 消費税は国庫から返す
+      update treasury set balance = balance - r.tax, consumption_total = consumption_total - r.tax where id = 1;
+      amt := amt + r.tax;
+    end if;
     if amt > 0 then
-      perform _corp_move(c.id, -amt, 'refund', format('注文 #%s の返金（%s）', r.id, label));
       perform _give(r.buyer, amt);
       perform _log(r.buyer, 'order_refund', 0, amt, jsonb_build_object('company', c.name, 'order', r.id));
     end if;
@@ -7611,7 +7636,7 @@ end $$;
 -- 買う（本）・購読する（新聞。期間をのばす）
 create or replace function public.pub_buy(p_id bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); p pubs; me profiles; fee bigint; c companies; cur timestamptz;
+declare u uuid := _me(); p pubs; me profiles; fee bigint; tax bigint; c companies; cur timestamptz;
 begin
   select * into p from pubs where id = p_id and status = 'active';
   if not found then raise exception '見つかりません'; end if;
@@ -7627,15 +7652,18 @@ begin
   end if;
   fee := _xfer_fee(p.price);
   if me.balance < p.price + fee then raise exception 'AiliNaXが足りません（手数料 % X をふくめて % X 必要です）', fee, p.price + fee; end if;
+  tax := _ctax(p.price);                          -- 消費税（値段にふくまれる。売る側に入る額から国庫へ）
   update profiles set balance = balance - (p.price + fee) where id = u;
-  update treasury set balance = balance + fee, fee_total = fee_total + fee where id = 1;
-  perform _log(u, 'pub_buy', p.price + fee, 0, jsonb_build_object('pub', p.id, 'title', p.title));
+  update treasury set balance = balance + fee + tax, fee_total = fee_total + fee, consumption_total = consumption_total + tax where id = 1;
+  perform _log(u, 'pub_buy', p.price + fee, 0, jsonb_build_object('pub', p.id, 'title', p.title, 'tax', tax));
   if p.company_id is not null then
-    perform _corp_move(p.company_id, p.price, 'pub', format('「%s」の%s（%s さん）', p.title, case when p.kind = 'paper' then '購読料' else '売上' end, me.nickname));
+    perform _corp_move(p.company_id, p.price - tax, 'pub', format('「%s」の%s（%s さん・消費税 %s X をのぞく）', p.title,
+                       case when p.kind = 'paper' then '購読料' else '売上' end, me.nickname, _fmt(tax)));
   else
-    perform _give(p.author, p.price);
-    perform _log(p.author, 'pub_sale', 0, p.price, jsonb_build_object('pub', p.id, 'title', p.title));
-    perform _notice(p.author, format('【本】%s さんが「%s」を %s X で買いました。', me.nickname, p.title, _fmt(p.price)));
+    perform _give(p.author, p.price - tax);
+    perform _log(p.author, 'pub_sale', 0, p.price - tax, jsonb_build_object('pub', p.id, 'title', p.title, 'tax', tax));
+    perform _notice(p.author, format('【本】%s さんが「%s」を %s X で買いました（消費税 %s X をのぞいた %s X が入りました）。',
+                                     me.nickname, p.title, _fmt(p.price), _fmt(tax), _fmt(p.price - tax)));
   end if;
   if p.kind = 'book' then
     insert into pub_access(pub_id, user_id, until) values (p.id, u, null);
@@ -8995,7 +9023,7 @@ begin
             'bj_start','bj_hit','bj_stand','bj_double',
             '_now','_month_of','_month_start','_next_month','_prev_month','_jday','_dlabel','_fmt',
             '_tax','_income','_notice','_debt','_pay_tax','_process_month','_tax_tick','_tax_badge','_assets','_ok7',
-            'tax_state','tax_file','tax_pay','_new_acct','_cfull','_cid_norm','_new_ccode','_xfer_fee','_xfer_check','transfer_preview','transfer_send','work_state','work_start','work_submit','info_state',
+            'tax_state','tax_file','tax_pay','_new_acct','_cfull','_cid_norm','_new_ccode','_xfer_fee','_ctax','_xfer_check','transfer_preview','transfer_send','work_state','work_start','work_submit','info_state',
             '_find_id','_corp_move','_credit','_is_admin','_my_corp','_bank_accrue','_bank_accrue_all','_corp_card',
             'corp_search','corp_pins','corp_pin','corp_page','corp_buy','my_orders','bank_open','bank_deposit','bank_withdraw',
             'my_banks','corp_apply','my_corps','corp_update','corp_item_save','corp_order_done','corp_send','corp_withdraw',

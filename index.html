@@ -772,7 +772,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   </div>
   <div data-sub="bill" class="card">
     <h3 style="margin-top:0">請求する</h3>
-    <p class="muted small" style="margin:0 0 6px">相手のID（ユーザーか会社）に「〇X 払ってください」と送ります。相手が「払う」を押すと、送金と同じように届きます（手数料1%・最低1 Xは払う側）。</p>
+    <p class="muted small" style="margin:0 0 6px">相手のID（ユーザーか会社）に「〇X 払ってください」と送ります。相手が「払う」を押すと、送金と同じように届きます（手数料1%・最低1 Xは払う側）。請求額には消費税2%（1回 1,500 X まで）がふくまれ、請求した側に入る額から国に納められます。</p>
     <select class="inp" id="bFrom"><option value="">自分として</option></select>
     <input class="inp" id="bTo" inputmode="numeric" maxlength="11" placeholder="相手のID（ユーザー5けた・会社3けた）">
     <input class="inp" id="bAmt" type="number" inputmode="numeric" min="1" step="1" placeholder="請求する額（X）">
@@ -1888,7 +1888,8 @@ function taxRender() {
     <span class="muted">送金の手数料（累計）</span><b>${fmt(T.treasury.fee)}</b>
     <span class="muted">給料（累計）</span><b>${fmt(T.treasury.wage)}</b>
     <span class="muted">給付金（累計）</span><b>${fmt(T.treasury.benefit)}</b>
-    <span class="muted">企業評価の謝礼（累計）</span><b>${fmt(T.treasury.review || 0)}</b></div>`;
+    <span class="muted">企業評価の謝礼（累計）</span><b>${fmt(T.treasury.review || 0)}</b>
+    <span class="muted">消費税（累計）</span><b>${fmt(T.treasury.consumption || 0)}</b></div>`;
 
   // 高額納税者番付
   $('#txTop').innerHTML = `<h3 style="margin-top:0">高額納税者番付${T.top_month ? `（${mlab(T.top_month)}分）` : ''}</h3>` +
@@ -2200,6 +2201,8 @@ $('#vTax').addEventListener('click', async ev => {
 /* ---------------- 請求 ---------------- */
 let BL = null;
 const B_ST = { open: '未払い', paid: '払いずみ', declined: '断られた', canceled: '取り消し' };
+// 消費税（値段・請求額にふくまれる分）：102分の2・切り捨て、1回 1,500 X まで（サーバーの _ctax と同じ）
+const ctax = p => Math.min(Math.floor(Math.max(Number(p) || 0, 0) * 2 / 102), 1500);
 const B_ST_IN = { open: '未払い', paid: '払った', declined: '断った', canceled: '取り消された' };
 async function billLoad() { try { BL = await call('invoice_list'); billRender(); } catch (e) { toast(e.message); } }
 function billRender() {
@@ -2208,15 +2211,15 @@ function billRender() {
   if ([...$('#bFrom').options].some(o => o.value === keep)) $('#bFrom').value = keep;
   const line = (i, inc) => `<div class="item">
     <div class="row" style="justify-content:space-between"><b>${inc ? esc(i.from_name) + '（ID ' + i.from_id + '）から' : esc(i.to_name) + '（ID ' + i.to_id + '）へ'}</b><b class="num" style="margin-left:auto;white-space:nowrap">${fmt(i.amount)} X</b></div>
-    <div class="small muted">#${i.id}・${i.at}${i.memo ? '・' + esc(i.memo) : ''}${inc && i.to_cid ? `・会社「${esc(i.to_name)}」あて（会社のお金で払います）` : ''}</div>
+    <div class="small muted">#${i.id}・${i.at}${i.memo ? '・' + esc(i.memo) : ''}${inc && i.to_cid ? `・会社「${esc(i.to_name)}」あて（会社のお金で払います）` : ''}${i.tax ? `・うち消費税 ${fmt(i.tax)} X` : ''}</div>
     <div class="row" style="margin-top:6px">${i.status === 'open'
-      ? (inc ? `<button class="btn main s" data-bpay="${i.id}" data-amt="${i.amount}" data-fee="${i.fee}">払う（手数料 ${fmt(i.fee)} X）</button><button class="btn s" data-bclose="${i.id}">断る</button>`
+      ? (inc ? `<button class="btn main s" data-bpay="${i.id}" data-amt="${i.amount}" data-fee="${i.fee}" data-tax="${i.tax}" data-net="${i.net}">払う（手数料 ${fmt(i.fee)} X）</button><button class="btn s" data-bclose="${i.id}">断る</button>`
              : `<span class="tag">未払い</span><button class="btn s" data-bclose="${i.id}">取り消す</button>`)
       : `<span class="tag ${i.status === 'paid' ? 'good' : ''}">${(inc ? B_ST_IN : B_ST)[i.status]}</span>`}</div></div>`;
   $('#bIn').innerHTML = BL.incoming.map(i => line(i, true)).join('') || '<p class="muted small" style="margin:0">ありません</p>';
   $('#bOut').innerHTML = BL.outgoing.map(i => line(i, false)).join('') || '<p class="muted small" style="margin:0">ありません</p>';
   $$('[data-bpay]').forEach(b => b.onclick = async () => {
-    if (!confirm(`${fmt(b.dataset.amt)} X（手数料 ${fmt(b.dataset.fee)} X）を払います。よろしいですか？`)) return;
+    if (!confirm(`${fmt(b.dataset.amt)} X（手数料 ${fmt(b.dataset.fee)} X）を払います。${Number(b.dataset.tax) ? `\n請求額のうち消費税 ${fmt(b.dataset.tax)} X は国に納められ、相手には ${fmt(b.dataset.net)} X が入ります。` : ''}\nよろしいですか？`)) return;
     try { BL = await call('invoice_pay', { p_id: Number(b.dataset.bpay) }); setBal(BL.balance); billRender(); toast('払いました'); } catch (e) { toast(e.message); }
   });
   $$('[data-bclose]').forEach(b => b.onclick = async () => {
@@ -2350,7 +2353,7 @@ async function corpLoad(sub) {
     if (sub === 'order') {
       const d = await call('my_orders');
       $('#odList').innerHTML = d.length ? d.map(o => `<div class="co-row" data-cid="${o.cid}"><span class="nm"><b>${esc(o.item)}</b>
-          <small>${esc(o.company)}・注文 #${o.id}・${o.at}${o.note ? '・' + esc(o.note) : ''}</small></span>
+          <small>${esc(o.company)}・注文 #${o.id}・${o.at}・${fmt(o.price)} X${o.tax ? `（うち消費税 ${fmt(o.tax)} X）` : ''}${o.note ? '・' + esc(o.note) : ''}</small></span>
           <span class="tag ${o.status === 'done' ? 'good' : ''}">${{ done: '受け取りずみ', refunded: '返金ずみ' }[o.status] || '支払いずみ'}</span></div>`).join('')
         : '<p class="muted small" style="margin:0">まだ何も買っていません</p>';
       bindRows($('#odList'));
@@ -2475,8 +2478,8 @@ async function corpOpen(cid, ccOpen) {
   const wd = m.querySelector('[data-wd]');
   if (wd) wd.onclick = () => { const a = Math.floor(Number(prompt('引き出す額（X）', String(c.account.balance))) || 0); if (a > 0) act('bank_withdraw', { p_cid: cid, p_amount: a }, `${fmt(a)} X 引き出しました`); };
   m.querySelectorAll('[data-buy]').forEach(b => b.onclick = () => {
-    const price = Number(b.dataset.price), fee = Math.max(1, Math.floor(price * 0.01));
-    const note = prompt(`「${b.dataset.name}」を ${fmt(price)} X（手数料 ${fmt(fee)} X）で買います。\n注文のメモ（受け取り場所など。なくてもOK）`, '');
+    const price = Number(b.dataset.price), fee = Math.max(1, Math.floor(price * 0.01)), tax = ctax(price);
+    const note = prompt(`「${b.dataset.name}」を ${fmt(price)} X（手数料 ${fmt(fee)} X）で買います。値段には消費税 ${fmt(tax)} X がふくまれます（国に納められます）。\n注文のメモ（受け取り場所など。なくてもOK）`, '');
     if (note === null) return;
     act('corp_buy', { p_item: Number(b.dataset.buy), p_note: note }, '買いました。会社が品物を渡すのを待ちましょう');
   });
@@ -2582,7 +2585,7 @@ function ownSections(c) {
       ${c.items.map(it => itemForm(it)).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
       <details class="ed"><summary>＋ 商品を追加</summary>${itemForm(null)}</details>`]);
   S.push(['orders', '注文', waitOrders ? `渡していない ${waitOrders}件` : `${c.orders.length}件`, waitOrders, `
-      ${c.orders.map(o => `<div class="line"><span class="grow">#${o.id} ${esc(o.item)}（${fmt(o.price)} X）<small>${esc(o.buyer)}（ID ${o.buyer_id}）・${o.at}${o.note ? '・' + esc(o.note) : ''}</small></span>
+      ${c.orders.map(o => `<div class="line"><span class="grow">#${o.id} ${esc(o.item)}（${fmt(o.price)} X${o.tax ? `・うち消費税 ${fmt(o.tax)} X` : ''}）<small>${esc(o.buyer)}（ID ${o.buyer_id}）・${o.at}${o.note ? '・' + esc(o.note) : ''}</small></span>
         ${o.status === 'done' ? '<span class="tag good">渡しずみ</span>' : o.status === 'refunded' ? '<span class="tag">返金ずみ</span>' : `<button class="btn main s" data-act="done" data-id="${o.id}">渡した</button>`}</div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}`]);
   S.push(['jobs', '求人・応募', `求人 ${c.jobs.filter(j => j.active).length}件・応募 ${c.applies.length}件`, c.applies.length, `
       <h4 style="margin-top:0">求人</h4>
@@ -3863,7 +3866,7 @@ async function pubOpen(id) {
     ${d.status === 'deleted' ? `<p class="notice small">書いた人が削除しました。${d.kind === 'paper' ? '購読の期間が終わるまで、これまでの記事を読めます。' : '買った人は、このまま読めます。'}</p>` : ''}
     ${d.mine ? '<div class="row" style="margin:6px 0"><button class="btn main s" data-pedit-go>編集する</button><button class="btn s" data-pdel-pub>削除する</button></div>'
       : d.price > 0 && (d.kind === 'paper' || !d.owned) ? `<button class="btn main wide" data-buy>${d.kind === 'paper' ? (d.owned ? `購読を${d.period_days}日のばす（${fmt(d.price)} X）` : `購読する（${d.period_days}日 ${fmt(d.price)} X）`) : `買う（${fmt(d.price)} X）`}</button>
-        <p class="muted small" style="margin:4px 0 0">手数料1%（最低1 X）がかかります。${d.owned && d.until ? d.until + 'まで購読中です。' : ''}</p>` : ''}
+        <p class="muted small" style="margin:4px 0 0">手数料1%（最低1 X）がかかります。値段には消費税 ${fmt(ctax(d.price))} X がふくまれます。${d.owned && d.until ? d.until + 'まで購読中です。' : ''}</p>` : ''}
     <h3>${d.kind === 'paper' ? '記事' : '目次'}</h3>
     ${d.list.map(x => `<div class="co-row" ${x.readable ? `data-read="${x.id}"` : ''} style="${x.readable ? '' : 'cursor:default'}"><span class="nm"><b>${esc(x.title)}</b>
         <small>${x.at}・${fmt(x.chars)}文字${x.free ? '・無料' : ''}</small></span>${x.readable ? '<span style="color:var(--muted);font-size:20px">›</span>' : '<span class="lock">🔒 ' + (d.kind === 'paper' ? '購読すると読める' : '買うと読める') + '</span>'}</div>`).join('')
@@ -4308,7 +4311,7 @@ $('#rvSend').onclick = async () => {
 };
 
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て' };
+const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て' };
 async function moreLoad() {
   idLoad();
   try {
