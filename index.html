@@ -348,6 +348,8 @@ h3{font-size:15px;margin:16px 0 8px}
 .admtag.sub{background:#6B6A64}
 .offtag{font-size:11px;font-weight:900;border-radius:4px;padding:1px 6px;background:#1F5FA8;color:#fff;margin-left:6px}
 .offtag::before{content:'✓ '}
+.aitag{font-size:11px;font-weight:900;border-radius:4px;padding:1px 6px;background:#6B4FA8;color:#fff;margin-left:6px;white-space:nowrap}
+.staff-desk{font-size:12px;font-weight:800;color:var(--muted);margin:8px 0 2px}
 .stoptag{font-size:11px;font-weight:800;border-radius:4px;padding:1px 6px;margin-left:6px;color:#fff;white-space:nowrap}
 .stoptag.hi{background:#1F6B4F}.stoptag.lo{background:#C43A31}
 .stoptag.hi2,.stoptag.lo2{background:none;border:1px solid currentColor;padding:0 5px}
@@ -816,6 +818,11 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 <!-- 設定 -->
 <section id="vMore" class="view hidden">
   <div class="card" data-sub="prof">
+    <h3 style="margin-top:0">数字の表示</h3>
+    <div class="seg sm" id="numF"><button data-k="comma">1,234,567</button><button data-k="jp">123万4567</button><button data-k="four">123&#8239;4567</button></div>
+    <p class="muted small" id="numFEx" style="margin:6px 0 0"></p>
+  </div>
+  <div class="card" data-sub="prof">
     <h3 style="margin-top:0">ニックネーム</h3>
     <div class="row"><input id="nick" maxlength="12" class="grow" style="padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg)"><button class="btn main" id="nickSave">変える</button></div>
     <p class="muted small" style="margin:6px 0 0">TLや競馬億万長者などで、みんなに見えます（所持金は自分にしか見えません）。本名やメールアドレスは入れないでください。</p>
@@ -882,7 +889,21 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 const CFG = window.AILINAX_CONFIG || {};
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
-const fmt = n => Number(n || 0).toLocaleString('ja-JP');
+// 数字の表示（設定 → プロフィール でえらぶ。この端末に保存）：comma 1,234,567／jp 123万4567（日本式）／four 123 4567（4けたごとに細い空白）
+const NUMF = (() => { try { const v = localStorage.getItem('numfmt'); return ['comma', 'jp', 'four'].includes(v) ? v : 'comma'; } catch (e) { return 'comma'; } })();
+function numStr(n, fd) {
+  const x = Number(n || 0);
+  if (NUMF === 'comma' || !isFinite(x)) return x.toLocaleString('ja-JP', { maximumFractionDigits: fd });
+  const [ip, fp] = Math.abs(x).toLocaleString('en-US', { maximumFractionDigits: fd, useGrouping: false }).split('.');
+  const g = []; for (let i = ip.length; i > 0; i -= 4) g.unshift(ip.slice(Math.max(0, i - 4), i));
+  const U = ['', '万', '億', '兆', '京'];
+  const body = NUMF === 'four' ? g.join('\u202F') : (g.map((t, k) => Number(t) ? Number(t) + U[g.length - 1 - k] : '').join('') || '0');
+  return (x < 0 && (Number(ip) || Number(fp)) ? '-' : '') + body + (fp ? '.' + fp : '');
+}
+const fmt = n => numStr(n, 3);
+// サーバーが書いた文（通知・エラー・記事など）の中の数字（1,234 や「12345 X」）も、えらんだ書き方に
+const numT = t => String(t == null ? '' : t).replace(/(^|[^\d.,])(\d{1,3}(?:,\d{3})+|\d{4,}(?=\s?(?:X|株|CA|口)))(\.\d+)?/g,
+  (m, a, b, c) => a + numStr(Number(b.replace(/,/g, '') + (c || '')), 4));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 // 競馬を公開するときは true に（supabase/schema.sql の race_open も true にして SQL を Run）
 const RACE_ON = true;
@@ -906,9 +927,16 @@ function setBal(b, flash) {
 let toastT;
 function toast(t) {
   let e = $('.toast'); if (!e) { e = document.createElement('div'); e.className = 'toast'; document.body.appendChild(e); }
-  e.textContent = t; e.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => e.hidden = true, 2600);
+  e.textContent = numT(t); e.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => e.hidden = true, 2600);
 }
 function show(id) { $$('main > section').forEach(s => s.classList.toggle('hidden', s.id !== id)); }
+
+/* ---------------- 数字の表示（設定） ---------------- */
+$$('#numF button').forEach(b => {
+  b.classList.toggle('on', b.dataset.k === NUMF);
+  b.onclick = () => { if (b.dataset.k === NUMF) return; try { localStorage.setItem('numfmt', b.dataset.k); } catch (e) { return toast('この端末では保存できませんでした'); } location.reload(); };
+});
+$('#numFEx').textContent = `いまの表示：${fmt(1366583491)} X（カンマ 1,366,583,491・日本式 13億6658万3491・4けたごと 13\u202F6658\u202F3491）。この端末に保存します。`;
 
 /* ---------------- 賭け金入力 ---------------- */
 function betBox(el, def) {
@@ -1685,7 +1713,8 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;'
 const badgeH = b => !b ? '' : (b.ok ? '<span class="chk" title="チェック：滞納なし・登録7日・半年以内にメール認証">✓</span>' : '')
   + (b.role ? `<span class="admtag ${b.role === 'sub' ? 'sub' : ''}">${b.role === 'admin' ? '管理者' : '副管理者'}</span>` : '');
 const nameB = (n, b) => esc(n) + badgeH(b);
-const fmtP = n => Number(n || 0).toLocaleString('ja-JP', { maximumFractionDigits: 4 });
+const AITAG = '<span class="aitag">AI</span>';   // AIが運営する会社・AIのアカウントの印
+const fmtP = n => numStr(n, 4);
 
 /* ---------------- ブラックジャック ---------------- */
 const bjBet = betBox($('#bjBetBox'), 50);
@@ -1946,7 +1975,7 @@ const stopTag = x => x.stop === 'high' ? '<span class="stoptag hi">ストップ�
 // 前日比（X と %）。その日に取引がなければ空
 const chgX = x => { if (x.close == null || x.base == null) return ''; const c = x.close - x.base;
   return `<b class="${udc(c)}">${sgn(c)}${fmt(Math.abs(c))}（${sgn(c)}${Math.abs(c / x.base * 100).toFixed(2)}%）</b>`; };
-const tdStk = x => `<div class="co-row" data-stk="${x.cid}"><span class="nm"><b>${esc(x.name)}${x.new ? '<span class="kindtag">新規上場</span>' : ''}${stopTag(x)}${x.listed === false ? '<span class="stag dead">上場廃止</span>' : x.status === 'suspended' ? '<span class="stag">売買停止</span>' : ''}</b>
+const tdStk = x => `<div class="co-row" data-stk="${x.cid}"><span class="nm"><b>${esc(x.name)}${x.ai ? AITAG : ''}${x.new ? '<span class="kindtag">新規上場</span>' : ''}${stopTag(x)}${x.listed === false ? '<span class="stag dead">上場廃止</span>' : x.status === 'suspended' ? '<span class="stag">売買停止</span>' : ''}</b>
   <small>${x.n ? `始値 ${fmt(x.open)}・高値 ${fmt(x.high)}・安値 ${fmt(x.low)}` : x.base != null ? `取引なし（前日 ${fmt(x.base)} X）` : 'まだ取引がありません'}</small>
   ${x.n ? `<small>出来高 ${fmt(x.vol)}株・売買代金 ${fmt(x.value)} X</small>` : ''}</span>
   <span style="text-align:right;white-space:nowrap"><b class="num">${(x.close ?? x.last) != null ? fmt(x.close ?? x.last) + ' X' : '—'}</b><br><small>${chgX(x)}</small></span></div>`;
@@ -1981,8 +2010,8 @@ function tdHeads(d) {
     else if (d.today) add('🏇', `${nm}は ${m.time} 発走（${esc(m.venue)}）`, RACE_ON ? 'data-tdgo="race"' : '');
   }
   const nw = d.news, pu = d.pubs;
-  if (nw.length === 1) add('📰', `${esc(nw[0].paper)}「<b>${esc(nw[0].title)}</b>」`, `data-item="${nw[0].id}"`);
-  else if (nw.length > 1) add('📰', `ニュースが ${nw.length}件：${esc(nw[0].paper)}「<b>${esc(nw[0].title)}</b>」ほか`, 'data-tdgo="news"');
+  if (nw.length === 1) add('📰', `${esc(nw[0].paper)}「<b>${esc(numT(nw[0].title))}</b>」`, `data-item="${nw[0].id}"`);
+  else if (nw.length > 1) add('📰', `ニュースが ${nw.length}件：${esc(nw[0].paper)}「<b>${esc(numT(nw[0].title))}</b>」ほか`, 'data-tdgo="news"');
   if (pu.length === 1) add(pu[0].kind === 'paper' ? '🗞' : '📚', `新しい${pu[0].kind === 'paper' ? '新聞' : '本'}「<b>${esc(pu[0].title)}</b>」（${esc(pu[0].by)}）`, `data-pub="${pu[0].id}"`);
   else if (pu.length > 1) add('📚', `新しい新聞・本が ${pu.length}つ：「<b>${esc(pu[0].title)}</b>」（${esc(pu[0].by)}）ほか`, 'data-tdgo="news"');
   if (f && f.close != null && f.base) { const c = (f.close - f.base) / f.base * 100;
@@ -2037,7 +2066,7 @@ function tdRender() {
         <small>${(c.industries || []).length ? c.industries.map(indName).map(esc).join('・') : esc(c.description || '')}</small></span><span style="color:var(--muted);font-size:20px">›</span></div>`).join('')}</div>` : ''}
     <div class="card"><h3 style="margin-top:0">為替 AiliNaX / CA</h3>${fxh}<h3>競馬</h3>${kb}${RACE_ON && d.today ? '<button class="btn s" data-tdgo="race" style="margin-top:8px">競馬を開く</button>' : ''}</div>
     ${d.news.length || d.pubs.length ? `<div class="card" id="tdNews"><h3 style="margin-top:0">ニュース・新聞・本</h3>
-      ${d.news.map(n => `<div class="co-row" data-item="${n.id}"><span class="nm"><b>${esc(n.title)}</b><small>${esc(n.paper)}（${esc(n.by)}${n.official ? '<span class="offtag">公式</span>' : ''}）・${n.time}</small></span><span style="color:var(--muted);font-size:20px">›</span></div>`).join('')}
+      ${d.news.map(n => `<div class="co-row" data-item="${n.id}"><span class="nm"><b>${esc(numT(n.title))}</b><small>${esc(n.paper)}（${esc(n.by)}${n.official ? '<span class="offtag">公式</span>' : ''}${n.ai ? AITAG : ''}）・${n.time}</small></span><span style="color:var(--muted);font-size:20px">›</span></div>`).join('')}
       ${d.pubs.map(p => `<div class="co-row" data-pub="${p.id}"><span class="nm"><b>${esc(p.title)}<span class="kindtag">${p.kind === 'paper' ? '新しい新聞' : '新しい本'}</span></b><small>${byTxt(p)}・${priceTxt(p)}</small></span><span style="color:var(--muted);font-size:20px">›</span></div>`).join('')}</div>` : ''}
     <p class="muted small" style="margin:4px 4px 12px">1日の区切りは日本時間の0時。30日前までさかのぼって見られます。</p>`;
 }
@@ -2315,14 +2344,14 @@ document.addEventListener('click', ev => {
   const t = b.dataset.copy, done = () => toast('コピーしました');
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, () => toast(t)); else toast(t);
 }, true);
-const kindTag = c => (c.official ? '<span class="offtag">公式</span>' : '') + certTag(c) + (c.exchange ? '<span class="kindtag">取引所</span>' : c.kind === '銀行' ? '<span class="kindtag">銀行</span>' : c.kind === '証券' ? '<span class="kindtag">証券</span>' : '')
+const kindTag = c => (c.official ? '<span class="offtag">公式</span>' : '') + (c.ai ? AITAG : '') + certTag(c) + (c.exchange ? '<span class="kindtag">取引所</span>' : c.kind === '銀行' ? '<span class="kindtag">銀行</span>' : c.kind === '証券' ? '<span class="kindtag">証券</span>' : '')
   + (c.listed ? '<span class="kindtag">上場</span>' : '')
   + (c.status === 'suspended' ? '<span class="stag">休業中</span>' : c.status === 'bankrupt' ? '<span class="stag dead">倒産済み</span>' : c.status === 'closed' ? '<span class="stag dead">廃業済み</span>' : '')
   + (c.rating && c.rating.grade ? `<span class="gtag ${c.rating.grade === '優良企業' ? 'gold' : ''}">${c.rating.grade}</span>` : '');
 const starStr = n => '★'.repeat(n) + '☆'.repeat(5 - n);
 const ratingH = r => r && r.n ? `<span class="stars">${starStr(Math.round(Number(r.avg)))}</span> <strong>${Number(r.avg).toFixed(1)}</strong><span class="muted">（${r.n}人）</span>` : '<span class="muted">まだ評価なし</span>';
 const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>${esc(c.name)}${kindTag(c)}</b>
-  <small>ID ${c.cid_full || c.cid}・社長 ${nameB(c.owner, c.owner_badge)}${c.status === 'bankrupt' || c.status === 'closed' ? `・${c.closed_at || ''}${c.status === 'bankrupt' ? '倒産' : '廃業'}` : ''}${c.description ? '・' + esc(c.description) : ''}</small>
+  <small>ID ${c.cid_full || c.cid}・社長 ${nameB(c.owner, c.owner_badge)}${c.ai ? '（AI）' : ''}${c.status === 'bankrupt' || c.status === 'closed' ? `・${c.closed_at || ''}${c.status === 'bankrupt' ? '倒産' : '廃業'}` : ''}${c.description ? '・' + esc(c.description) : ''}</small>
   ${(c.industries && c.industries.length) || (c.servers && c.servers.length) ? `<small>${srvTags(c.servers)}${(c.industries || []).slice(0, 2).map(indName).map(esc).join('・')}${(c.industries || []).length > 2 ? ` ほか${c.industries.length - 2}` : ''}</small>` : ''}
   ${c.rating && c.rating.n ? `<small>${ratingH(c.rating)}</small>` : ''}</span>${c.pinned ? '📌' : ''}</div>`;
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
@@ -2399,19 +2428,20 @@ async function corpOpen(cid, ccOpen) {
   const rt = c.rating || { n: 0 };
   m.innerHTML = `<div class="sheet">
     <div class="row"><b style="font-size:20px">${esc(c.name)}</b>${kindTag(c)}<button class="btn s" style="margin-left:auto" data-x>とじる</button></div>
-    <p class="muted small" style="margin:4px 0">ID <b style="user-select:all">${c.cid_full}</b>（${c.cid} だけでもOK）・社長 ${nameB(c.owner, c.owner_badge)}</p>
+    <p class="muted small" style="margin:4px 0">ID <b style="user-select:all">${c.cid_full}</b>${c.ai ? '' : `（${c.cid} だけでもOK）`}・社長 ${nameB(c.owner, c.owner_badge)}${c.ai ? '（AI）' : ''}</p>
     ${c.industries && c.industries.length ? `<div style="margin:2px 0 4px">${indChips(c.industries, true)}</div>` : ''}
     ${dead ? `<p class="notice small" style="margin:6px 0">この会社は${c.closed_at ? c.closed_at + 'に' : ''}<b>${c.status === 'bankrupt' ? '倒産' : '廃業'}</b>しました（${c.status === 'bankrupt' ? '倒産済み' : '廃業済み'}）。もう取引はできません。</p>` : ''}
     ${c.status === 'suspended' ? '<p class="notice small" style="margin:6px 0">この会社はいま<b>休業中</b>です。買い物・送金・預け入れはできません（銀行の引き出しはできます）。</p>' : ''}
     ${c.description ? `<p style="white-space:pre-wrap;margin:8px 0">${esc(c.description)}</p>` : ''}
+    ${c.ai ? `<p class="small" style="margin:6px 0;padding:8px 10px;border-radius:8px;background:var(--soft)"><span class="aitag" style="margin:0 4px 0 0">AI</span>この会社は<b>AIが運営</b>しています（ルールとさいころで自動で動きます）。社員はAIの登場人物です。売上は外の客から毎日入り、<b>毎週月曜9時ごろ</b>に決算と配当があります。</p>` : ''}
     ${c.cert ? `<p class="small" style="margin:6px 0;color:#2B6FD6"><b>${CERT_SVG} サイトの認証を受けた会社です</b>（${c.cert_until}まで）</p>` : ''}
     <div class="small" style="margin:6px 0">評価：${ratingH(rt)}${rt.n ? `<span class="muted">　★5 ${rt.dist[4]}・★4 ${rt.dist[3]}・★3 ${rt.dist[2]}・★2 ${rt.dist[1]}・★1 ${rt.dist[0]}</span>` : ''}</div>
     ${c.listed ? `<div class="row" style="margin:6px 0"><span class="small">株価 <b style="font-size:16px">${c.price != null ? fmt(c.price) + ' X' : '—'}</b>${c.price != null ? '' : '（まだ取引なし）'}・風の芽証券取引所に上場</span>
       <button class="btn main s" data-stk="${c.cid}" style="margin-left:auto">株を売り買いする</button></div>` : ''}
     ${dead ? '' : `<div class="row" style="margin:8px 0"><button class="btn s" data-pin>${c.pinned ? '📌 ピン留めをやめる' : '📌 ピン留め'}</button>
-      ${c.mine || c.status !== 'active' ? '' : '<button class="btn s" data-send>この会社に送金</button>'}
+      ${c.mine || c.ai || c.status !== 'active' ? '' : '<button class="btn s" data-send>この会社に送金</button>'}
       ${c.desk_staff ? '<button class="btn s" data-dkinbox>💬 窓口をひらく（担当）</button>' : c.desk_on ? '<button class="btn main s" data-dknew>💬 窓口で相談</button>' : ''}</div>
-      ${!c.desk_staff && !c.desk_on ? '<p class="small muted" style="margin:0 0 6px">いまは窓口の相談を受け付けていません。</p>' : ''}
+      ${!c.desk_staff && !c.desk_on && !c.ai ? '<p class="small muted" style="margin:0 0 6px">いまは窓口の相談を受け付けていません。</p>' : ''}
       ${c.desk_note ? `<p class="small muted" style="margin:0 0 6px;white-space:pre-wrap">窓口の案内：${esc(c.desk_note)}</p>` : ''}`}
     ${c.desk_mine ? `<p class="small" style="margin:0 0 6px"><a class="men" data-dkmine>この会社との相談（${c.desk_mine}件）を見る</a></p>` : ''}
     ${!dead && c.servers && c.servers.length ? `<h3>ゲーム・Discord</h3>${c.servers.map(srvRow).join('')}
@@ -2433,7 +2463,8 @@ async function corpOpen(cid, ccOpen) {
       <p class="muted small">期限を過ぎると延滞の利息がつき、あなたにお金が入るたびに銀行が取り立てます。</p>` : ''}
     ${dead ? '' : c.official ? '<p class="small muted">国営の会社です（株はありません）。</p>' : `<h3>${unitOf(c) === '株' ? '株主' : '出資者'}</h3>
     <p class="small muted" style="margin:0 0 4px">発行 ${fmt(c.shares)} ${unitOf(c)}</p>${holdersHtml(c, 10)}`}
-    ${dead ? '' : `<h3>商品</h3>
+    ${c.ai && c.staff && c.staff.length ? `<h3>社員（AI）</h3>${staffHtml(c.staff)}` : ''}
+    ${dead || c.ai ? '' : `<h3>商品</h3>
     ${c.items.length ? c.items.map(it => `<div class="item"><div class="row" style="justify-content:space-between"><b>${esc(it.name)}</b><b class="num" style="margin-left:auto;white-space:nowrap">${fmt(it.price)} X</b></div>
         ${it.description ? `<p class="small muted" style="margin:4px 0;white-space:pre-wrap">${esc(it.description)}</p>` : ''}
         ${c.mine || c.status !== 'active' ? '' : `<button class="btn main s" data-buy="${it.id}" data-price="${it.price}" data-name="${esc(it.name)}">購入する</button>`}</div>`).join('')
@@ -2620,7 +2651,7 @@ function ownSections(c) {
         廃業・倒産すると、銀行の預金はみんなに返し、渡していない注文の代金を返して、残ったお金を株主に持ち株の割合で分けます。
         渡していない注文の代金は <b>${fmt(c.owed)} X</b>。会社のお金が足りれば「廃業」、足りなければ「倒産」です（倒産では代金を割合で返し、株は消えます）。</p>`]);
   S.push(['ledger', 'お金の出入り', c.ledger.length ? esc((c.ledger[0].memo || c.ledger[0].kind).slice(0, 20)) : 'まだありません', 0, `
-      ${c.ledger.map(l => `<div class="line"><span class="grow">${esc(l.memo || l.kind)}<small>${l.at}・残り ${fmt(l.balance_after)} X</small></span>
+      ${c.ledger.map(l => `<div class="line"><span class="grow">${esc(numT(l.memo || l.kind))}<small>${l.at}・残り ${fmt(l.balance_after)} X</small></span>
         <b class="num" style="color:${l.amount >= 0 ? 'var(--win)' : 'var(--lose)'}">${l.amount >= 0 ? '+' : ''}${fmt(l.amount)}</b></div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}`]);
   return S;
 }
@@ -2857,8 +2888,9 @@ async function adminLoad() {
           <div class="row"><button class="btn main s" data-lok="${a.cid}">上場を許可</button><button class="btn s" data-lng="${a.cid}">見送る</button><button class="btn s" data-lco="${a.cid}">会社を見る</button></div></div>`).join('')
         : '<p class="muted small" style="margin:0">審査待ちはありません</p>'}
       <h3>上場している会社</h3>
-      ${d.listed.map(x => `<div class="line"><span class="grow">${esc(x.name)}${x.status === 'suspended' ? '<span class="stag">売買停止</span>' : ''}<small>株価 ${x.last != null ? fmt(x.last) + ' X' : '—'}${x.stop === 'high' ? '（ストップ高）' : x.stop === 'low' ? '（ストップ安）' : ''}・きょう ${fmt(x.vol)}株・${x.listed_at}から</small></span>
+      ${d.listed.map(x => `<div class="line"><span class="grow">${esc(x.name)}${x.ai ? AITAG : ''}${x.status === 'suspended' ? '<span class="stag">売買停止</span>' : ''}<small>株価 ${x.last != null ? fmt(x.last) + ' X' : '—'}${x.stop === 'high' ? '（ストップ高）' : x.stop === 'low' ? '（ストップ安）' : ''}・きょう ${fmt(x.vol)}株・${x.listed_at}から</small></span>
           <button class="btn s" data-stk="${x.cid}">板</button>${adm ? `<button class="btn s" data-delist="${x.cid}">上場廃止</button>` : ''}</div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
+      <h3>AI会社</h3><div id="adAi"><p class="muted small" style="margin:0">読みこみ中…</p></div>
       <h3>訴えの審理</h3>
       ${d.cases.length ? d.cases.map(caseForm).join('') : '<p class="muted small" style="margin:0">審理中の訴えはありません</p>'}
       <h3>Cièlani-Nièpha との交換申請</h3>
@@ -2880,7 +2912,7 @@ async function adminLoad() {
       <p class="muted small" style="margin:4px 0 0">買った人の X と、売った人の CA から引いて、風の芽証券取引所に入ります。</p>
       <p class="small muted">副管理者（ID）：${esc(d.subadmins || 'なし')}</p>` : ''}
       <h3>活動中の企業</h3>
-      ${d.active.map(c => `<div class="line"><span class="grow">${esc(c.name)}${c.cert_until ? `<span class="cert">${CERT_SVG}認証</span>` : ''}${c.status === 'suspended' ? `<span class="stag">${c.court_lock ? '休業命令' : '休業中'}</span>` : ''}
+      ${d.active.map(c => `<div class="line"><span class="grow">${esc(c.name)}${c.ai ? AITAG : ''}${c.cert_until ? `<span class="cert">${CERT_SVG}認証</span>` : ''}${c.status === 'suspended' ? `<span class="stag">${c.court_lock ? '休業命令' : '休業中'}</span>` : ''}
           <small>${esc(c.kind === '一般' ? c.form : c.kind)}・ID ${c.cid_full}・社長 ${esc(c.owner)}${adm ? `・お金 ${fmt(c.balance)} X` : ''}${c.cert_until ? `・認証 ${c.cert_until}まで` : ''}</small>
           <small>${c.industries && c.industries.length ? esc(c.industries.map(indName).join('・')) : '業種：未設定'}${c.servers ? `・サーバー ${c.servers}件` : ''}</small></span>
           ${adm && c.status === 'active' ? `<button class="btn s" data-certopen="${c.cid}">認証マーク</button>` : ''}
@@ -2923,7 +2955,39 @@ async function adminLoad() {
     });
     const fs = $('#adFeeSave');
     if (fs) fs.onclick = async () => { try { await call('admin_fx_fee', { p_pct: Number($('#adFee').value) }); toast('手数料を変えました'); adminLoad(); } catch (e) { toast(e.message); } };
+    adAiLoad();
   } catch (e) { toast(e.message); }
+}
+// 管理：AI会社（お金のことは管理者だけ）
+async function adAiLoad(a) {
+  const box = $('#adAi'); if (!box) return;
+  if (!a) { try { a = await call('admin_ai'); } catch (e) { box.innerHTML = `<p class="muted small" style="margin:0">${esc(e.message)}</p>`; return; } }
+  const RL = { trade: '商社・株の売り買い', news: '新聞社・記事' };
+  box.innerHTML = `<div class="kv"><span>ようす</span><b>${!a.setup ? 'まだ始めていません' : a.on ? '<span class="up">動いています</span>' : '<span class="down">止めています</span>'}</b>
+      <span class="muted">最後に動いた時刻</span><b>${a.last || '—'}</b>
+      <span class="muted">1分ごとの自動実行</span><b>${a.cron ? 'あり' : '<span class="down">なし（自動では動きません）</span>'}</b>
+      <span class="muted">きょうの記事・AIの取引</span><b>${fmt(a.articles_today)}本・${fmt(a.trades_today)}件</b>
+      ${a.error ? `<span class="muted">最後のエラー（とばして先へ進みました）</span><b class="small" style="font-weight:400;word-break:break-all">${esc(a.error)}</b>` : ''}
+      ${a.admin ? `<span class="muted">国庫からAIに出したお金</span><b>${fmt(a.ai_out)} X</b><span class="muted">外の客との商売でふえたお金</span><b>${fmt(a.made)} X</b>` : ''}</div>
+    ${a.corps.map(c => `<div class="line"><span class="grow">${esc(c.name)}${AITAG}<small>${RL[c.role] || ''}・株価 ${c.price != null ? fmt(c.price) + ' X' : '—'}・AIの見る値打ち ${fmt(c.fair)} X・評判 ${Number(c.mood).toFixed(2)}・社員 ${c.staff}人</small>
+        <small>この7日：売上 ${fmt(c.week_rev)} X・利益 ${fmt(c.week_profit)} X${c.balance != null ? `・会社のお金 ${fmt(c.balance)} X` : ''}</small></span><button class="btn s" data-aico="${c.cid}">会社</button></div>`).join('')}
+    ${a.accounts ? `<h4 style="margin:10px 0 2px">AIのアカウント（管理者だけに見えます）</h4>${a.accounts.map(x => `<div class="line"><span class="grow">${esc(x.nickname)}<small>お金 ${fmt(x.cash)} X・注文で預けている ${fmt(x.locked)} X・持ち株 ${fmt(x.stocks)} X 分・注文 ${fmt(x.orders)}件</small></span>
+        ${x.role !== 'founder' ? `<button class="btn s" data-aifund="${x.role}" data-nm="${esc(x.nickname)}">お金を足す</button>` : ''}</div>`).join('')}` : ''}
+    ${a.admin ? `<div class="row" style="margin-top:8px">${a.on ? '<button class="btn s" data-aion="0">AIを止める</button>' : `<button class="btn main s" data-aion="1">${a.setup ? 'AIを動かす' : 'AI会社を始める'}</button>`}</div>` : ''}
+    <p class="muted small" style="margin:6px 0 0">神楽坂通商事・帝都京浜新聞・AI投資家は、1分ごとに自動で動きます（ルールとさいころ）。止めると、AIの注文は数分で全部取り消されます。${a.admin ? 'お金を足すと、国庫から出します。' : ''}</p>`;
+  box.querySelectorAll('[data-aico]').forEach(b => b.onclick = () => corpOpen(b.dataset.aico));
+  box.querySelectorAll('[data-aion]').forEach(b => b.onclick = async () => {
+    const on = b.dataset.aion === '1';
+    if (!confirm(on ? (a.setup ? 'AIを動かします。よろしいですか？' : 'AI会社を始めます。国庫から 880万 X（神楽坂通商事 800万・AI投資家 20万×4）を出し、神楽坂通商事と帝都京浜新聞を上場させます。よろしいですか？')
+                    : 'AIを止めます。AIの注文は数分で全部取り消されます。よろしいですか？')) return;
+    try { adAiLoad(await call('admin_ai_set', { p_on: on })); toast(on ? '動かしました' : '止めました'); } catch (e) { toast(e.message); }
+  });
+  box.querySelectorAll('[data-aifund]').forEach(b => b.onclick = async () => {
+    const v = prompt(`「${b.dataset.nm}」に、国庫からいくら足しますか？（X）`, ''); if (v === null) return;
+    const n = Math.floor(Number(String(v).replace(/[,，\s]/g, '')) || 0); if (n < 1) return toast('額を入れてください');
+    if (!confirm(`国庫から ${fmt(n)} X を「${b.dataset.nm}」に出します。よろしいですか？`)) return;
+    try { adAiLoad(await call('admin_ai_fund', { p_who: b.dataset.aifund, p_amount: n })); toast('足しました'); } catch (e) { toast(e.message); }
+  });
 }
 
 /* =================================================================
@@ -3087,7 +3151,7 @@ $('#vCorp').addEventListener('click', async ev => {
 
 /* ---------------- 株式（上場・売り買い） ---------------- */
 const chgH = (last, base) => { if (last == null || !base) return ''; const c = (last - base) / base * 100; return `<b class="${udc(c)}">${sgn(c)}${Math.abs(c).toFixed(2)}%</b>`; };
-const stkRow = x => `<div class="co-row" data-stk="${x.cid}"><span class="nm"><b>${esc(x.name)}${stopTag(x)}${x.status === 'suspended' ? '<span class="stag">売買停止</span>' : ''}</b>
+const stkRow = x => `<div class="co-row" data-stk="${x.cid}"><span class="nm"><b>${esc(x.name)}${x.ai ? AITAG : ''}${stopTag(x)}${x.status === 'suspended' ? '<span class="stag">売買停止</span>' : ''}</b>
   <small>${x.last != null ? `時価総額 ${fmt(x.cap)} X・` : ''}きょう ${fmt(x.vol)}株${x.last == null ? '・まだ取引がありません' : ''}</small></span>
   <span style="text-align:right;white-space:nowrap"><b class="num">${x.last != null ? fmt(x.last) + ' X' : '—'}</b><br><small>${chgH(x.close, x.base)}</small></span></div>`;
 async function stkListLoad() {
@@ -3105,7 +3169,7 @@ async function stkOpen(cid) {
   STK.cid = d.cid; STK.d = d; STK.side = 'buy';
   const m = document.createElement('div'); m.className = 'modal';
   m.innerHTML = `<div class="sheet">
-    <div class="row"><b style="font-size:19px" class="grow">${esc(d.name)}<span class="kindtag">株式</span></b><button class="btn s" data-x>とじる</button></div>
+    <div class="row"><b style="font-size:19px" class="grow">${esc(d.name)}${d.ai ? AITAG : ''}<span class="kindtag">株式</span></b><button class="btn s" data-x>とじる</button></div>
     <p class="small muted" style="margin:2px 0 6px"><a class="men" data-stkco>会社のページ</a>・風の芽証券取引所</p>
     <div id="stkTop"></div>
     <h4 style="margin:12px 0 4px">注文する</h4>
@@ -3197,7 +3261,10 @@ function stkPrev() {
 
 /* ---------------- 株 ---------------- */
 const unitOf = c => c.form === '株式会社' ? '株' : '口';
-const holdersHtml = (c, n) => c.holders.slice(0, n).map(h => `<div class="line"><span class="grow">${nameB(h.nickname, h.badge)}<small>ID ${h.uid}</small></span>
+// AI会社の社員（部署ごと）
+const staffHtml = L => { const g = new Map(); L.forEach(x => { const k = x.desk || '役員'; if (!g.has(k)) g.set(k, []); g.get(k).push(x); });
+  return [...g].map(([k, a]) => `<div class="staff-desk">${esc(k)}</div>` + a.map(x => `<div class="line"><span class="grow">${esc(x.name)}<small>${esc(x.title)}</small></span><span class="muted small">${esc(x.since)}から</span></div>`).join('')).join(''); };
+const holdersHtml = (c, n) => c.holders.slice(0, n).map(h => `<div class="line"><span class="grow">${nameB(h.nickname, h.badge)}${h.ai ? AITAG + '<small>AIのアカウント</small>' : `<small>ID ${h.uid}</small>`}</span>
   <b class="num">${fmt(h.shares)} ${unitOf(c)}</b><span class="muted small" style="width:60px;text-align:right">${Number(h.pct)}%</span></div>`).join('');
 async function stockLoad() {
   try {
@@ -3208,8 +3275,8 @@ async function stockLoad() {
         <div class="small muted">${nameB(o.from_name, o.from_badge)}（ID ${o.from_id}）から・代金 <b>${fmt(o.price)} X</b>（手数料 ${fmt(o.fee)} X）・${o.at}</div>
         <div class="row" style="margin-top:6px"><button class="btn main s" data-ofok="${o.id}" data-p="${o.price}" data-f="${o.fee}">払って受け取る</button><button class="btn s" data-ofng="${o.id}">断る</button></div></div>`).join('') : '')
       + (d.stocks.length ? `<h4 style="margin:${d.offers_in.length ? 12 : 0}px 0 4px">持っている株</h4>` : '')
-      + (d.stocks.map(x => `<div class="item"><div class="row"><b>${esc(x.name)}${x.listed ? '<span class="kindtag">上場</span>' : ''}${x.status === 'suspended' ? '<span class="stag">休業中</span>' : ''}</b><b class="num" style="margin-left:auto">${fmt(x.shares + (x.on_sale || 0))} ${unitOf(x)}</b></div>
-      <div class="small muted">発行 ${fmt(x.total)} ${unitOf(x)} のうち ${Number(x.pct)}%・社長 ${esc(x.owner)}${x.mine ? '（あなた）' : ''}・もらった配当 ${fmt(x.dividend_total)} X</div>
+      + (d.stocks.map(x => `<div class="item"><div class="row"><b>${esc(x.name)}${x.ai ? AITAG : ''}${x.listed ? '<span class="kindtag">上場</span>' : ''}${x.status === 'suspended' ? '<span class="stag">休業中</span>' : ''}</b><b class="num" style="margin-left:auto">${fmt(x.shares + (x.on_sale || 0))} ${unitOf(x)}</b></div>
+      <div class="small muted">発行 ${fmt(x.total)} ${unitOf(x)} のうち ${Number(x.pct)}%・社長 ${esc(x.owner)}${x.mine ? '（あなた）' : x.ai ? '（AI）' : ''}・もらった配当 ${fmt(x.dividend_total)} X</div>
       ${x.listed ? `<div class="small">株価 ${x.price != null ? `<b>${fmt(x.price)} X</b>（評価額 ${fmt(x.price * (x.shares + (x.on_sale || 0)))} X）` : 'まだ取引なし'}${x.on_sale ? `・売り注文中 ${fmt(x.on_sale)}株` : ''}</div>` : ''}
       <div class="row" style="margin-top:6px">${x.listed ? `<button class="btn main s" data-stk="${x.cid}">取引所で売り買い</button>` : ''}<button class="btn s" data-give="${x.cid}" data-max="${x.shares}">ゆずる・売る</button><button class="btn s" data-co="${x.cid}">会社を見る</button></div></div>`).join('')
       || '<p class="muted small" style="margin:0">まだ持っていません</p>')
@@ -3801,7 +3868,7 @@ $('#rmChatIn').onkeydown = ev => { if (ev.key === 'Enter') $('#rmChatSend').clic
 /* =================================================================
    広報・書籍（ニュース・新聞・本）
    ================================================================= */
-const PB = { tab: 'news', q: '', edit: null };
+const PB = { tab: 'news', q: '', edit: null, nf: 'all' };
 const priceTxt = x => x.price === 0 ? '無料' : x.kind === 'paper' ? `${fmt(x.price)} X／${x.period_days}日` : `${fmt(x.price)} X`;
 const byTxt = x => `${esc(x.by)}${x.official ? '<span class="offtag">公式</span>' : ''}${badgeH(x.by_badge)}`;
 const pubRow = x => `<div class="co-row" data-pub="${x.id}"><span class="nm"><b>${esc(x.title)}${x.status === 'hidden' ? '<span class="stag">非公開</span>' : x.status === 'deleted' ? '<span class="stag dead">削除済み</span>' : ''}</b>
@@ -3811,10 +3878,12 @@ async function pubLoad() {
   const box = $('#pbBox');
   try {
     if (PB.tab === 'news') {
-      const d = await call('news_list');
-      box.innerHTML = d.map(n => `<div class="co-row" data-item="${n.id}"><span class="nm"><b>${esc(n.title)}</b>
-          <small>${esc(n.paper)}（${esc(n.by)}${n.official ? '<span class="offtag">公式</span>' : ''}）・${n.at}</small><small>${esc(n.head)}</small></span></div>`).join('')
-        || '<p class="muted small" style="margin:0">まだニュースはありません。会社が新聞を出し、無料の記事を書くとここに出ます。</p>';
+      const d = await call('news_list'), L = d.filter(n => PB.nf === 'all' || (PB.nf === 'ai') === !!n.ai);
+      box.innerHTML = (d.some(n => n.ai) ? `<div class="seg sm" id="nwF" style="margin:0 0 8px">${[['all', 'すべて'], ['human', 'プレイヤーの新聞'], ['ai', 'AIの新聞']].map(([k, v]) => `<button data-k="${k}" class="${PB.nf === k ? 'on' : ''}">${v}</button>`).join('')}</div>` : '')
+        + (L.map(n => `<div class="co-row" data-item="${n.id}"><span class="nm"><b>${esc(numT(n.title))}</b>
+          <small>${esc(n.paper)}（${esc(n.by)}${n.official ? '<span class="offtag">公式</span>' : ''}${n.ai ? AITAG : ''}）・${n.at}</small><small>${esc(numT(n.head))}</small></span></div>`).join('')
+        || `<p class="muted small" style="margin:0">${PB.nf === 'human' ? 'プレイヤーの新聞の記事はまだありません。' : 'まだニュースはありません。'}会社が新聞を出し、無料の記事を書くとここに出ます。</p>`);
+      $$('#nwF button').forEach(b => b.onclick = () => { PB.nf = b.dataset.k; pubLoad(); });
     } else if (PB.tab === 'paper' || PB.tab === 'book') {
       const d = await call('pub_list', { p_kind: PB.tab, p_q: PB.q });
       box.innerHTML = `<input class="inp" id="pbQ" placeholder="${PB.tab === 'paper' ? '新聞' : '本'}をさがす" value="${esc(PB.q)}">` + (d.map(pubRow).join('')
@@ -3894,9 +3963,9 @@ async function pubReader(id) {
   const m = document.createElement('div'); m.className = 'modal';
   m.innerHTML = `<div class="sheet">
     <div class="row"><button class="btn s" data-back>‹ ${esc(r.pub.title)}</button><button class="btn s" style="margin-left:auto" data-x>とじる</button></div>
-    <h2 style="margin:12px 0 2px;font-size:21px">${esc(r.title)}</h2>
+    <h2 style="margin:12px 0 2px;font-size:21px">${esc(numT(r.title))}</h2>
     <p class="muted small" style="margin:0">${byTxt(r.pub)}・${r.at}</p>
-    <div class="reader">${esc(r.body)}</div>
+    <div class="reader">${esc(numT(r.body))}</div>
     <div class="row" style="justify-content:space-between">${r.prev ? `<button class="btn s" data-go="${r.prev}">‹ 前へ</button>` : '<span></span>'}${r.next ? `<button class="btn main s" data-go="${r.next}">次へ ›</button>` : ''}</div></div>`;
   m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) m.remove(); };
   document.body.appendChild(m);
@@ -4178,7 +4247,7 @@ async function noticeOpen() {
   $$('.modal').forEach(m => m.remove());
   const m = document.createElement('div'); m.className = 'modal';
   const can = 'Notification' in window;
-  const row = n => `<div class="nt-row ${n.new ? 'new' : ''}" data-nt="${n.id}"><span class="tg2">${esc(noticeTag(n.body))}</span><span class="tx">${esc(noticeText(n.body))}</span><span class="tm">${n.at}<br>${n.time}</span></div>`;
+  const row = n => `<div class="nt-row ${n.new ? 'new' : ''}" data-nt="${n.id}"><span class="tg2">${esc(noticeTag(n.body))}</span><span class="tx">${esc(numT(noticeText(n.body)))}</span><span class="tm">${n.at}<br>${n.time}</span></div>`;
   m.innerHTML = `<div class="sheet"><div class="row"><b style="font-size:19px">通知</b><button class="btn s" style="margin-left:auto" data-x>とじる</button></div>
     ${can ? `<label class="small" style="display:block;margin:6px 0"><input type="checkbox" id="ntPush" ${ntLocal('ntPush') === '1' && Notification.permission === 'granted' ? 'checked' : ''}> この端末にも通知を出す（このサイトを開いているとき）</label>` : ''}
     <div id="ntList">${d.items.map(row).join('') || '<p class="muted small">まだ通知はありません</p>'}</div>

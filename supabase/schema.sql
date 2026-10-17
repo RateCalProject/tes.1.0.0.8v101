@@ -257,6 +257,8 @@ create or replace function public._ok7(u uuid) returns timestamptz
 language sql stable set search_path = public as $$
   select coalesce(ok7_at, created_at + interval '7 days') from profiles where id = u
 $$;
+-- AIのアカウント（AI会社・AI投資家。ログインできず、IDもない。くわしくは下の「AI会社」）：null なら人
+alter table public.profiles add column if not exists ai text;
 alter table public.treasury add column if not exists fee_total bigint not null default 0;
 
 -- 企業・銀行 ---------------------------------------------------------
@@ -277,10 +279,25 @@ create table if not exists public.companies (
 );
 -- 会社の形（株式会社・有限会社・合同会社）。name には「株式会社〇〇」のように形もふくめた名前を入れる
 alter table public.companies add column if not exists form text not null default '株式会社';
+-- AI会社（自動で動く。くわしくは下の「AI会社」）と、AIの社員（名前と役職のある登場人物）
+alter table public.companies add column if not exists ai boolean not null default false;
+create table if not exists public.ai_staff (
+  id         bigserial primary key,
+  company_id int not null references public.companies(id) on delete cascade,
+  name       text not null,
+  title      text not null,
+  role       text not null default 'staff',   -- ceo / reporter / trader / analyst / staff
+  desk       text not null default '',        -- 部署
+  joined     date not null,
+  left_on    date
+);
+alter table public.ai_staff enable row level security;
+revoke all on public.ai_staff from anon, authenticated;
 -- 会社のID：「会社番号3けた-代表（社長）のID5けた」（例 101-76705）。取引は最初の3けただけでもできる
 create or replace function public._cfull(c companies) returns text
 language plpgsql stable set search_path = public as $$
 begin
+  if c.ai then return c.cid; end if;     -- AI会社は会社番号だけ
   return c.cid || '-' || coalesce((select account_no from profiles where id = c.owner), '');
 end $$;
 -- 入力されたIDを会社番号にそろえる（「101-76705」→「101」。後ろの5けたが今の社長と合わなければエラー）
@@ -482,9 +499,12 @@ language sql stable set search_path = public as $$ select balance from profiles 
 -- 記録する。ゲームのときは、カジノのもうけ（賭け金 − 払い戻し）を国庫に入れる
 create or replace function public._log(u uuid, g text, bet bigint, pay bigint, d jsonb) returns void
 language plpgsql set search_path = public as $$
+declare b bigint; a text;
 begin
+  select balance, ai into b, a from profiles where id = u;
+  if a is not null then return; end if;      -- AIのアカウントは記録しない
   insert into tx_log(user_id, game, bet, payout, balance_after, detail)
-  values (u, g, bet, pay, (select balance from profiles where id = u), d);
+  values (u, g, bet, pay, b, d);
   if g in ('slot','roulette','hilo','blackjack','race') then
     update treasury set balance = balance + (bet - pay), casino_total = casino_total + (bet - pay) where id = 1;
   end if;
@@ -880,7 +900,8 @@ language sql stable set search_path = public as $$
 $$;
 
 create or replace function public._notice(u uuid, t text) returns void
-language sql set search_path = public as $$ insert into notices(user_id, body) values (u, t) $$;
+language sql set search_path = public as $$
+  insert into notices(user_id, body) select u, t where not exists (select 1 from profiles where id = u and ai is not null) $$;
 
 -- 滞納（締めたあとの月で、まだ納めていない額）
 create or replace function public._debt(u uuid) returns bigint
@@ -985,7 +1006,7 @@ begin
   insert into tax_months(month) values (m) on conflict (month) do nothing;
   if (select processed from tax_months where month = m for update) then return; end if;
 
-  for p in select id from profiles where created_at < mend order by created_at loop
+  for p in select id from profiles where created_at < mend and ai is null order by created_at loop
     tru := _income(p.id, m);
     select * into r from tax_returns where user_id = p.id and month = m for update;
     if found and r.declared is not null then
@@ -1102,7 +1123,7 @@ declare lastm int := _prev_month(_month_of(_now() - interval '15 days')); m int;
 begin
   if exists (select 1 from tax_months where month = lastm and processed) then return; end if;
   perform pg_advisory_xact_lock(20261016);
-  select _month_of(min(created_at)) into m from profiles;
+  select _month_of(min(created_at)) into m from profiles where ai is null;
   if m is null then return; end if;
   while m <= lastm loop
     if not coalesce((select processed from tax_months where month = m), false) then
@@ -2116,7 +2137,7 @@ declare r record;
 begin
   -- 前の7けたの口座番号は5けたのIDに変える
   update public.profiles set account_no = null where char_length(account_no) = 7;
-  for r in select id from public.profiles where account_no is null loop
+  for r in select id from public.profiles where account_no is null and ai is null loop
     update public.profiles set account_no = public._new_acct() where id = r.id;
   end loop;
 end $$;
@@ -2138,6 +2159,7 @@ declare k text := btrim(coalesce(p_to, ''));
 begin
   select id, nickname, created_at into rid, rname, rcreated from profiles where account_no = k;
   if found then return; end if;
+  if exists (select 1 from companies where cid = _cid_norm(k) and ai) then raise exception 'AIの会社は、送金・請求などの相手にできません'; end if;
   select id, name into rcomp, rname from companies where cid = _cid_norm(k) and status = 'active';
   if found then return; end if;
   if exists (select 1 from companies where cid = _cid_norm(k) and status = 'suspended') then raise exception 'その会社はいま休業中です'; end if;
@@ -2222,12 +2244,14 @@ create or replace function public.transfer_send(p_to text, p_amount bigint) retu
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c record; me profiles;
 begin
-  select * into me from profiles where id = u for update;
-  select * into c from _xfer_check(u, p_to, p_amount, null);
+  select * into c from _xfer_check(u, p_to, p_amount, null);                  -- 相手をさがす
+  perform 1 from profiles where id in (u, c.rid) order by id for update;     -- 自分と相手を id の順にロック
+  select * into c from _xfer_check(u, p_to, p_amount, null);                  -- ロックしたあとの残高で、もう一度調べる
+  select * into me from profiles where id = u;
   update profiles set balance = balance - (p_amount + c.fee) where id = u;
-  update treasury set balance = balance + c.fee, fee_total = fee_total + c.fee where id = 1;
   perform _log(u, 'send', p_amount + c.fee, 0, jsonb_build_object('to', c.rnick, 'id', btrim(p_to), 'amount', p_amount, 'fee', c.fee));
   perform _credit(c.rid, c.rcomp, p_amount, me.nickname || ' さん', me.account_no);
+  update treasury set balance = balance + c.fee, fee_total = fee_total + c.fee where id = 1;   -- 国庫は最後
   return jsonb_build_object('nickname', c.rnick, 'amount', p_amount, 'fee', c.fee, 'balance', _bal(u));
 end $$;
 
@@ -2353,7 +2377,7 @@ declare u uuid := _me(); tr treasury;
 begin
   select * into tr from treasury where id = 1;
   return jsonb_build_object(
-    'players', (select count(*) from profiles),
+    'players', (select count(*) from profiles where ai is null),
     'companies', (select count(*) from companies where status = 'active'),
     'wage', coalesce(tr.wage_total, 0), 'fee', coalesce(tr.fee_total, 0),
     -- 競馬億万長者：今週（月曜から）の競馬の勝ち（払戻 − 賭け金）の合計
@@ -2518,7 +2542,9 @@ language sql stable set search_path = public as $$
 create or replace function public._corp_card(c companies, u uuid) returns jsonb
 language sql stable set search_path = public as $$
   select jsonb_build_object('cid', c.cid, 'cid_full', _cfull(c), 'name', c.name, 'form', c.form, 'kind', c.kind, 'description', c.description,
-    'owner', (select nickname from profiles where id = c.owner), 'owner_badge', _badge(c.owner), 'rate', c.rate, 'status', c.status,
+    'owner', case when c.ai then (select s.name from ai_staff s where s.company_id = c.id and s.role = 'ceo' and s.left_on is null order by s.id limit 1)
+                  else (select nickname from profiles where id = c.owner) end,
+    'owner_badge', case when c.ai then null else _badge(c.owner) end, 'ai', c.ai, 'rate', c.rate, 'status', c.status,
     'exchange', c.cid = (select value from app_settings where key = 'exchange_cid'), 'official', c.official, 'acct_mode', c.acct_mode,
     'acct_need_check', c.acct_need_check, 'loan_on', c.loan_on, 'loan_need_acct', c.loan_need_acct, 'loan_need_check', c.loan_need_check,
     'pinned', exists (select 1 from corp_pins where user_id = u and company_id = c.id),
@@ -2595,6 +2621,8 @@ begin
     'shares', c.shares, 'holders', _corp_holders(c.id),
     'desk_mine', (select count(*) from desk_threads t where t.company_id = c.id and t.user_id = u),
     'desk_staff', _desk_staff(c.id, u),
+    'staff', case when c.ai then (select coalesce(jsonb_agg(jsonb_build_object('name', s.name, 'title', s.title, 'desk', s.desk, 'since', _dlabel(_jday_start(s.joined)))
+                                   order by (s.role = 'ceo') desc, s.id), '[]'::jsonb) from ai_staff s where s.company_id = c.id and s.left_on is null) end,
     'balance', _bal(u));
 end $$;
 
@@ -3089,7 +3117,8 @@ begin
     'pending', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'cid_full', _cfull(c), 'name', c.name, 'form', c.form, 'kind', c.kind, 'description', c.description,
                   'industries', c.industries, 'owner', p.nickname, 'owner_id', p.account_no, 'owner_badge', _badge(p.id), 'mine', c.owner = u, 'at', _dlabel(c.created_at)) order by c.id), '[]'::jsonb)
                   from companies c join profiles p on p.id = c.owner where c.status = 'pending'),
-    'active', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'cid_full', _cfull(c), 'name', c.name, 'form', c.form, 'kind', c.kind, 'owner', p.nickname,
+    'active', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'cid_full', _cfull(c), 'name', c.name, 'form', c.form, 'kind', c.kind,
+                  'owner', case when c.ai then coalesce(_ai_ceo(c.id), '') || '（AI）' else p.nickname end, 'ai', c.ai,
                   'status', c.status, 'court_lock', c.court_lock, 'industries', c.industries, 'servers', jsonb_array_length(c.servers),
                   'cert_until', case when c.status = 'active' and c.cert_until > _now() then _dlabel(c.cert_until) end,
                   'balance', case when rl = 'admin' then c.balance end) order by c.name), '[]'::jsonb)
@@ -3315,7 +3344,7 @@ select c.id, c.owner, c.shares from public.companies c
 
 create or replace function public._corp_holders(cid_int int) returns jsonb
 language sql stable set search_path = public as $$
-  select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id), 'shares', h.n,
+  select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id), 'ai', p.ai is not null, 'shares', h.n,
            'pct', round(h.n * 100.0 / greatest(c.shares, 1), 2)) order by h.n desc, p.nickname), '[]'::jsonb)
     from (select user_id, sum(n)::bigint n, sum(s)::bigint s from (
             select user_id, shares n, 0 s from corp_holders where company_id = cid_int
@@ -3399,7 +3428,7 @@ begin
            'shares', coalesce(h.shares, 0), 'total', c.shares, 'pct', round((coalesce(h.shares, 0) + h.on_sale) * 100.0 / greatest(c.shares, 1), 2),
            'on_sale', h.on_sale, 'listed', c.listed,
            'price', case when c.listed then (select price from stock_trades t where t.company_id = c.id order by t.id desc limit 1) end,
-           'owner', (select nickname from profiles where id = c.owner), 'mine', c.owner = u,
+           'owner', case when c.ai then _ai_ceo(c.id) else (select nickname from profiles where id = c.owner) end, 'mine', c.owner = u, 'ai', c.ai,
            'dividend_total', (select coalesce(sum(payout), 0) from tx_log where user_id = u and game = 'dividend' and detail->>'company_id' = c.id::text))
            order by c.name), '[]'::jsonb)
          from (select company_id, sum(n)::bigint shares, sum(s)::bigint on_sale from (
@@ -7586,12 +7615,18 @@ create or replace function public.news_list() returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me();
 begin
-  return (select coalesce(jsonb_agg(jsonb_build_object('id', i.id, 'title', i.title, 'pub_id', p.id, 'paper', p.title,
-            'by', (select name from companies where id = p.company_id), 'official', coalesce((select official from companies where id = p.company_id), false),
-            'at', _dlabel(i.created_at), 'head', left(regexp_replace(i.body, '\s+', ' ', 'g'), 60)) order by i.id desc), '[]'::jsonb)
-    from (select * from pub_items where free order by id desc limit 200) i join pubs p on p.id = i.pub_id
-   where p.kind = 'paper' and p.status = 'active'
-     and exists (select 1 from companies c where c.id = p.company_id and c.status in ('active', 'suspended')));
+  return (select coalesce(jsonb_agg(jsonb_build_object('id', z.id, 'title', z.title, 'pub_id', z.pub_id, 'paper', z.paper,
+            'by', z.cname, 'official', z.official, 'ai', z.ai,
+            'at', _dlabel(z.created_at), 'head', left(regexp_replace(z.body, '\s+', ' ', 'g'), 60)) order by z.id desc), '[]'::jsonb)
+    from (select * from (select i.id, i.title, i.pub_id, p.title paper, c.name cname, c.official, c.ai, i.created_at, i.body
+                           from pub_items i join pubs p on p.id = i.pub_id join companies c on c.id = p.company_id
+                          where i.free and p.kind = 'paper' and p.status = 'active' and c.status in ('active', 'suspended') and not c.ai
+                          order by i.id desc limit 150) h
+          union all
+          select * from (select i.id, i.title, i.pub_id, p.title paper, c.name cname, c.official, c.ai, i.created_at, i.body
+                           from pub_items i join pubs p on p.id = i.pub_id join companies c on c.id = p.company_id
+                          where i.free and p.kind = 'paper' and p.status = 'active' and c.status in ('active', 'suspended') and c.ai
+                          order by i.id desc limit 150) m) z);
 end $$;
 
 -- 新聞・本のページ（記事・章の一覧）
@@ -7777,7 +7812,8 @@ alter table public.notices add column if not exists link jsonb;
 alter table public.notices add column if not exists from_user uuid references public.profiles(id) on delete set null;
 
 create or replace function public._notice_l(u uuid, t text, lk jsonb, fu uuid) returns void
-language sql set search_path = public as $$ insert into notices(user_id, body, link, from_user) values (u, t, lk, fu) $$;
+language sql set search_path = public as $$
+  insert into notices(user_id, body, link, from_user) select u, t, lk, fu where not exists (select 1 from profiles where id = u and ai is not null) $$;
 
 -- 通知の一覧（p_before より前を30件）。p_read = true なら、出したものを既読にする
 create or replace function public.notice_list(p_before bigint, p_read boolean) returns jsonb
@@ -7858,7 +7894,7 @@ begin
   q := ltrim(q, '@');
   lk := '%' || replace(replace(replace(q, '\', '\\'), '%', '\%'), '_', '\_') || '%';
   return (select coalesce(jsonb_agg(_person_card(p, u) order by (p.account_no = q) desc, _is_friend(u, p.id) desc, p.nickname), '[]'::jsonb) from (
-            select * from profiles p where p.account_no = q or p.nickname ilike lk
+            select * from profiles p where (p.account_no = q or p.nickname ilike lk) and p.ai is null
              order by (p.account_no = q) desc, p.nickname limit 30) p);
 end $$;
 
@@ -8500,7 +8536,7 @@ begin
   if f = 'debt' and not adm then raise exception '税の滞納でしぼれるのは管理者だけです'; end if;
   select array_agg(z.id order by z.created_at desc, z.id), count(*) into ids, n from (
     select p.id, p.created_at from profiles p
-     where (q = '' or p.account_no = q or p.nickname ilike '%' || q || '%'
+     where p.ai is null and (q = '' or p.account_no = q or p.nickname ilike '%' || q || '%'
             or (adm and q like '%@%' and exists (select 1 from auth.users a where a.id = p.id and to_jsonb(a)->>'email' ilike '%' || q || '%')))
        and case f when 'new' then p.created_at > _now() - interval '7 days'
                   when 'banned' then coalesce(p.banned_until > _now(), false)
@@ -8510,10 +8546,10 @@ begin
   return jsonb_build_object('total', n, 'more', ofs + 50 < n,
     'items', (select coalesce(jsonb_agg(_user_row(p, adm) order by array_position(ids, p.id)), '[]'::jsonb)
                 from profiles p where p.id = any(coalesce(ids[ofs + 1 : ofs + 50], '{}'::uuid[]))),
-    'all', (select count(*) from profiles),
-    'today', (select count(*) from profiles where created_at >= (date_trunc('day', _now() at time zone 'Asia/Tokyo') at time zone 'Asia/Tokyo')),
-    'week', (select count(*) from profiles where created_at > _now() - interval '7 days'),
-    'active7', (select count(*) from profiles where last_seen_at > _now() - interval '7 days'));
+    'all', (select count(*) from profiles where ai is null),
+    'today', (select count(*) from profiles where ai is null and created_at >= (date_trunc('day', _now() at time zone 'Asia/Tokyo') at time zone 'Asia/Tokyo')),
+    'week', (select count(*) from profiles where ai is null and created_at > _now() - interval '7 days'),
+    'active7', (select count(*) from profiles where ai is null and last_seen_at > _now() - interval '7 days'));
 end $$;
 
 create or replace function public.admin_user(p_uid text) returns jsonb
@@ -8669,7 +8705,7 @@ create or replace function public._stock_list() returns jsonb
 language sql stable set search_path = public as $$
   select coalesce(jsonb_agg(j order by (j->>'value')::bigint desc, j->>'name'), '[]'::jsonb) from (
     select _stock_day(c.id, _kb_jday(_now())) || jsonb_build_object('cid', c.cid, 'name', c.name, 'status', c.status, 'shares', c.shares,
-             'listed_at', _dlabel(c.listed_at), 'last', l.p, 'cap', l.p * c.shares) j
+             'listed_at', _dlabel(c.listed_at), 'last', l.p, 'cap', l.p * c.shares, 'ai', c.ai) j
       from companies c
       left join lateral (select price p from stock_trades where company_id = c.id order by id desc limit 1) l on true
      where c.listed and c.status in ('active', 'suspended') offset 0) z
@@ -8694,7 +8730,7 @@ begin
     raise exception 'その会社は上場していません';
   end if;
   select * into me from profiles where id = u;
-  return jsonb_build_object('cid', c.cid, 'name', c.name, 'status', c.status, 'listed', c.listed, 'listed_at', _dlabel(c.listed_at),
+  return jsonb_build_object('cid', c.cid, 'name', c.name, 'ai', c.ai, 'status', c.status, 'listed', c.listed, 'listed_at', _dlabel(c.listed_at),
     'market', _stock_market(c.id),
     'exch', case when ex.id is null then null else jsonb_build_object('cid', ex.cid, 'name', ex.name, 'open', ex.status = 'active', 'fee_pct', ex.fx_fee) end,
     'can_trade', c.listed and c.status = 'active' and ex.id is not null and ex.status = 'active',
@@ -8721,38 +8757,39 @@ begin
   else perform _add_shares(o.company_id, o.user_id, o.remain); end if;
 end $$;
 
--- 株の注文（買い：X を手数料こみで預ける／売り：株を預ける）。合う注文があれば、すぐ約定する
-create or replace function public.stock_order(p_cid text, p_side text, p_price bigint, p_qty bigint) returns jsonb
-language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); c companies; ex companies; me profiles; o stock_orders; m stock_orders; bo stock_orders; so stock_orders;
-  q bigint; v bigint; fb bigint; fs bigint; lockamt bigint; have bigint; fee_tot bigint := 0; bd record; tp bigint; ts timestamptz;
+-- 株の注文を出して、合う注文とすぐ約定する（中で使う。画面からの注文もAIの注文もこれを通る）。注文の id を返す
+--   買い：X を手数料こみで預ける／売り：株を預ける。ioc なら、すぐ合わなかった残りは取り消して返す
+--   呼ぶ前に、会社の行（for key share）と、この株の順番待ちのロック（pg_advisory_xact_lock(7400, 会社)）を取っておくこと
+--   ぶつかりそうな相手の行は、自分とあわせて id の順にロックする（ほかの注文とのデッドロックを防ぐ）
+create or replace function public._stock_exec(u uuid, cid_int int, p_side text, p_price bigint, p_qty bigint, ioc boolean) returns bigint
+language plpgsql set search_path = public as $$
+declare c companies; ex companies := _stock_exch(); o stock_orders; m stock_orders; bo stock_orders; so stock_orders;
+  q bigint; v bigint; fb bigint; fs bigint; lockamt bigint; have bigint; fee_tot bigint := 0; bd record; tp bigint; ts timestamptz := _tnow();
+  who uuid[];
 begin
-  if p_side not in ('buy', 'sell') then raise exception '買いか売りをえらんでください'; end if;
-  if p_price is null or p_price < 1 or p_price > 1000000000 then raise exception '値段は1株あたり1〜10億 X にしてください'; end if;
-  if p_qty is null or p_qty < 1 or p_qty > 1000000000 then raise exception '数量は1〜10億株にしてください'; end if;
-  -- 会社の行を先にロック（上場廃止・廃業の最中なら、終わるのを待ってから最新の状態で判断する）
-  select * into c from companies where cid = _cid_norm(p_cid) for key share;
-  if not found or not c.listed or c.status not in ('active', 'suspended') then raise exception 'その会社は上場していません'; end if;
-  if c.status <> 'active' then raise exception '「%」はいま休業中なので、売買は止まっています（取り消しはできます）', c.name; end if;
-  ex := _stock_exch();
-  if ex.id is null or ex.status <> 'active' then raise exception '取引所がいま開いていないので、注文できません'; end if;
-  perform pg_advisory_xact_lock(7400, c.id);            -- 同じ株の注文は1つずつ
-  ts := _tnow();                                        -- ロックを取ったあとの時刻（値幅の日付と、注文・取引の時刻）
-  select * into me from profiles where id = u for update;
-  if _now() < coalesce(me.ok7_at, me.created_at + interval '7 days') then raise exception '登録から7日たつまで、株の売り買いはできません（%から）', _dlabel(coalesce(me.ok7_at, me.created_at + interval '7 days')); end if;
-  if (select count(*) from stock_orders where user_id = u and status = 'open') >= 30 then raise exception '出せる株の注文は30件までです'; end if;
+  select * into c from companies where id = cid_int;
   select * into bd from _stock_band(c.id, _kb_jday(ts));            -- きょうの値幅（基準値段がなければ値幅制限なし）
   if bd.base is not null and (p_price < bd.lo or p_price > bd.hi) then
     raise exception 'きょうの値幅は % 〜 % X です（基準値段 % X。ストップ安〜ストップ高）。この間の値段で注文してください', _fmt(bd.lo), _fmt(bd.hi), _fmt(bd.base);
   end if;
+  -- ぶつかりそうな相手（値段の良い順・先に出た順に、数量が足りるまで）と自分の行を、id の順にロック
+  if p_side = 'buy' then
+    select array_agg(distinct z.user_id) into who from (
+      select user_id, sum(remain) over (order by price, id) - remain as before from stock_orders
+       where company_id = c.id and side = 'sell' and status = 'open' and price <= p_price and user_id <> u) z where z.before < p_qty;
+  else
+    select array_agg(distinct z.user_id) into who from (
+      select user_id, sum(remain) over (order by price desc, id) - remain as before from stock_orders
+       where company_id = c.id and side = 'buy' and status = 'open' and price >= p_price and user_id <> u) z where z.before < p_qty;
+  end if;
+  perform 1 from profiles where id = any(coalesce(who, '{}'::uuid[]) || u) order by id for update;
   if p_side = 'buy' then
     if exists (select 1 from stock_orders where company_id = c.id and user_id = u and side = 'sell' and status = 'open' and price <= p_price) then
       raise exception '自分の売り注文と同じか高い値段の買い注文は出せません（先に売り注文を取り消してください）';
     end if;
-    if _debt(u) > 0 then raise exception '税金の滞納があるので、株は買えません'; end if;
     lockamt := p_price * p_qty + ceil(p_price * p_qty * ex.fx_fee / 100)::bigint;
     update profiles set balance = balance - lockamt where id = u and balance >= lockamt;
-    if not found then raise exception 'AiliNaX が足りません（手数料をふくめて % X 必要です）', lockamt; end if;
+    if not found then raise exception 'AiliNaX が足りません（手数料をふくめて % X 必要です）', _fmt(lockamt); end if;
   else
     if exists (select 1 from stock_orders where company_id = c.id and user_id = u and side = 'buy' and status = 'open' and price >= p_price) then
       raise exception '自分の買い注文と同じか安い値段の売り注文は出せません（先に買い注文を取り消してください）';
@@ -8807,7 +8844,32 @@ begin
     end if;
     if o.side = 'buy' then o := bo; else o := so; end if;
   end loop;
+  if ioc and o.remain > 0 then perform _stock_cancel_order(o.id); end if;   -- すぐ合わなかった残りは取り消す
   if fee_tot > 0 then perform _corp_move(ex.id, fee_tot, 'stock_fee', format('株の売買の手数料 %s X（%s）', _fmt(fee_tot), c.name)); end if;
+  return o.id;
+end $$;
+
+-- 株の注文（画面から）
+create or replace function public.stock_order(p_cid text, p_side text, p_price bigint, p_qty bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies; ex companies; me profiles;
+begin
+  if p_side not in ('buy', 'sell') then raise exception '買いか売りをえらんでください'; end if;
+  if p_price is null or p_price < 1 or p_price > 1000000000 then raise exception '値段は1株あたり1〜10億 X にしてください'; end if;
+  if p_qty is null or p_qty < 1 or p_qty > 1000000000 then raise exception '数量は1〜10億株にしてください'; end if;
+  -- 会社の行を先にロック（上場廃止・廃業の最中なら、終わるのを待ってから最新の状態で判断する）
+  select * into c from companies where cid = _cid_norm(p_cid) for key share;
+  if not found or not c.listed or c.status not in ('active', 'suspended') then raise exception 'その会社は上場していません'; end if;
+  if c.status <> 'active' then raise exception '「%」はいま休業中なので、売買は止まっています（取り消しはできます）', c.name; end if;
+  ex := _stock_exch();
+  if ex.id is null or ex.status <> 'active' then raise exception '取引所がいま開いていないので、注文できません'; end if;
+  perform pg_advisory_xact_lock(7400, c.id);            -- 同じ株の注文は1つずつ
+  perform pg_advisory_xact_lock(7401, hashtext(u::text));   -- 同じ人の注文も1つずつ（注文30件までを守る）
+  select * into me from profiles where id = u;
+  if _now() < coalesce(me.ok7_at, me.created_at + interval '7 days') then raise exception '登録から7日たつまで、株の売り買いはできません（%から）', _dlabel(coalesce(me.ok7_at, me.created_at + interval '7 days')); end if;
+  if (select count(*) from stock_orders where user_id = u and status = 'open') >= 30 then raise exception '出せる株の注文は30件までです'; end if;
+  if p_side = 'buy' and _debt(u) > 0 then raise exception '税金の滞納があるので、株は買えません'; end if;
+  perform _stock_exec(u, c.id, p_side, p_price, p_qty, false);
   return stock_state(c.cid);
 end $$;
 
@@ -8952,7 +9014,7 @@ begin
     'exch', case when ex.id is null then null else jsonb_build_object('cid', ex.cid, 'name', ex.name, 'open', ex.status = 'active', 'fee_pct', ex.fx_fee) end,
     'stocks', (select coalesce(jsonb_agg(j order by (j->>'value')::bigint desc, j->>'name'), '[]'::jsonb) from (
         select _stock_day(c.id, d) || jsonb_build_object('cid', c.cid, 'name', c.name, 'status', c.status, 'shares', c.shares,
-                 'new', c.listed_at >= t0 and c.listed_at < t1, 'listed', c.listed and c.status in ('active', 'suspended'), 'listed_at', _dlabel(c.listed_at),
+                 'new', c.listed_at >= t0 and c.listed_at < t1, 'listed', c.listed and c.status in ('active', 'suspended'), 'listed_at', _dlabel(c.listed_at), 'ai', c.ai,
                  'last', (select price from stock_trades t where t.company_id = c.id and t.created_at < t1 order by t.created_at desc, t.id desc limit 1)) j
           from companies c
          where (c.listed and c.status in ('active', 'suspended') and c.listed_at < t1)
@@ -8961,7 +9023,7 @@ begin
     -- 新商品（その日に出た商品。なければ、その前の7日の新商品）
     'items', (select coalesce(jsonb_agg(z.j order by z.id desc), '[]'::jsonb) from (
                 select i.id, jsonb_build_object('id', i.id, 'name', i.name, 'price', i.price, 'description', left(i.description, 100),
-                  'cid', c.cid, 'company', c.name, 'official', c.official, 'time', to_char(i.created_at at time zone 'Asia/Tokyo', 'HH24:MI')) j
+                  'cid', c.cid, 'company', c.name, 'official', c.official, 'ai', c.ai, 'time', to_char(i.created_at at time zone 'Asia/Tokyo', 'HH24:MI')) j
                   from corp_items i join companies c on c.id = i.company_id
                  where i.created_at >= t0 and i.created_at < t1 and i.active and c.status = 'active' order by i.id desc limit 30) z),
     'items_recent', (select coalesce(jsonb_agg(z.j order by z.id desc), '[]'::jsonb) from (
@@ -8970,7 +9032,7 @@ begin
                   from corp_items i join companies c on c.id = i.company_id
                  where i.created_at >= t0 - interval '7 days' and i.created_at < t0 and i.active and c.status = 'active' order by i.id desc limit 6) z),
     -- 新しくできた会社（その日に審査が通った会社）
-    'corps', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'kind', c.kind, 'form', c.form, 'official', c.official,
+    'corps', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'kind', c.kind, 'form', c.form, 'official', c.official, 'ai', c.ai,
                 'industries', c.industries, 'description', left(c.description, 100)) order by c.decided_at), '[]'::jsonb)
               from companies c where c.decided_at >= t0 and c.decided_at < t1 and c.status in ('active', 'suspended')),
     'fx', fxj,
@@ -8989,7 +9051,7 @@ begin
               from keiba_races r where r.day = d),
     -- ニュース（新聞の無料の記事）と、新しく出た新聞・本（記事・章があるもの）
     'news', (select coalesce(jsonb_agg(z.j order by z.id desc), '[]'::jsonb) from (
-               select i.id, jsonb_build_object('id', i.id, 'title', i.title, 'pub_id', p.id, 'paper', p.title, 'by', c.name, 'official', c.official,
+               select i.id, jsonb_build_object('id', i.id, 'title', i.title, 'pub_id', p.id, 'paper', p.title, 'by', c.name, 'official', c.official, 'ai', c.ai,
                  'time', to_char(i.created_at at time zone 'Asia/Tokyo', 'HH24:MI')) j
                  from pub_items i join pubs p on p.id = i.pub_id join companies c on c.id = p.company_id
                 where i.free and i.created_at >= t0 and i.created_at < t1 and p.kind = 'paper' and p.status = 'active' and c.status in ('active', 'suspended')
@@ -9002,8 +9064,797 @@ begin
               and (p.company_id is null or c.status in ('active', 'suspended'))
               and exists (select 1 from pub_items pi where pi.pub_id = p.id)),
     -- 登録した人の数
-    'joined', (select count(*) from profiles where created_at >= t0 and created_at < t1),
-    'players', (select count(*) from profiles where created_at < t1));
+    'joined', (select count(*) from profiles where created_at >= t0 and created_at < t1 and ai is null),
+    'players', (select count(*) from profiles where created_at < t1 and ai is null));
+end $$;
+
+-- =====================================================================
+-- AI会社（ルールとさいころで自動で動く会社。画面ではAIのしるしがつく）
+--   神楽坂通商事：取引所でひんぱんに売り買いする。上場しているすべての株（自分の株はのぞく）に、買い・売りの注文を出しておく
+--     AI会社の株は、値打ちに少しずつ近づく値段で。プレイヤーの会社の株は、最近10回の取引の真ん中の値段で
+--     （プレイヤーの会社の株は、この30日に3人以上が売り買いした株だけ。1社あたり3万 X か資産の3%まで）
+--   帝都京浜新聞：毎朝「きのうの株式市場」「新しい会社」、7時と18時に「新商品」、ストップ高・安と新規上場の速報、
+--     AI会社の決算と出来事を記事にする（無料。ニュースと「今日」に出る。記者の名前つき）
+--   AI投資家（さくら・はやて・しずく・こはる）：AI会社の株を、それぞれの考え方（値打ち・勢い・逆張り・気まぐれ）で売り買いする
+--   創業家（AI）：2社の株を持つ。上場のときに株を売り出し、神楽坂通商事の株には買い・売りの注文を出しておく
+--   2社とも上場（10万株。公開価格：神楽坂通商事 150 X・帝都京浜新聞 100 X）
+--   売上は外の客から毎日（世の中のお金が少しふえる）。決算と配当は毎週月曜9時から（先週の利益の4〜5割）
+--   元手は国庫から（神楽坂通商事 800万 X、AI投資家 20万 X ずつ）。管理者は止める・動かす・お金を足すができる
+--   pg_cron で毎分 _ai_tick() を呼ぶ（1回に1つの仕事だけして、すぐ終わる）
+--   AIのアカウントはログインできず、IDもない（送金・請求・フレンドなどの相手にならない）。人の数・税金・通知・記録には入らない
+-- =====================================================================
+alter table public.treasury add column if not exists ai_out bigint not null default 0;   -- 国庫からAIに出したお金（元手・足した分）
+create table if not exists public.ai_corps (
+  company_id int primary key references public.companies(id) on delete cascade,
+  role       text not null check (role in ('trade', 'news')),
+  ipo_price  bigint not null,                  -- 公開価格
+  rev_base   numeric not null,                 -- 1日の売上の目安（外の客から）
+  margin     numeric not null,                 -- 利益率の目安
+  trend      numeric not null default 0.0005,  -- 1日あたりの伸び
+  per        numeric not null,                 -- 株価の目安（1年の利益の何倍か）
+  payout     numeric not null,                 -- 利益のうち配当にまわす割合
+  mood       numeric not null default 1,       -- 評判（出来事で上下する。1がふつう）
+  ema_profit numeric not null,                 -- 1日の利益の平均（なめらか）
+  started    date not null,
+  biz_day    date not null,                    -- 売上を計算した最後の日
+  week_done  date not null                     -- まだ決算していない週の月曜
+);
+create table if not exists public.ai_days (      -- 毎日の売上と費用
+  company_id int not null references public.companies(id) on delete cascade,
+  day        date not null,
+  revenue    bigint not null,
+  cost       bigint not null,
+  primary key (company_id, day)
+);
+create table if not exists public.ai_news_log (  -- 同じ記事を2回出さないための印
+  kind text not null,
+  key  text not null,
+  at   timestamptz not null default now(),
+  primary key (kind, key)
+);
+alter table public.ai_corps enable row level security;
+alter table public.ai_days enable row level security;
+alter table public.ai_news_log enable row level security;
+revoke all on public.ai_corps, public.ai_days, public.ai_news_log from anon, authenticated;
+
+-- AIのアカウントの id（決まった値）
+create or replace function public._ai_uid(k text) returns uuid
+language sql immutable as $$
+  select (case k when 'founder' then 'a1000000-0000-4000-8000-000000000001'
+                 when 'kagura'  then 'a1000000-0000-4000-8000-000000000002'
+                 when 'inv1'    then 'a1000000-0000-4000-8000-000000000011'
+                 when 'inv2'    then 'a1000000-0000-4000-8000-000000000012'
+                 when 'inv3'    then 'a1000000-0000-4000-8000-000000000013'
+                 when 'inv4'    then 'a1000000-0000-4000-8000-000000000014' end)::uuid
+$$;
+
+-- ふつうの乱数（平均0・標準偏差1）
+create or replace function public._randn() returns double precision
+language sql volatile as $$ select sqrt(-2 * ln(1 - random())) * cos(2 * pi() * random()) $$;
+
+-- AIの登場人物の名前
+create or replace function public._ai_name() returns text
+language sql volatile as $$
+  select (array['佐藤','鈴木','高橋','田中','伊藤','渡辺','山本','中村','小林','加藤','吉田','山田','佐々木','山口','松本',
+                '井上','木村','林','斎藤','清水','山崎','森','池田','橋本','阿部','石川','前田','藤田','小川','岡田'])[1 + floor(random() * 30)::int]
+      || ' ' ||
+         (array['健一','誠','大輔','翔太','拓也','直樹','浩二','隆','悠斗','蓮','大和','陽向','湊','樹','颯','美咲','陽子','恵','彩','結衣',
+                '真由美','智子','涼子','奈々','葵','凛','結菜','陽菜','芽依','紗希','千尋','遥','舞','優花','杏奈','早紀','美穂','恵美','由佳','明日香'])[1 + floor(random() * 40)::int]
+$$;
+
+-- AIのアカウントをつくる（ログインはできない。IDなし。メールは届かないアドレス）
+create or replace function public._ai_account(p_id uuid, p_nick text, p_role text) returns void
+language plpgsql set search_path = public as $$
+declare cols text[];
+begin
+  if not exists (select 1 from auth.users where id = p_id) then
+    select array_agg(column_name::text) into cols from information_schema.columns where table_schema = 'auth' and table_name = 'users';
+    if 'email' = any(cols) and 'confirmation_token' = any(cols) and 'banned_until' = any(cols) then
+      execute 'insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+                 confirmation_token, recovery_token, email_change_token_new, email_change, banned_until)
+               values ($1, ''00000000-0000-0000-0000-000000000000'', ''authenticated'', ''authenticated'', $2,
+                 ''{"provider":"ai","providers":["ai"]}''::jsonb, ''{"ai":true}''::jsonb, now(), now(), '''', '''', '''', '''', ''2999-12-31'')'
+        using p_id, 'ai-' || p_role || '@ailinax.invalid';
+    else
+      execute 'insert into auth.users (id) values ($1)' using p_id;
+    end if;
+  end if;
+  insert into profiles(id, nickname, balance, created_at, ai) values (p_id, p_nick, 0, _now(), p_role)
+  on conflict (id) do update set ai = excluded.ai, nickname = excluded.nickname;
+end $$;
+
+-- 国庫からAIのアカウントにお金を出す（行のロックは、アカウント → 国庫 の順）
+create or replace function public._ai_fund(u uuid, amt bigint) returns void
+language plpgsql set search_path = public as $$
+begin
+  if amt is null or amt < 1 then raise exception '額は1 X以上にしてください'; end if;
+  update profiles set balance = balance + amt where id = u and ai is not null;
+  if not found then raise exception 'AIのアカウントが見つかりません'; end if;
+  update treasury set balance = balance - amt, ai_out = ai_out + amt where id = 1 and balance >= amt;
+  if not found then raise exception '国庫のお金が足りません'; end if;
+end $$;
+
+-- AIの社員をやとう（同じ会社に同じ名前の人がいないように）
+create or replace function public._ai_hire(co int, p_title text, p_role text, p_desk text) returns void
+language plpgsql set search_path = public as $$
+declare nm text;
+begin
+  for i in 1..30 loop
+    nm := _ai_name();
+    exit when not exists (select 1 from ai_staff where company_id = co and name = nm and left_on is null);
+  end loop;
+  insert into ai_staff(company_id, name, title, role, desk, joined) values (co, nm, p_title, p_role, coalesce(p_desk, ''), _kb_jday(_now()));
+end $$;
+
+-- AI会社の社長の名前
+create or replace function public._ai_ceo(co int) returns text
+language sql stable set search_path = public as $$
+  select name from ai_staff where company_id = co and role = 'ceo' and left_on is null order by id limit 1
+$$;
+
+-- アカウントの持ち株（売り注文に出している分もふくむ）の値打ち（最後の値段で）
+create or replace function public._ai_stock_value(u uuid) returns numeric
+language sql stable set search_path = public as $$
+  select coalesce(sum(h.n * coalesce((select t.price from stock_trades t where t.company_id = h.company_id order by t.id desc limit 1), 0)), 0)
+    from (select company_id, sum(n) n from (select company_id, shares n from corp_holders where user_id = u
+                                            union all select company_id, remain from stock_orders where user_id = u and side = 'sell' and status = 'open') y
+           group by company_id) h
+$$;
+
+-- AI会社の1株の値打ち（AIの見方）：1年の利益 × PER ÷ 株数 × 評判。神楽坂通商事は運用しているお金と株の半分も足す
+create or replace function public._ai_fair(co int) returns numeric
+language plpgsql stable set search_path = public as $$
+declare a ai_corps; sh bigint; v numeric; k uuid := _ai_uid('kagura');
+begin
+  select * into a from ai_corps where company_id = co;
+  if not found then return null; end if;
+  sh := greatest((select shares from companies where id = co), 1);
+  v := greatest(a.ema_profit, 0) * 365 * a.per / sh * a.mood;
+  if a.role = 'trade' then
+    v := v + (coalesce((select balance from profiles where id = k), 0)
+              + coalesce((select sum(locked) from stock_orders where user_id = k and side = 'buy' and status = 'open'), 0)
+              + _ai_stock_value(k)) * 0.5 / sh;
+  end if;
+  return greatest(v, 1);
+end $$;
+
+-- 帝都京浜新聞に記事をのせる（無料。ニュースに出る）。最後にその部の記者の名前を入れる
+create or replace function public._ai_article(p_title text, p_body text, p_desk text) returns bigint
+language plpgsql set search_path = public as $$
+declare pid bigint; w text; iid bigint;
+begin
+  select p.id into pid from pubs p join ai_corps a on a.company_id = p.company_id
+   where a.role = 'news' and p.kind = 'paper' and p.status = 'active' order by p.id limit 1;
+  if pid is null then return null; end if;
+  select s.name into w from ai_staff s join ai_corps a on a.company_id = s.company_id
+   where a.role = 'news' and s.desk = p_desk and s.left_on is null order by random() limit 1;
+  insert into pub_items(pub_id, title, body, free, created_at)
+  values (pid, left(p_title, 60), p_body || E'\n\n（帝都京浜新聞 ' || p_desk || coalesce('　' || w, '') || '）', true, _now())
+  returning id into iid;
+  update pubs set updated_at = _now() where id = pid;
+  return iid;
+end $$;
+
+-- AI会社の出来事（記事になり、評判が上下する）
+create or replace function public._ai_event(co int) returns void
+language plpgsql set search_path = public as $$
+declare a ai_corps; c companies; good boolean := random() < 0.55; sh numeric := 0.03 + random() * 0.06; i int := 1 + floor(random() * 3)::int;
+  ceo text; t text; b text;
+begin
+  select * into a from ai_corps where company_id = co;
+  select * into c from companies where id = co;
+  ceo := coalesce(_ai_ceo(co), '社長');
+  if a.role = 'trade' then
+    if good then
+      t := (array['大型の注文を受ける', '新しい取引先と提携', '物流を見直して費用をへらす'])[i];
+      b := (array[
+        format('%sは、大口の取引先から大型の注文を受けたと発表した。来週以降の売上がふえる見込みだ。社長の%s氏は「お客さまの期待にこたえたい」と話した。', c.name, ceo),
+        format('%sは、新しい取引先と長く取引を続ける約束をした。あつかう品物がふえ、商売の幅が広がる。', c.name),
+        format('%sは、倉庫と配送のしくみを見直し、費用をおさえると発表した。利益がふえると見られている。', c.name)])[i];
+    else
+      t := (array['取引先の支払いが遅れる', '仕入れの値段が上がる', '天候で輸送が遅れる'])[i];
+      b := (array[
+        format('%sは、一部の取引先からの支払いが遅れていると発表した。しばらく利益がへる見込みだ。', c.name),
+        format('%sが仕入れている品物の値段が上がっている。社長の%s氏は「お客さまへの影響はできるだけおさえる」としている。', c.name, ceo),
+        format('天候の影響で輸送が遅れ、%sの一部の取引が来週にずれこむ見込みとなった。', c.name)])[i];
+    end if;
+  else
+    if good then
+      t := (array['本紙の読者がふえる', '新しい連載を始める', '広告の申しこみが好調'])[i];
+      b := (array[
+        format('本紙（%s）の読者がふえている。株式市場の記事がよく読まれているという。社長の%s氏は「読者の声にこたえる紙面をつくる」と話した。', c.name, ceo),
+        format('本紙（%s）は、来週から企業の社長にじっくり話を聞く新しい連載を始める。', c.name),
+        format('本紙（%s）への広告の申しこみがふえている。売上がふえる見込みだ。', c.name)])[i];
+    else
+      t := (array['紙の値上がりで費用がふえる', '印刷所の点検で配達が遅れる', 'きのうの記事の誤りをおわび'])[i];
+      b := (array[
+        format('紙の値段が上がり、本紙（%s）の費用がふえる見込みとなった。', c.name),
+        format('印刷所の点検のため、本紙（%s）の一部の配達が遅れる。', c.name),
+        format('本紙（%s）は、きのうの記事の一部に誤りがあったとして、おわびを出した。社長の%s氏は「確かめるしくみを強める」と話した。', c.name, ceo)])[i];
+    end if;
+  end if;
+  update ai_corps set mood = greatest(0.5, least(2.0, mood * (1 + case when good then sh else -sh end))) where company_id = co;
+  perform _ai_article(format('【企業】%s、%s', c.name, t), b, '経済部');
+end $$;
+
+-- AI会社の1日の商売（外の客からの売上と、仕入れ・給料などの費用）。ときどき出来事
+create or replace function public._ai_business(co int, d date) returns void
+language plpgsql set search_path = public as $$
+declare a ai_corps; c companies; rev bigint; cst bigint; prof bigint; econ numeric;
+begin
+  select * into a from ai_corps where company_id = co for update;
+  if not found or a.biz_day >= d then return; end if;
+  select * into c from companies where id = co;
+  econ := 0.05 * sin(2 * pi() * extract(doy from d) / 61.0);       -- 景気の波（2か月くらいで1回）
+  rev := greatest(0, round(a.rev_base * power(1 + a.trend, greatest(d - a.started, 0)) * (1 + econ) * (1 + 0.12 * _randn()) * power(a.mood, 0.3)))::bigint;
+  cst := greatest(0, round(rev * (1 - a.margin * (1 + 0.5 * _randn()))))::bigint;
+  if c.status = 'active' then
+    if rev > 0 then perform _corp_move(co, rev, 'ai_sale', format('%s の外の客への売上', _dlabel(d))); end if;
+    cst := least(cst, (select balance from companies where id = co));
+    if cst > 0 then perform _corp_move(co, -cst, 'ai_cost', format('%s の仕入れ・給料など', _dlabel(d))); end if;
+  else
+    rev := 0; cst := 0;
+  end if;
+  insert into ai_days(company_id, day, revenue, cost) values (co, d, rev, cst) on conflict do nothing;
+  prof := rev - cst;
+  update ai_corps set biz_day = d, ema_profit = ema_profit * 0.85 + prof * 0.15,
+         mood = greatest(0.5, least(2.0, 1 + (mood - 1) * 0.95 + 0.01 * _randn()))
+   where company_id = co;
+  if c.status = 'active' and random() < 0.15 then perform _ai_event(co); end if;
+end $$;
+
+-- 1週間の決算と配当（wk：その週の月曜）
+create or replace function public._ai_settle_week(co int, wk date) returns void
+language plpgsql set search_path = public as $$
+declare a ai_corps; c companies; rev bigint; cst bigint; prof bigint; prev bigint; div bigint; paid bigint := 0; n int := 0; h record; amt bigint;
+  ceo text; b text;
+begin
+  select * into a from ai_corps where company_id = co for update;
+  if not found or a.week_done > wk then return; end if;
+  select * into c from companies where id = co;
+  select coalesce(sum(x.revenue), 0), coalesce(sum(x.cost), 0) into rev, cst from ai_days x where x.company_id = co and x.day >= wk and x.day < wk + 7;
+  prof := rev - cst;
+  select coalesce(sum(x.revenue - x.cost), 0) into prev from ai_days x where x.company_id = co and x.day >= wk - 7 and x.day < wk;
+  div := case when prof > 0 and c.status = 'active' then floor(prof * a.payout)::bigint else 0 end;
+  div := least(div, (select balance from companies where id = co));
+  if div > 0 then
+    -- 株主の行を、先に id 順でロック（デッドロックを防ぐ）
+    perform 1 from profiles where id in (select user_id from _holdings(co)) order by id for update;
+    for h in select * from _holdings(co) loop
+      amt := floor(div::numeric * h.shares / greatest(c.shares, 1));
+      if amt > 0 then
+        perform _give(h.user_id, amt);
+        perform _log(h.user_id, 'dividend', 0, amt, jsonb_build_object('company', c.name, 'company_id', c.id));
+        perform _notice(h.user_id, format('【配当】「%s」から配当 %s X が入りました。', c.name, _fmt(amt)));
+        paid := paid + amt; n := n + 1;
+      end if;
+    end loop;
+    if paid > 0 then perform _corp_move(co, -paid, 'dividend', format('配当（%s人に合計 %s X）', n, _fmt(paid))); end if;
+  end if;
+  update ai_corps set week_done = wk + 7 where company_id = co;
+  ceo := coalesce(_ai_ceo(co), '社長');
+  b := format('%s（AI）は、%s〜%sの1週間の決算を発表した。売上は %s X、利益は %s X で、利益は前の週より%s。',
+              c.name, _dlabel(_jday_start(wk)), _dlabel(_jday_start(wk + 6)), _fmt(rev), _fmt(prof),
+              case when prev = 0 then 'くらべられない（はじめての決算）' when prof >= prev then format('%s%% ふえた', round((prof - prev) * 100.0 / greatest(abs(prev), 1), 1))
+                   else format('%s%% へった', round((prev - prof) * 100.0 / greatest(abs(prev), 1), 1)) end);
+  if paid > 0 then
+    b := b || format('株主に合計 %s X の配当を出した（1株あたり %s X）。', _fmt(paid), to_char(paid::numeric / greatest(c.shares, 1), 'FM999990.000'));
+  end if;
+  b := b || format('社長の%s氏は「%s」と話した。', ceo,
+                   case when prof >= prev then '来週も手をぬかずにがんばる' else '立て直しをいそぐ' end);
+  perform _ai_article(format('【決算】%s、先週の利益 %s X', c.name, _fmt(prof)), b, '経済部');
+end $$;
+
+-- 朝刊（d：きょう）：きのうの株式市場と、きのうできた会社。古いAIの注文の記録もかたづける
+create or replace function public._ai_news_morning(d date) returns void
+language plpgsql set search_path = public as $$
+declare y date := d - 1; t0 timestamptz := _jday_start(d - 1); t1 timestamptz := _jday_start(d); L jsonb; n int; nt int;
+  up int; dn int; fl int; nw int; val bigint; vol bigint; capc numeric; b text; lst text; cm text;
+begin
+  insert into ai_news_log(kind, key, at) values ('morning', d::text, _now()) on conflict do nothing;
+  if not found then return; end if;
+  delete from stock_orders where status in ('done', 'canceled') and created_at < _now() - interval '3 days'
+     and user_id in (select id from profiles where ai is not null);
+  -- きのうの株：上場している株と、きのう取引があった株
+  select coalesce(jsonb_agg(j), '[]'::jsonb) into L from (
+    select _stock_day(c.id, y) || jsonb_build_object('name', c.name, 'shares', c.shares,
+             'last', (select t.price from stock_trades t where t.company_id = c.id and t.created_at < t1 order by t.created_at desc, t.id desc limit 1)) j
+      from companies c
+     where (c.listed and c.status in ('active', 'suspended') and c.listed_at < t1)
+        or exists (select 1 from stock_trades t where t.company_id = c.id and t.created_at >= t0 and t.created_at < t1)
+    offset 0) z;
+  n := jsonb_array_length(L);
+  if n > 0 then
+    select count(*) filter (where (x->>'n')::int > 0), count(*) filter (where (x->>'chg')::bigint > 0), count(*) filter (where (x->>'chg')::bigint < 0),
+           count(*) filter (where (x->>'chg')::bigint = 0), count(*) filter (where x->>'base' is null and (x->>'n')::int > 0),
+           coalesce(sum((x->>'value')::bigint), 0), coalesce(sum((x->>'vol')::bigint), 0),
+           case when sum((x->>'base')::numeric * (x->>'shares')::numeric) filter (where x->>'base' is not null and x->>'last' is not null) > 0
+                then (sum((x->>'last')::numeric * (x->>'shares')::numeric) filter (where x->>'base' is not null and x->>'last' is not null)
+                      / sum((x->>'base')::numeric * (x->>'shares')::numeric) filter (where x->>'base' is not null and x->>'last' is not null) - 1) * 100 end
+      into nt, up, dn, fl, nw, val, vol, capc
+      from jsonb_array_elements(L) x;
+    cm := case when capc is null then '' when capc >= 3 then '相場全体は大きく上げた。' when capc >= 0.5 then '相場全体は上げた。'
+               when capc > -0.5 then '相場全体はほぼ横ばいだった。' when capc > -3 then '相場全体は下げた。' else '相場全体は大きく下げた。' end;
+    b := format('%sの風の芽証券取引所は、上場%s社のうち%s社が値上がりし、%s社が値下がりした（変わらず%s社%s）。売買代金は合計 %s X、出来高は %s株だった。%s',
+                _dlabel(t0), n, up, dn, fl, case when nw > 0 then format('、はじめての取引で前の日とくらべられない%s社', nw) else '' end,
+                _fmt(val), _fmt(vol), cm);
+    if capc is not null then b := b || format('時価総額の合計は前の日より %s%s%%。', case when capc >= 0 then '+' else '−' end, to_char(abs(capc), 'FM990.00')); end if;
+    select string_agg(format('・%s　%s X（+%s）', x->>'name', _fmt((x->>'close')::bigint), _fmt((x->>'chg')::bigint)), E'\n') into lst
+      from jsonb_array_elements(L) x where x->>'stop' = 'high';
+    if lst is not null then b := b || E'\n\n▼ストップ高\n' || lst; end if;
+    select string_agg(format('・%s　%s X（−%s）', x->>'name', _fmt((x->>'close')::bigint), _fmt(-(x->>'chg')::bigint)), E'\n') into lst
+      from jsonb_array_elements(L) x where x->>'stop' = 'low';
+    if lst is not null then b := b || E'\n\n▼ストップ安\n' || lst; end if;
+    select string_agg(format('・%s　%s X（+%s%%）', z.nm, _fmt(z.cl), to_char(z.pc, 'FM990.00')), E'\n' order by z.pc desc) into lst from (
+      select x->>'name' nm, (x->>'close')::bigint cl, (x->>'chg')::numeric * 100 / (x->>'base')::numeric pc
+        from jsonb_array_elements(L) x where (x->>'chg')::bigint > 0 order by 3 desc limit 3) z;
+    if lst is not null then b := b || E'\n\n▼値上がり率の上位\n' || lst; end if;
+    select string_agg(format('・%s　%s X（−%s%%）', z.nm, _fmt(z.cl), to_char(-z.pc, 'FM990.00')), E'\n' order by z.pc) into lst from (
+      select x->>'name' nm, (x->>'close')::bigint cl, (x->>'chg')::numeric * 100 / (x->>'base')::numeric pc
+        from jsonb_array_elements(L) x where (x->>'chg')::bigint < 0 order by 3 limit 3) z;
+    if lst is not null then b := b || E'\n\n▼値下がり率の上位\n' || lst; end if;
+    select string_agg(format('・%s　%s', x->>'name',
+                             case when (x->>'n')::int > 0 then format('終値 %s X%s　出来高 %s株', _fmt((x->>'close')::bigint),
+                                    case when x->>'chg' is null then '' else format('（%s%s）', case when (x->>'chg')::bigint >= 0 then '+' else '−' end, _fmt(abs((x->>'chg')::bigint))) end,
+                                    _fmt((x->>'vol')::bigint))
+                                  else format('取引なし（%s X）', coalesce(_fmt((x->>'last')::bigint), '—')) end), E'\n' order by (x->>'value')::bigint desc, x->>'name') into lst
+      from (select x from jsonb_array_elements(L) x order by (x->>'value')::bigint desc limit 20) z(x);
+    b := b || E'\n\n▼銘柄ごと（売買代金の多い順）\n' || lst;
+    perform _ai_article(format('【市況】%sの株式市場　値上がり%s社・値下がり%s社', _dlabel(t0), up, dn), b, '市場部');
+  end if;
+  -- きのうできた会社（AI会社はのぞく）
+  select count(*), string_agg(format('・%s（%s）', c.name,
+           coalesce((select string_agg(ic.name, '・' order by ic.code) from industry_codes ic where ic.code = any(c.industries)), '業種はまだ')), E'\n' order by c.decided_at)
+    into n, lst from companies c where c.decided_at >= t0 and c.decided_at < t1 and c.status in ('active', 'suspended') and not c.ai;
+  if n > 0 then
+    perform _ai_article(format('【企業】新しい会社が%s社できた', n),
+      format('%sに、新しい会社が%s社できた。', _dlabel(t0), n) || E'\n\n' || lst || E'\n\n' || '会社のページは、企業タブの「会社検索」から見られる。', '経済部');
+  end if;
+end $$;
+
+-- 新商品の記事（p_kind：items_am / items_pm）。前の記事のあとに出た商品（売っているもの・営業中の会社）
+create or replace function public._ai_news_items(p_kind text, d date) returns void
+language plpgsql set search_path = public as $$
+declare since timestamptz; n int; m int; b text;
+begin
+  since := coalesce((select max(at) from ai_news_log where kind in ('items_am', 'items_pm', 'items_start')), _now() - interval '1 day');
+  insert into ai_news_log(kind, key, at) values (p_kind, d::text, _now()) on conflict do nothing;
+  if not found then return; end if;
+  select count(*), count(distinct i.company_id) into n, m from corp_items i join companies c on c.id = i.company_id
+   where i.created_at > since and i.created_at <= _now() and i.active and c.status = 'active';
+  if n = 0 then return; end if;
+  select string_agg(z.t, E'\n\n' order by z.nm) into b from (
+    select c.name nm, '▼' || c.name || E'\n' || string_agg(format('・%s　%s X%s', i.name, _fmt(i.price),
+             case when i.description <> '' then '　「' || left(regexp_replace(i.description, '\s+', ' ', 'g'), 40) || '」' else '' end), E'\n' order by i.id) t
+      from corp_items i join companies c on c.id = i.company_id
+     where i.created_at > since and i.created_at <= _now() and i.active and c.status = 'active'
+     group by c.id, c.name order by c.name limit 20) z;
+  perform _ai_article(format('【新商品】新しい商品が%s点', n),
+    format('%sまでに、%s社から新しい商品が%s点出た。', to_char(_now() at time zone 'Asia/Tokyo', 'FMMM"月"FMDD"日" HH24"時"'), m, n)
+    || E'\n\n' || b || E'\n\n' || '商品は、それぞれの会社のページから買える（値段には消費税がふくまれる）。', '生活部');
+end $$;
+
+-- 速報：きょうストップ高・安になった株、新しく上場した株（1回に1本）
+create or replace function public._ai_news_flash(d date) returns boolean
+language plpgsql set search_path = public as $$
+declare r record; st text;
+begin
+  for r in select c.id, c.cid, c.name, x.j from companies c cross join lateral (select _stock_day(c.id, d) j offset 0) x
+            where c.listed and c.status = 'active' order by c.id loop
+    st := r.j->>'stop';
+    if st in ('high', 'low') then
+      insert into ai_news_log(kind, key, at) values ('stop_' || st, r.cid || ':' || d, _now()) on conflict do nothing;
+      if found then
+        perform _ai_article(format('【速報】%sがストップ%s', r.name, case st when 'high' then '高' else '安' end),
+          format('%sの株価が、きょうの値幅の%s（ストップ%s）の %s X まで%sた。前の日の終値は %s X だった。',
+                 r.name, case st when 'high' then '上限' else '下限' end, case st when 'high' then '高' else '安' end,
+                 _fmt((r.j->>'close')::bigint), case st when 'high' then '上がっ' else '下がっ' end, _fmt((r.j->>'base')::bigint)), '市場部');
+        return true;
+      end if;
+    end if;
+  end loop;
+  for r in select c.id, c.cid, c.name, c.shares, c.industries, c.listed_at from companies c
+            where c.listed and c.status = 'active' and c.listed_at >= _jday_start(d) - interval '1 day' order by c.id loop
+    insert into ai_news_log(kind, key, at) values ('listing', r.cid || ':' || to_char(r.listed_at, 'YYYYMMDDHH24MISS'), _now()) on conflict do nothing;
+    if found then
+      perform _ai_article(format('【新規上場】%sが上場', r.name),
+        format('%sが、風の芽証券取引所に上場した。発行株数は %s株。', r.name, _fmt(r.shares))
+        || coalesce('業種は' || (select string_agg(ic.name, '・' order by ic.code) from industry_codes ic where ic.code = any(r.industries)) || '。', ''), '市場部');
+      return true;
+    end if;
+  end loop;
+  return false;
+end $$;
+
+-- AI投資家の売り買い（AI会社の株だけ）。st：inv1 値打ち／inv2 勢い／inv3 逆張り／inv4 気まぐれ。すぐ約定しなければ7割は取り消す
+create or replace function public._ai_invest(u uuid, st text, co int, ref numeric, fv numeric, lo bigint, hi bigint) returns int
+language plpgsql set search_path = public as $$
+declare lastp bigint; oldp bigint; ret numeric := 0; tg numeric; sd text; px bigint; q bigint; cash bigint; hold bigint; r record;
+begin
+  for r in select id from stock_orders where user_id = u and company_id = co and status = 'open' and created_at < _tnow() - interval '6 hours' loop
+    perform _stock_cancel_order(r.id);
+  end loop;
+  lastp := coalesce((select price from stock_trades where company_id = co order by id desc limit 1), round(ref)::bigint);
+  oldp := (select price from stock_trades where company_id = co order by id desc offset 20 limit 1);
+  if oldp is not null and oldp > 0 then ret := (lastp - oldp)::numeric / oldp; end if;
+  tg := case st when 'inv1' then fv
+                when 'inv2' then lastp * (1 + 2 * ret)
+                when 'inv3' then lastp * (1 - 1.5 * ret)
+                else lastp * exp(0.04 * _randn()) end;
+  if lastp <= 0 or abs(tg - lastp) / lastp < (case st when 'inv1' then 0.02 else 0.005 end) then return 0; end if;
+  sd := case when tg > lastp then 'buy' else 'sell' end;
+  cash := (select balance from profiles where id = u);
+  hold := coalesce((select shares from corp_holders where company_id = co and user_id = u), 0);
+  if sd = 'buy' then
+    px := ceil(least(tg, lastp * 1.03));
+    if lo is not null then px := least(greatest(px, lo), hi); end if;
+    q := floor(cash * (0.02 + random() * 0.05) / greatest(px, 1));
+  else
+    px := floor(greatest(tg, lastp * 0.97));
+    if lo is not null then px := least(greatest(px, lo), hi); end if;
+    q := floor(hold * (0.05 + random() * 0.15));
+  end if;
+  if px < 1 or q < 1 then return 0; end if;
+  begin
+    perform _stock_exec(u, co, sd, px, q, random() < 0.7);
+  exception when others then return 0;
+  end;
+  return 1;
+end $$;
+
+-- 市場：上場している株を1つ（板の注文を出しなおす・AI投資家）
+create or replace function public._ai_market(co int) returns text
+language plpgsql set search_path = public as $$
+declare c companies; ex companies := _stock_exch(); a ai_corps; bd record; ts timestamptz := _tnow(); d date := _kb_jday(_tnow());
+  k uuid := _ai_uid('kagura'); mm uuid; lastp bigint; ref numeric; fv numeric; s numeric; bid bigint; ask bigint; qb bigint; qa bigint;
+  cash bigint; inv bigint; held bigint; cap numeric; humans int; r record; nav numeric;
+begin
+  select * into c from companies where id = co for key share;
+  if not found or not c.listed or c.status <> 'active' or ex.id is null or ex.status <> 'active' then return 'skip'; end if;
+  perform pg_advisory_xact_lock(7400, c.id);
+  -- この株にかかわるアカウントの行を、先に id 順でロック（デッドロックを防ぐ）
+  perform 1 from profiles where id in (select p.id from profiles p where p.ai is not null
+                                       union select o.user_id from stock_orders o where o.company_id = c.id and o.status = 'open') order by id for update;
+  select * into bd from _stock_band(c.id, d);
+  select * into a from ai_corps where company_id = c.id;
+  lastp := (select price from stock_trades where company_id = c.id order by id desc limit 1);
+  if a.company_id is not null then
+    fv := _ai_fair(c.id);
+    ref := coalesce(lastp, a.ipo_price)::numeric;
+    ref := ref * power(fv / ref, 0.05) * exp(0.003 * _randn());   -- 少しずつ値打ちに近づく
+    mm := case when a.role = 'trade' then _ai_uid('founder') else k end;   -- 神楽坂通商事の株は創業家が板に出す
+  else
+    -- プレイヤーの会社の株：この30日に売り買いした人（AIのぞく）が3人以上のときだけ。値段は最近10回の真ん中
+    select count(distinct y.x) into humans from (
+      select buyer x from stock_trades where company_id = c.id and created_at > ts - interval '30 days'
+      union select seller from stock_trades where company_id = c.id and created_at > ts - interval '30 days') y
+      join profiles p on p.id = y.x where p.ai is null;
+    if humans < 3 then
+      for r in select id from stock_orders where company_id = c.id and user_id = k and status = 'open' loop perform _stock_cancel_order(r.id); end loop;
+      return 'thin ' || c.cid;
+    end if;
+    select percentile_cont(0.5) within group (order by z.price) into ref from (select price from stock_trades where company_id = c.id order by id desc limit 10) z;
+    mm := k;
+  end if;
+  if bd.base is not null then ref := least(greatest(ref, bd.lo), bd.hi); end if;
+  -- 板の注文を出しなおす（同じ値段のものは、そのまま）
+  s := case when a.company_id is null then 0.025 when a.role = 'trade' then 0.02 else 0.01 end;
+  bid := floor(ref * (1 - s)); ask := ceil(ref * (1 + s));
+  if ask <= bid then ask := bid + 1; end if;
+  if bd.base is not null then
+    bid := least(greatest(bid, bd.lo), bd.hi); ask := least(greatest(ask, bd.lo), bd.hi);
+    if bid >= ask then if ask < bd.hi then ask := bid + 1; else bid := ask - 1; end if; end if;
+    if bid < bd.lo then bid := null; end if;
+  end if;
+  if bid is not null and bid < 1 then bid := null; end if;
+  for r in select id, side, price from stock_orders where company_id = c.id and user_id = mm and status = 'open' loop
+    if (r.side = 'buy' and r.price is distinct from bid) or (r.side = 'sell' and r.price is distinct from ask) then perform _stock_cancel_order(r.id); end if;
+  end loop;
+  cash := (select balance from profiles where id = mm);
+  inv := coalesce((select shares from corp_holders where company_id = c.id and user_id = mm), 0);
+  held := inv + coalesce((select sum(remain) from stock_orders where company_id = c.id and user_id = mm and side = 'sell' and status = 'open'), 0);
+  if a.company_id is not null then
+    qb := floor(least(cash * 0.005, 100000) / greatest(bid, 1));
+    qa := least(inv, floor(held * 0.05)::bigint, floor(100000 / greatest(ask, 1))::bigint);
+  else
+    nav := cash + coalesce((select sum(locked) from stock_orders where user_id = mm and side = 'buy' and status = 'open'), 0) + _ai_stock_value(mm);
+    cap := least(30000, nav * 0.03);
+    qb := case when held * ref < cap and held < c.shares * 0.10 then floor(least(cap - held * ref, 5000) / greatest(bid, 1)) else 0 end;
+    qa := least(inv, floor(5000 / greatest(ask, 1))::bigint);
+  end if;
+  -- いま出ている同じ値段の注文が半分以上残っていれば、出しなおさない
+  if bid is not null and qb > 0 and not exists (select 1 from stock_orders where company_id = c.id and user_id = mm and side = 'buy' and status = 'open' and price = bid and remain * 2 >= qb) then
+    for r in select id from stock_orders where company_id = c.id and user_id = mm and side = 'buy' and status = 'open' loop perform _stock_cancel_order(r.id); end loop;
+    begin perform _stock_exec(mm, c.id, 'buy', bid, qb, false); exception when others then null; end;
+  end if;
+  inv := coalesce((select shares from corp_holders where company_id = c.id and user_id = mm), 0);
+  qa := least(qa, inv + coalesce((select sum(remain) from stock_orders where company_id = c.id and user_id = mm and side = 'sell' and status = 'open' and price = ask), 0));
+  if ask is not null and qa > 0 and not exists (select 1 from stock_orders where company_id = c.id and user_id = mm and side = 'sell' and status = 'open' and price = ask and remain * 2 >= qa) then
+    for r in select id from stock_orders where company_id = c.id and user_id = mm and side = 'sell' and status = 'open' loop perform _stock_cancel_order(r.id); end loop;
+    inv := coalesce((select shares from corp_holders where company_id = c.id and user_id = mm), 0);
+    begin perform _stock_exec(mm, c.id, 'sell', ask, least(qa, inv), false); exception when others then null; end;
+  end if;
+  -- AI投資家（AI会社の株だけ）
+  if a.company_id is not null then
+    for r in select p.id, p.ai from profiles p where p.ai in ('inv1', 'inv2', 'inv3', 'inv4') order by p.id loop
+      if random() < 0.06 then perform _ai_invest(r.id, r.ai, c.id, ref, fv, bd.lo, bd.hi); end if;
+    end loop;
+  end if;
+  return 'market ' || c.cid;
+end $$;
+
+-- 止めたあと：AIの注文を、会社ごとに取り消す（1回に1社）
+create or replace function public._ai_market_cancel(co int) returns void
+language plpgsql set search_path = public as $$
+declare r record;
+begin
+  perform 1 from companies where id = co for key share;
+  perform pg_advisory_xact_lock(7400, co);
+  perform 1 from profiles where ai is not null order by id for update;
+  for r in select o.id from stock_orders o join profiles p on p.id = o.user_id where o.company_id = co and o.status = 'open' and p.ai is not null loop
+    perform _stock_cancel_order(r.id);
+  end loop;
+end $$;
+
+-- はじめの準備（1回だけ）：アカウント・元手・2社（上場）・社員・新聞・売り出し
+create or replace function public._ai_setup() returns text
+language plpgsql set search_path = public as $$
+declare f uuid := _ai_uid('founder'); k uuid := _ai_uid('kagura'); ex companies := _stock_exch(); ck int; ct int; d date := _kb_jday(_now());
+  mon date := _kb_jday(_now()) - (extract(isodow from _kb_jday(_now()))::int - 1); x text;
+begin
+  if exists (select 1 from app_settings where key = 'ai_setup') then return 'already'; end if;
+  perform pg_advisory_xact_lock(7501);
+  if exists (select 1 from app_settings where key = 'ai_setup') then return 'already'; end if;
+  if ex.id is null or ex.status <> 'active' then raise exception '国営の取引所が開いていないので、AI会社を始められません'; end if;
+  if exists (select 1 from companies where lower(name) in ('神楽坂通商事', '帝都京浜新聞') and status not in ('rejected', 'closed', 'bankrupt')) then
+    raise exception '同じ名前の会社がもうあります';
+  end if;
+  -- アカウント（ログインできない。IDなし）
+  perform _ai_account(f, '創業家', 'founder');
+  perform _ai_account(k, '神楽坂通商事', 'kagura');
+  perform _ai_account(_ai_uid('inv1'), 'AI投資家 さくら', 'inv1');
+  perform _ai_account(_ai_uid('inv2'), 'AI投資家 はやて', 'inv2');
+  perform _ai_account(_ai_uid('inv3'), 'AI投資家 しずく', 'inv3');
+  perform _ai_account(_ai_uid('inv4'), 'AI投資家 こはる', 'inv4');
+  -- 元手（国庫から）：神楽坂通商事 800万 X、AI投資家 20万 X ずつ
+  perform _ai_fund(k, 8000000);
+  foreach x in array array['inv1', 'inv2', 'inv3', 'inv4'] loop perform _ai_fund(_ai_uid(x), 200000); end loop;
+  -- 会社（上場。10万株は創業家が持つ）
+  insert into companies(cid, owner, name, kind, form, description, status, balance, created_at, decided_at, industries, desk_on, listed, listed_at, shares, ai)
+  values (_new_ccode(), f, '神楽坂通商事', '一般', '株式会社',
+          '総合商社（AI）。いろいろな品物を外の客と売り買いするほか、風の芽証券取引所で株をひんぱんに売り買いして、上場しているすべての株に買い・売りの注文を出している。社員はAIの登場人物。',
+          'active', 0, _now(), _now(), '{50}', false, true, _now(), 100000, true) returning id into ck;
+  insert into companies(cid, owner, name, kind, form, description, status, balance, created_at, decided_at, industries, desk_on, listed, listed_at, shares, ai)
+  values (_new_ccode(), f, '帝都京浜新聞', '一般', '株式会社',
+          '新聞社（AI）。株式市場・新商品・企業のニュースを毎日記事にしている（無料）。記者はAIの登場人物。',
+          'active', 0, _now(), _now(), '{41}', false, true, _now(), 100000, true) returning id into ct;
+  insert into corp_holders(company_id, user_id, shares) values (ck, f, 100000), (ct, f, 100000);
+  insert into ai_corps(company_id, role, ipo_price, rev_base, margin, per, payout, ema_profit, started, biz_day, week_done)
+  values (ck, 'trade', 150, 60000, 0.06, 10, 0.4, 60000 * 0.06, d, d - 1, mon),
+         (ct, 'news',  100, 20000, 0.10, 14, 0.5, 20000 * 0.10, d, d - 1, mon);
+  -- 社員（AIの登場人物）
+  perform _ai_hire(ck, '代表取締役社長', 'ceo', '');
+  perform _ai_hire(ck, '専務取締役', 'staff', '');
+  perform _ai_hire(ck, '運用本部長', 'trader', '運用本部');
+  perform _ai_hire(ck, 'トレーダー', 'trader', '運用本部');
+  perform _ai_hire(ck, 'トレーダー', 'trader', '運用本部');
+  perform _ai_hire(ck, 'トレーダー', 'trader', '運用本部');
+  perform _ai_hire(ck, 'アナリスト', 'analyst', '調査部');
+  perform _ai_hire(ck, 'アナリスト', 'analyst', '調査部');
+  perform _ai_hire(ck, '課長', 'staff', '経理部');
+  perform _ai_hire(ck, '主任', 'staff', '営業部');
+  perform _ai_hire(ct, '代表取締役社長', 'ceo', '');
+  perform _ai_hire(ct, '編集局長', 'staff', '編集局');
+  perform _ai_hire(ct, 'デスク', 'reporter', '市場部');
+  perform _ai_hire(ct, '記者', 'reporter', '市場部');
+  perform _ai_hire(ct, '記者', 'reporter', '市場部');
+  perform _ai_hire(ct, '記者', 'reporter', '経済部');
+  perform _ai_hire(ct, '記者', 'reporter', '経済部');
+  perform _ai_hire(ct, '記者', 'reporter', '生活部');
+  perform _ai_hire(ct, 'カメラマン', 'staff', '写真部');
+  -- 新聞（無料）
+  insert into pubs(kind, company_id, title, description, price, period_days, status, created_at, updated_at)
+  values ('paper', ct, '帝都京浜新聞', '株式市場・新商品・企業のニュースを毎日お届けします（無料）。記事はAIの記者が書いています。', 0, 30, 'active', _now(), _now());
+  -- 売り出し（公開価格）：創業家が売りに出し、神楽坂通商事とAI投資家が買う。のこりは板に残る（だれでも買える）
+  perform pg_advisory_xact_lock(7400, ck); perform pg_advisory_xact_lock(7400, ct);
+  perform _stock_exec(f, ck, 'sell', 150, 6000, false);
+  perform _stock_exec(f, ct, 'sell', 100, 8000, false);
+  perform _stock_exec(k, ct, 'buy', 100, 5000, false);
+  foreach x in array array['inv1', 'inv2', 'inv3', 'inv4'] loop
+    perform _stock_exec(_ai_uid(x), ck, 'buy', 150, 200, false);
+    perform _stock_exec(_ai_uid(x), ct, 'buy', 100, 200, false);
+  end loop;
+  -- 記事（創刊・上場）。速報で同じ上場の記事を出さないように印をつける
+  insert into ai_news_log(kind, key, at)
+  select 'listing', c.cid || ':' || to_char(c.listed_at, 'YYYYMMDDHH24MISS'), _now() from companies c where c.id in (ck, ct) on conflict do nothing;
+  insert into ai_news_log(kind, key, at) values ('items_start', d::text, _now() - interval '1 day') on conflict do nothing;
+  perform _ai_article('【お知らせ】帝都京浜新聞、きょう創刊',
+    format('帝都京浜新聞は、きょう創刊した。毎朝「きのうの株式市場」を、朝7時と夕方6時に「新商品」を、ストップ高・ストップ安や新規上場があれば速報をお届けする。記事はすべて無料で、記者はAIである。社長の%s氏は「風の芽の経済の動きを、毎日わかりやすく伝えたい」と話した。', coalesce(_ai_ceo(ct), '')), '編集局');
+  perform _ai_article('【新規上場】神楽坂通商事と帝都京浜新聞が上場',
+    format('AIが運営する神楽坂通商事（総合商社）と帝都京浜新聞（新聞社）が、きょう風の芽証券取引所に上場した。公開価格は神楽坂通商事が 150 X、帝都京浜新聞が 100 X。発行株数はどちらも10万株で、創業家（AI）が売り出した。神楽坂通商事は、上場しているすべての株に買い・売りの注文を出し、ひんぱんに売り買いする。'), '市場部');
+  insert into app_settings values ('ai_setup', _now()::text) on conflict (key) do nothing;
+  insert into app_settings values ('ai_on', '1') on conflict (key) do update set value = '1';
+  return 'ok';
+end $$;
+
+-- うまくいかなかった仕事の記録（管理の画面に出る）。その仕事はとばして、次へ進む（同じ失敗で毎分止まらないように）
+create or replace function public._ai_err(k text, msg text) returns void
+language sql set search_path = public as $$
+  insert into app_settings values ('ai_error', to_char(_now() at time zone 'Asia/Tokyo', 'FMMM/FMDD HH24:MI') || ' ' || k || '：' || left(coalesce(msg, ''), 300))
+  on conflict (key) do update set value = excluded.value
+$$;
+
+-- 毎分（pg_cron）：1回に1つの仕事だけ
+create or replace function public._ai_tick() returns text
+language plpgsql set search_path = public as $$
+declare d date := _kb_jday(_now()); hh int := extract(hour from _now() at time zone 'Asia/Tokyo')::int;
+  mon date := _kb_jday(_now()) - (extract(isodow from _kb_jday(_now()))::int - 1); a ai_corps; nx int; co int; r text;
+begin
+  if not exists (select 1 from app_settings where key = 'ai_setup') then return 'not set up'; end if;
+  if not pg_try_advisory_xact_lock(7500) then return 'busy'; end if;
+  insert into app_settings values ('ai_last', _now()::text) on conflict (key) do update set value = excluded.value;
+  if coalesce((select value from app_settings where key = 'ai_on'), '0') <> '1' then
+    -- 止めたあと：AIの注文を1社ずつ取り消す
+    select o.company_id into co from stock_orders o join profiles p on p.id = o.user_id where p.ai is not null and o.status = 'open' order by o.company_id limit 1;
+    if co is null then return 'off'; end if;
+    perform _ai_market_cancel(co);
+    return 'stopping';
+  end if;
+  -- 1) 毎日の商売（きのうまで。1回に1社1日。7日より前はとばす）
+  select a2.* into a from ai_corps a2 join companies c on c.id = a2.company_id
+   where a2.biz_day < d - 1 and c.status in ('active', 'suspended') order by a2.biz_day, a2.company_id limit 1;
+  if found then
+    begin
+      perform _ai_business(a.company_id, greatest(a.biz_day + 1, d - 7));
+    exception
+    when deadlock_detected or serialization_failure or lock_not_available then
+      perform _ai_err('商売（次の分にやりなおし）', sqlerrm); return 'retry';
+    when others then
+      perform _ai_err('商売', sqlerrm);
+      update ai_corps set biz_day = greatest(a.biz_day + 1, d - 7) where company_id = a.company_id;
+    end;
+    return 'business';
+  end if;
+  -- 2) 決算と配当（終わった週を古い順に。いちばん新しい週は月曜9時から）
+  select a2.* into a from ai_corps a2 join companies c on c.id = a2.company_id
+   where c.status in ('active', 'suspended') and (a2.week_done + 7 < mon or (a2.week_done + 7 = mon and (d > mon or hh >= 9)))
+   order by a2.week_done, a2.company_id limit 1;
+  if found then
+    begin
+      perform _ai_settle_week(a.company_id, a.week_done);
+    exception
+    when deadlock_detected or serialization_failure or lock_not_available then
+      perform _ai_err('決算（次の分にやりなおし）', sqlerrm); return 'retry';
+    when others then
+      perform _ai_err('決算', sqlerrm);
+      update ai_corps set week_done = a.week_done + 7 where company_id = a.company_id;
+    end;
+    return 'week';
+  end if;
+  -- 3) 朝刊（7時から）
+  if hh >= 7 and not exists (select 1 from ai_news_log where kind = 'morning' and key = d::text) then
+    begin
+      perform _ai_news_morning(d);
+    exception
+    when deadlock_detected or serialization_failure or lock_not_available then
+      perform _ai_err('朝刊（次の分にやりなおし）', sqlerrm); return 'retry';
+    when others then
+      perform _ai_err('朝刊', sqlerrm);
+      insert into ai_news_log(kind, key, at) values ('morning', d::text, _now()) on conflict do nothing;
+    end;
+    return 'morning';
+  end if;
+  -- 4) 新商品（7時と18時）
+  if hh >= 7 then
+    r := case when not exists (select 1 from ai_news_log where kind = 'items_am' and key = d::text) then 'items_am'
+              when hh >= 18 and not exists (select 1 from ai_news_log where kind = 'items_pm' and key = d::text) then 'items_pm' end;
+    if r is not null then
+      begin
+        perform _ai_news_items(r, d);
+      exception
+      when deadlock_detected or serialization_failure or lock_not_available then
+        perform _ai_err('新商品（次の分にやりなおし）', sqlerrm); return 'retry';
+      when others then
+        perform _ai_err('新商品', sqlerrm);
+        insert into ai_news_log(kind, key, at) values (r, d::text, _now()) on conflict do nothing;
+      end;
+      return 'items';
+    end if;
+  end if;
+  -- 5) 速報（うまくいかなければ、とばして市場へ）
+  begin
+    if _ai_news_flash(d) then return 'flash'; end if;
+  exception when others then
+    perform _ai_err('速報', sqlerrm);
+  end;
+  -- 6) 市場（上場している株を1つずつ順番に）
+  nx := (select c.id from companies c where c.listed and c.status = 'active' and c.id > coalesce((select value::int from app_settings where key = 'ai_next'), 0) order by c.id limit 1);
+  if nx is null then nx := (select c.id from companies c where c.listed and c.status = 'active' order by c.id limit 1); end if;
+  if nx is null then return 'idle'; end if;
+  insert into app_settings values ('ai_next', nx::text) on conflict (key) do update set value = excluded.value;
+  begin
+    return _ai_market(nx);
+  exception
+  when deadlock_detected or serialization_failure or lock_not_available then
+    perform _ai_err('市場（次の順番でやりなおし）', sqlerrm); return 'retry';
+  when others then
+    perform _ai_err('市場', sqlerrm);
+    return 'market error';
+  end;
+end $$;
+
+-- 管理：AI会社のようす（お金は管理者だけ）
+create or replace function public.admin_ai() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); adm boolean := coalesce(_role(u), '') = 'admin'; t0 timestamptz := _jday_start(_kb_jday(_now()));
+begin
+  if _role(u) is null then raise exception '管理者だけが使えます'; end if;
+  return jsonb_build_object(
+    'setup', exists (select 1 from app_settings where key = 'ai_setup'),
+    'on', coalesce((select value from app_settings where key = 'ai_on'), '0') = '1',
+    'last', (select to_char(value::timestamptz at time zone 'Asia/Tokyo', 'FMMM/FMDD HH24:MI:SS') from app_settings where key = 'ai_last'),
+    'cron', exists (select 1 from pg_namespace where nspname = 'cron'),
+    'error', (select value from app_settings where key = 'ai_error'),
+    'admin', adm,
+    'corps', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'role', a.role, 'fair', case when adm then round(_ai_fair(c.id)) end, 'mood', round(a.mood, 3),
+                 'price', (select price from stock_trades t where t.company_id = c.id order by t.id desc limit 1),
+                 'balance', case when adm then c.balance end,
+                 'week_rev', case when adm then (select coalesce(sum(revenue), 0) from ai_days where company_id = c.id and day >= _kb_jday(_now()) - 7) end,
+                 'week_profit', case when adm then (select coalesce(sum(revenue - cost), 0) from ai_days where company_id = c.id and day >= _kb_jday(_now()) - 7) end,
+                 'staff', (select count(*) from ai_staff s where s.company_id = c.id and s.left_on is null)) order by c.id), '[]'::jsonb)
+                from ai_corps a join companies c on c.id = a.company_id),
+    'accounts', case when adm then (select coalesce(jsonb_agg(jsonb_build_object('role', p.ai, 'nickname', p.nickname, 'cash', p.balance,
+                 'locked', (select coalesce(sum(locked), 0) from stock_orders o where o.user_id = p.id and o.status = 'open' and o.side = 'buy'),
+                 'stocks', round(_ai_stock_value(p.id)),
+                 'orders', (select count(*) from stock_orders o where o.user_id = p.id and o.status = 'open')) order by p.ai), '[]'::jsonb)
+                from profiles p where p.ai is not null) end,
+    'ai_out', case when adm then (select ai_out from treasury where id = 1) end,
+    'made', case when adm then (select coalesce(sum(revenue - cost), 0) from ai_days) end,
+    'articles_today', (select count(*) from pub_items i join pubs p on p.id = i.pub_id join ai_corps a on a.company_id = p.company_id and a.role = 'news'
+                        where i.created_at >= t0),
+    'trades_today', (select count(*) from stock_trades t where t.created_at >= t0
+                       and exists (select 1 from profiles p where p.ai is not null and (p.id = t.buyer or p.id = t.seller))));
+end $$;
+
+-- 管理者：AIを動かす（はじめてなら準備も）・止める（AIの注文は数分で取り消される）
+create or replace function public.admin_ai_set(p_on boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me();
+begin
+  if coalesce(_role(u), '') <> 'admin' then raise exception '管理者だけが使えます'; end if;
+  if p_on then
+    if not exists (select 1 from app_settings where key = 'ai_setup') then perform _ai_setup(); end if;
+    insert into app_settings values ('ai_on', '1') on conflict (key) do update set value = '1';
+  else
+    insert into app_settings values ('ai_on', '0') on conflict (key) do update set value = '0';
+  end if;
+  return admin_ai();
+end $$;
+
+-- 管理者：国庫からAIにお金を足す（神楽坂通商事・AI投資家）
+create or replace function public.admin_ai_fund(p_who text, p_amount bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me();
+begin
+  if coalesce(_role(u), '') <> 'admin' then raise exception '管理者だけが使えます'; end if;
+  if p_who is null or p_who not in ('kagura', 'inv1', 'inv2', 'inv3', 'inv4') then raise exception 'お金を足せるのは、神楽坂通商事とAI投資家だけです'; end if;
+  if p_amount is null or p_amount < 1 or p_amount > 100000000 then raise exception '額は1〜1億 X にしてください'; end if;
+  perform _ai_fund(_ai_uid(p_who), p_amount);
+  return admin_ai();
+end $$;
+
+-- 毎分 AI を動かす（pg_cron があるとき。なければ何もしない）
+do $$
+begin
+  begin
+    create extension if not exists pg_cron;
+  exception when others then
+    raise notice 'pg_cron は使えません（AI会社は止まったまま）';
+  end;
+  if exists (select 1 from pg_namespace where nspname = 'cron') then
+    perform cron.schedule('ailinax-ai', '* * * * *', 'select public._ai_tick()');
+    perform cron.schedule('ailinax-cron-clean', '17 4 * * *', $c$delete from cron.job_run_details where end_time < now() - interval '3 days'$c$);
+  end if;
 end $$;
 
 -- ---------------------------------------------------------------------
@@ -9064,7 +9915,10 @@ begin
             '_desk_staff','_desk_json','_desk_people','_desk_unread','desk_thread','desk_open','desk_send','desk_close','desk_list',
             'desk_settings','corp_member_desk','_user_row','admin_users','admin_user',
             '_holdings','_stock_exch','_stock_market','_stock_list','_stock_cancel_order','_stock_delist','stock_list','stock_state',
-            '_stock_width','_jday_start','_stock_base','_stock_band','_stock_day','_tnow','info_today',
+            '_stock_width','_jday_start','_stock_base','_stock_band','_stock_day','_tnow','info_today','_stock_exec',
+            '_ai_uid','_randn','_ai_name','_ai_account','_ai_fund','_ai_hire','_ai_ceo','_ai_stock_value','_ai_fair','_ai_article','_ai_event',
+            '_ai_business','_ai_settle_week','_ai_news_morning','_ai_news_items','_ai_news_flash','_ai_invest','_ai_market','_ai_market_cancel',
+            '_ai_setup','_ai_tick','_ai_err','admin_ai','admin_ai_set','admin_ai_fund',
             'stock_order','stock_cancel','stock_list_apply','stock_list_withdraw','admin_stock_decide','admin_stock_delist','_unlock_orders',
             'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse') loop
     execute format('revoke all on function %s from public, anon', f.sig);
