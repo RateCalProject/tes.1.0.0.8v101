@@ -2987,7 +2987,7 @@ async function adIvLoad(v, listed) {
   const SD = K === 'fx' ? { buy: 'X を買う（CA を払う・X 高へ）', sell: 'X を売る（CA を受け取る・X 安へ）' } : { buy: '買い支える', sell: '国の株を売る' };
   const pick = `<select class="inp" id="ivCid" style="margin:0 0 6px">${L.map(x => `<option value="${x.cid}" ${IV.cid === x.cid ? 'selected' : ''}>${esc(x.name)}（${x.last != null ? fmt(x.last) + ' X' : '—'}${x.base != null ? `・きょう ${fmt(x.stop_lo)}〜${fmt(x.stop_hi)}` : ''}）</option>`).join('')}</select>`;
   const KN = { fx: '為替', stock: '株', news: '新聞（うわさ）' };
-  const logRow = x => (x.kind === 'reprice' || x.kind === 'split') ? `<div class="line"><span class="grow">${x.kind === 'reprice' ? '株価の決めなおし' : '株式分割'}「${esc(x.name || '')}」<small>${x.at} ${x.time}・${esc(x.note || '')}</small></span></div>`
+  const logRow = x => (x.kind === 'reprice' || x.kind === 'split' || x.kind === 'give') ? `<div class="line"><span class="grow">${{ reprice: '株価の決めなおし', split: '株式分割', give: '国の株を渡す' }[x.kind]}「${esc(x.name || '')}」<small>${x.at} ${x.time}・${esc(x.note || '')}</small></span></div>`
     : x.kind === 'news'
     ? `<div class="line"><span class="grow">新聞「${esc(x.name || '')}」・${x.side === 'buy' ? '良いうわさ' : '悪いうわさ'}（${['', '小', '中', '大'][x.qty] || ''}）
         <small>${x.at} ${x.time}・${esc(x.note || '')}${x.after != null ? `・目標 ${fmt(x.before)} → ${fmt(x.after)} X（1日）` : ''}</small></span></div>`
@@ -3008,13 +3008,21 @@ async function adIvLoad(v, listed) {
     <label class="small" style="display:block;margin:6px 0"><input type="checkbox" id="ivNews"> 帝都京浜新聞の記事にする（額は出しません）</label>
     <button class="btn main s" id="ivGo">介入する</button>
     <p class="muted small" style="margin:6px 0 0">${K === 'fx' ? '買い：その値段までの売り注文を、安い順に買います（国の CA を使う）。売り：その値段までの買い注文に、高い順に売ります（国庫の X を使う）。' : '買い支え：その値段までの売り注文を買います（国庫の X）。売る：国が持っている株を、その値段までの買い注文に売ります。'}すぐ合う分だけ約定し、残りは取り消します。受け取った X・CA は国庫へ。取引所の手数料はかかります。</p>`}
-    ${v.holds.length ? `<h4 style="margin:10px 0 2px">国が持っている株</h4>${v.holds.map(h => `<div class="line"><span class="grow">${esc(h.name)}<small>${h.price != null ? fmt(h.price) + ' X・評価 ' + fmt(h.price * h.shares) + ' X' : ''}</small></span><b class="num">${fmt(h.shares)}株</b></div>`).join('')}` : ''}
+    ${v.holds.length ? `<h4 style="margin:10px 0 2px">国が持っている株</h4>${v.holds.map(h => `<div class="line"><span class="grow">${esc(h.name)}<small>${h.price != null ? fmt(h.price) + ' X・評価 ' + fmt(h.price * h.shares) + ' X' : ''}</small></span><b class="num">${fmt(h.shares)}株</b><button class="btn s" data-ivgive="${h.cid}" data-nm="${esc(h.name)}" data-n="${h.shares}">渡す</button></div>`).join('')}
+      <p class="muted small" style="margin:4px 0 0">「渡す」で、国の株を自分やほかの人に渡せます（代金なし）。</p>` : ''}
     ${v.log.length ? `<h4 style="margin:10px 0 2px">介入の記録</h4>${v.log.slice(0, 10).map(logRow).join('')}` : ''}`;
   box.querySelectorAll('#ivKind button').forEach(b => b.onclick = () => { IV.kind = b.dataset.k; adIvLoad(v); });
   box.querySelectorAll('#ivSide button').forEach(b => b.onclick = () => { IV.side = b.dataset.k; adIvLoad(v); });
   box.querySelectorAll('#ivGood button').forEach(b => b.onclick = () => { IV.good = b.dataset.k === '1'; adIvLoad(v); });
   box.querySelectorAll('#ivPow button').forEach(b => b.onclick = () => { IV.power = Number(b.dataset.k); adIvLoad(v); });
   const sel = box.querySelector('#ivCid'); if (sel) sel.onchange = () => { IV.cid = sel.value; };
+  box.querySelectorAll('[data-ivgive]').forEach(b => b.onclick = async () => {
+    const to = prompt(`国が持っている「${b.dataset.nm}」の株を、だれに渡しますか？\n相手のID（5けた）。空のままなら、あなたに渡します。`, ''); if (to === null) return;
+    const v2 = prompt(`何株渡しますか？（国が持っているのは ${fmt(b.dataset.n)}株）`, b.dataset.n); if (v2 === null) return;
+    const n = Math.floor(Number(String(v2).replace(/[,，\s]/g, '')) || 0); if (n < 1) return toast('株数を入れてください');
+    if (!confirm(`「${b.dataset.nm}」の株 ${fmt(n)}株を、${to.trim() ? 'ID ' + to.trim() + ' の人' : 'あなた'}に渡します（代金なし）。よろしいですか？`)) return;
+    try { adIvLoad(await call('admin_gov_share_give', { p_cid: b.dataset.ivgive, p_to: to.trim(), p_shares: n })); toast('渡しました'); } catch (e) { toast(e.message); }
+  });
   const cname = cid => (L.find(x => x.cid === cid) || {}).name || cid;
   box.querySelector('#ivGo').onclick = async () => {
     const cid = sel ? sel.value : null;

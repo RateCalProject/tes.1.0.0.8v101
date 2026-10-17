@@ -10065,7 +10065,7 @@ create table if not exists public.interventions (
   created_at timestamptz not null default now()
 );
 alter table public.interventions drop constraint if exists interventions_kind_check;
-alter table public.interventions add constraint interventions_kind_check check (kind in ('fx', 'stock', 'news', 'reprice', 'split'));
+alter table public.interventions add constraint interventions_kind_check check (kind in ('fx', 'stock', 'news', 'reprice', 'split', 'give'));
 alter table public.interventions add column if not exists note text;      -- 新聞の記事の見出し
 alter table public.interventions enable row level security;
 revoke all on public.interventions from anon, authenticated;
@@ -10237,6 +10237,39 @@ begin
   return admin_state();
 end $$;
 
+-- 管理者：国が持っている株を、人に渡す（p_to が空なら自分に）。代金はなし
+create or replace function public.admin_gov_share_give(p_cid text, p_to text, p_shares bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); g uuid := 'a1000000-0000-4000-8000-000000000099'; c companies; t record; to_u uuid; to_name text; to_id text; have bigint;
+begin
+  if not _is_admin(u) then raise exception '国の株を渡せるのは管理者だけです'; end if;
+  if p_shares is null or p_shares < 1 then raise exception '渡す株数を入れてください'; end if;
+  select * into c from companies where cid = _cid_norm(p_cid) for key share;
+  if not found then raise exception '会社が見つかりません'; end if;
+  if coalesce(btrim(p_to), '') = '' then
+    to_u := u;
+  else
+    select * into t from _find_id(p_to);
+    if t.rid is null then raise exception '株を渡せるのは人だけです（会社には渡せません）'; end if;
+    to_u := t.rid;
+  end if;
+  select nickname, account_no into to_name, to_id from profiles where id = to_u;
+  perform pg_advisory_xact_lock(7400, c.id);
+  select shares into have from corp_holders where company_id = c.id and user_id = g for update;
+  if coalesce(have, 0) < p_shares then raise exception '国が持っている「%」の株は %株です', c.name, _fmt(coalesce(have, 0)); end if;
+  update corp_holders set shares = shares - p_shares where company_id = c.id and user_id = g;
+  delete from corp_holders where company_id = c.id and user_id = g and shares <= 0;
+  perform _add_shares(c.id, to_u, p_shares);
+  perform _log(to_u, 'gov_share', 0, 0, jsonb_build_object('company', c.name, 'company_id', c.id, 'shares', p_shares));
+  if to_u <> u then
+    perform _notice_l(to_u, format('【株】国から「%s」の株 %s株を受け取りました。「企業 → 持ち株」で見られます。', c.name, _fmt(p_shares)),
+                      jsonb_build_object('go', 'corp', 'cid', c.cid), u);
+  end if;
+  insert into interventions(kind, company_id, side, price, qty, by_user, note, created_at)
+  values ('give', c.id, 'sell', 0, p_shares, u, format('国の株を %s（ID %s）に %s株', to_name, to_id, _fmt(p_shares)), _now());
+  return admin_iv_state();
+end $$;
+
 -- 管理者：介入する
 --   p_kind：fx（為替。buy＝X を買って CA を払う＝X 高へ／sell＝X を売って CA を受け取る＝X 安へ。値段は 1 X あたりの CA）
 --           stock（株。p_cid の株を buy＝買い支え／sell＝国が持っている株を売る。値段は1株の X）
@@ -10389,7 +10422,7 @@ begin
             '_stock_width','_jday_start','_stock_base','_stock_band','_stock_day','_tnow','info_today','_stock_exec',
             '_ai_uid','_randn','_ai_name','_ai_account','_ai_fund','_ai_hire','_ai_ceo','_ai_stock_value','_ai_fair','_ai_article','_ai_event',
             '_ai_business','_ai_settle_week','_ai_news_morning','_ai_news_items','_ai_news_flash','_ai_invest','_ai_market','_ai_market_cancel',
-            '_ai_setup','_ai_add_investors','_ai_tick','_fx_exec','_stock_width_x','_ai_buzz_target','_ai_fair_p','_ai_found','_ok7_ins','_stock_last','_stock_cancel_all','stock_split','admin_stock_reprice','admin_ai_news','_gov_uid','_gov_sweep','_fx_last','admin_iv_state','admin_intervene','_ai_err','admin_ai','admin_ai_set','admin_ai_fund',
+            '_ai_setup','_ai_add_investors','_ai_tick','_fx_exec','_stock_width_x','_ai_buzz_target','_ai_fair_p','_ai_found','_ok7_ins','_stock_last','_stock_cancel_all','stock_split','admin_stock_reprice','admin_gov_share_give','admin_ai_news','_gov_uid','_gov_sweep','_fx_last','admin_iv_state','admin_intervene','_ai_err','admin_ai','admin_ai_set','admin_ai_fund',
             'stock_order','stock_cancel','stock_list_apply','stock_list_withdraw','admin_stock_decide','admin_stock_delist','_unlock_orders',
             'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse') loop
     execute format('revoke all on function %s from public, anon', f.sig);
