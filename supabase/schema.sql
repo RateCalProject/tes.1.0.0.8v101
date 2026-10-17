@@ -2753,7 +2753,7 @@ begin
   if p_price is null or p_price < 1 or p_price > 1000000000000 then raise exception '値段は1 X以上にしてください'; end if;
   if p_item is null then
     if (select count(*) from corp_items where company_id = c.id) >= 30 then raise exception '商品は30個までです'; end if;
-    insert into corp_items(company_id, name, price, description, active) values (c.id, nm, p_price, left(coalesce(p_desc, ''), 300), coalesce(p_active, true));
+    insert into corp_items(company_id, name, price, description, active, created_at) values (c.id, nm, p_price, left(coalesce(p_desc, ''), 300), coalesce(p_active, true), _now());
   else
     update corp_items set name = nm, price = p_price, description = left(coalesce(p_desc, ''), 300), active = coalesce(p_active, active)
      where id = p_item and company_id = c.id;
@@ -8478,6 +8478,11 @@ end $$;
 --   株式会社（国営はのぞく）の社長が上場を申請し、管理者・副管理者が審査する
 --   上場した株は、国営の風の芽証券取引所の板で X で売り買いする（指値。値段は1株あたりの X・整数）
 --   約定の値段は、先に出ていた注文の値段。自分の注文どうしは合わせない（自分の注文とぶつかる値段は出せない）
+--   値幅制限（ストップ高・ストップ安）：1日（日本時間 0:00〜24:00）に動ける値段の幅を、前の日までの最後の値段（基準値段）から
+--     東証と同じ表で決める（例：基準値段 100 X 未満は上下 30 X、1,000 X 未満は上下 150 X）
+--     ストップ高＝基準値段＋値幅、ストップ安＝基準値段−値幅（1 X より下にはならない）。この幅の外の値段では注文できない
+--     前の日までに出ていて幅の外にある注文は、幅のはしの値段で約定する（ストップ高より高い買い注文は、ストップ高の値段で買える）
+--     前の日までに取引がない株（はじめて取引がある日）は、値幅制限なし
 --   手数料は取引所の手数料（%）を、買う人・売る人の両方から X で（切り捨て）。取引所のお金になる
 --   登録から7日たってから。買うのは税金の滞納がないとき。出せる注文は30件まで
 --   会社か取引所が休業中は売買停止（取り消しはできる）。上場廃止・廃業・倒産では、注文を取り消して返す
@@ -8489,42 +8494,112 @@ language sql stable set search_path = public as $$
   select * from companies where cid = (select value from app_settings where key = 'exchange_cid') and official limit 1
 $$;
 
--- 1つの株の相場（だれが売り買いしたかは出さない）
-create or replace function public._stock_market(cid_int int) returns jsonb
+create index if not exists stock_trades_corp_time_idx on public.stock_trades(company_id, created_at);
+do $$
+begin
+  if exists (select 1 from pg_constraint where conname = 'stock_trades_buyer_fkey' and confdeltype <> 'n') then
+    alter table public.stock_trades alter column buyer drop not null, alter column seller drop not null;
+    alter table public.stock_trades drop constraint stock_trades_buyer_fkey, drop constraint if exists stock_trades_seller_fkey;
+    alter table public.stock_trades add constraint stock_trades_buyer_fkey foreign key (buyer) references public.profiles(id) on delete set null,
+                                    add constraint stock_trades_seller_fkey foreign key (seller) references public.profiles(id) on delete set null;
+  end if;
+end $$;
+
+-- 東証の制限値幅の表（基準値段 → 上下の幅）
+create or replace function public._stock_width(b bigint) returns bigint
+language sql immutable as $$
+  select (case
+    when b <      100 then      30 when b <      200 then      50 when b <      500 then      80 when b <      700 then     100
+    when b <     1000 then     150 when b <     1500 then     300 when b <     2000 then     400 when b <     3000 then     500
+    when b <     5000 then     700 when b <     7000 then    1000 when b <    10000 then    1500 when b <    15000 then    3000
+    when b <    20000 then    4000 when b <    30000 then    5000 when b <    50000 then    7000 when b <    70000 then   10000
+    when b <   100000 then   15000 when b <   150000 then   30000 when b <   200000 then   40000 when b <   300000 then   50000
+    when b <   500000 then   70000 when b <   700000 then  100000 when b <  1000000 then  150000 when b <  1500000 then  300000
+    when b <  2000000 then  400000 when b <  3000000 then  500000 when b <  5000000 then  700000 when b <  7000000 then 1000000
+    when b < 10000000 then 1500000 when b < 15000000 then 3000000 when b < 20000000 then 4000000 when b < 30000000 then 5000000
+    when b < 50000000 then 7000000 else 10000000 end)::bigint
+$$;
+
+-- その日（日本時間）の 0:00
+create or replace function public._jday_start(d date) returns timestamptz
+language sql stable as $$ select d::timestamp at time zone 'Asia/Tokyo' $$;
+
+-- 基準値段：その日より前の、最後の取引の値段（なければ null）
+--   いまの上場より前の取引は数えない（上場しなおした日は値幅制限なし）。その日がいまの上場より前なら、前の上場のときの取引で
+create or replace function public._stock_base(cid_int int, d date) returns bigint
 language sql stable set search_path = public as $$
-  select jsonb_build_object(
+  select t.price from stock_trades t
+   where t.company_id = cid_int and t.created_at < _jday_start(d)
+     and t.created_at >= coalesce((select c.listed_at from companies c where c.id = cid_int and c.listed_at < _jday_start(d + 1)), '-infinity'::timestamptz)
+   order by t.created_at desc, t.id desc limit 1
+$$;
+
+-- その日の値幅：基準値段・ストップ安・ストップ高（基準値段がなければ、どれも null＝値幅制限なし）
+create or replace function public._stock_band(cid_int int, d date, out base bigint, out lo bigint, out hi bigint)
+language plpgsql stable set search_path = public as $$
+begin
+  base := _stock_base(cid_int, d);
+  if base is not null then lo := greatest(base - _stock_width(base), 1); hi := base + _stock_width(base); end if;
+end $$;
+
+-- 取引の時刻：ロックを取ったあとの実際の時刻（日付の変わり目で、前の日の取引があとから入らないように）。テストの fake_now があればその時刻
+create or replace function public._tnow() returns timestamptz
+language sql volatile set search_path = public as $$
+  select coalesce((select value::timestamptz from app_settings where key = 'fake_now'), clock_timestamp())
+$$;
+
+-- 1つの株の、その日のようす（基準値段・値幅・始値・高値・安値・終値・出来高・売買代金・ストップ高／安）
+--   stop：終値がストップ高（high）・ストップ安（low）。touched：一時ストップ高・安になった（high / low / both）
+create or replace function public._stock_day(cid_int int, d date) returns jsonb
+language plpgsql stable set search_path = public as $$
+declare bd record; t0 timestamptz := _jday_start(d); t1 timestamptz := _jday_start(d + 1); t record; op bigint; cl bigint;
+begin
+  select * into bd from _stock_band(cid_int, d);
+  select max(price) hp, min(price) lp, coalesce(sum(qty), 0)::bigint vol, coalesce(sum(value), 0)::bigint val, count(*) n into t
+    from stock_trades where company_id = cid_int and created_at >= t0 and created_at < t1;
+  if t.n > 0 then
+    select price into op from stock_trades where company_id = cid_int and created_at >= t0 and created_at < t1 order by created_at, id limit 1;
+    select price into cl from stock_trades where company_id = cid_int and created_at >= t0 and created_at < t1 order by created_at desc, id desc limit 1;
+  end if;
+  return jsonb_build_object('base', bd.base, 'stop_lo', bd.lo, 'stop_hi', bd.hi,
+    'open', op, 'high', t.hp, 'low', t.lp, 'close', cl, 'vol', t.vol, 'value', t.val, 'n', t.n,
+    'chg', case when cl is not null and bd.base is not null then cl - bd.base end,
+    'stop', case when cl is null or bd.base is null then null when cl >= bd.hi then 'high' when cl <= bd.lo and cl < bd.base then 'low' end,
+    'touched', case when bd.base is null or t.n = 0 then null
+                    when t.hp >= bd.hi and t.lp <= bd.lo and t.lp < bd.base then 'both' when t.hp >= bd.hi then 'high'
+                    when t.lp <= bd.lo and t.lp < bd.base then 'low' end);
+end $$;
+
+-- 1つの株の相場（だれが売り買いしたかは出さない）
+--   きょうのようす（_stock_day）＋板。板は、値幅の外の注文を値幅のはしの値段に入れて見せる（その値段で約定するため）
+create or replace function public._stock_market(cid_int int) returns jsonb
+language plpgsql stable set search_path = public as $$
+declare dy jsonb := _stock_day(cid_int, _kb_jday(_now())); lo bigint := (dy->>'stop_lo')::bigint; hi bigint := (dy->>'stop_hi')::bigint;
+begin
+  return dy || jsonb_build_object(
     'last', (select price from stock_trades where company_id = cid_int order by id desc limit 1),
-    'prev', (select price from stock_trades where company_id = cid_int and created_at <= _now() - interval '1 day' order by id desc limit 1),
-    'first', (select price from stock_trades where company_id = cid_int and created_at > _now() - interval '1 day' order by id limit 1),
-    'bid', (select max(price) from stock_orders where company_id = cid_int and side = 'buy' and status = 'open'),
-    'ask', (select min(price) from stock_orders where company_id = cid_int and side = 'sell' and status = 'open'),
-    'vol', (select coalesce(sum(qty), 0) from stock_trades where company_id = cid_int and created_at > _now() - interval '1 day'),
-    'bids', (select coalesce(jsonb_agg(jsonb_build_object('price', price, 'qty', q) order by price desc), '[]'::jsonb) from (
-              select price, sum(remain) q from stock_orders where company_id = cid_int and side = 'buy' and status = 'open' group by price order by price desc limit 8) z),
-    'asks', (select coalesce(jsonb_agg(jsonb_build_object('price', price, 'qty', q) order by price), '[]'::jsonb) from (
-              select price, sum(remain) q from stock_orders where company_id = cid_int and side = 'sell' and status = 'open' group by price order by price limit 8) z),
+    'bid', (select case when count(*) > 0 then least(max(price), hi) end from stock_orders where company_id = cid_int and side = 'buy' and status = 'open'),
+    'ask', (select case when count(*) > 0 then greatest(min(price), lo) end from stock_orders where company_id = cid_int and side = 'sell' and status = 'open'),
+    'bids', (select coalesce(jsonb_agg(jsonb_build_object('price', p, 'qty', q) order by p desc), '[]'::jsonb) from (
+              select least(price, hi) p, sum(remain) q from stock_orders where company_id = cid_int and side = 'buy' and status = 'open' group by 1 order by 1 desc limit 8) z),
+    'asks', (select coalesce(jsonb_agg(jsonb_build_object('price', p, 'qty', q) order by p), '[]'::jsonb) from (
+              select greatest(price, lo) p, sum(remain) q from stock_orders where company_id = cid_int and side = 'sell' and status = 'open' group by 1 order by 1 limit 8) z),
     'trades', (select coalesce(jsonb_agg(jsonb_build_object('price', price, 'qty', qty, 'ts', _kb_ms(created_at)) order by id desc), '[]'::jsonb) from (
               select * from stock_trades where company_id = cid_int order by id desc limit 20) z),
     'chart', (select coalesce(jsonb_agg(jsonb_build_object('price', price, 'ts', _kb_ms(created_at)) order by id), '[]'::jsonb) from (
               select * from stock_trades where company_id = cid_int order by id desc limit 100) z),
-    'shares', (select shares from companies where id = cid_int))
-$$;
+    'shares', (select shares from companies where id = cid_int));
+end $$;
 
 -- 上場している株の一覧（相場・取引所に出す）
 create or replace function public._stock_list() returns jsonb
 language sql stable set search_path = public as $$
-  select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'status', c.status, 'shares', c.shares,
-           'listed_at', _dlabel(c.listed_at), 'last', z.last, 'prev', z.prev, 'first', z.first, 'vol', z.vol,
-           'bid', (select max(price) from stock_orders where company_id = c.id and side = 'buy' and status = 'open'),
-           'ask', (select min(price) from stock_orders where company_id = c.id and side = 'sell' and status = 'open'),
-           'cap', z.last * c.shares) order by z.vol desc, c.name), '[]'::jsonb)
-    from companies c
-    cross join lateral (select
-      (select price from stock_trades where company_id = c.id order by id desc limit 1) as last,
-      (select price from stock_trades where company_id = c.id and created_at <= _now() - interval '1 day' order by id desc limit 1) as prev,
-      (select price from stock_trades where company_id = c.id and created_at > _now() - interval '1 day' order by id limit 1) as first,
-      (select coalesce(sum(qty), 0) from stock_trades where company_id = c.id and created_at > _now() - interval '1 day') as vol) z
-   where c.listed and c.status in ('active', 'suspended')
+  select coalesce(jsonb_agg(j order by (j->>'value')::bigint desc, j->>'name'), '[]'::jsonb) from (
+    select _stock_day(c.id, _kb_jday(_now())) || jsonb_build_object('cid', c.cid, 'name', c.name, 'status', c.status, 'shares', c.shares,
+             'listed_at', _dlabel(c.listed_at), 'last', l.p, 'cap', l.p * c.shares) j
+      from companies c
+      left join lateral (select price p from stock_trades where company_id = c.id order by id desc limit 1) l on true
+     where c.listed and c.status in ('active', 'suspended') offset 0) z
 $$;
 
 create or replace function public.stock_list() returns jsonb
@@ -8577,7 +8652,7 @@ end $$;
 create or replace function public.stock_order(p_cid text, p_side text, p_price bigint, p_qty bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies; ex companies; me profiles; o stock_orders; m stock_orders; bo stock_orders; so stock_orders;
-  q bigint; v bigint; fb bigint; fs bigint; lockamt bigint; have bigint; fee_tot bigint := 0;
+  q bigint; v bigint; fb bigint; fs bigint; lockamt bigint; have bigint; fee_tot bigint := 0; bd record; tp bigint; ts timestamptz;
 begin
   if p_side not in ('buy', 'sell') then raise exception '買いか売りをえらんでください'; end if;
   if p_price is null or p_price < 1 or p_price > 1000000000 then raise exception '値段は1株あたり1〜10億 X にしてください'; end if;
@@ -8589,9 +8664,14 @@ begin
   ex := _stock_exch();
   if ex.id is null or ex.status <> 'active' then raise exception '取引所がいま開いていないので、注文できません'; end if;
   perform pg_advisory_xact_lock(7400, c.id);            -- 同じ株の注文は1つずつ
+  ts := _tnow();                                        -- ロックを取ったあとの時刻（値幅の日付と、注文・取引の時刻）
   select * into me from profiles where id = u for update;
   if _now() < coalesce(me.ok7_at, me.created_at + interval '7 days') then raise exception '登録から7日たつまで、株の売り買いはできません（%から）', _dlabel(coalesce(me.ok7_at, me.created_at + interval '7 days')); end if;
   if (select count(*) from stock_orders where user_id = u and status = 'open') >= 30 then raise exception '出せる株の注文は30件までです'; end if;
+  select * into bd from _stock_band(c.id, _kb_jday(ts));            -- きょうの値幅（基準値段がなければ値幅制限なし）
+  if bd.base is not null and (p_price < bd.lo or p_price > bd.hi) then
+    raise exception 'きょうの値幅は % 〜 % X です（基準値段 % X。ストップ安〜ストップ高）。この間の値段で注文してください', _fmt(bd.lo), _fmt(bd.hi), _fmt(bd.base);
+  end if;
   if p_side = 'buy' then
     if exists (select 1 from stock_orders where company_id = c.id and user_id = u and side = 'sell' and status = 'open' and price <= p_price) then
       raise exception '自分の売り注文と同じか高い値段の買い注文は出せません（先に売り注文を取り消してください）';
@@ -8611,7 +8691,7 @@ begin
     lockamt := 0;
   end if;
   insert into stock_orders(company_id, exch_id, user_id, side, price, qty, remain, locked, fee_pct, created_at)
-  values (c.id, ex.id, u, p_side, p_price, p_qty, p_qty, lockamt, ex.fx_fee, _now()) returning * into o;
+  values (c.id, ex.id, u, p_side, p_price, p_qty, p_qty, lockamt, ex.fx_fee, ts) returning * into o;
   -- 反対側の注文と合わせる（値段の良い順・先に出た順）
   loop
     exit when o.remain = 0;
@@ -8625,7 +8705,9 @@ begin
     exit when not found;
     q := least(o.remain, m.remain);
     if o.side = 'buy' then bo := o; so := m; else bo := m; so := o; end if;
-    v := q * m.price;                                   -- 値段は先に出ていた注文（m）の値段
+    tp := m.price;                                      -- 値段は先に出ていた注文（m）の値段
+    if bd.base is not null then tp := least(greatest(tp, bd.lo), bd.hi); end if;   -- 値幅の外に残っていた注文は、値幅のはしの値段
+    v := q * tp;
     fb := floor(v * bo.fee_pct / 100); fs := floor(v * so.fee_pct / 100);
     if v + fb > bo.locked then raise exception '預かりが足りません（内部エラー）'; end if;
     update stock_orders set remain = remain - q, locked = locked - (v + fb), status = case when remain - q = 0 then 'done' else status end
@@ -8635,9 +8717,9 @@ begin
     perform _add_shares(c.id, bo.user_id, q);           -- 買った人に株
     perform _give(so.user_id, v - fs);                  -- 売った人に X（手数料を引く）
     insert into stock_trades(company_id, exch_id, buy_order, sell_order, buyer, seller, price, qty, value, fee_buy, fee_sell, created_at)
-    values (c.id, ex.id, bo.id, so.id, bo.user_id, so.user_id, m.price, q, v, fb, fs, _now());
-    perform _log(bo.user_id, 'share_buy', v + fb, 0, jsonb_build_object('company', c.name, 'shares', q, 'price', m.price, 'fee', fb, 'exchange', true));
-    perform _log(so.user_id, 'share_sell', 0, v - fs, jsonb_build_object('company', c.name, 'shares', q, 'price', m.price, 'fee', fs, 'exchange', true));
+    values (c.id, ex.id, bo.id, so.id, bo.user_id, so.user_id, tp, q, v, fb, fs, ts);
+    perform _log(bo.user_id, 'share_buy', v + fb, 0, jsonb_build_object('company', c.name, 'shares', q, 'price', tp, 'fee', fb, 'exchange', true));
+    perform _log(so.user_id, 'share_sell', 0, v - fs, jsonb_build_object('company', c.name, 'shares', q, 'price', tp, 'fee', fs, 'exchange', true));
     fee_tot := fee_tot + fb + fs;
     if bo.remain = 0 and bo.locked > 0 then             -- 買い終わったら、あまった預かりを返す
       update profiles set balance = balance + bo.locked where id = bo.user_id;
@@ -8763,6 +8845,94 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
+-- 情報タブの「今日」：その日（日本時間）の株式市場・新商品・新しい会社・為替・競馬・ニュースなど
+--   30日前までさかのぼって見られる。だれが売り買いしたか・所持金は出さない
+-- ---------------------------------------------------------------------
+alter table public.corp_items alter column created_at set default public._now();
+create index if not exists corp_items_time_idx on public.corp_items(created_at);
+create index if not exists fx_trades_exch_time_idx on public.fx_trades(exch_id, created_at);
+create index if not exists pub_items_time_idx on public.pub_items(created_at);
+
+create or replace function public.info_today(p_day date default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); today date := _kb_jday(_now()); d date := coalesce(p_day, _kb_jday(_now()));
+  t0 timestamptz; t1 timestamptz; fx companies; ex companies := _stock_exch(); fxj jsonb;
+begin
+  if d > today or d < today - 30 then raise exception '見られるのは、きょうから30日前までです'; end if;
+  t0 := _jday_start(d); t1 := _jday_start(d + 1);
+  begin perform _kb_tick(); exception when others then null; end;    -- 競馬の番組・結果を最新に（うまくいかなくても、ほかは出す）
+  -- 為替（AiliNaX ⇄ CA。国営の取引所）
+  fx := _fx_pick(null);
+  if fx.id is not null then
+    select jsonb_build_object('cid', fx.cid, 'name', fx.name,
+             'base', (select price from fx_trades where exch_id = fx.id and created_at < t0 order by created_at desc, id desc limit 1),
+             'open', (select price from fx_trades where exch_id = fx.id and created_at >= t0 and created_at < t1 order by created_at, id limit 1),
+             'close', (select price from fx_trades where exch_id = fx.id and created_at >= t0 and created_at < t1 order by created_at desc, id desc limit 1),
+             'high', max(price), 'low', min(price), 'vol', coalesce(sum(qty), 0), 'n', count(*))
+      into fxj from fx_trades where exch_id = fx.id and created_at >= t0 and created_at < t1;
+  end if;
+  return jsonb_build_object(
+    'day', d, 'today', d = today, 'min_day', today - 30,
+    'label', to_char(d::timestamp, 'FMMM"月"FMDD"日"') || '（' || (array['月','火','水','木','金','土','日'])[extract(isodow from d)::int] || '）',
+    'at', case when d = today then to_char(_now() at time zone 'Asia/Tokyo', 'HH24:MI') end,
+    -- 株式市場：上場しているすべての株の、その日のようす（売買代金の多い順）
+    'exch', case when ex.id is null then null else jsonb_build_object('cid', ex.cid, 'name', ex.name, 'open', ex.status = 'active', 'fee_pct', ex.fx_fee) end,
+    'stocks', (select coalesce(jsonb_agg(j order by (j->>'value')::bigint desc, j->>'name'), '[]'::jsonb) from (
+        select _stock_day(c.id, d) || jsonb_build_object('cid', c.cid, 'name', c.name, 'status', c.status, 'shares', c.shares,
+                 'new', c.listed_at >= t0 and c.listed_at < t1, 'listed', c.listed and c.status in ('active', 'suspended'), 'listed_at', _dlabel(c.listed_at),
+                 'last', (select price from stock_trades t where t.company_id = c.id and t.created_at < t1 order by t.created_at desc, t.id desc limit 1)) j
+          from companies c
+         where (c.listed and c.status in ('active', 'suspended') and c.listed_at < t1)
+            or exists (select 1 from stock_trades t where t.company_id = c.id and t.created_at >= t0 and t.created_at < t1)
+        offset 0) z),
+    -- 新商品（その日に出た商品。なければ、その前の7日の新商品）
+    'items', (select coalesce(jsonb_agg(z.j order by z.id desc), '[]'::jsonb) from (
+                select i.id, jsonb_build_object('id', i.id, 'name', i.name, 'price', i.price, 'description', left(i.description, 100),
+                  'cid', c.cid, 'company', c.name, 'official', c.official, 'time', to_char(i.created_at at time zone 'Asia/Tokyo', 'HH24:MI')) j
+                  from corp_items i join companies c on c.id = i.company_id
+                 where i.created_at >= t0 and i.created_at < t1 and i.active and c.status = 'active' order by i.id desc limit 30) z),
+    'items_recent', (select coalesce(jsonb_agg(z.j order by z.id desc), '[]'::jsonb) from (
+                select i.id, jsonb_build_object('id', i.id, 'name', i.name, 'price', i.price, 'description', left(i.description, 100),
+                  'cid', c.cid, 'company', c.name, 'official', c.official, 'at', _dlabel(i.created_at)) j
+                  from corp_items i join companies c on c.id = i.company_id
+                 where i.created_at >= t0 - interval '7 days' and i.created_at < t0 and i.active and c.status = 'active' order by i.id desc limit 6) z),
+    -- 新しくできた会社（その日に審査が通った会社）
+    'corps', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'kind', c.kind, 'form', c.form, 'official', c.official,
+                'industries', c.industries, 'description', left(c.description, 100)) order by c.decided_at), '[]'::jsonb)
+              from companies c where c.decided_at >= t0 and c.decided_at < t1 and c.status in ('active', 'suspended')),
+    'fx', fxj,
+    -- 競馬（その日の番組。メインレースと、きょうなら次のレース）
+    'keiba', (select jsonb_build_object('n', count(*), 'night', count(*) filter (where r.no >= 30), 'settled', count(*) filter (where r.settled),
+                'first', to_char(min(r.post) at time zone 'Asia/Tokyo', 'HH24:MI'), 'last', to_char(max(r.post) at time zone 'Asia/Tokyo', 'HH24:MI'),
+                'main', (select jsonb_build_object('id', m.id, 'name', m.name, 'grade', m.grade, 'venue', v.name, 'rnum', m.rnum,
+                           'surface', m.surface, 'dist', m.dist, 'time', to_char(m.post at time zone 'Asia/Tokyo', 'HH24:MI'), 'status', _kb_status(m),
+                           'winner', case when m.settled then (select jsonb_build_object('uma', w.uma, 'name', h.name, 'ninki', w.ninki)
+                                         from keiba_entries w join keiba_horses h on h.id = w.horse_id where w.race_id = m.id and w.pos = 1) end)
+                           from keiba_races m join keiba_venues v on v.id = m.venue where m.day = d and m.no = 29),
+                'next', case when d = today then (select jsonb_build_object('name', x.name, 'grade', x.grade, 'venue', v.name, 'rnum', x.rnum,
+                           'time', to_char(x.post at time zone 'Asia/Tokyo', 'HH24:MI'))
+                           from keiba_races x join keiba_venues v on v.id = x.venue where x.day = d and x.post > _now() order by x.post limit 1) end)
+              from keiba_races r where r.day = d),
+    -- ニュース（新聞の無料の記事）と、新しく出た新聞・本（記事・章があるもの）
+    'news', (select coalesce(jsonb_agg(z.j order by z.id desc), '[]'::jsonb) from (
+               select i.id, jsonb_build_object('id', i.id, 'title', i.title, 'pub_id', p.id, 'paper', p.title, 'by', c.name, 'official', c.official,
+                 'time', to_char(i.created_at at time zone 'Asia/Tokyo', 'HH24:MI')) j
+                 from pub_items i join pubs p on p.id = i.pub_id join companies c on c.id = p.company_id
+                where i.free and i.created_at >= t0 and i.created_at < t1 and p.kind = 'paper' and p.status = 'active' and c.status in ('active', 'suspended')
+                order by i.id desc limit 20) z),
+    'pubs', (select coalesce(jsonb_agg(jsonb_build_object('id', p.id, 'kind', p.kind, 'title', p.title, 'price', p.price, 'period_days', p.period_days,
+               'by', coalesce(c.name, pr.nickname), 'by_company', p.company_id is not null, 'official', coalesce(c.official, false),
+               'by_badge', case when p.company_id is null then _badge(p.author) end) order by p.id desc), '[]'::jsonb)
+             from pubs p left join companies c on c.id = p.company_id left join profiles pr on pr.id = p.author
+            where p.status = 'active' and p.created_at >= t0 and p.created_at < t1
+              and (p.company_id is null or c.status in ('active', 'suspended'))
+              and exists (select 1 from pub_items pi where pi.pub_id = p.id)),
+    -- 登録した人の数
+    'joined', (select count(*) from profiles where created_at >= t0 and created_at < t1),
+    'players', (select count(*) from profiles where created_at < t1));
+end $$;
+
+-- ---------------------------------------------------------------------
 -- 実行権限：内部用（_ではじまる）は画面から呼べないようにする
 -- ---------------------------------------------------------------------
 do $$
@@ -8820,6 +8990,7 @@ begin
             '_desk_staff','_desk_json','_desk_people','_desk_unread','desk_thread','desk_open','desk_send','desk_close','desk_list',
             'desk_settings','corp_member_desk','_user_row','admin_users','admin_user',
             '_holdings','_stock_exch','_stock_market','_stock_list','_stock_cancel_order','_stock_delist','stock_list','stock_state',
+            '_stock_width','_jday_start','_stock_base','_stock_band','_stock_day','_tnow','info_today',
             'stock_order','stock_cancel','stock_list_apply','stock_list_withdraw','admin_stock_decide','admin_stock_delist','_unlock_orders',
             'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse') loop
     execute format('revoke all on function %s from public, anon', f.sig);

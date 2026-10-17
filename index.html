@@ -9,14 +9,14 @@
 :root{
   --bg:#F6F5F1; --panel:#FFFFFF; --ink:#1C1C1A; --muted:#6B6A64; --line:#E2E0D8;
   --accent:#1F6B4F; --accent-ink:#FFFFFF; --soft:#EEF4F0; --red:#C43A31; --black:#22221F;
-  --win:#1F6B4F; --lose:#C43A31; --felt:#2E6B52; --night:#4A55A2;
+  --win:#1F6B4F; --lose:#C43A31; --felt:#2E6B52; --night:#4A55A2; --up:#1F6B4F; --down:#C43A31;
   --radius:12px;
   --font:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic",sans-serif;
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
     --bg:#151614; --panel:#1F201E; --ink:#ECEBE6; --muted:#9C9B94; --line:#33342F;
-    --accent:#4FB98E; --accent-ink:#0F1F18; --soft:#1E2B25; --black:#0E0E0D; --night:#9AA6F0;
+    --accent:#4FB98E; --accent-ink:#0F1F18; --soft:#1E2B25; --black:#0E0E0D; --night:#9AA6F0; --up:#5CC79A; --down:#F07B70;
   }
 }
 *{box-sizing:border-box}
@@ -348,6 +348,23 @@ h3{font-size:15px;margin:16px 0 8px}
 .admtag.sub{background:#6B6A64}
 .offtag{font-size:11px;font-weight:900;border-radius:4px;padding:1px 6px;background:#1F5FA8;color:#fff;margin-left:6px}
 .offtag::before{content:'✓ '}
+.stoptag{font-size:11px;font-weight:800;border-radius:4px;padding:1px 6px;margin-left:6px;color:#fff;white-space:nowrap}
+.stoptag.hi{background:#1F6B4F}.stoptag.lo{background:#C43A31}
+.stoptag.hi2,.stoptag.lo2{background:none;border:1px solid currentColor;padding:0 5px}
+.stoptag.hi2{color:var(--up)}.stoptag.lo2{color:var(--down)}
+.up{color:var(--up)}.down{color:var(--down)}
+.td-nav{display:flex;align-items:center;gap:8px}
+.td-nav .btn{min-width:44px;font-size:18px;line-height:1.1}
+.td-hl{list-style:none;margin:12px 0 0;padding:0}
+.td-hl li{display:flex;gap:8px;align-items:baseline;padding:8px 0;border-top:1px solid var(--line);font-size:14px;line-height:1.55}
+.td-hl li:first-child{border-top:0}
+.td-hl li.go{cursor:pointer}
+.td-hl .ic{flex:none;width:1.5em;text-align:center}
+.td-hl .tx{flex:1;min-width:0;overflow-wrap:anywhere}
+.td-sum{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:0 0 10px}
+.td-sum div{background:var(--soft);border-radius:10px;padding:8px 6px;text-align:center}
+.td-sum b{display:block;font-size:18px;font-variant-numeric:tabular-nums}
+.td-sum small{color:var(--muted);font-size:11px}
 .cond{display:flex;gap:8px;align-items:center;padding:4px 0;font-size:14px}
 .cond .y{color:var(--win);font-weight:900}.cond .n{color:var(--lose);font-weight:900}
 .case h4{margin:8px 0 2px}
@@ -409,6 +426,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 
 <!-- 情報 -->
 <section id="vInfo" class="view hidden">
+  <div data-sub="today" id="tdBox"></div>
   <div class="card" data-sub="cur">
     <h3 style="margin-top:0">通貨 AiliNaX</h3>
     <div class="kv" id="infoCur"></div>
@@ -1032,7 +1050,7 @@ const GAMES = ['vGameList', 'vRace', 'vSlot', 'vBj', 'vRou', 'vHilo', 'vLobby', 
 const HIDDEN_SUBS = ['vLobby', 'vRoom'];
 // メインメニュー（左から）とサブメニュー
 const MENU = [
-  ['vInfo', '情報', 'i', [['cur', '通貨'], ['pub', '広報・書籍'], ['mkt', '相場'], ['tl', 'TL'], ['friend', 'フレンド'], ['people', '人をさがす'], ['jack', '競馬億万長者']]],
+  ['vInfo', '情報', 'i', [['today', '今日'], ['cur', '通貨'], ['pub', '広報・書籍'], ['mkt', '相場'], ['tl', 'TL'], ['friend', 'フレンド'], ['people', '人をさがす'], ['jack', '競馬億万長者']]],
   ['vWork', '仕事', '✎', [['jobs', '仕事をえらぶ'], ['stat', '給料'], ['corp', '企業ページ'], ['mywork', '勤め先']]],
   ['vGame', '遊戯', '♠', [['vGameList', '≡ 一覧'], ['vRace', '🏇 競馬'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
   ['vCorp', '企業', '社', [['search', '会社検索'], ['review', '評価（500 X）'], ['pin', 'ピン留め'], ['desk', '相談'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所']]],
@@ -1058,7 +1076,7 @@ function go(v, sub) {
   $('#subNav').innerHTML = subs.map(x => `<button data-s="${x[0]}" class="${x[0] === sub ? 'on' : ''}">${x[1]}</button>`).join('');
   $$('#subNav button').forEach(b => b.onclick = () => go(main, b.dataset.s));
   window.scrollTo(0, 0);
-  if (sec === 'vInfo') { infoLoad(); if (sub === 'tl') tlLoad(true); if (sub === 'mkt') mktLoad(); if (sub === 'pub') pubLoad(); if (sub === 'friend') friendLoad(); if (sub === 'people') peopleLoad(); }
+  if (sec === 'vInfo') { if (sub === 'today') todayLoad(); if (sub === 'cur' || sub === 'jack') infoLoad(); if (sub === 'tl') tlLoad(true); if (sub === 'mkt') mktLoad(); if (sub === 'pub') pubLoad(); if (sub === 'friend') friendLoad(); if (sub === 'people') peopleLoad(); }
   if (sec === 'vWork') workLoad();
   if (sec === 'vRace') kbLoad();
   if (sec === 'vLobby') lobbyLoad();
@@ -1916,6 +1934,129 @@ async function infoLoad() {
   } catch (e) { toast(e.message); }
 }
 
+/* ---------------- 今日（情報タブの1枚目）：その日の株式市場・新商品・新しい会社・為替・競馬・ニュース ---------------- */
+const TD = { d: null, rank: 'value' };
+const addDay = (s, n) => { const t = new Date(s + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
+const sgn = n => n > 0 ? '+' : n < 0 ? '−' : '±';
+const udc = n => n > 0 ? 'up' : n < 0 ? 'down' : 'muted';
+// ストップ高・ストップ安（終値）／一時ストップ高・安（その日に一度でも）
+const stopTag = x => x.stop === 'high' ? '<span class="stoptag hi">ストップ高</span>' : x.stop === 'low' ? '<span class="stoptag lo">ストップ安</span>'
+  : (['high', 'both'].includes(x.touched) ? '<span class="stoptag hi2">一時ストップ高</span>' : '') + (['low', 'both'].includes(x.touched) ? '<span class="stoptag lo2">一時ストップ安</span>' : '');
+// 前日比（X と %）。その日に取引がなければ空
+const chgX = x => { if (x.close == null || x.base == null) return ''; const c = x.close - x.base;
+  return `<b class="${udc(c)}">${sgn(c)}${fmt(Math.abs(c))}（${sgn(c)}${Math.abs(c / x.base * 100).toFixed(2)}%）</b>`; };
+const tdStk = x => `<div class="co-row" data-stk="${x.cid}"><span class="nm"><b>${esc(x.name)}${x.new ? '<span class="kindtag">新規上場</span>' : ''}${stopTag(x)}${x.listed === false ? '<span class="stag dead">上場廃止</span>' : x.status === 'suspended' ? '<span class="stag">売買停止</span>' : ''}</b>
+  <small>${x.n ? `始値 ${fmt(x.open)}・高値 ${fmt(x.high)}・安値 ${fmt(x.low)}` : x.base != null ? `取引なし（前日 ${fmt(x.base)} X）` : 'まだ取引がありません'}</small>
+  ${x.n ? `<small>出来高 ${fmt(x.vol)}株・売買代金 ${fmt(x.value)} X</small>` : ''}</span>
+  <span style="text-align:right;white-space:nowrap"><b class="num">${(x.close ?? x.last) != null ? fmt(x.close ?? x.last) + ' X' : '—'}</b><br><small>${chgX(x)}</small></span></div>`;
+function tdRankRows(S) {
+  const pc = x => x.chg / x.base;
+  const L = TD.rank === 'up' ? S.filter(x => x.chg > 0).sort((a, b) => pc(b) - pc(a)).slice(0, 5)
+    : TD.rank === 'down' ? S.filter(x => x.chg < 0).sort((a, b) => pc(a) - pc(b)).slice(0, 5)
+    : TD.rank === 'value' ? S.filter(x => x.n > 0).sort((a, b) => b.value - a.value).slice(0, 5)
+    : [...S].sort((a, b) => b.value - a.value || a.name.localeCompare(b.name, 'ja'));
+  return L.map(tdStk).join('') || `<p class="muted small" style="margin:8px 0 0">${{ up: '値上がりした株はありません', down: '値下がりした株はありません', value: 'この日は取引がありませんでした' }[TD.rank]}</p>`;
+}
+// 見出し（その日のできごと）
+function tdHeads(d) {
+  const H = [], S = d.stocks, k = d.keiba, f = d.fx;
+  const add = (ic, html, attr) => H.push(`<li class="${attr ? 'go' : ''}" ${attr || ''}><span class="ic">${ic}</span><span class="tx">${html}</span></li>`);
+  // 同じ種類が多い日は、いくつかだけ出して「ほか」にまとめる
+  const many = (L, n, one, rest) => { L.slice(0, n).forEach(one); if (L.length > n) rest(L.length - n); };
+  many(S.filter(x => x.stop === 'high'), 3, x => add('📈', `<b>${esc(x.name)}</b> がストップ高（${fmt(x.close)} X・前日比 +${fmt(x.chg)}）`, `data-stk="${x.cid}"`), n => add('📈', `ほかに ${n}社がストップ高`, 'data-tdgo="stock"'));
+  many(S.filter(x => x.stop === 'low'), 3, x => add('📉', `<b>${esc(x.name)}</b> がストップ安（${fmt(x.close)} X・前日比 −${fmt(-x.chg)}）`, `data-stk="${x.cid}"`), n => add('📉', `ほかに ${n}社がストップ安`, 'data-tdgo="stock"'));
+  many(S.filter(x => !x.stop && x.touched), 2, x => add('↕', `<b>${esc(x.name)}</b> が一時${x.touched === 'low' ? 'ストップ安' : 'ストップ高'}`, `data-stk="${x.cid}"`), n => add('↕', `ほかに ${n}社が一時ストップ高・安`, 'data-tdgo="stock"'));
+  many(S.filter(x => x.new), 3, x => add('🔔', `<b>${esc(x.name)}</b> が新しく上場${x.base == null && x.open != null ? `（初値 ${fmt(x.open)} X）` : ''}`, `data-stk="${x.cid}"`), n => add('🔔', `ほかに ${n}社が新しく上場`, 'data-tdgo="stock"'));
+  const tr = S.filter(x => x.n > 0);
+  if (tr.length) add('💹', `株式市場：値上がり ${S.filter(x => x.chg > 0).length}社・値下がり ${S.filter(x => x.chg < 0).length}社、売買代金 <b>${fmt(tr.reduce((a, x) => a + x.value, 0))} X</b>`, 'data-tdgo="stock"');
+  const it = d.items, cs = d.corps;
+  if (it.length === 1) add('🛍', `新商品「<b>${esc(it[0].name)}</b>」${fmt(it[0].price)} X（${esc(it[0].company)}）`, `data-cid="${it[0].cid}"`);
+  else if (it.length > 1) add('🛍', `新商品が ${it.length}つ：「<b>${esc(it[0].name)}</b>」${fmt(it[0].price)} X（${esc(it[0].company)}）ほか`, 'data-tdgo="items"');
+  if (cs.length === 1) add('🏢', `<b>${esc(cs[0].name)}</b> ができました`, `data-cid="${cs[0].cid}"`);
+  else if (cs.length > 1) add('🏢', `新しい会社が ${cs.length}社：<b>${esc(cs[0].name)}</b> ほか`, 'data-tdgo="corps"');
+  if (k && k.main) {
+    const m = k.main, nm = `メインレース「${esc(m.name)}」${m.grade ? `（${m.grade}）` : ''}`;
+    if (m.winner) add('🏇', `${nm}は <b>${esc(m.winner.name)}</b> が1着（${m.winner.ninki}番人気）`, RACE_ON && d.today ? 'data-tdgo="race"' : '');
+    else if (d.today) add('🏇', `${nm}は ${m.time} 発走（${esc(m.venue)}）`, RACE_ON ? 'data-tdgo="race"' : '');
+  }
+  const nw = d.news, pu = d.pubs;
+  if (nw.length === 1) add('📰', `${esc(nw[0].paper)}「<b>${esc(nw[0].title)}</b>」`, `data-item="${nw[0].id}"`);
+  else if (nw.length > 1) add('📰', `ニュースが ${nw.length}件：${esc(nw[0].paper)}「<b>${esc(nw[0].title)}</b>」ほか`, 'data-tdgo="news"');
+  if (pu.length === 1) add(pu[0].kind === 'paper' ? '🗞' : '📚', `新しい${pu[0].kind === 'paper' ? '新聞' : '本'}「<b>${esc(pu[0].title)}</b>」（${esc(pu[0].by)}）`, `data-pub="${pu[0].id}"`);
+  else if (pu.length > 1) add('📚', `新しい新聞・本が ${pu.length}つ：「<b>${esc(pu[0].title)}</b>」（${esc(pu[0].by)}）ほか`, 'data-tdgo="news"');
+  if (f && f.close != null && f.base) { const c = (f.close - f.base) / f.base * 100;
+    add('💱', `AiliNaX は 1 X = <b>${fmtP(f.close)} CA</b>（前日比 ${sgn(c)}${Math.abs(c).toFixed(2)}%）`, 'data-tdgo="mkt"'); }
+  if (d.joined) add('👋', `${d.today ? 'きょうは' : 'この日は'} ${fmt(d.joined)}人が登録しました`);
+  return H.join('') || `<li><span class="ic">・</span><span class="tx muted">${d.today ? 'まだ大きなできごとはありません' : 'この日は大きなできごとがありませんでした'}</span></li>`;
+}
+async function todayLoad(day) {
+  try { TD.d = await call('info_today', { p_day: day || null }); } catch (e) { return toast(e.message); }
+  tdRender();
+}
+function tdRender() {
+  const d = TD.d, S = d.stocks, f = d.fx, k = d.keiba;
+  const prev = d.day > d.min_day ? addDay(d.day, -1) : null, next = d.today ? null : addDay(d.day, 1);
+  const tr = S.filter(x => x.n > 0), up = S.filter(x => x.chg > 0).length, dn = S.filter(x => x.chg < 0).length, fl = S.filter(x => x.chg === 0).length;
+  const val = S.reduce((a, x) => a + x.value, 0), vol = S.reduce((a, x) => a + x.vol, 0);
+  const cap = S.reduce((a, x) => a + (x.last ?? 0) * x.shares, 0), cmp = S.filter(x => x.base != null && x.last != null);
+  const c0 = cmp.reduce((a, x) => a + x.base * x.shares, 0), c1 = cmp.reduce((a, x) => a + x.last * x.shares, 0), capc = c0 ? (c1 - c0) / c0 * 100 : null;
+  const nh = S.filter(x => x.stop === 'high').length, nl = S.filter(x => x.stop === 'low').length;
+  const stock = !S.length ? '<p class="muted small" style="margin:0">上場している会社はまだありません。株式会社の社長は、企業ページの「上場」から申請できます。</p>'
+    : `<div class="td-sum"><div><small>値上がり</small><b class="up">${up}</b></div><div><small>値下がり</small><b class="down">${dn}</b></div><div><small>変わらず</small><b>${fl}</b></div></div>
+      <div class="kv"><span>上場</span><b>${S.length}社${tr.length < S.length ? `（取引なし ${S.length - tr.length}社）` : ''}</b>
+        <span>売買代金</span><b>${fmt(val)} X</b><span>出来高</span><b>${fmt(vol)}株</b>
+        <span>ストップ高・ストップ安</span><b>${nh}社・${nl}社</b>
+        <span>時価総額の合計</span><b>${fmt(cap)} X${capc != null ? `<br><small class="${udc(capc)}">前日比 ${sgn(capc)}${Math.abs(capc).toFixed(2)}%</small>` : ''}</b></div>
+      <div class="seg sm" id="tdRank" style="margin:12px 0 2px">${Object.entries({ value: '売買代金', up: '値上がり', down: '値下がり', all: 'すべて' }).map(([key, v]) => `<button data-k="${key}" class="${TD.rank === key ? 'on' : ''}">${v}</button>`).join('')}</div>
+      <div id="tdRankList">${tdRankRows(S)}</div>`;
+  const itemRow = (i, when) => `<div class="co-row" data-cid="${i.cid}"><span class="nm"><b>${esc(i.name)}</b>
+    <small>${esc(i.company)}${i.official ? '<span class="offtag">公式</span>' : ''}・${when}</small>${i.description ? `<small>${esc(i.description)}</small>` : ''}</span><b class="num" style="white-space:nowrap">${fmt(i.price)} X</b></div>`;
+  const items = d.items.length ? d.items.map(i => itemRow(i, i.time)).join('')
+    : `<p class="muted small" style="margin:0">${d.today ? 'きょうの新商品はまだありません' : 'この日の新商品はありません'}</p>${d.items_recent.length ? `<h4 style="margin:12px 0 2px">その前の7日の新商品</h4>${d.items_recent.map(i => itemRow(i, i.at)).join('')}` : ''}`;
+  const fxh = !f ? '<p class="muted small" style="margin:0">いま開いている取引所はありません</p>'
+    : (f.close ?? f.base) == null ? '<p class="muted small" style="margin:0">まだ取引がありません</p>'
+    : `<div class="row" style="align-items:baseline;gap:8px"><span class="muted small">1 X =</span><b style="font-size:22px">${fmtP(f.close ?? f.base)}</b><span class="muted small">CA</span>
+        <span style="margin-left:auto">${f.close != null && f.base ? (c => `<b class="${udc(c)}">${sgn(c)}${Math.abs(c).toFixed(2)}%</b>`)((f.close - f.base) / f.base * 100) : ''}</span></div>
+      <div class="small muted">${f.n ? `高値 ${fmtP(f.high)}・安値 ${fmtP(f.low)}・取引 ${fmt(f.vol)} X` : 'この日は取引がありませんでした'}</div>`;
+  const kb = !k || !k.n ? `<p class="muted small" style="margin:0">${d.today ? 'きょうのレースは16:30から。競馬を開くと出走表が出ます。' : 'この日のレースはありません'}</p>`
+    : `<div class="small muted">全${k.n}レース（${k.first}〜${k.last}）・確定 ${k.settled}</div>
+      ${k.main ? `<div class="line" style="border-top:0"><span class="grow"><b>メイン ${esc(k.main.venue)}${k.main.rnum}R「${esc(k.main.name)}」${k.main.grade ? `<span class="kindtag">${k.main.grade}</span>` : ''}</b>
+        <small>${k.main.time} 発走・${k.main.surface === '芝' ? '芝' : 'ダート'}${k.main.dist}m${k.main.winner ? `・1着 ${esc(k.main.winner.name)}（${k.main.winner.ninki}番人気）` : ''}</small></span></div>` : ''}
+      ${k.next ? `<div class="line"><span class="grow">次のレース<small>${k.next.time} ${esc(k.next.venue)}${k.next.rnum}R ${esc(k.next.name)}${k.next.grade ? `（${k.next.grade}）` : ''}</small></span></div>` : ''}`;
+  $('#tdBox').innerHTML = `<div class="card">
+      <div class="td-nav"><button class="btn s" data-tdday="${prev || ''}" ${prev ? '' : 'disabled'} aria-label="前の日">‹</button>
+        <div class="grow" style="text-align:center"><b style="font-size:18px">${d.label}</b><div class="muted small">${d.today ? `きょうのまとめ（${d.at} 現在）` : 'この日のまとめ'}</div></div>
+        <button class="btn s" data-tdday="${next || ''}" ${next ? '' : 'disabled'} aria-label="次の日">›</button></div>
+      <ul class="td-hl">${tdHeads(d)}</ul>
+      ${d.today ? '' : '<button class="btn wide" data-tdday="" style="margin-top:8px">きょうにもどる</button>'}</div>
+    <div class="card" id="tdStock"><h3 style="margin-top:0">株式市場 <span class="muted small">${d.exch ? esc(d.exch.name) + (d.exch.open ? '' : '（休業中）') : ''}</span></h3>${stock}
+      <p class="muted small" style="margin:10px 0 0">値幅制限：1日に動ける値段の幅は、前の日の終値（基準値段）から東証と同じ表で決まります（100 X 未満は上下30 X、1,000 X 未満は上下150 X など）。上限がストップ高、下限がストップ安。押すと板が開きます。</p></div>
+    <div class="card" id="tdItems"><h3 style="margin-top:0">新商品</h3>${items}<p class="muted small" style="margin:8px 0 0">押すと会社のページが開き、そこで買えます。</p></div>
+    ${d.corps.length ? `<div class="card" id="tdCorps"><h3 style="margin-top:0">新しくできた会社</h3>${d.corps.map(c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>${esc(c.name)}${kindTag(c)}</b>
+        <small>${(c.industries || []).length ? c.industries.map(indName).map(esc).join('・') : esc(c.description || '')}</small></span><span style="color:var(--muted);font-size:20px">›</span></div>`).join('')}</div>` : ''}
+    <div class="card"><h3 style="margin-top:0">為替 AiliNaX / CA</h3>${fxh}<h3>競馬</h3>${kb}${RACE_ON && d.today ? '<button class="btn s" data-tdgo="race" style="margin-top:8px">競馬を開く</button>' : ''}</div>
+    ${d.news.length || d.pubs.length ? `<div class="card" id="tdNews"><h3 style="margin-top:0">ニュース・新聞・本</h3>
+      ${d.news.map(n => `<div class="co-row" data-item="${n.id}"><span class="nm"><b>${esc(n.title)}</b><small>${esc(n.paper)}（${esc(n.by)}${n.official ? '<span class="offtag">公式</span>' : ''}）・${n.time}</small></span><span style="color:var(--muted);font-size:20px">›</span></div>`).join('')}
+      ${d.pubs.map(p => `<div class="co-row" data-pub="${p.id}"><span class="nm"><b>${esc(p.title)}<span class="kindtag">${p.kind === 'paper' ? '新しい新聞' : '新しい本'}</span></b><small>${byTxt(p)}・${priceTxt(p)}</small></span><span style="color:var(--muted);font-size:20px">›</span></div>`).join('')}</div>` : ''}
+    <p class="muted small" style="margin:4px 4px 12px">1日の区切りは日本時間の0時。30日前までさかのぼって見られます。</p>`;
+}
+$('#tdBox').addEventListener('click', ev => {
+  const dy = ev.target.closest('[data-tdday]'), rk = ev.target.closest('#tdRank [data-k]'), g = ev.target.closest('[data-tdgo]');
+  const it = ev.target.closest('[data-item]'), pb = ev.target.closest('[data-pub]'), co = ev.target.closest('[data-cid]');
+  if (dy) { if (!dy.disabled) todayLoad(dy.dataset.tdday || null); return; }
+  if (rk) { TD.rank = rk.dataset.k; $$('#tdRank button').forEach(b => b.classList.toggle('on', b === rk)); $('#tdRankList').innerHTML = tdRankRows(TD.d.stocks); return; }
+  if (g) {
+    const k = g.dataset.tdgo;
+    if (k === 'race') return go('vRace');
+    if (k === 'mkt') return go('vInfo', 'mkt');
+    const el = $({ stock: '#tdStock', items: '#tdItems', corps: '#tdCorps', news: '#tdNews' }[k] || '#tdStock'); if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 60, behavior: 'smooth' });
+    return;
+  }
+  if (it) return pubReader(Number(it.dataset.item));
+  if (pb) return pubOpen(Number(pb.dataset.pub));
+  if (co) return corpOpen(co.dataset.cid);
+});
+
 /* =================================================================
    仕事
    ================================================================= */
@@ -2713,7 +2854,7 @@ async function adminLoad() {
           <div class="row"><button class="btn main s" data-lok="${a.cid}">上場を許可</button><button class="btn s" data-lng="${a.cid}">見送る</button><button class="btn s" data-lco="${a.cid}">会社を見る</button></div></div>`).join('')
         : '<p class="muted small" style="margin:0">審査待ちはありません</p>'}
       <h3>上場している会社</h3>
-      ${d.listed.map(x => `<div class="line"><span class="grow">${esc(x.name)}${x.status === 'suspended' ? '<span class="stag">売買停止</span>' : ''}<small>株価 ${x.last != null ? fmt(x.last) + ' X' : '—'}・24時間 ${fmt(x.vol)}株・${x.listed_at}から</small></span>
+      ${d.listed.map(x => `<div class="line"><span class="grow">${esc(x.name)}${x.status === 'suspended' ? '<span class="stag">売買停止</span>' : ''}<small>株価 ${x.last != null ? fmt(x.last) + ' X' : '—'}${x.stop === 'high' ? '（ストップ高）' : x.stop === 'low' ? '（ストップ安）' : ''}・きょう ${fmt(x.vol)}株・${x.listed_at}から</small></span>
           <button class="btn s" data-stk="${x.cid}">板</button>${adm ? `<button class="btn s" data-delist="${x.cid}">上場廃止</button>` : ''}</div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
       <h3>訴えの審理</h3>
       ${d.cases.length ? d.cases.map(caseForm).join('') : '<p class="muted small" style="margin:0">審理中の訴えはありません</p>'}
@@ -2942,10 +3083,10 @@ $('#vCorp').addEventListener('click', async ev => {
 });
 
 /* ---------------- 株式（上場・売り買い） ---------------- */
-const chgH = (last, base) => { if (last == null || !base) return ''; const c = (last - base) / base * 100; return `<b style="color:${c >= 0 ? 'var(--win)' : 'var(--lose)'}">${c >= 0 ? '+' : ''}${c.toFixed(2)}%</b>`; };
-const stkRow = x => `<div class="co-row" data-stk="${x.cid}"><span class="nm"><b>${esc(x.name)}${x.status === 'suspended' ? '<span class="stag">売買停止</span>' : ''}</b>
-  <small>${x.last != null ? `時価総額 ${fmt(x.cap)} X・` : ''}24時間 ${fmt(x.vol)}株${x.last == null ? '・まだ取引がありません' : ''}</small></span>
-  <span style="text-align:right;white-space:nowrap"><b class="num">${x.last != null ? fmt(x.last) + ' X' : '—'}</b><br><small>${chgH(x.last, x.prev ?? x.first)}</small></span></div>`;
+const chgH = (last, base) => { if (last == null || !base) return ''; const c = (last - base) / base * 100; return `<b class="${udc(c)}">${sgn(c)}${Math.abs(c).toFixed(2)}%</b>`; };
+const stkRow = x => `<div class="co-row" data-stk="${x.cid}"><span class="nm"><b>${esc(x.name)}${stopTag(x)}${x.status === 'suspended' ? '<span class="stag">売買停止</span>' : ''}</b>
+  <small>${x.last != null ? `時価総額 ${fmt(x.cap)} X・` : ''}きょう ${fmt(x.vol)}株${x.last == null ? '・まだ取引がありません' : ''}</small></span>
+  <span style="text-align:right;white-space:nowrap"><b class="num">${x.last != null ? fmt(x.last) + ' X' : '—'}</b><br><small>${chgH(x.close, x.base)}</small></span></div>`;
 async function stkListLoad() {
   try {
     const d = await call('stock_list');
@@ -2974,7 +3115,8 @@ async function stkOpen(cid) {
     <h4 style="margin:14px 0 4px">注文の一覧（板）</h4><div id="stkBook"></div>
     <h4 style="margin:14px 0 4px">自分の注文</h4><div id="stkMine"></div>
     <h4 style="margin:14px 0 4px">最近の取引</h4><div id="stkTrades"></div>
-    <p class="muted small" style="margin:10px 0 0">指値の注文です。値段の合う注文があればすぐ約定し（値段は先に出ていた注文の値段）、合わなければ残ります。取り消すと、預けたお金・株は戻ります。手数料は取引所の手数料（%）を、買う人・売る人の両方から X で払います。登録から7日たつと使えます。</p></div>`;
+    <p class="muted small" style="margin:10px 0 0">指値の注文です。値段の合う注文があればすぐ約定し（値段は先に出ていた注文の値段）、合わなければ残ります。取り消すと、預けたお金・株は戻ります。手数料は取引所の手数料（%）を、買う人・売る人の両方から X で払います。登録から7日たつと使えます。</p>
+    <p class="muted small" style="margin:6px 0 0">値幅制限：1日（日本時間）に動ける値段の幅は、前の日の終値（基準値段）から東証と同じ表で決まります（例：100 X 未満は上下30 X、1,000 X 未満は上下150 X）。上限がストップ高、下限がストップ安で、その外の値段では注文できません。前の日までの注文で幅の外にあるものは、幅のはしの値段で約定します。はじめて取引がある日は値幅制限がありません。</p></div>`;
   m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) { m.remove(); clearTimeout(STK.timer); STK.cid = null; } };
   document.body.appendChild(m);
   m.querySelector('[data-stkco]').onclick = () => corpOpen(STK.cid);
@@ -2983,6 +3125,7 @@ async function stkOpen(cid) {
   m.querySelector('#stkGo').onclick = async () => {
     const p = Math.floor(Number($('#stkPrice').value) || 0), q = Math.floor(Number($('#stkQty').value) || 0);
     if (p < 1 || q < 1) return toast('値段と数量を入れてください');
+    const mb = STK.d.market; if (mb.base != null && (p < mb.stop_lo || p > mb.stop_hi)) return toast(`きょうは ${fmt(mb.stop_lo)} 〜 ${fmt(mb.stop_hi)} X の間でしか注文できません`);
     if (!confirm(`${STK.side === 'buy' ? '買い' : '売り'}注文：${fmt(q)}株を1株 ${fmt(p)} X で出します。よろしいですか？`)) return;
     try { STK.d = await call('stock_order', { p_cid: STK.cid, p_side: STK.side, p_price: p, p_qty: q }); setBal(STK.d.balance); $('#stkQty').value = ''; stkRender(); toast('注文しました'); }
     catch (e) { toast(e.message); }
@@ -2992,7 +3135,8 @@ async function stkOpen(cid) {
     if (!confirm('この注文を取り消しますか？（預けたお金・株は戻ります）')) return;
     try { STK.d = await call('stock_cancel', { p_id: Number(b.dataset.stkc) }); setBal(STK.d.balance); stkRender(); toast('取り消しました'); } catch (e) { toast(e.message); }
   };
-  const mk = d.market; if (mk.last ?? mk.ask ?? mk.bid) m.querySelector('#stkPrice').value = mk.last ?? mk.ask ?? mk.bid;
+  const mk = d.market, p0 = mk.last ?? mk.ask ?? mk.bid;
+  if (p0) m.querySelector('#stkPrice').value = mk.base != null ? Math.min(Math.max(p0, mk.stop_lo), mk.stop_hi) : p0;
   stkRender();
   const cid0 = STK.cid;
   const poll = async () => {
@@ -3004,12 +3148,15 @@ async function stkOpen(cid) {
 }
 function stkRender() {
   const d = STK.d, mk = d.market, fee = d.exch ? Number(d.exch.fee_pct) : 0;
-  $('#stkTop').innerHTML = `<div class="row" style="align-items:baseline;gap:8px"><span class="muted small">1株</span>
-      <b style="font-size:28px">${mk.last != null ? fmt(mk.last) : '—'}</b><span class="muted small">X</span>
-      <span style="margin-left:auto">${chgH(mk.last, mk.prev ?? mk.first)}</span></div>
-    <div class="kv" style="margin-top:6px"><span class="muted">買い（いちばん高い）</span><b>${mk.bid != null ? fmt(mk.bid) + ' X' : '—'}</b>
+  $('#stkTop').innerHTML = `<div class="row" style="align-items:baseline;gap:8px;flex-wrap:wrap"><span class="muted small">1株</span>
+      <b style="font-size:28px">${mk.last != null ? fmt(mk.last) : '—'}</b><span class="muted small">X</span>${stopTag(mk)}
+      <span style="margin-left:auto">${chgX(mk)}</span></div>
+    <div class="kv" style="margin-top:6px"><span class="muted">前日の終値（基準値段）</span><b>${mk.base != null ? fmt(mk.base) + ' X' : '—'}</b>
+      <span class="muted">きょうの値幅</span><b>${mk.base != null ? `${fmt(mk.stop_lo)} 〜 ${fmt(mk.stop_hi)} X` : 'なし（はじめて取引がある日）'}</b>
+      ${mk.n ? `<span class="muted">始値・高値・安値</span><b>${fmt(mk.open)}・${fmt(mk.high)}・${fmt(mk.low)}</b>` : ''}
+      <span class="muted">買い（いちばん高い）</span><b>${mk.bid != null ? fmt(mk.bid) + ' X' : '—'}</b>
       <span class="muted">売り（いちばん安い）</span><b>${mk.ask != null ? fmt(mk.ask) + ' X' : '—'}</b>
-      <span class="muted">24時間の出来高</span><b>${fmt(mk.vol)}株</b>
+      <span class="muted">きょうの出来高</span><b>${fmt(mk.vol)}株${mk.value ? `（${fmt(mk.value)} X）` : ''}</b>
       <span class="muted">発行株数</span><b>${fmt(mk.shares)}株</b>
       ${mk.last != null ? `<span class="muted">時価総額</span><b>${fmt(mk.last * mk.shares)} X</b>` : ''}
       <span class="muted">手数料</span><b>${fmtP(fee)}%</b>
@@ -3021,9 +3168,10 @@ function stkRender() {
     : d.ok_from ? `<p class="notice small" style="margin:0 0 6px">登録から7日たつまで売り買いできません（${d.ok_from}から）。</p>`
     : d.debt ? '<p class="notice small" style="margin:0 0 6px">税金の滞納があるので、買うことはできません（売るのはできます）。</p>' : '';
   $('#stkGo').disabled = !d.can_trade || !!d.ok_from;
-  const rows = (a, col) => a.map(x => `<div class="line"><span class="grow num" style="color:${col}">${fmt(x.price)} X</span><b class="num">${fmt(x.qty)}株</b></div>`).join('');
-  $('#stkBook').innerHTML = `<div class="small muted">売り注文</div>${rows([...mk.asks].reverse(), 'var(--lose)') || '<p class="muted small" style="margin:0">なし</p>'}
-    <div class="small muted" style="margin-top:6px">買い注文</div>${rows(mk.bids, 'var(--win)') || '<p class="muted small" style="margin:0">なし</p>'}`;
+  const pi = $('#stkPrice'); pi.min = mk.base != null ? mk.stop_lo : 1; if (mk.base != null) pi.max = mk.stop_hi; else pi.removeAttribute('max');
+  const rows = (a, col) => a.map(x => `<div class="line"><span class="grow num" style="color:${col}">${fmt(x.price)} X${mk.base != null && x.price === mk.stop_hi ? '<span class="stoptag hi2">ストップ高</span>' : mk.base != null && x.price === mk.stop_lo ? '<span class="stoptag lo2">ストップ安</span>' : ''}</span><b class="num">${fmt(x.qty)}株</b></div>`).join('');
+  $('#stkBook').innerHTML = `<div class="small muted">売り注文</div>${rows([...mk.asks].reverse(), 'var(--down)') || '<p class="muted small" style="margin:0">なし</p>'}
+    <div class="small muted" style="margin-top:6px">買い注文</div>${rows(mk.bids, 'var(--up)') || '<p class="muted small" style="margin:0">なし</p>'}`;
   const ST = { open: '注文中', done: '約定', canceled: '取り消し' };
   $('#stkMine').innerHTML = d.orders.map(o => `<div class="line"><span class="grow">${o.side === 'buy' ? '買い' : '売り'} ${fmt(o.qty)}株 @ ${fmt(o.price)} X
       <small>#${o.id}・${o.at} ${o.time}・残り ${fmt(o.remain)}株</small></span>${o.status === 'open' ? `<button class="btn s" data-stkc="${o.id}">取り消す</button>` : `<span class="tag ${o.status === 'done' ? 'good' : ''}">${ST[o.status]}</span>`}</div>`).join('')
@@ -3034,8 +3182,10 @@ function stkRender() {
 }
 function stkPrev() {
   const d = STK.d; if (!d) return;
-  const p = Math.floor(Number($('#stkPrice').value) || 0), q = Math.floor(Number($('#stkQty').value) || 0), fee = d.exch ? Number(d.exch.fee_pct) : 0;
-  $('#stkPrev').innerHTML = p > 0 && q > 0 ? (STK.side === 'buy'
+  const p = Math.floor(Number($('#stkPrice').value) || 0), q = Math.floor(Number($('#stkQty').value) || 0), fee = d.exch ? Number(d.exch.fee_pct) : 0, mk = d.market;
+  $('#stkPrev').innerHTML = mk.base != null && p > 0 && (p < mk.stop_lo || p > mk.stop_hi)
+    ? `<span class="down">きょうは ${fmt(mk.stop_lo)} 〜 ${fmt(mk.stop_hi)} X の間でしか注文できません（${p > mk.stop_hi ? 'ストップ高' : 'ストップ安'}は ${fmt(p > mk.stop_hi ? mk.stop_hi : mk.stop_lo)} X）</span>`
+    : p > 0 && q > 0 ? (STK.side === 'buy'
       ? `${fmt(q)}株を買うのに、最大 <b>${fmt(p * q + Math.ceil(p * q * fee / 100))} X</b>（手数料 ${fmtP(fee)}% こみ）を預けます。安く買えたら差額は戻ります`
       : `${fmt(q)}株を売って、<b>${fmt(p * q - Math.floor(p * q * fee / 100))} X</b> くらい以上を受け取ります（手数料 ${fmtP(fee)}% を引いたあと）。売れるのは ${fmt(d.shares_mine)}株まで`)
     : '<span class="muted">1株あたりの値段（X）と数量を入れてください</span>';
