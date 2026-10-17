@@ -9,14 +9,14 @@
 :root{
   --bg:#F6F5F1; --panel:#FFFFFF; --ink:#1C1C1A; --muted:#6B6A64; --line:#E2E0D8;
   --accent:#1F6B4F; --accent-ink:#FFFFFF; --soft:#EEF4F0; --red:#C43A31; --black:#22221F;
-  --win:#1F6B4F; --lose:#C43A31; --felt:#2E6B52; --night:#4A55A2; --up:#1F6B4F; --down:#C43A31;
+  --win:#1F6B4F; --lose:#C43A31; --felt:#2E6B52; --night:#4A55A2; --noon:#A05A00; --up:#1F6B4F; --down:#C43A31;
   --radius:12px;
   --font:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic",sans-serif;
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
     --bg:#151614; --panel:#1F201E; --ink:#ECEBE6; --muted:#9C9B94; --line:#33342F;
-    --accent:#4FB98E; --accent-ink:#0F1F18; --soft:#1E2B25; --black:#0E0E0D; --night:#9AA6F0; --up:#5CC79A; --down:#F07B70;
+    --accent:#4FB98E; --accent-ink:#0F1F18; --soft:#1E2B25; --black:#0E0E0D; --night:#9AA6F0; --noon:#F2B648; --up:#5CC79A; --down:#F07B70;
   }
 }
 *{box-sizing:border-box}
@@ -85,7 +85,7 @@ h3{font-size:15px;margin:16px 0 8px}
 .kb-focus{cursor:pointer}
 .kb-focus .clock{margin-left:auto;font-size:24px;font-weight:800;font-variant-numeric:tabular-nums}
 .kb-sess{margin:16px 0 4px;font-weight:800;font-size:14px;display:flex;gap:8px;align-items:baseline}
-.kb-sess span{font-weight:700;color:var(--accent);font-size:12px}.kb-sess span.night{color:var(--night)}
+.kb-sess span{font-weight:700;color:var(--accent);font-size:12px}.kb-sess span.night{color:var(--night)}.kb-sess span.noon{color:var(--noon)}
 .kb-row{display:flex;align-items:center;gap:8px;padding:9px 10px;background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:6px 0;cursor:pointer}
 .kb-row .t{font-variant-numeric:tabular-nums;font-weight:700;width:40px;font-size:13px}
 .kb-row .r{font-weight:800;width:28px;color:var(--muted);font-size:13px}
@@ -1094,7 +1094,7 @@ function go(v, sub) {
 $$('#tabs button').forEach(b => b.onclick = () => go(b.dataset.v, b.dataset.v === 'vGame' ? 'vGameList' : undefined));
 // 遊戯の一覧
 const GAME_LIST = [
-  ['vRace', '🏇', '競馬', '毎日16:30〜22:30（20:30はメインレース、そのあと深夜競馬）。みんなで同じレースに賭ける、いちばんの目玉'],
+  ['vRace', '🏇', '競馬', '毎日 12:30〜13:30（昼競馬）と 16:30〜22:30（20:30はメインレース、そのあと深夜競馬）。みんなで同じレースに賭ける、いちばんの目玉'],
   ['vSlot', '7', 'スロット', '絵柄を3つそろえて当たり'],
   ['vBj', '♠', 'ブラックジャック', 'カードの合計を21に近づけて、ディーラーと勝負'],
   ['vRou', '◎', 'ルーレット', '数字や色に賭けて、玉の止まる場所を当てる'],
@@ -1182,7 +1182,7 @@ function kbRenderList() {
   const focus = rs.find(r => ['closed', 'running', 'judging'].includes(kbStatus(r))) || rs.find(r => kbStatus(r) === 'sale');
   const dd = new Date(KD.day + 'T12:00:00+09:00');
   let h = `<h2 style="margin-bottom:2px">${dd.getMonth() + 1}月${dd.getDate()}日（${'日月火水木金土'[dd.getDay()]}）の開催</h2>
-    <p class="muted small" style="margin:0 0 6px">ふだんのレースは16:30・17:30・18:30・19:30から7Rずつ。メインレースは20:30。深夜競馬は20:42・21:42から7Rずつ（22:30の最終レースまで）</p>`;
+    <p class="muted small" style="margin:0 0 6px">昼競馬は12:30から10分おきに7R（13:30まで）。ふだんのレースは16:30・17:30・18:30・19:30から7Rずつ。メインレースは20:30。深夜競馬は20:42・21:42から7Rずつ（22:30の最終レースまで）</p>`;
   if (focus) {
     const s = kbStatus(focus), left = (focus.post_ms - kbNow()) / 1000;
     h += `<div class="card kb-focus" data-id="${focus.id}">
@@ -1193,14 +1193,14 @@ function kbRenderList() {
       <div class="muted small">${focus.surface === '芝' ? '芝' : 'ダート'}${focus.dist}m・${focus.n}頭・${focus.weather}・${focus.going}</div>
       <button class="btn main wide" style="margin-top:10px">${s === 'sale' ? '出走表を見て馬券を買う' : 'レースを見る'}</button></div>`;
   } else {
-    h += `<div class="card"><b>きょうのレースは終わりました</b><p class="muted small" style="margin:4px 0 0">あしたは16:30から。結果は下から見られます。</p></div>`;
+    h += `<div class="card"><b>きょうのレースは終わりました</b><p class="muted small" style="margin:4px 0 0">あしたは12:30から（昼競馬）。結果は下から見られます。</p></div>`;
   }
   let last = null;
   for (const r of rs) {
     const key = r.sess != null ? 's' + r.sess : r.venue + (r.no === 29 ? 'main' : '');
     if (key !== last) {
       last = key;
-      h += `<div class="kb-sess">${hhmm(r.post_ms)}〜 ${r.venue}競馬場${r.no === 29 ? '<span>メインレース</span>' : r.part === 'night' ? '<span class="night">🌙 深夜競馬</span>' : ''}</div>`;
+      h += `<div class="kb-sess">${hhmm(r.post_ms)}〜 ${r.venue}競馬場${r.no === 29 ? '<span>メインレース</span>' : r.part === 'night' ? '<span class="night">🌙 深夜競馬</span>' : r.part === 'noon' ? '<span class="noon">☀ 昼競馬</span>' : ''}</div>`;
     }
     const s = kbStatus(r);
     const chip = s === 'final' && r.winner
@@ -2018,7 +2018,7 @@ function tdRender() {
     : `<div class="row" style="align-items:baseline;gap:8px"><span class="muted small">1 X =</span><b style="font-size:22px">${fmtP(f.close ?? f.base)}</b><span class="muted small">CA</span>
         <span style="margin-left:auto">${f.close != null && f.base ? (c => `<b class="${udc(c)}">${sgn(c)}${Math.abs(c).toFixed(2)}%</b>`)((f.close - f.base) / f.base * 100) : ''}</span></div>
       <div class="small muted">${f.n ? `高値 ${fmtP(f.high)}・安値 ${fmtP(f.low)}・取引 ${fmt(f.vol)} X` : 'この日は取引がありませんでした'}</div>`;
-  const kb = !k || !k.n ? `<p class="muted small" style="margin:0">${d.today ? 'きょうのレースは16:30から。競馬を開くと出走表が出ます。' : 'この日のレースはありません'}</p>`
+  const kb = !k || !k.n ? `<p class="muted small" style="margin:0">${d.today ? 'きょうのレースは12:30（昼競馬）から。競馬を開くと出走表が出ます。' : 'この日のレースはありません'}</p>`
     : `<div class="small muted">全${k.n}レース（${k.first}〜${k.last}）・確定 ${k.settled}</div>
       ${k.main ? `<div class="line" style="border-top:0"><span class="grow"><b>メイン ${esc(k.main.venue)}${k.main.rnum}R「${esc(k.main.name)}」${k.main.grade ? `<span class="kindtag">${k.main.grade}</span>` : ''}</b>
         <small>${k.main.time} 発走・${k.main.surface === '芝' ? '芝' : 'ダート'}${k.main.dist}m${k.main.winner ? `・1着 ${esc(k.main.winner.name)}（${k.main.winner.ninki}番人気）` : ''}</small></span></div>` : ''}

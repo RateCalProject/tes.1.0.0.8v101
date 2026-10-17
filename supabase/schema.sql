@@ -1623,7 +1623,7 @@ declare
   wth text; gt text; gd text; x numeric;
 begin
   perform pg_advisory_xact_lock(4242);
-  if exists (select 1 from keiba_races where day = d and no >= 30) then return; end if;
+  if exists (select 1 from keiba_races where day = d and no between 30 and 43) then return; end if;
   for s in 0..1 loop
     vid := case s when 0 then 1 else 2 end;
     select * into v from keiba_venues where id = vid;
@@ -1656,6 +1656,49 @@ begin
       perform _kb_make_race(d, 30 + s * 7 + (k - 1), vid, k, posttime, nm, null, cls, cond, sf, ds,
                             case when sf = '芝' then gt else gd end, wth, 'normal', false, 8, 12);
     end loop;
+  end loop;
+end $$;
+
+-- 昼競馬（12:30〜13:30・府中で10分おきに7R。番号は44〜50）
+--   天気・馬場は、その日の府中（18:30の回）と同じ。最終レースは曜日ごとの特別戦。発走2分前をすぎたレースはつくらない
+create or replace function public._kb_make_noon(d date) returns void
+language plpgsql volatile set search_path = public as $$
+declare
+  dow int := extract(isodow from d)::int;
+  fin text[] := array['青空特別', '日だまり特別', '若葉特別', 'ひまわり特別', '昼下がり特別', '陽光特別', '白雲特別'];
+  k int; vid int := 3; v keiba_venues; posttime timestamptz; sf text; ds int; cls int; cond text; nm text;
+  wth text; gt text; gd text; x numeric;
+begin
+  perform pg_advisory_xact_lock(4242);
+  if exists (select 1 from keiba_races where day = d and no >= 44) then return; end if;
+  select * into v from keiba_venues where id = vid;
+  select r.weather into wth from keiba_races r where r.day = d and r.venue = vid and r.no <= 28 order by r.no limit 1;
+  select r.going into gt from keiba_races r where r.day = d and r.venue = vid and r.no <= 28 and r.surface = '芝' order by r.no limit 1;
+  select r.going into gd from keiba_races r where r.day = d and r.venue = vid and r.no <= 28 and r.surface = 'ダ' order by r.no limit 1;
+  if wth is null then
+    x := random();
+    wth := case when x < 0.5 then '晴' when x < 0.8 then '曇' when x < 0.9 then '小雨' else '雨' end;
+  end if;
+  gt := coalesce(gt, case wth when '晴' then '良' when '曇' then '良' when '小雨' then '稍重' else '重' end);
+  gd := coalesce(gd, case wth when '晴' then '良' when '曇' then '良' when '小雨' then '稍重' else '重' end);
+  for k in 1..7 loop
+    posttime := make_timestamptz(extract(year from d)::int, extract(month from d)::int, extract(day from d)::int,
+                                 12, 30, 0, 'Asia/Tokyo') + (k - 1) * interval '10 minutes';
+    continue when posttime < _now() + interval '2 minutes';   -- もう締め切ったレースはつくらない
+    sf := case when random() < 0.55 then '芝' else 'ダ' end;
+    ds := case when sf = '芝' then v.turf_d[1 + floor(random() * array_length(v.turf_d, 1))::int]
+               else v.dirt_d[1 + floor(random() * array_length(v.dirt_d, 1))::int] end;
+    case k
+      when 1 then cls := 0; cond := '2yo_new';
+      when 2 then cls := 0; cond := '3yo';
+      when 3, 4 then cls := 1; cond := '3up';
+      when 5, 6 then cls := 2; cond := '3up';
+      else cls := 3; cond := '3up';
+    end case;
+    nm := case when k = 7 then fin[dow]
+               else case cond when '2yo_new' then '2歳新馬' when '3yo' then '3歳未勝利' else '3歳以上' || cls || '勝クラス' end end;
+    perform _kb_make_race(d, 43 + k, vid, k, posttime, nm, null, cls, cond, sf, ds,
+                          case when sf = '芝' then gt else gd end, wth, 'normal', false, 8, 12);
   end loop;
 end $$;
 
@@ -1873,10 +1916,12 @@ begin
   elsif last < cur then
     perform _kb_month(cur);
   end if;
-  -- 今日の番組（ふだん・メイン）と、深夜競馬（つぎの呼び出しでつくる。1回の待ち時間を短くするため。最終レースの時刻をすぎていたらつくらない）
+  -- 今日の番組（ふだん・メイン）、昼競馬、深夜競馬の順に、呼び出しごとに1つずつつくる（1回の待ち時間を短くするため。最終レースの時刻をすぎていたらつくらない）
   if not exists (select 1 from keiba_races where day = today) then perform _kb_make_day(today);
+  elsif _now() < make_timestamptz(extract(year from today)::int, extract(month from today)::int, extract(day from today)::int, 13, 30, 0, 'Asia/Tokyo')
+        and not exists (select 1 from keiba_races where day = today and no >= 44) then perform _kb_make_noon(today);
   elsif _now() < make_timestamptz(extract(year from today)::int, extract(month from today)::int, extract(day from today)::int, 22, 30, 0, 'Asia/Tokyo')
-        and not exists (select 1 from keiba_races where day = today and no >= 30) then perform _kb_make_night(today);
+        and not exists (select 1 from keiba_races where day = today and no between 30 and 43) then perform _kb_make_night(today);
   end if;
 end $$;
 
@@ -1904,8 +1949,8 @@ begin
         'id', r.id, 'no', r.no, 'rnum', r.rnum, 'post_ms', _kb_ms(r.post), 'venue', v.name,
         'name', r.name, 'grade', r.grade, 'surface', r.surface, 'dist', r.dist, 'going', r.going,
         'weather', r.weather, 'status', _kb_status(r),
-        'part', case when r.no = 29 then 'main' when r.no >= 30 then 'night' else 'day' end,
-        'sess', case when r.no <= 28 then (r.no - 1) / 7 when r.no = 29 then 4 else 5 + (r.no - 30) / 7 end,
+        'part', case when r.no = 29 then 'main' when r.no >= 44 then 'noon' when r.no >= 30 then 'night' else 'day' end,
+        'sess', case when r.no <= 28 then (r.no - 1) / 7 when r.no = 29 then 4 when r.no >= 44 then 7 else 5 + (r.no - 30) / 7 end,
         'n', (select count(*) from keiba_entries e where e.race_id = r.id),
         'winner', case when r.settled then (select jsonb_build_object('uma', e.uma, 'name', h.name, 'ninki', e.ninki)
                                               from keiba_entries e join keiba_horses h on h.id = e.horse_id
@@ -8902,7 +8947,8 @@ begin
               from companies c where c.decided_at >= t0 and c.decided_at < t1 and c.status in ('active', 'suspended')),
     'fx', fxj,
     -- 競馬（その日の番組。メインレースと、きょうなら次のレース）
-    'keiba', (select jsonb_build_object('n', count(*), 'night', count(*) filter (where r.no >= 30), 'settled', count(*) filter (where r.settled),
+    'keiba', (select jsonb_build_object('n', count(*), 'night', count(*) filter (where r.no between 30 and 43), 'noon', count(*) filter (where r.no >= 44),
+                'settled', count(*) filter (where r.settled),
                 'first', to_char(min(r.post) at time zone 'Asia/Tokyo', 'HH24:MI'), 'last', to_char(max(r.post) at time zone 'Asia/Tokyo', 'HH24:MI'),
                 'main', (select jsonb_build_object('id', m.id, 'name', m.name, 'grade', m.grade, 'venue', v.name, 'rnum', m.rnum,
                            'surface', m.surface, 'dist', m.dist, 'time', to_char(m.post at time zone 'Asia/Tokyo', 'HH24:MI'), 'status', _kb_status(m),
@@ -8984,7 +9030,7 @@ begin
             '_pub_mine','_pub_can_read','_pub_json','pub_list','news_list','pub_page','pub_read','pub_buy','pub_save','pub_item_save',
             'pub_item_delete','my_pubs','admin_pub_hide',
             '_kb_norm','_kb_gumbel','_kb_midx','_kb_jday','_kb_ms','_kb_agef','_kb_fit','_kb_name','_kb_new_horse',
-            '_kb_make_race','_kb_make_day','_kb_make_night','_kb_seq','_kb_prob','_kb_prob_trio','_kb_rate','_kb_odds','_kb_check_sel',
+            '_kb_make_race','_kb_make_day','_kb_make_night','_kb_make_noon','_kb_seq','_kb_prob','_kb_prob_trio','_kb_rate','_kb_odds','_kb_check_sel',
             '_kb_hit','_kb_settle','_kb_month','_kb_seed','_kb_tick','_kb_status',
             '_ind_norm','corp_set_industries','_srv_norm','corp_set_servers','admin_corp_servers_clear',
             '_desk_staff','_desk_json','_desk_people','_desk_unread','desk_thread','desk_open','desk_send','desk_close','desk_list',
