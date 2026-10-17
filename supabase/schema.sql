@@ -1664,6 +1664,38 @@ begin
    where id = rid;
 end $$;
 
+-- 天気と馬場：その日、同じ名前の競馬場のレースがもうあれば、それに合わせる（なければくじで）。w0 をわたすと天気はそれ
+create or replace function public._kb_wx(d date, vid int, sf text, w0 text default null) returns text[]
+language plpgsql volatile set search_path = public as $$
+declare vn text; w text := w0; g text; x numeric;
+begin
+  select name into vn from keiba_venues where id = vid;
+  if w is null then
+    select r.weather into w from keiba_races r join keiba_venues v on v.id = r.venue
+     where r.day = d and v.name = vn order by (r.venue = vid) desc, r.no limit 1;
+  end if;
+  if w is null then
+    x := random();
+    w := case when x < 0.5 then '晴' when x < 0.8 then '曇' when x < 0.9 then '小雨' else '雨' end;
+  end if;
+  select r.going into g from keiba_races r join keiba_venues v on v.id = r.venue
+   where r.day = d and v.name = vn and r.surface = sf and r.weather = w order by (r.venue = vid) desc, r.no limit 1;
+  if g is null then
+    g := case when sf = '芝' then
+           case w when '晴' then case when random() < 0.88 then '良' else '稍重' end
+                  when '曇' then case when random() < 0.75 then '良' else '稍重' end
+                  when '小雨' then case when random() < 0.6 then '稍重' else '重' end
+                  else case when random() < 0.55 then '重' else '不良' end end
+         else
+           case w when '晴' then case when random() < 0.85 then '良' else '稍重' end
+                  when '曇' then case when random() < 0.7 then '良' else '稍重' end
+                  when '小雨' then case when random() < 0.5 then '稍重' else '重' end
+                  else case when random() < 0.5 then '重' else '不良' end end
+         end;
+  end if;
+  return array[w, g];
+end $$;
+
 -- 1日分の番組をつくる
 create or replace function public._kb_make_day(d date) returns void
 language plpgsql volatile set search_path = public as $$
@@ -1671,21 +1703,14 @@ declare
   dow int := extract(isodow from d)::int;
   wk int := (extract(day from d)::int - 1) / 7;
   s int; k int; vid int; posttime timestamptz; v keiba_venues; sf text; ds int; cls int; cond text; nm text;
-  wth text[]; gt text[]; gd text[]; x numeric; nr keiba_names; knd text; found_nr boolean;
+  wth text[]; gt text[]; gd text[]; x numeric; nr keiba_names; knd text; found_nr boolean; wx text[];
 begin
   perform pg_advisory_xact_lock(4242);
-  if exists (select 1 from keiba_races where day = d) then return; end if;
+  if exists (select 1 from keiba_races where day = d and no <= 29) then return; end if;   -- 臨時のレース（60〜）は数えない
   for vid in 1..5 loop
-    x := random();
-    wth[vid] := case when x < 0.5 then '晴' when x < 0.8 then '曇' when x < 0.9 then '小雨' else '雨' end;
-    gt[vid] := case wth[vid] when '晴' then case when random() < 0.88 then '良' else '稍重' end
-                             when '曇' then case when random() < 0.75 then '良' else '稍重' end
-                             when '小雨' then case when random() < 0.6 then '稍重' else '重' end
-                             else case when random() < 0.55 then '重' else '不良' end end;
-    gd[vid] := case wth[vid] when '晴' then case when random() < 0.85 then '良' else '稍重' end
-                             when '曇' then case when random() < 0.7 then '良' else '稍重' end
-                             when '小雨' then case when random() < 0.5 then '稍重' else '重' end
-                             else case when random() < 0.5 then '重' else '不良' end end;
+    -- 天気と馬場（その日の臨時のレースがもうあれば、同じ競馬場はそれに合わせる）
+    wx := _kb_wx(d, vid, '芝'); wth[vid] := wx[1]; gt[vid] := wx[2];
+    gd[vid] := (_kb_wx(d, vid, 'ダ', wth[vid]))[2];
   end loop;
   for s in 0..3 loop
     vid := s + 1;
@@ -1782,7 +1807,7 @@ declare
   wth text; gt text; gd text; x numeric;
 begin
   perform pg_advisory_xact_lock(4242);
-  if exists (select 1 from keiba_races where day = d and no >= 44) then return; end if;
+  if exists (select 1 from keiba_races where day = d and no between 44 and 59) then return; end if;
   select * into v from keiba_venues where id = vid;
   select r.weather into wth from keiba_races r where r.day = d and r.venue = vid and r.no <= 28 order by r.no limit 1;
   select r.going into gt from keiba_races r where r.day = d and r.venue = vid and r.no <= 28 and r.surface = '芝' order by r.no limit 1;
@@ -2063,9 +2088,9 @@ begin
     perform _kb_month(cur);
   end if;
   -- 今日の番組（ふだん・メイン）、昼競馬、深夜競馬の順に、呼び出しごとに1つずつつくる（1回の待ち時間を短くするため。最終レースの時刻をすぎていたらつくらない）
-  if not exists (select 1 from keiba_races where day = today) then perform _kb_make_day(today);
+  if not exists (select 1 from keiba_races where day = today and no <= 29) then perform _kb_make_day(today);
   elsif _now() < make_timestamptz(extract(year from today)::int, extract(month from today)::int, extract(day from today)::int, 13, 30, 0, 'Asia/Tokyo')
-        and not exists (select 1 from keiba_races where day = today and no >= 44) then perform _kb_make_noon(today);
+        and not exists (select 1 from keiba_races where day = today and no between 44 and 59) then perform _kb_make_noon(today);
   elsif _now() < make_timestamptz(extract(year from today)::int, extract(month from today)::int, extract(day from today)::int, 22, 30, 0, 'Asia/Tokyo')
         and not exists (select 1 from keiba_races where day = today and no between 30 and 43) then perform _kb_make_night(today);
   end if;
@@ -2249,7 +2274,171 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
--- 送金（口座番号で相手を指定。手数料1%・最低1 X は国庫へ。登録から7日たつまで送金も受け取りもできない）
+-- 臨時のレース（管理者がつくる。番号60〜99。きょうかあした）
+-- ---------------------------------------------------------------------
+create or replace function public.admin_kb_extras() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); today date;
+begin
+  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  today := _kb_jday(_now());
+  return jsonb_build_object(
+    'now_ms', _kb_ms(_now()), 'today', today,
+    'venues', (select jsonb_agg(jsonb_build_object('id', id, 'name', name, 'turf_d', turf_d, 'dirt_d', dirt_d)
+                 order by case id when 3 then 1 when 2 then 2 else 3 end) from keiba_venues where id in (1, 2, 3)),
+    'races', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'day', r.day, 'post_ms', _kb_ms(r.post), 'rnum', r.rnum,
+                'venue', v.name, 'name', r.name, 'grade', r.grade, 'cls', r.cls, 'surface', r.surface, 'dist', r.dist,
+                'weather', r.weather, 'going', r.going, 'status', _kb_status(r),
+                'n', (select count(*) from keiba_entries e where e.race_id = r.id),
+                'tickets', (select count(*) from keiba_tickets t where t.race_id = r.id),
+                'bet', (select coalesce(sum(t.amount), 0) from keiba_tickets t where t.race_id = r.id)) order by r.post desc), '[]'::jsonb)
+              from keiba_races r join keiba_venues v on v.id = r.venue where r.no >= 60 and r.day >= today - 7));
+end $$;
+
+create or replace function public.admin_kb_extra(p_name text, p_day int, p_time text, p_venue int, p_surface text, p_dist int,
+  p_grade text, p_cls int, p_cond text, p_handicap boolean, p_n int, p_rnum int, p_banner boolean default false) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  u uuid := _me(); nm text := btrim(coalesce(p_name, '')); gr text := nullif(btrim(coalesce(p_grade, '')), '');
+  cnd text := coalesce(p_cond, '3up'); d date; pt timestamptz; v keiba_venues; no int; rid bigint; wx text[]; cl int; hh int; mi int;
+begin
+  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  perform _kb_tick();
+  if char_length(nm) < 1 or char_length(nm) > 30 then raise exception 'レース名は1〜30文字にしてください'; end if;
+  if p_day is null or p_day not in (0, 1) then raise exception '日にちは、きょうかあしたです'; end if;
+  if coalesce(p_time, '') !~ '^[0-9]{1,2}:[0-9]{2}$' then raise exception '発走時刻は 17:15 のように書いてください'; end if;
+  hh := split_part(p_time, ':', 1)::int; mi := split_part(p_time, ':', 2)::int;
+  if hh > 23 or mi > 59 then raise exception '発走時刻が正しくありません'; end if;
+  d := _kb_jday(_now()) + p_day;
+  pt := make_timestamptz(extract(year from d)::int, extract(month from d)::int, extract(day from d)::int, hh, mi, 0, 'Asia/Tokyo');
+  if pt < _now() + interval '5 minutes' then raise exception '発走は、いまから5分よりあとにしてください（馬券を買う時間がいるため）'; end if;
+  select * into v from keiba_venues where id = p_venue and id in (1, 2, 3);
+  if not found then raise exception '競馬場をえらんでください'; end if;
+  if coalesce(p_surface, '') not in ('芝', 'ダ') then raise exception '芝かダートをえらんでください'; end if;
+  if p_dist is null or not (p_dist = any(case when p_surface = '芝' then v.turf_d else v.dirt_d end)) then
+    raise exception '%の%では、その距離のレースはできません', v.name, case when p_surface = '芝' then '芝' else 'ダート' end;
+  end if;
+  if gr is not null and gr not in ('G1', 'G2', 'G3', 'L', 'OP') then raise exception 'グレードが正しくありません'; end if;
+  if gr is null then
+    if p_cls is null or p_cls not between 0 and 3 then raise exception 'クラスをえらんでください'; end if;
+    cl := p_cls;
+  end if;
+  if cnd not in ('3up', '3yo') then raise exception '出走できる馬の条件が正しくありません'; end if;
+  if p_n is null or p_n not between 8 and 18 then raise exception '頭数は8〜18頭です'; end if;
+  if p_rnum is null or p_rnum not between 1 and 12 then raise exception 'レース番号は1〜12Rです'; end if;
+  perform pg_advisory_xact_lock(4242);
+  select coalesce(max(k.no), 59) + 1 into no from keiba_races k where k.day = d and k.no >= 60;
+  if no > 99 then raise exception '臨時のレースは1日40レースまでです'; end if;
+  rid := to_char(d, 'YYYYMMDD')::bigint * 100 + no;
+  wx := _kb_wx(d, p_venue, p_surface);
+  perform _kb_make_race(d, no, p_venue, p_rnum, pt, nm, gr, cl, cnd, p_surface, p_dist, wx[2], wx[1],
+                        case when gr = 'G1' then 'g1' when gr is not null then 'graded' else 'normal' end,
+                        coalesce(p_handicap, false), p_n, p_n);
+  if coalesce(p_banner, false) then
+    insert into banners(body, kind, link, starts_at, ends_at, by_user, created_at)
+    values (format('臨時競馬「%s」%s　%s %s 発走（%s %s%sm）', nm, case when gr is not null then '（' || gr || '）' else '' end,
+                   case when p_day = 0 then 'きょう' else 'あした' end, to_char(pt at time zone 'Asia/Tokyo', 'HH24:MI'),
+                   v.name, case when p_surface = '芝' then '芝' else 'ダート' end, p_dist),
+            'event', 'race:' || rid, _now(), pt + interval '5 minutes', u, _now());
+  end if;
+  return jsonb_build_object('id', rid, 'weather', wx[1], 'going', wx[2], 'n', (select count(*) from keiba_entries where race_id = rid));
+end $$;
+
+-- 発走の前なら取り消せる（買われた馬券は全額返す）
+create or replace function public.admin_kb_extra_cancel(p_race bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); r keiba_races; t keiba_tickets; n int := 0; tot bigint := 0; hs int[]; x record;
+begin
+  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  select * into r from keiba_races where id = p_race for update;
+  if not found or r.no < 60 then raise exception '臨時のレースが見つかりません'; end if;
+  if r.settled or r.post <= _now() then raise exception '発走したレースは取り消せません'; end if;
+  for t in select * from keiba_tickets where race_id = p_race and payout is null order by id for update loop
+    perform _give(t.user_id, t.amount);
+    perform _log(t.user_id, 'race', t.amount, t.amount, jsonb_build_object('race', p_race, 'kind', t.kind, 'sel', t.sel, 'refund', true, 'cancel', true));
+    n := n + 1; tot := tot + t.amount;
+  end loop;
+  for x in select user_id, count(*) k, sum(amount)::bigint a from keiba_tickets where race_id = p_race group by user_id loop
+    perform _notice(x.user_id, format('臨時競馬「%s」は取り消しになりました。馬券%s枚の %s X を返しました', r.name, x.k, _fmt(x.a)));
+  end loop;
+  select array_agg(horse_id) into hs from keiba_entries where race_id = p_race;
+  update banners set ended = true where link = 'race:' || p_race and not ended;
+  delete from keiba_races where id = p_race;          -- 出走馬と馬券もいっしょに消える
+  update keiba_horses h set last_day = (select max(r2.day) from keiba_entries e join keiba_races r2 on r2.id = e.race_id where e.horse_id = h.id)
+   where h.id = any(hs);
+  return jsonb_build_object('refunded', n, 'amount', tot);
+end $$;
+
+-- ---------------------------------------------------------------------
+-- お知らせバナー（画面の上に出す。管理者が出す・消す。見る人は×で閉じられる）
+-- ---------------------------------------------------------------------
+create table if not exists public.banners (
+  id         bigserial primary key,
+  body       text not null,
+  kind       text not null default 'info' check (kind in ('info', 'warn', 'event')),
+  link       text,                                  -- race:<レースの番号> か https のURL
+  starts_at  timestamptz not null default now(),
+  ends_at    timestamptz,                           -- null なら、消すまで出しておく
+  ended      boolean not null default false,
+  by_user    uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+alter table public.banners enable row level security;
+revoke all on public.banners from anon, authenticated;
+
+create or replace function public.banner_list() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me();
+begin
+  return (select coalesce(jsonb_agg(jsonb_build_object('id', b.id, 'body', b.body, 'kind', b.kind, 'link', b.link) order by b.id desc), '[]'::jsonb)
+            from (select * from banners where not ended and starts_at <= _now() and (ends_at is null or ends_at > _now())
+                   order by id desc limit 5) b);
+end $$;
+
+create or replace function public.admin_banners() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me();
+begin
+  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  return (select coalesce(jsonb_agg(jsonb_build_object('id', b.id, 'body', b.body, 'kind', b.kind, 'link', b.link,
+            'at', _dlabel(b.created_at), 'time', to_char(b.created_at at time zone 'Asia/Tokyo', 'HH24:MI'),
+            'until', case when b.ends_at is null then null else to_char(b.ends_at at time zone 'Asia/Tokyo', 'FMMM/FMDD HH24:MI') end,
+            'live', not b.ended and b.starts_at <= _now() and (b.ends_at is null or b.ends_at > _now()),
+            'by', p.nickname) order by b.id desc), '[]'::jsonb)
+          from (select * from banners order by id desc limit 20) b left join profiles p on p.id = b.by_user);
+end $$;
+
+-- p_hours：0＝消すまで、-1＝きょういっぱい、1〜720＝その時間
+create or replace function public.admin_banner_save(p_body text, p_kind text, p_hours int, p_link text default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); b text := btrim(coalesce(p_body, '')); lk text := nullif(btrim(coalesce(p_link, '')), ''); en timestamptz; id0 bigint;
+begin
+  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  if char_length(b) < 1 or char_length(b) > 200 then raise exception 'お知らせは1〜200文字にしてください'; end if;
+  if coalesce(p_kind, '') not in ('info', 'warn', 'event') then raise exception '種類が正しくありません'; end if;
+  if lk is not null and not (lk ~ '^race:[0-9]+$' or (lk ~* '^https://[^ ]+$' and char_length(lk) <= 300)) then
+    raise exception 'リンクは https:// ではじまるURLにしてください';
+  end if;
+  if p_hours is null or not (p_hours in (0, -1) or p_hours between 1 and 720) then raise exception '出しておく期間が正しくありません'; end if;
+  en := case when p_hours = 0 then null
+             when p_hours = -1 then (_kb_jday(_now()) + 1)::timestamp at time zone 'Asia/Tokyo'
+             else _now() + make_interval(hours => p_hours) end;
+  insert into banners(body, kind, link, starts_at, ends_at, by_user, created_at) values (b, p_kind, lk, _now(), en, u, _now()) returning id into id0;
+  return jsonb_build_object('id', id0);
+end $$;
+
+create or replace function public.admin_banner_end(p_id bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me();
+begin
+  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  update banners set ended = true where id = p_id;
+  if not found then raise exception 'お知らせが見つかりません'; end if;
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- ---------------------------------------------------------------------
+-- 送金（口座番号で相手を指定。手数料1%・最低1 X は国庫へ）
 -- ---------------------------------------------------------------------
 create or replace function public._new_acct() returns text
 language plpgsql volatile set search_path = public as $$
@@ -10537,6 +10726,7 @@ begin
             '_ai_business','_ai_settle_week','_ai_news_morning','_ai_news_items','_ai_news_flash','_ai_invest','_ai_market','_ai_market_cancel',
             '_ai_setup','_ai_add_investors','_ai_tick','_fx_exec','_stock_width_x','_ai_buzz_target','_ai_fair_p','_ai_found','_ok7_ins','_stock_last','_stock_cancel_all','stock_split','admin_stock_reprice','admin_gov_share_give','admin_ai_news','_gov_uid','_gov_sweep','_fx_last','admin_iv_state','admin_intervene','_ai_err','admin_ai','admin_ai_set','admin_ai_fund',
             'stock_order','stock_cancel','stock_list_apply','stock_list_withdraw','admin_stock_decide','admin_stock_delist','_unlock_orders',
+            '_kb_wx','admin_kb_extras','admin_kb_extra','admin_kb_extra_cancel','banner_list','admin_banners','admin_banner_save','admin_banner_end',
             'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then

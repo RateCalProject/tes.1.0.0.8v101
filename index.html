@@ -27,6 +27,15 @@ input{font:inherit;color:inherit}
 .wrap{max-width:760px;margin:0 auto;padding:0 16px}
 header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
 header .wrap{display:flex;align-items:center;gap:12px;height:52px}
+.bnbar{border-bottom:1px solid var(--line)}
+.bn-item{display:flex;align-items:flex-start;gap:8px;padding:8px 16px;font-size:13px;line-height:1.5}
+.bn-item+.bn-item{border-top:1px solid var(--line)}
+.bn-row.info{background:color-mix(in srgb,var(--accent) 13%,var(--panel))}
+.bn-row.warn{background:color-mix(in srgb,#E89A1A 22%,var(--panel))}
+.bn-row.event{background:color-mix(in srgb,#D0407F 15%,var(--panel))}
+.bn-tx{flex:1;white-space:pre-wrap;word-break:break-word}
+.bn-tx.go{cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.bn-x{border:0;background:transparent;font-size:20px;line-height:1;padding:0 2px 0 8px;color:inherit;opacity:.65}
 .logo{font-weight:800;letter-spacing:.02em;font-size:17px}
 .logo small{font-weight:600;color:var(--muted);font-size:12px;margin-left:4px}
 .bal{margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:5px 12px;white-space:nowrap}
@@ -425,6 +434,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   <button class="bell hidden" id="bell" aria-label="通知"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="bn hidden" id="bellN">0</span></button>
   <div class="bal hidden" id="bal"><b class="num" id="balNum">0</b><span>X</span></div>
 </div></header>
+<div class="bnbar hidden" id="bnBar"></div>
 
 <main class="wrap">
 <div class="tabs-s subnav hidden" id="subNav"></div>
@@ -2990,6 +3000,8 @@ async function adminLoad() {
         <span class="muted">手数料・申請料</span><b>${fmt(t.fee_total)}</b><span class="muted">給料（仕事）</span><b>${fmt(t.wage_total)}</b>
         <span class="muted">没収・罰金</span><b>${fmt(t.confiscated_total)}</b></div>
       <h3>介入（管理者だけ）</h3><div id="adIv"><p class="muted small" style="margin:0">読みこみ中…</p></div>
+      <h3>お知らせバナー（管理者だけ）</h3><div id="adBn"><p class="muted small" style="margin:0">読みこみ中…</p></div>
+      <h3>臨時のレース（管理者だけ）</h3><div id="adKb"><p class="muted small" style="margin:0">読みこみ中…</p></div>
       <h3>取引所の手数料</h3>
       <div class="row"><input class="inp" id="adFee" type="number" min="0" max="10" step="0.01" value="${Number(d.fee_pct)}" style="width:110px;margin:0"><span class="small">%</span><button class="btn s" id="adFeeSave">保存</button></div>
       <p class="muted small" style="margin:4px 0 0">買った人の X と、売った人の CA から引いて、風の芽証券取引所に入ります。</p>
@@ -3051,8 +3063,89 @@ async function adminLoad() {
     const fs = $('#adFeeSave');
     if (fs) fs.onclick = async () => { try { await call('admin_fx_fee', { p_pct: Number($('#adFee').value) }); toast('手数料を変えました'); adminLoad(); } catch (e) { toast(e.message); } };
     adAiLoad();
-    if (adm) adIvLoad(null, d.listed);
+    if (adm) { adIvLoad(null, d.listed); adBnLoad(); adKbLoad(); }
   } catch (e) { toast(e.message); }
+}
+// 管理：お知らせバナー
+async function adBnLoad() {
+  const box = $('#adBn'); if (!box) return;
+  let L; try { L = await call('admin_banners'); } catch (e) { box.innerHTML = `<p class="muted small" style="margin:0">${esc(e.message)}</p>`; return; }
+  let kind = 'info';
+  box.innerHTML = `<textarea class="inp" id="bnBody" rows="2" maxlength="200" placeholder="お知らせの文（200文字まで）"></textarea>
+    <div class="seg sm" id="bnKind" style="margin-bottom:6px"><button data-k="info" class="on">📢 お知らせ</button><button data-k="warn">⚠️ 注意</button><button data-k="event">🎉 イベント</button></div>
+    <div class="row"><span class="small" style="width:6em">出す期間</span><select class="inp grow" id="bnHours" style="margin:0">
+      <option value="1">1時間</option><option value="3">3時間</option><option value="-1" selected>きょういっぱい</option><option value="24">1日</option>
+      <option value="72">3日</option><option value="168">1週間</option><option value="0">消すまで</option></select></div>
+    <input class="inp" id="bnLink" maxlength="300" placeholder="リンク（なくてもOK。https:// ではじまるURL）">
+    <button class="btn main s" id="bnGo">出す</button>
+    <p class="muted small" style="margin:6px 0 0">みんなの画面のいちばん上に出ます。見た人は × で閉じられます（閉じたものは、その端末ではもう出ません）。</p>
+    ${L.length ? `<h4 style="margin:10px 0 2px">これまでのお知らせ</h4>` + L.map(b => `<div class="line"><span class="grow">${b.live ? '<span class="kindtag">表示中</span>' : ''}${{ info: '📢', warn: '⚠️', event: '🎉' }[b.kind] || ''} ${esc(b.body)}
+        <small>${b.at} ${b.time}・${b.until ? b.until + ' まで' : '消すまで'}${b.by ? '・' + esc(b.by) : ''}</small></span>${b.live ? `<button class="btn s" data-bnend="${b.id}">消す</button>` : ''}</div>`).join('') : ''}`;
+  $$('#bnKind button').forEach(b => b.onclick = () => { kind = b.dataset.k; $$('#bnKind button').forEach(x => x.classList.toggle('on', x === b)); });
+  $('#bnGo').onclick = async () => {
+    const body = $('#bnBody').value.trim(); if (!body) return toast('お知らせの文を入れてください');
+    try {
+      await call('admin_banner_save', { p_body: body, p_kind: kind, p_hours: Number($('#bnHours').value), p_link: $('#bnLink').value.trim() || null });
+      toast('お知らせを出しました'); adBnLoad(); bnLoad(true);
+    } catch (e) { toast(e.message); }
+  };
+  $$('#adBn [data-bnend]').forEach(b => b.onclick = async () => {
+    if (!confirm('このお知らせを消しますか？')) return;
+    try { await call('admin_banner_end', { p_id: Number(b.dataset.bnend) }); toast('消しました'); adBnLoad(); bnLoad(true); } catch (e) { toast(e.message); }
+  });
+}
+// 管理：臨時のレース
+const KX = { venue: 3, surface: '芝' };
+const KX_GR = [['G1', 'G1'], ['G2', 'G2'], ['G3', 'G3'], ['L', 'リステッド'], ['OP', 'オープン'], ['c3', '3勝クラス'], ['c2', '2勝クラス'], ['c1', '1勝クラス'], ['c0', '未勝利']];
+async function adKbLoad() {
+  const box = $('#adKb'); if (!box) return;
+  let v; try { v = await call('admin_kb_extras'); } catch (e) { box.innerHTML = `<p class="muted small" style="margin:0">${esc(e.message)}</p>`; return; }
+  const t0 = new Date(Math.ceil((v.now_ms + 30 * 60000) / 300000) * 300000);
+  const tm = t0.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Tokyo' });
+  box.innerHTML = `<input class="inp" id="kxName" maxlength="30" placeholder="レース名（例：帝都風の芽賞）">
+    <div class="row"><span class="small" style="width:6em">発走</span><select class="inp" id="kxDay" style="margin:0;width:auto"><option value="0">きょう</option><option value="1">あした</option></select>
+      <input class="inp grow" id="kxTime" type="time" value="${tm}" style="margin:0"></div>
+    <div class="seg sm" id="kxVenue" style="margin:6px 0">${v.venues.map(x => `<button data-k="${x.id}" class="${x.id === KX.venue ? 'on' : ''}">${esc(x.name)}</button>`).join('')}</div>
+    <div class="seg sm" id="kxSurf" style="margin-bottom:6px"><button data-k="芝" class="${KX.surface === '芝' ? 'on' : ''}">芝</button><button data-k="ダ" class="${KX.surface === 'ダ' ? 'on' : ''}">ダート</button></div>
+    <div class="row"><span class="small" style="width:6em">距離</span><select class="inp grow" id="kxDist" style="margin:0"></select></div>
+    <div class="row"><span class="small" style="width:6em">格</span><select class="inp grow" id="kxGrade" style="margin:0">${KX_GR.map(g => `<option value="${g[0]}">${g[1]}</option>`).join('')}</select></div>
+    <div class="row"><span class="small" style="width:6em">出られる馬</span><select class="inp grow" id="kxCond" style="margin:0"><option value="3up">3歳以上</option><option value="3yo">3歳だけ</option></select></div>
+    <div class="row"><span class="small" style="width:6em">頭数</span><input class="inp grow" id="kxN" type="number" inputmode="numeric" min="8" max="18" value="18" style="margin:0"><span class="small">頭</span></div>
+    <div class="row"><span class="small" style="width:6em">レース番号</span><input class="inp grow" id="kxR" type="number" inputmode="numeric" min="1" max="12" value="11" style="margin:0"><span class="small">R</span></div>
+    <label class="small" style="display:block;margin:6px 0"><input type="checkbox" id="kxHc"> ハンデ戦</label>
+    <label class="small" style="display:block;margin:6px 0"><input type="checkbox" id="kxBn" checked> お知らせバナーを出す（発走の5分後まで）</label>
+    <button class="btn main s" id="kxGo">レースをつくる</button>
+    <p class="muted small" style="margin:6px 0 0">きょうかあしたの、発走の5分以上前に。天気と馬場はその日の同じ競馬場と同じになり、出走馬は自動でえらびます（G1〜オープンは強い馬から）。発走の前なら取り消せます（買われた馬券は全額返します）。</p>
+    ${v.races.length ? `<h4 style="margin:10px 0 2px">臨時のレース（この1週間）</h4>` + v.races.map(r => `<div class="line"><span class="grow">${esc(r.name)}${gradeTag(r.grade)}
+        <small>${r.day.slice(5).replace('-', '/')} ${hhmm(r.post_ms)}・${esc(r.venue)}${r.rnum}R ${r.surface === '芝' ? '芝' : 'ダート'}${r.dist}m・${r.n}頭・${esc(r.weather)}・${esc(r.going)}・${KB_STATUS[r.status] || ''}・馬券${fmt(r.tickets)}枚 ${fmt(r.bet)} X</small></span>
+        <button class="btn s" data-kxopen="${r.id}">見る</button>${r.status === 'sale' || r.status === 'closed' ? `<button class="btn s" data-kxcancel="${r.id}" data-nm="${esc(r.name)}">取り消す</button>` : ''}</div>`).join('') : ''}`;
+  const dist = () => {
+    const V = v.venues.find(x => x.id === KX.venue) || v.venues[0], L = KX.surface === '芝' ? V.turf_d : V.dirt_d, cur = Number($('#kxDist').value);
+    $('#kxDist').innerHTML = L.map(d => `<option value="${d}" ${d === (L.includes(cur) ? cur : L.includes(2400) ? 2400 : L[Math.floor(L.length / 2)]) ? 'selected' : ''}>${d}m</option>`).join('');
+  };
+  dist();
+  $$('#kxVenue button').forEach(b => b.onclick = () => { KX.venue = Number(b.dataset.k); $$('#kxVenue button').forEach(x => x.classList.toggle('on', x === b)); dist(); });
+  $$('#kxSurf button').forEach(b => b.onclick = () => { KX.surface = b.dataset.k; $$('#kxSurf button').forEach(x => x.classList.toggle('on', x === b)); dist(); });
+  $('#kxGrade').onchange = () => { const g = $('#kxGrade').value; $('#kxN').value = g === 'G1' ? 18 : g === 'G2' || g === 'G3' ? 16 : g === 'L' || g === 'OP' ? 14 : 12; };
+  $('#kxGo').onclick = async () => {
+    const name = $('#kxName').value.trim(), g = $('#kxGrade').value;
+    if (!name) return toast('レース名を入れてください');
+    if (!$('#kxTime').value) return toast('発走時刻を入れてください');
+    $('#kxGo').disabled = true;
+    try {
+      const r = await call('admin_kb_extra', { p_name: name, p_day: Number($('#kxDay').value), p_time: $('#kxTime').value.slice(0, 5), p_venue: KX.venue,
+        p_surface: KX.surface, p_dist: Number($('#kxDist').value), p_grade: g.startsWith('c') ? null : g, p_cls: g.startsWith('c') ? Number(g.slice(1)) : null,
+        p_cond: $('#kxCond').value, p_handicap: $('#kxHc').checked, p_n: Number($('#kxN').value), p_rnum: Number($('#kxR').value), p_banner: $('#kxBn').checked });
+      toast(`「${name}」をつくりました（${r.n}頭・${r.weather}・馬場 ${r.going}）`); adKbLoad(); bnLoad(true);
+    } catch (e) { toast(e.message); }
+    $('#kxGo').disabled = false;
+  };
+  $$('#adKb [data-kxopen]').forEach(b => b.onclick = () => { kbView = Number(b.dataset.kxopen); go('vRace'); });
+  $$('#adKb [data-kxcancel]').forEach(b => b.onclick = async () => {
+    if (!confirm(`「${b.dataset.nm}」を取り消しますか？\n買われた馬券は全額返します。`)) return;
+    try { const r = await call('admin_kb_extra_cancel', { p_race: Number(b.dataset.kxcancel) }); toast(`取り消しました（馬券${fmt(r.refunded)}枚・${fmt(r.amount)} X を返しました）`); adKbLoad(); bnLoad(true); }
+    catch (e) { toast(e.message); }
+  });
 }
 // 管理：介入（為替・株）。国庫の X と国の CA で、国が取引所に注文を出す（すぐ合う分だけ）
 const IV = { kind: 'fx', side: 'buy', good: true, power: 2 };
@@ -4365,8 +4458,38 @@ function setBell(n) {
   b.textContent = n > 99 ? '99+' : n; b.classList.toggle('hidden', !n);
 }
 const ntLocal = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } };
+/* ---------- お知らせバナー（上部。×で閉じたものは、この端末では出さない） ---------- */
+const BN = { list: [], at: 0 };
+function bnClosed() { try { return JSON.parse(localStorage.getItem('bnClosed') || '[]'); } catch (e) { return []; } }
+function bnClose(id) {
+  const c = bnClosed().filter(x => x !== id); c.push(id);
+  try { localStorage.setItem('bnClosed', JSON.stringify(c.slice(-50))); } catch (e) {}
+  bnRender();
+}
+async function bnLoad(force) {
+  if (!entered || (!force && Date.now() - BN.at < 110000)) return;
+  BN.at = Date.now();
+  try { BN.list = await call('banner_list'); bnRender(); } catch (e) {}
+}
+function bnRender() {
+  const el = $('#bnBar'); if (!el) return;
+  const closed = bnClosed(), L = (BN.list || []).filter(b => !closed.includes(b.id));
+  el.classList.toggle('hidden', !L.length);
+  el.innerHTML = L.map(b => `<div class="bn-row ${b.kind}"><div class="wrap bn-item"><span>${{ info: '📢', warn: '⚠️', event: '🎉' }[b.kind] || '📢'}</span>
+    <span class="bn-tx ${b.link ? 'go' : ''}" data-bnlink="${esc(b.link || '')}">${esc(b.body)}</span>
+    <button class="bn-x" data-bnx="${b.id}" aria-label="閉じる" title="閉じる">×</button></div></div>`).join('');
+  $$('#bnBar [data-bnx]').forEach(x => x.onclick = () => bnClose(Number(x.dataset.bnx)));
+  $$('#bnBar [data-bnlink]').forEach(x => {
+    const lk = x.dataset.bnlink; if (!lk) return;
+    x.onclick = () => {
+      if (lk.startsWith('race:')) { kbView = Number(lk.slice(5)); go('vRace'); }
+      else if (/^https:\/\//.test(lk)) window.open(lk, '_blank', 'noopener');
+    };
+  });
+}
 async function bellPoll() {
   clearTimeout(NT.timer);
+  bnLoad();
   if (!document.hidden || ntLocal('ntPush') === '1') {
     try {
       const d = await call('notice_count'); setBell(d.unread);
@@ -4381,7 +4504,7 @@ async function bellPoll() {
   }
   NT.timer = setTimeout(bellPoll, 30000);
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden && entered) bellPoll(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && entered) { BN.at = 0; bellPoll(); } });
 // 【カテゴリ】をとった本文と、カテゴリ
 const noticeTag = b => { const m = /^【([^】]+)】/.exec(b || ''); return m ? m[1].replace(/\s*#\d+$/, '') : /届きました|入りました|返しました/.test(b) ? 'お金' : 'お知らせ'; };
 const noticeText = b => (b || '').replace(/^【[^】]+】/, '');
