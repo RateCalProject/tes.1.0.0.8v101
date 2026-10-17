@@ -2967,36 +2967,59 @@ async function adminLoad() {
   } catch (e) { toast(e.message); }
 }
 // 管理：介入（為替・株）。国庫の X と国の CA で、国が取引所に注文を出す（すぐ合う分だけ）
-const IV = { kind: 'fx', side: 'buy' };
+const IV = { kind: 'fx', side: 'buy', good: true, power: 2 };
 async function adIvLoad(v, listed) {
   const box = $('#adIv'); if (!box) return;
   if (!v) { try { v = await call('admin_iv_state'); } catch (e) { box.innerHTML = `<p class="muted small" style="margin:0">${esc(e.message)}</p>`; return; } }
   if (listed) IV.listed = listed;
-  const L = IV.listed || [], f = v.fx;
-  const SD = IV.kind === 'fx' ? { buy: 'X を買う（CA を払う・X 高へ）', sell: 'X を売る（CA を受け取る・X 安へ）' } : { buy: '買い支える', sell: '国の株を売る' };
-  box.innerHTML = `<div class="seg sm" id="ivKind" style="margin-bottom:6px"><button data-k="fx" class="${IV.kind === 'fx' ? 'on' : ''}">為替</button><button data-k="stock" class="${IV.kind === 'stock' ? 'on' : ''}">株</button></div>
-    ${IV.kind === 'fx' ? `<p class="small" style="margin:0 0 6px">${f ? `${esc(f.name)}${f.open ? '' : '（休業中）'}：1 X = <b>${f.last != null ? fmtP(f.last) : '—'}</b> CA（買い ${f.bid != null ? fmtP(f.bid) : '—'}・売り ${f.ask != null ? fmtP(f.ask) : '—'}）` : '国営の取引所がありません'}<br>国庫 ${fmt(v.x)} X・国の CA ${fmt(v.ca)} CA</p>`
-      : `<select class="inp" id="ivCid" style="margin:0 0 6px">${L.map(x => `<option value="${x.cid}" ${IV.cid === x.cid ? 'selected' : ''}>${esc(x.name)}（${x.last != null ? fmt(x.last) + ' X' : '—'}${x.base != null ? `・きょう ${fmt(x.stop_lo)}〜${fmt(x.stop_hi)}` : ''}）</option>`).join('')}</select>`}
+  const L = IV.listed || [], f = v.fx, K = IV.kind;
+  const SD = K === 'fx' ? { buy: 'X を買う（CA を払う・X 高へ）', sell: 'X を売る（CA を受け取る・X 安へ）' } : { buy: '買い支える', sell: '国の株を売る' };
+  const pick = `<select class="inp" id="ivCid" style="margin:0 0 6px">${L.map(x => `<option value="${x.cid}" ${IV.cid === x.cid ? 'selected' : ''}>${esc(x.name)}（${x.last != null ? fmt(x.last) + ' X' : '—'}${x.base != null ? `・きょう ${fmt(x.stop_lo)}〜${fmt(x.stop_hi)}` : ''}）</option>`).join('')}</select>`;
+  const KN = { fx: '為替', stock: '株', news: '新聞（うわさ）' };
+  const logRow = x => x.kind === 'news'
+    ? `<div class="line"><span class="grow">新聞「${esc(x.name || '')}」・${x.side === 'buy' ? '良いうわさ' : '悪いうわさ'}（${['', '小', '中', '大'][x.qty] || ''}）
+        <small>${x.at} ${x.time}・${esc(x.note || '')}${x.after != null ? `・目標 ${fmt(x.before)} → ${fmt(x.after)} X（1日）` : ''}</small></span></div>`
+    : `<div class="line"><span class="grow">${x.kind === 'fx' ? '為替' : '株「' + esc(x.name || '') + '」'}・${x.kind === 'fx' ? (x.side === 'buy' ? 'X 買い' : 'X 売り') : (x.side === 'buy' ? '買い支え' : '売り')}${x.announced ? '<span class="kindtag">記事</span>' : ''}
+        <small>${x.at} ${x.time}・${x.kind === 'fx' ? fmtP(x.price) + ' CA' : fmt(x.price) + ' X'} まで ${fmt(x.qty)} → ${fmt(x.filled)} 約定・${x.paid ? '払った ' + fmt(x.paid) + (x.kind === 'fx' ? ' CA' : ' X') : '受け取った ' + fmt(x.got) + (x.kind === 'fx' ? ' CA' : ' X')}・${x.before != null ? (x.kind === 'fx' ? fmtP(x.before) : fmt(x.before)) : '—'} → ${x.after != null ? (x.kind === 'fx' ? fmtP(x.after) : fmt(x.after)) : '—'}</small></span></div>`;
+  box.innerHTML = `<div class="seg sm" id="ivKind" style="margin-bottom:6px">${Object.entries(KN).map(([k, t]) => `<button data-k="${k}" class="${K === k ? 'on' : ''}">${t}</button>`).join('')}</div>
+    ${K === 'news' ? `${pick}
+      <div class="seg sm" id="ivGood" style="margin-bottom:6px"><button data-k="1" class="${IV.good ? 'on' : ''}">良いうわさ（上がる）</button><button data-k="0" class="${IV.good ? '' : 'on'}">悪いうわさ（下がる）</button></div>
+      <div class="seg sm" id="ivPow" style="margin-bottom:6px">${[1, 2, 3].map(n => `<button data-k="${n}" class="${IV.power === n ? 'on' : ''}">${['', '小', '中', '大'][n]}</button>`).join('')}</div>
+      <input class="inp" id="ivTitle" maxlength="60" placeholder="見出し（空ならひな形から）">
+      <textarea class="inp" id="ivBody" rows="3" maxlength="2000" placeholder="本文（空ならひな形から）"></textarea>
+      <button class="btn main s" id="ivGo">記事を出す</button>
+      <p class="muted small" style="margin:6px 0 0">帝都京浜新聞のふつうの記事として出ます（国が出したことはわかりません）。上場している会社なら、1日のあいだ、AIはいまの株価の ${IV.good ? '1.1倍（小）・1.25倍（中）・1.5倍（大）' : '0.9倍（小）・0.8倍（中）・0.65倍（大）'} に向けて売り買いします（値幅制限の中で）。同じ会社に新しく出すと上書きします。</p>`
+    : `${K === 'fx' ? `<p class="small" style="margin:0 0 6px">${f ? `${esc(f.name)}${f.open ? '' : '（休業中）'}：1 X = <b>${f.last != null ? fmtP(f.last) : '—'}</b> CA（買い ${f.bid != null ? fmtP(f.bid) : '—'}・売り ${f.ask != null ? fmtP(f.ask) : '—'}）` : '国営の取引所がありません'}<br>国庫 ${fmt(v.x)} X・国の CA ${fmt(v.ca)} CA</p>` : pick}
     <div class="seg sm" id="ivSide" style="margin-bottom:6px"><button data-k="buy" class="${IV.side === 'buy' ? 'on' : ''}">${SD.buy}</button><button data-k="sell" class="${IV.side === 'sell' ? 'on' : ''}">${SD.sell}</button></div>
-    <div class="row"><span class="small" style="width:6em">値段</span><input class="inp grow" id="ivPrice" type="number" inputmode="decimal" min="0" step="${IV.kind === 'fx' ? '0.0001' : '1'}" style="margin:0"><span class="small">${IV.kind === 'fx' ? 'CA（1 X）' : 'X（1株）'}</span></div>
-    <div class="row"><span class="small" style="width:6em">数量</span><input class="inp grow" id="ivQty" type="number" inputmode="numeric" min="1" step="1" style="margin:0"><span class="small">${IV.kind === 'fx' ? 'X' : '株'}</span></div>
+    <div class="row"><span class="small" style="width:6em">値段</span><input class="inp grow" id="ivPrice" type="number" inputmode="decimal" min="0" step="${K === 'fx' ? '0.0001' : '1'}" style="margin:0"><span class="small">${K === 'fx' ? 'CA（1 X）' : 'X（1株）'}</span></div>
+    <div class="row"><span class="small" style="width:6em">数量</span><input class="inp grow" id="ivQty" type="number" inputmode="numeric" min="1" step="1" style="margin:0"><span class="small">${K === 'fx' ? 'X' : '株'}</span></div>
     <label class="small" style="display:block;margin:6px 0"><input type="checkbox" id="ivNews"> 帝都京浜新聞の記事にする（額は出しません）</label>
     <button class="btn main s" id="ivGo">介入する</button>
-    <p class="muted small" style="margin:6px 0 0">${IV.kind === 'fx' ? '買い：その値段までの売り注文を、安い順に買います（国の CA を使う）。売り：その値段までの買い注文に、高い順に売ります（国庫の X を使う）。' : '買い支え：その値段までの売り注文を買います（国庫の X）。売る：国が持っている株を、その値段までの買い注文に売ります。'}すぐ合う分だけ約定し、残りは取り消します。受け取った X・CA は国庫へ。取引所の手数料はかかります。</p>
+    <p class="muted small" style="margin:6px 0 0">${K === 'fx' ? '買い：その値段までの売り注文を、安い順に買います（国の CA を使う）。売り：その値段までの買い注文に、高い順に売ります（国庫の X を使う）。' : '買い支え：その値段までの売り注文を買います（国庫の X）。売る：国が持っている株を、その値段までの買い注文に売ります。'}すぐ合う分だけ約定し、残りは取り消します。受け取った X・CA は国庫へ。取引所の手数料はかかります。</p>`}
     ${v.holds.length ? `<h4 style="margin:10px 0 2px">国が持っている株</h4>${v.holds.map(h => `<div class="line"><span class="grow">${esc(h.name)}<small>${h.price != null ? fmt(h.price) + ' X・評価 ' + fmt(h.price * h.shares) + ' X' : ''}</small></span><b class="num">${fmt(h.shares)}株</b></div>`).join('')}` : ''}
-    ${v.log.length ? `<h4 style="margin:10px 0 2px">介入の記録</h4>${v.log.slice(0, 10).map(x => `<div class="line"><span class="grow">${x.kind === 'fx' ? '為替' : '株「' + esc(x.name || '') + '」'}・${x.kind === 'fx' ? (x.side === 'buy' ? 'X 買い' : 'X 売り') : (x.side === 'buy' ? '買い支え' : '売り')}${x.announced ? '<span class="kindtag">記事</span>' : ''}
-        <small>${x.at} ${x.time}・${x.kind === 'fx' ? fmtP(x.price) + ' CA' : fmt(x.price) + ' X'} まで ${fmt(x.qty)} → ${fmt(x.filled)} 約定・${x.paid ? '払った ' + fmt(x.paid) + (x.kind === 'fx' ? ' CA' : ' X') : '受け取った ' + fmt(x.got) + (x.kind === 'fx' ? ' CA' : ' X')}・${x.before != null ? (x.kind === 'fx' ? fmtP(x.before) : fmt(x.before)) : '—'} → ${x.after != null ? (x.kind === 'fx' ? fmtP(x.after) : fmt(x.after)) : '—'}</small></span></div>`).join('')}` : ''}`;
+    ${v.log.length ? `<h4 style="margin:10px 0 2px">介入の記録</h4>${v.log.slice(0, 10).map(logRow).join('')}` : ''}`;
   box.querySelectorAll('#ivKind button').forEach(b => b.onclick = () => { IV.kind = b.dataset.k; adIvLoad(v); });
   box.querySelectorAll('#ivSide button').forEach(b => b.onclick = () => { IV.side = b.dataset.k; adIvLoad(v); });
+  box.querySelectorAll('#ivGood button').forEach(b => b.onclick = () => { IV.good = b.dataset.k === '1'; adIvLoad(v); });
+  box.querySelectorAll('#ivPow button').forEach(b => b.onclick = () => { IV.power = Number(b.dataset.k); adIvLoad(v); });
   const sel = box.querySelector('#ivCid'); if (sel) sel.onchange = () => { IV.cid = sel.value; };
+  const cname = cid => (L.find(x => x.cid === cid) || {}).name || cid;
   box.querySelector('#ivGo').onclick = async () => {
-    const p = Number($('#ivPrice').value), q = Math.floor(Number($('#ivQty').value) || 0), news = $('#ivNews').checked, cid = sel ? sel.value : null;
+    const cid = sel ? sel.value : null;
+    if (K === 'news') {
+      if (!cid) return toast('会社をえらんでください');
+      if (!confirm(`「${cname(cid)}」の${IV.good ? '良い' : '悪い'}うわさ（${['', '小', '中', '大'][IV.power]}）を、帝都京浜新聞の記事として出します。よろしいですか？`)) return;
+      try { const r = await call('admin_ai_news', { p_cid: cid, p_good: IV.good, p_power: IV.power, p_title: $('#ivTitle').value, p_body: $('#ivBody').value });
+        toast('記事を出しました'); adIvLoad(r); } catch (e) { toast(e.message); }
+      return;
+    }
+    const p = Number($('#ivPrice').value), q = Math.floor(Number($('#ivQty').value) || 0), news = $('#ivNews').checked;
     if (!(p > 0) || q < 1) return toast('値段と数量を入れてください');
-    if (IV.kind === 'stock' && !cid) return toast('会社をえらんでください');
-    const what = IV.kind === 'fx' ? `為替：${IV.side === 'buy' ? 'X を買う' : 'X を売る'}（1 X = ${fmtP(p)} CA まで・${fmt(q)} X）` : `株「${(L.find(x => x.cid === cid) || {}).name || cid}」：${IV.side === 'buy' ? '買い支え' : '売り'}（1株 ${fmt(p)} X まで・${fmt(q)}株）`;
+    if (K === 'stock' && !cid) return toast('会社をえらんでください');
+    const what = K === 'fx' ? `為替：${IV.side === 'buy' ? 'X を買う' : 'X を売る'}（1 X = ${fmtP(p)} CA まで・${fmt(q)} X）` : `株「${cname(cid)}」：${IV.side === 'buy' ? '買い支え' : '売り'}（1株 ${fmt(p)} X まで・${fmt(q)}株）`;
     if (!confirm(`${what}\n${news ? '記事にします。' : '記事にはしません。'}介入しますか？`)) return;
-    try { const r = await call('admin_intervene', { p_kind: IV.kind, p_cid: cid, p_side: IV.side, p_price: p, p_qty: q, p_announce: news });
-      toast(`${fmt(r.result.filled)} ${IV.kind === 'fx' ? 'X' : '株'} 約定しました`); adIvLoad(r); } catch (e) { toast(e.message); }
+    try { const r = await call('admin_intervene', { p_kind: K, p_cid: cid, p_side: IV.side, p_price: p, p_qty: q, p_announce: news });
+      toast(`${fmt(r.result.filled)} ${K === 'fx' ? 'X' : '株'} 約定しました`); adIvLoad(r); } catch (e) { toast(e.message); }
   };
 }
 // 管理：AI会社（お金のことは管理者だけ）
