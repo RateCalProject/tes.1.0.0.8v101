@@ -9329,7 +9329,7 @@ begin
   update ai_corps set biz_day = d, ema_profit = ema_profit * 0.85 + prof * 0.15,
          mood = greatest(0.5, least(2.0, 1 + (mood - 1) * 0.95 + 0.01 * _randn()))
    where company_id = co;
-  if c.status = 'active' and random() < 0.15 then perform _ai_event(co); end if;
+  if c.status = 'active' and random() < 0.3 then perform _ai_event(co); end if;
 end $$;
 
 -- 1週間の決算と配当（wk：その週の月曜）
@@ -9510,7 +9510,7 @@ begin
   tg := case st when 'inv1' then fv
                 when 'inv2' then lastp * (1 + 2 * ret)
                 when 'inv3' then lastp * (1 - 1.5 * ret)
-                else lastp * exp(0.04 * _randn()) end;
+                else lastp * exp(0.06 * _randn()) end;
   if lastp <= 0 or abs(tg - lastp) / lastp < (case st when 'inv1' then 0.02 else 0.005 end) then return 0; end if;
   sd := case when tg > lastp then 'buy' else 'sell' end;
   cash := (select balance from profiles where id = u);
@@ -9551,7 +9551,7 @@ begin
   if a.company_id is not null then
     fv := _ai_fair(c.id);
     ref := coalesce(lastp, a.ipo_price)::numeric;
-    ref := ref * power(fv / ref, 0.05) * exp(0.008 * _randn());   -- 少しずつ値打ちに近づく（少しゆれる）
+    ref := ref * power(fv / ref, 0.05) * exp(0.015 * _randn());   -- 少しずつ値打ちに近づく（ゆれながら）
     mm := case when a.role = 'trade' then _ai_uid('founder') else k end;   -- 神楽坂通商事の株は創業家が板に出す
   else
     -- プレイヤーの会社の株：この30日に売り買いした人（AIのぞく）が3人以上のときだけ。値段は最近10回の真ん中
@@ -9607,7 +9607,7 @@ begin
   -- AI投資家（AI会社の株だけ）
   if a.company_id is not null then
     for r in select p.id, p.ai from profiles p where p.ai like 'inv%' order by p.id loop
-      if random() < 0.22 then perform _ai_invest(r.id, r.ai, c.id, ref, fv, bd.lo, bd.hi); end if;
+      if random() < 0.5 then perform _ai_invest(r.id, r.ai, c.id, ref, fv, bd.lo, bd.hi); end if;
     end loop;
   end if;
   return 'market ' || c.cid;
@@ -9816,20 +9816,25 @@ begin
   exception when others then
     perform _ai_err('速報', sqlerrm);
   end;
-  -- 6) 市場（上場している株を1つずつ順番に）
-  nx := (select c.id from companies c where c.listed and c.status = 'active' and c.id > coalesce((select value::int from app_settings where key = 'ai_next'), 0) order by c.id limit 1);
-  if nx is null then nx := (select c.id from companies c where c.listed and c.status = 'active' order by c.id limit 1); end if;
-  if nx is null then return 'idle'; end if;
-  insert into app_settings values ('ai_next', nx::text) on conflict (key) do update set value = excluded.value;
-  begin
-    return _ai_market(nx);
-  exception
-  when deadlock_detected or serialization_failure or lock_not_available then
-    perform _ai_err('市場（次の順番でやりなおし）', sqlerrm); return 'retry';
-  when others then
-    perform _ai_err('市場', sqlerrm);
-    return 'market error';
-  end;
+  -- 6) 市場（上場している株を、毎分ぜんぶ回る。多いときは10社ずつ順番に）
+  r := '';
+  for nx in select z.id from (
+      (select c.id from companies c where c.listed and c.status = 'active' and c.id > coalesce((select value::int from app_settings where key = 'ai_next'), 0) order by c.id limit 10)
+      union all
+      (select c.id from companies c where c.listed and c.status = 'active' order by c.id limit 10)) z limit 10 loop
+    exit when r like '%% ' || nx || ' %%' or r like '%% ' || nx;
+    insert into app_settings values ('ai_next', nx::text) on conflict (key) do update set value = excluded.value;
+    begin
+      r := r || ' ' || _ai_market(nx);
+    exception
+    when deadlock_detected or serialization_failure or lock_not_available then
+      perform _ai_err('市場（次の分にやりなおし）', sqlerrm); r := r || ' retry';
+    when others then
+      perform _ai_err('市場', sqlerrm); r := r || ' error';
+    end;
+  end loop;
+  if r = '' then return 'idle'; end if;
+  return 'market' || r;
 end $$;
 
 -- 管理：AI会社のようす（お金は管理者だけ）
