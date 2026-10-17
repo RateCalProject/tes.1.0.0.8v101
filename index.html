@@ -618,7 +618,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 
 <!-- 対戦ゲーム：ロビー -->
 <section id="vLobby" class="view hidden">
-  <div class="card"><div class="row"><button class="btn s" id="lbBack">‹ 一覧</button><h3 style="margin:0 0 0 6px" id="lbTitle">リバーシ</h3></div>
+  <div class="card"><div class="row"><button class="btn s" id="lbBack">‹ 一覧</button><h3 style="margin:0 0 0 6px" id="lbTitle">オセロ</h3></div>
     <details class="ed howto" style="margin-top:8px"><summary>遊び方（はじめての人へ）</summary><div id="lbHow"></div></details></div>
   <div class="card">
     <h3 style="margin-top:0">部屋を作る</h3>
@@ -1141,13 +1141,13 @@ const GAME_LIST = [
   ['vBj', '♠', 'ブラックジャック', 'カードの合計を21に近づけて、ディーラーと勝負'],
   ['vRou', '◎', 'ルーレット', '数字や色に賭けて、玉の止まる場所を当てる'],
   ['vHilo', '↕', 'ハイ＆ロー', '次のカードが上か下か。当てるたびに倍率アップ、好きなときに受け取れる'],
-  ['reversi', '◐', 'リバーシ', 'ふたりで対戦。相手の石をはさんでひっくり返す。観戦して、勝つ人に賭けることもできる'],
+  ['reversi', '◐', 'オセロ', 'ふたりで対戦。相手の石をはさんでひっくり返す。観戦して、勝つ人に賭けることもできる'],
   ['chess', '♞', 'チェス', 'ふたりで対戦。相手のキングをチェックメイトしたら勝ち。観戦して賭けることもできる'],
   ['shogi', '☗', '将棋', 'ふたりで対戦。とった駒を自分の駒として使える。観戦して賭けることもできる'],
   ['onecard', '🃏', 'ワンカード', '2〜4人。色か数字を合わせてカードを出し、先に出しきった人の勝ち。コンピューターも入れられる'],
   ['mahjong', '🀄', '麻雀', '4人で打つリーチ麻雀。人が足りないときはコンピューターが入る（東風戦・半荘戦）'],
 ];
-const BOARD_GAMES = { reversi: 'リバーシ', chess: 'チェス', shogi: '将棋', onecard: 'ワンカード', mahjong: '麻雀' };
+const BOARD_GAMES = { reversi: 'オセロ', chess: 'チェス', shogi: '将棋', onecard: 'ワンカード', mahjong: '麻雀' };
 const MULTI_GAMES = { onecard: true, mahjong: true };
 $('#gameList').innerHTML = GAME_LIST.filter(g => g[0] !== 'vRace' || RACE_ON).map(g => {
   const soon = g[3] === '準備中' || g[3].startsWith('準備中（');
