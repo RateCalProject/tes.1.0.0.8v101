@@ -8964,6 +8964,7 @@ drop function if exists public.admin_stock_decide(text, boolean, text);
 create or replace function public.admin_stock_decide(p_cid text, p_ok boolean, p_reason text, p_price bigint default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); c companies; a stock_list_apps; why text := nullif(left(btrim(coalesce(p_reason, '')), 300), '');
+  n5 bigint; ai_n bigint; have bigint; ais uuid[]; k int; each bigint; gv bigint;
 begin
   if not _is_staff(u) then raise exception '管理者だけが使えます'; end if;
   select * into c from companies where cid = _cid_norm(p_cid) for update;
@@ -8974,10 +8975,32 @@ begin
   if p_ok then
     if c.status <> 'active' or c.form <> '株式会社' or c.official then raise exception 'この会社はいま上場できません（休業中など）'; end if;
     if p_price is null or p_price < 1 or p_price > 1000000000 then raise exception '公開価格（1株の値段）を1〜10億 X で決めてください'; end if;
+    -- 社長の持ち株から発行株数の5%を国へ。そのうち半分は、AIトレーダー（神楽坂通商事・AI投資家）に同じ数ずつ配る
+    n5 := floor(c.shares * 0.05)::bigint;
+    if n5 > 0 then
+      select shares into have from corp_holders where company_id = c.id and user_id = c.owner for update;
+      if coalesce(have, 0) < n5 then
+        raise exception '上場するには、社長が発行株数の5%%（%株）以上を持っている必要があります（いま %株）', _fmt(n5), _fmt(coalesce(have, 0));
+      end if;
+      update corp_holders set shares = shares - n5 where company_id = c.id and user_id = c.owner;
+      delete from corp_holders where company_id = c.id and user_id = c.owner and shares <= 0;
+      select array_agg(id order by (ai = 'kagura') desc, ai) into ais from profiles where ai = 'kagura' or ai like 'inv%';
+      ai_n := case when ais is null then 0 else n5 / 2 end;
+      if ai_n > 0 then
+        k := array_length(ais, 1); each := ai_n / k;
+        for i in 1..k loop
+          gv := each + (case when i = 1 then ai_n % k else 0 end);          -- あまりは神楽坂通商事
+          if gv > 0 then perform _add_shares(c.id, ais[i], gv); end if;
+        end loop;
+      end if;
+      gv := n5 - ai_n;
+      if gv > 0 then perform _add_shares(c.id, _gov_uid(), gv); end if;
+    end if;
     update companies set listed = true, listed_at = _now(), ipo_price = p_price where id = c.id;
     update stock_list_apps set status = 'approved', reason = why, decided_by = u, decided_at = _now() where id = a.id;
-    perform _notice_l(c.owner, format('【上場】「%s」が風の芽証券取引所に上場しました。公開価格は1株 %s X で、きょうはこの値段を基準に値幅制限（%s〜%s X）がかかります。株は「企業 → 取引所」で売り買いできます。%s',
+    perform _notice_l(c.owner, format('【上場】「%s」が風の芽証券取引所に上場しました。公開価格は1株 %s X で、きょうはこの値段を基準に値幅制限（%s〜%s X）がかかります。株は「企業 → 取引所」で売り買いできます。%s%s',
                       c.name, _fmt(p_price), _fmt(greatest(p_price - _stock_width_x(p_price), 1)), _fmt(p_price + _stock_width_x(p_price)),
+                      case when coalesce(n5, 0) > 0 then format('上場にあたり、社長の持ち株から発行株数の5%%（%s株）を国に渡しました（そのうち%s株はAIトレーダーへ）。', _fmt(n5), _fmt(ai_n)) else '' end,
                       coalesce('（' || why || '）', '')), jsonb_build_object('go', 'stock', 'cid', c.cid), u);
   else
     update stock_list_apps set status = 'rejected', reason = why, decided_by = u, decided_at = _now() where id = a.id;
@@ -9108,7 +9131,7 @@ end $$;
 alter table public.treasury add column if not exists ai_out bigint not null default 0;   -- 国庫からAIに出したお金（元手・足した分）
 create table if not exists public.ai_corps (
   company_id int primary key references public.companies(id) on delete cascade,
-  role       text not null check (role in ('trade', 'news')),
+  role       text not null,
   ipo_price  bigint not null,                  -- 公開価格
   rev_base   numeric not null,                 -- 1日の売上の目安（外の客から）
   margin     numeric not null,                 -- 利益率の目安
@@ -9134,6 +9157,9 @@ create table if not exists public.ai_news_log (  -- 同じ記事を2回出さな
   at   timestamptz not null default now(),
   primary key (kind, key)
 );
+alter table public.ai_corps drop constraint if exists ai_corps_role_check;
+alter table public.ai_corps add constraint ai_corps_role_check check (role in ('trade', 'news', 'biz'));
+alter table public.ai_corps add column if not exists events jsonb;   -- 出来事の見出しと本文（{name} 会社名・{ceo} 社長）。good / bad
 alter table public.ai_corps enable row level security;
 alter table public.ai_days enable row level security;
 alter table public.ai_news_log enable row level security;
@@ -9293,7 +9319,7 @@ end $$;
 create or replace function public._ai_event(co int) returns void
 language plpgsql set search_path = public as $$
 declare a ai_corps; c companies; good boolean := random() < 0.55; sh numeric := 0.03 + random() * 0.06; i int := 1 + floor(random() * 3)::int;
-  ceo text; t text; b text;
+  ceo text; t text; b text; ek text; ev jsonb;
 begin
   select * into a from ai_corps where company_id = co;
   select * into c from companies where id = co;
@@ -9326,6 +9352,11 @@ begin
         format('印刷所の点検のため、本紙（%s）の一部の配達が遅れる。', c.name),
         format('本紙（%s）は、きのうの記事の一部に誤りがあったとして、おわびを出した。社長の%s氏は「確かめるしくみを強める」と話した。', c.name, ceo)])[i];
     end if;
+  end if;
+  ek := case when good then 'good' else 'bad' end;               -- 会社ごとの出来事の文があれば、そちらを使う
+  if a.events is not null and jsonb_array_length(coalesce(a.events->ek, '[]'::jsonb)) > 0 then
+    ev := (a.events->ek)->(floor(random() * jsonb_array_length(a.events->ek))::int);
+    t := ev->>0; b := replace(replace(ev->>1, '{name}', c.name), '{ceo}', ceo);
   end if;
   update ai_corps set mood = greatest(0.5, least(2.0, mood * (1 + case when good then sh else -sh end))) where company_id = co;
   perform _ai_article(format('【企業】%s、%s', c.name, t), b, '経済部');
@@ -9761,6 +9792,38 @@ language sql set search_path = public as $$
   insert into app_settings values ('ai_error', to_char(_now() at time zone 'Asia/Tokyo', 'FMMM/FMDD HH24:MI') || ' ' || k || '：' || left(coalesce(msg, ''), 300))
   on conflict (key) do update set value = excluded.value
 $$;
+
+-- AIの事業会社をつくって上場する（創業家が全部の株を持ち、公開価格で売り出す。神楽坂通商事とAI投資家が買う）
+--   p_staff：[[役職, 役割(ceo/staff…), 部署], …]　p_events：{"good": [[見出し, 本文], …], "bad": […]}
+create or replace function public._ai_found(p_name text, p_desc text, p_inds text[], p_ipo bigint, p_shares bigint, p_rev numeric, p_margin numeric,
+  p_trend numeric, p_per numeric, p_payout numeric, p_sell bigint, p_kagura bigint, p_staff jsonb, p_events jsonb) returns text
+language plpgsql set search_path = public as $$
+declare f uuid := _ai_uid('founder'); k uuid := _ai_uid('kagura'); co int; c companies; d date := _kb_jday(_now());
+  mon date := _kb_jday(_now()) - (extract(isodow from _kb_jday(_now()))::int - 1); x jsonb; r record;
+begin
+  if not exists (select 1 from app_settings where key = 'ai_setup') then raise exception 'AI会社がまだ始まっていません'; end if;
+  if exists (select 1 from companies where name = p_name and status not in ('rejected', 'closed', 'bankrupt')) then raise exception '同じ名前の会社がもうあります'; end if;
+  insert into companies(cid, owner, name, kind, form, description, status, balance, created_at, decided_at, industries, desk_on, listed, listed_at, shares, ai, ipo_price)
+  values (_new_ccode(), f, p_name, '一般', '株式会社', p_desc, 'active', 0, _now(), _now(), p_inds, false, true, _now(), p_shares, true, p_ipo)
+  returning id into co;
+  select * into c from companies where id = co;
+  insert into corp_holders(company_id, user_id, shares) values (co, f, p_shares);
+  insert into ai_corps(company_id, role, ipo_price, rev_base, margin, trend, per, payout, ema_profit, started, biz_day, week_done, events)
+  values (co, 'biz', p_ipo, p_rev, p_margin, p_trend, p_per, p_payout, p_rev * p_margin, d, d - 1, mon, p_events);
+  for x in select * from jsonb_array_elements(p_staff) loop perform _ai_hire(co, x->>0, x->>1, x->>2); end loop;
+  -- 売り出し（公開価格）
+  perform pg_advisory_xact_lock(7400, co);
+  perform _stock_exec(f, co, 'sell', p_ipo, p_sell, false);
+  begin perform _stock_exec(k, co, 'buy', p_ipo, p_kagura, false); exception when others then null; end;
+  for r in select id from profiles where ai like 'inv%' order by id loop
+    begin perform _stock_exec(r.id, co, 'buy', p_ipo, greatest(1, least(100, (p_sell - p_kagura) / 20)), false); exception when others then null; end;
+  end loop;
+  insert into ai_news_log(kind, key, at) values ('listing', c.cid || ':' || to_char(c.listed_at, 'YYYYMMDDHH24MISS'), _now()) on conflict do nothing;
+  perform _ai_article(format('【新規上場】AIの新会社「%s」が設立、きょう上場', p_name),
+    format('AIが運営する新しい会社「%s」が設立され、きょう風の芽証券取引所に上場した。%s公開価格は %s X、発行株数は %s株で、創業家（AI）が %s株を売り出した。社長の%s氏は「みなさんに愛される会社にしたい」と話した。',
+           p_name, coalesce(nullif(p_desc, '') || '。', ''), _fmt(p_ipo), _fmt(p_shares), _fmt(p_sell), coalesce(_ai_ceo(co), '')), '経済部');
+  return c.cid;
+end $$;
 
 -- 毎分（pg_cron）：1回に1つの仕事だけ
 create or replace function public._ai_tick() returns text
@@ -10212,7 +10275,7 @@ begin
             '_stock_width','_jday_start','_stock_base','_stock_band','_stock_day','_tnow','info_today','_stock_exec',
             '_ai_uid','_randn','_ai_name','_ai_account','_ai_fund','_ai_hire','_ai_ceo','_ai_stock_value','_ai_fair','_ai_article','_ai_event',
             '_ai_business','_ai_settle_week','_ai_news_morning','_ai_news_items','_ai_news_flash','_ai_invest','_ai_market','_ai_market_cancel',
-            '_ai_setup','_ai_add_investors','_ai_tick','_fx_exec','_stock_width_x','_ai_buzz_target','_ai_fair_p','admin_ai_news','_gov_uid','_gov_sweep','_fx_last','admin_iv_state','admin_intervene','_ai_err','admin_ai','admin_ai_set','admin_ai_fund',
+            '_ai_setup','_ai_add_investors','_ai_tick','_fx_exec','_stock_width_x','_ai_buzz_target','_ai_fair_p','_ai_found','admin_ai_news','_gov_uid','_gov_sweep','_fx_last','admin_iv_state','admin_intervene','_ai_err','admin_ai','admin_ai_set','admin_ai_fund',
             'stock_order','stock_cancel','stock_list_apply','stock_list_withdraw','admin_stock_decide','admin_stock_delist','_unlock_orders',
             'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse') loop
     execute format('revoke all on function %s from public, anon', f.sig);

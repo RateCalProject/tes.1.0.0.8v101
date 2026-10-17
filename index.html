@@ -2608,7 +2608,7 @@ function ownSections(c) {
       ${la.note ? `<p class="small muted" style="white-space:pre-wrap;margin:0 0 6px">${esc(la.note)}</p>` : ''}
       <button class="btn s" data-act="list_withdraw">申請を取り下げる</button>` : `
       ${la.status === 'rejected' ? `<p class="small" style="margin:0 0 6px">前回の申請（${la.at}）は見送りになりました。${la.reason ? '理由：' + esc(la.reason) : ''}</p>` : ''}
-      <p class="small" style="margin:0 0 6px">上場すると、会社の株を風の芽証券取引所でだれでも売り買いできるようになります（1株あたりの値段は X・手数料は取引所の手数料）。上場のときの値段（公開価格）は、審査で管理者が決めます。上場した日は公開価格を基準に値幅制限がかかります。上場中は発行株数を変えられません。</p>
+      <p class="small" style="margin:0 0 6px">上場すると、会社の株を風の芽証券取引所でだれでも売り買いできるようになります（1株あたりの値段は X・手数料は取引所の手数料）。上場のときの値段（公開価格）は、審査で管理者が決めます。上場した日は公開価格を基準に値幅制限がかかります。上場すると、社長の持ち株から発行株数の5%を国に渡します（半分はAIトレーダーへ）。社長が5%以上を持っていないと上場できません。上場中は発行株数を変えられません。</p>
       <textarea class="inp" rows="3" data-f="list_note" maxlength="500" placeholder="上場したい理由・会社の紹介（審査する人が読みます）"></textarea>
       <button class="btn main s" data-act="list_apply">上場を申請する</button>`]);
   }
@@ -2946,7 +2946,7 @@ async function adminLoad() {
         price = Math.floor(Number(String(v).replace(/[,，\s]/g, '')) || 0); if (price < 1) return toast('公開価格を1 X 以上で入れてください');
       }
       const why = prompt(ok ? '社長へのひとこと（なくてもOK）' : '見送る理由（社長に届きます）', ''); if (why === null) return;
-      if (ok && !confirm(`公開価格 ${fmt(price)} X で上場を許可します。よろしいですか？`)) return;
+      if (ok && !confirm(`公開価格 ${fmt(price)} X で上場を許可します。社長の持ち株から発行株数の5%を国に渡します（半分はAIトレーダーへ）。よろしいですか？`)) return;
       try { await call('admin_stock_decide', { p_cid: cid, p_ok: ok, p_reason: why, p_price: price }); toast(ok ? '上場を許可しました' : '見送りました'); adminLoad(); } catch (e) { toast(e.message); }
     });
     $$('#adminBox [data-delist]').forEach(b => b.onclick = async () => {
@@ -3026,7 +3026,7 @@ async function adIvLoad(v, listed) {
 async function adAiLoad(a) {
   const box = $('#adAi'); if (!box) return;
   if (!a) { try { a = await call('admin_ai'); } catch (e) { box.innerHTML = `<p class="muted small" style="margin:0">${esc(e.message)}</p>`; return; } }
-  const RL = { trade: '商社・株の売り買い', news: '新聞社・記事' };
+  const RL = { trade: '商社・株の売り買い', news: '新聞社・記事', biz: '事業会社' };
   box.innerHTML = `<div class="kv"><span>ようす</span><b>${!a.setup ? 'まだ始めていません' : a.on ? '<span class="up">動いています</span>' : '<span class="down">止めています</span>'}</b>
       <span class="muted">最後に動いた時刻</span><b>${a.last || '—'}</b>
       <span class="muted">1分ごとの自動実行</span><b>${a.cron ? 'あり' : '<span class="down">なし（自動では動きません）</span>'}</b>
