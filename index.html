@@ -1226,10 +1226,11 @@ function kbRenderList() {
   }
   let last = null;
   for (const r of rs) {
-    const key = r.sess != null ? 's' + r.sess : r.venue + (r.no === 29 ? 'main' : '');
+    const ex = r.no >= 60;   // 臨時のレース
+    const key = ex ? 'x' + r.no : r.sess != null ? 's' + r.sess : r.venue + (r.no === 29 ? 'main' : '');
     if (key !== last) {
       last = key;
-      h += `<div class="kb-sess">${hhmm(r.post_ms)}〜 ${r.venue}競馬場${r.no === 29 ? '<span>メインレース</span>' : r.part === 'night' ? '<span class="night">🌙 深夜競馬</span>' : r.part === 'noon' ? '<span class="noon">☀ 昼競馬</span>' : ''}</div>`;
+      h += `<div class="kb-sess">${hhmm(r.post_ms)}〜 ${r.venue}競馬場${ex ? '<span>🏆 臨時競馬</span>' : r.no === 29 ? '<span>メインレース</span>' : r.part === 'night' ? '<span class="night">🌙 深夜競馬</span>' : r.part === 'noon' ? '<span class="noon">☀ 昼競馬</span>' : ''}</div>`;
     }
     const s = kbStatus(r);
     const chip = s === 'final' && r.winner
