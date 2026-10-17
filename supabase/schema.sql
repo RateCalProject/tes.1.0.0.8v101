@@ -253,6 +253,24 @@ begin
     insert into public.app_settings values ('ok7_migrated', now()::text);
   end if;
 end $$;
+-- 新しく登録した人は、すぐ全部使える（ok7_at を登録の時刻に）。app_settings の wait7 が 1 なら、今までどおり7日待つ
+create or replace function public._ok7_ins() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if new.ok7_at is null and coalesce((select value from app_settings where key = 'wait7'), '0') <> '1' then
+    new.ok7_at := least(coalesce(new.created_at, now()), _now());
+  end if;
+  return new;
+end $$;
+drop trigger if exists profiles_ok7 on public.profiles;
+create trigger profiles_ok7 before insert on public.profiles for each row execute function public._ok7_ins();
+do $$
+begin
+  if coalesce((select value from public.app_settings where key = 'wait7'), '0') <> '1' then
+    update public.profiles set ok7_at = least(created_at, now()) where ok7_at is null or ok7_at > now();
+  end if;
+end $$;
+
 create or replace function public._ok7(u uuid) returns timestamptz
 language sql stable set search_path = public as $$
   select coalesce(ok7_at, created_at + interval '7 days') from profiles where id = u
@@ -283,6 +301,8 @@ alter table public.companies add column if not exists form text not null default
 alter table public.companies add column if not exists ai boolean not null default false;
 -- 公開価格（上場のとき管理者が決める1株の値段。上場した日の基準値段。取引がまだなければ株価のかわり）
 alter table public.companies add column if not exists ipo_price bigint;
+-- 株価の起点（上場・株価の決めなおしの時刻）。これより前の取引は、いまの株価・値幅に使わない（null なら上場の時刻）
+alter table public.companies add column if not exists price_from timestamptz;
 create table if not exists public.ai_staff (
   id         bigserial primary key,
   company_id int not null references public.companies(id) on delete cascade,
@@ -2497,6 +2517,16 @@ create table if not exists public.stock_trades (
   fee_sell   bigint not null default 0,
   created_at timestamptz not null default now()
 );
+-- 株価：いまの起点（上場・決めなおし）からの最後の取引の値段。まだなければ公開価格。上場していなければ最後の取引
+create or replace function public._stock_last(cid_int int) returns bigint
+language sql stable set search_path = public as $$
+  select coalesce(
+    (select t.price from stock_trades t where t.company_id = c.id and t.created_at >= coalesce(c.price_from, c.listed_at, '-infinity'::timestamptz) order by t.id desc limit 1),
+    case when c.listed then c.ipo_price end,
+    (select t.price from stock_trades t where t.company_id = c.id order by t.id desc limit 1))
+  from companies c where c.id = cid_int
+$$;
+
 create table if not exists public.stock_list_apps (
   id         bigserial primary key,
   company_id int  not null references public.companies(id) on delete cascade,
@@ -2559,7 +2589,7 @@ language sql stable set search_path = public as $$
     'desk_on', c.desk_on and c.status in ('active', 'suspended'),
     'desk_note', case when c.status in ('active', 'suspended') then c.desk_note else '' end,
     'listed', c.listed and c.status in ('active', 'suspended'),
-    'price', case when c.listed then coalesce((select price from stock_trades where company_id = c.id order by id desc limit 1), c.ipo_price) end,
+    'price', case when c.listed then _stock_last(c.id) end,
     'mine', c.owner = u)
 $$;
 
@@ -2776,7 +2806,7 @@ begin
       'cert_until', case when c.status = 'active' and c.cert_until > _now() then _dlabel(c.cert_until) end,
       'industries', c.industries, 'servers', c.servers, 'desk_on', c.desk_on, 'desk_note', c.desk_note,
       'listed', c.listed, 'listed_at', _dlabel(c.listed_at),
-      'price', case when c.listed then coalesce((select price from stock_trades t where t.company_id = c.id order by t.id desc limit 1), c.ipo_price) end,
+      'price', case when c.listed then _stock_last(c.id) end,
       'list_app', (select jsonb_build_object('status', a.status, 'reason', a.reason, 'note', a.note, 'at', _dlabel(a.created_at))
                      from stock_list_apps a where a.company_id = c.id order by a.id desc limit 1),
       'desk_unread', _desk_unread(c.id), 'desk_open', (select count(*) from desk_threads t where t.company_id = c.id and t.status = 'open'),
@@ -3430,7 +3460,7 @@ begin
   return jsonb_build_object('stocks', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'form', c.form, 'status', c.status,
            'shares', coalesce(h.shares, 0), 'total', c.shares, 'pct', round((coalesce(h.shares, 0) + h.on_sale) * 100.0 / greatest(c.shares, 1), 2),
            'on_sale', h.on_sale, 'listed', c.listed,
-           'price', case when c.listed then coalesce((select price from stock_trades t where t.company_id = c.id order by t.id desc limit 1), c.ipo_price) end,
+           'price', case when c.listed then _stock_last(c.id) end,
            'owner', case when c.ai then _ai_ceo(c.id) else (select nickname from profiles where id = c.owner) end, 'mine', c.owner = u, 'ai', c.ai,
            'dividend_total', (select coalesce(sum(payout), 0) from tx_log where user_id = u and game = 'dividend' and detail->>'company_id' = c.id::text))
            order by c.name), '[]'::jsonb)
@@ -8651,9 +8681,9 @@ language sql stable set search_path = public as $$
   select coalesce(
     (select t.price from stock_trades t
       where t.company_id = cid_int and t.created_at < _jday_start(d)
-        and t.created_at >= coalesce((select c.listed_at from companies c where c.id = cid_int and c.listed_at < _jday_start(d + 1)), '-infinity'::timestamptz)
+        and t.created_at >= coalesce((select coalesce(c.price_from, c.listed_at) from companies c where c.id = cid_int and coalesce(c.price_from, c.listed_at) < _jday_start(d + 1)), '-infinity'::timestamptz)
       order by t.created_at desc, t.id desc limit 1),
-    (select c.ipo_price from companies c where c.id = cid_int and c.listed and c.listed_at < _jday_start(d + 1)))   -- 上場した日は公開価格
+    (select c.ipo_price from companies c where c.id = cid_int and c.listed and coalesce(c.price_from, c.listed_at) < _jday_start(d + 1)))   -- 上場した日（決めなおした日）は公開価格
 $$;
 
 -- 実際の値幅：東証の表の何倍か（app_settings の stock_band_x。ないときは4倍）
@@ -8680,9 +8710,11 @@ $$;
 --   stop：終値がストップ高（high）・ストップ安（low）。touched：一時ストップ高・安になった（high / low / both）
 create or replace function public._stock_day(cid_int int, d date) returns jsonb
 language plpgsql stable set search_path = public as $$
-declare bd record; t0 timestamptz := _jday_start(d); t1 timestamptz := _jday_start(d + 1); t record; op bigint; cl bigint;
+declare bd record; t0 timestamptz := _jday_start(d); t1 timestamptz := _jday_start(d + 1); t record; op bigint; cl bigint; pf timestamptz;
 begin
   select * into bd from _stock_band(cid_int, d);
+  pf := (select coalesce(price_from, listed_at) from companies where id = cid_int);
+  if pf >= t0 and pf < t1 then t0 := pf; end if;          -- その日に上場・決めなおしがあれば、そこから
   select max(price) hp, min(price) lp, coalesce(sum(qty), 0)::bigint vol, coalesce(sum(value), 0)::bigint val, count(*) n into t
     from stock_trades where company_id = cid_int and created_at >= t0 and created_at < t1;
   if t.n > 0 then
@@ -8705,7 +8737,7 @@ language plpgsql stable set search_path = public as $$
 declare dy jsonb := _stock_day(cid_int, _kb_jday(_now())); lo bigint := (dy->>'stop_lo')::bigint; hi bigint := (dy->>'stop_hi')::bigint;
 begin
   return dy || jsonb_build_object(
-    'last', coalesce((select price from stock_trades where company_id = cid_int order by id desc limit 1), (select ipo_price from companies where id = cid_int and listed)),
+    'last', _stock_last(cid_int),
     'bid', (select case when count(*) > 0 then least(max(price), hi) end from stock_orders where company_id = cid_int and side = 'buy' and status = 'open'),
     'ask', (select case when count(*) > 0 then greatest(min(price), lo) end from stock_orders where company_id = cid_int and side = 'sell' and status = 'open'),
     'bids', (select coalesce(jsonb_agg(jsonb_build_object('price', p, 'qty', q) order by p desc), '[]'::jsonb) from (
@@ -8713,9 +8745,11 @@ begin
     'asks', (select coalesce(jsonb_agg(jsonb_build_object('price', p, 'qty', q) order by p), '[]'::jsonb) from (
               select greatest(price, lo) p, sum(remain) q from stock_orders where company_id = cid_int and side = 'sell' and status = 'open' group by 1 order by 1 limit 8) z),
     'trades', (select coalesce(jsonb_agg(jsonb_build_object('price', price, 'qty', qty, 'ts', _kb_ms(created_at)) order by id desc), '[]'::jsonb) from (
-              select * from stock_trades where company_id = cid_int order by id desc limit 20) z),
+              select * from stock_trades where company_id = cid_int
+                 and created_at >= coalesce((select coalesce(price_from, listed_at) from companies where id = cid_int), '-infinity'::timestamptz) order by id desc limit 20) z),
     'chart', (select coalesce(jsonb_agg(jsonb_build_object('price', price, 'ts', _kb_ms(created_at)) order by id), '[]'::jsonb) from (
-              select * from stock_trades where company_id = cid_int order by id desc limit 100) z),
+              select * from stock_trades where company_id = cid_int
+                 and created_at >= coalesce((select coalesce(price_from, listed_at) from companies where id = cid_int), '-infinity'::timestamptz) order by id desc limit 100) z),
     'shares', (select shares from companies where id = cid_int));
 end $$;
 
@@ -8724,9 +8758,9 @@ create or replace function public._stock_list() returns jsonb
 language sql stable set search_path = public as $$
   select coalesce(jsonb_agg(j order by (j->>'value')::bigint desc, j->>'name'), '[]'::jsonb) from (
     select _stock_day(c.id, _kb_jday(_now())) || jsonb_build_object('cid', c.cid, 'name', c.name, 'status', c.status, 'shares', c.shares,
-             'listed_at', _dlabel(c.listed_at), 'last', coalesce(l.p, c.ipo_price), 'cap', coalesce(l.p, c.ipo_price) * c.shares, 'ai', c.ai) j
+             'listed_at', _dlabel(c.listed_at), 'last', l.p, 'cap', l.p * c.shares, 'ai', c.ai) j
       from companies c
-      left join lateral (select price p from stock_trades where company_id = c.id order by id desc limit 1) l on true
+      cross join lateral (select _stock_last(c.id) p) l
      where c.listed and c.status in ('active', 'suspended') offset 0) z
 $$;
 
@@ -8996,7 +9030,7 @@ begin
       gv := n5 - ai_n;
       if gv > 0 then perform _add_shares(c.id, _gov_uid(), gv); end if;
     end if;
-    update companies set listed = true, listed_at = _now(), ipo_price = p_price where id = c.id;
+    update companies set listed = true, listed_at = _now(), price_from = _now(), ipo_price = p_price where id = c.id;
     update stock_list_apps set status = 'approved', reason = why, decided_by = u, decided_at = _now() where id = a.id;
     perform _notice_l(c.owner, format('【上場】「%s」が風の芽証券取引所に上場しました。公開価格は1株 %s X で、きょうはこの値段を基準に値幅制限（%s〜%s X）がかかります。株は「企業 → 取引所」で売り買いできます。%s%s',
                       c.name, _fmt(p_price), _fmt(greatest(p_price - _stock_width_x(p_price), 1)), _fmt(p_price + _stock_width_x(p_price)),
@@ -9060,7 +9094,9 @@ begin
     'stocks', (select coalesce(jsonb_agg(j order by (j->>'value')::bigint desc, j->>'name'), '[]'::jsonb) from (
         select _stock_day(c.id, d) || jsonb_build_object('cid', c.cid, 'name', c.name, 'status', c.status, 'shares', c.shares,
                  'new', c.listed_at >= t0 and c.listed_at < t1, 'listed', c.listed and c.status in ('active', 'suspended'), 'listed_at', _dlabel(c.listed_at), 'ai', c.ai,
-                 'last', coalesce((select price from stock_trades t where t.company_id = c.id and t.created_at < t1 order by t.created_at desc, t.id desc limit 1), c.ipo_price)) j
+                 'last', coalesce((select price from stock_trades t where t.company_id = c.id and t.created_at < t1
+                                    and t.created_at >= coalesce(case when coalesce(c.price_from, c.listed_at) < t1 then coalesce(c.price_from, c.listed_at) end, '-infinity'::timestamptz)
+                                  order by t.created_at desc, t.id desc limit 1), case when coalesce(c.price_from, c.listed_at) < t1 then c.ipo_price end)) j
           from companies c
          where (c.listed and c.status in ('active', 'suspended') and c.listed_at < t1)
             or exists (select 1 from stock_trades t where t.company_id = c.id and t.created_at >= t0 and t.created_at < t1)
@@ -9274,8 +9310,7 @@ $$;
 -- アカウントの持ち株（売り注文に出している分もふくむ）の値打ち（最後の値段で）
 create or replace function public._ai_stock_value(u uuid) returns numeric
 language sql stable set search_path = public as $$
-  select coalesce(sum(h.n * coalesce((select t.price from stock_trades t where t.company_id = h.company_id order by t.id desc limit 1),
-                                      (select c.ipo_price from companies c where c.id = h.company_id), 0)), 0)
+  select coalesce(sum(h.n * coalesce(_stock_last(h.company_id), 0)), 0)
     from (select company_id, sum(n) n from (select company_id, shares n from corp_holders where user_id = u
                                             union all select company_id, remain from stock_orders where user_id = u and side = 'sell' and status = 'open') y
            group by company_id) h
@@ -9443,7 +9478,9 @@ begin
   -- きのうの株：上場している株と、きのう取引があった株
   select coalesce(jsonb_agg(j), '[]'::jsonb) into L from (
     select _stock_day(c.id, y) || jsonb_build_object('name', c.name, 'shares', c.shares,
-             'last', coalesce((select t.price from stock_trades t where t.company_id = c.id and t.created_at < t1 order by t.created_at desc, t.id desc limit 1), c.ipo_price)) j
+             'last', coalesce((select t.price from stock_trades t where t.company_id = c.id and t.created_at < t1
+                                and t.created_at >= coalesce(case when coalesce(c.price_from, c.listed_at) < t1 then coalesce(c.price_from, c.listed_at) end, '-infinity'::timestamptz)
+                              order by t.created_at desc, t.id desc limit 1), case when coalesce(c.price_from, c.listed_at) < t1 then c.ipo_price end)) j
       from companies c
      where (c.listed and c.status in ('active', 'suspended') and c.listed_at < t1)
         or exists (select 1 from stock_trades t where t.company_id = c.id and t.created_at >= t0 and t.created_at < t1)
@@ -9562,8 +9599,9 @@ begin
     perform _stock_cancel_order(r.id);
   end loop;
   st := 'inv' || ((substr(st, 4)::int - 1) % 4 + 1);      -- 考え方（4つ）
-  lastp := coalesce((select price from stock_trades where company_id = co order by id desc limit 1), round(ref)::bigint);
-  oldp := (select price from stock_trades where company_id = co order by id desc offset 20 limit 1);
+  lastp := coalesce(_stock_last(co), round(ref)::bigint);
+  oldp := (select price from stock_trades where company_id = co
+             and created_at >= coalesce((select coalesce(price_from, listed_at) from companies where id = co), '-infinity'::timestamptz) order by id desc offset 20 limit 1);
   if oldp is not null and oldp > 0 then ret := (lastp - oldp)::numeric / oldp; end if;
   tg := case st when 'inv1' then fv
                 when 'inv2' then lastp * (1 + 2 * ret)
@@ -9611,7 +9649,7 @@ begin
                                        union select o.user_id from stock_orders o where o.company_id = c.id and o.status = 'open') order by id for update;
   select * into bd from _stock_band(c.id, d);
   select * into a from ai_corps where company_id = c.id;
-  lastp := (select price from stock_trades where company_id = c.id order by id desc limit 1);
+  lastp := _stock_last(c.id);
   bz := _ai_buzz_target(c.id);                                   -- 国の記事（うわさ）の目標
   if a.company_id is not null then
     fv := _ai_fair(c.id);
@@ -9620,7 +9658,8 @@ begin
     mm := case when a.role = 'trade' then _ai_uid('founder') else k end;   -- 神楽坂通商事の株は創業家が板に出す
   else
     -- プレイヤーの会社の株：値段は最近10回の取引の真ん中（取引がなければ公開価格）。うわさがあれば、そちらへ
-    select percentile_cont(0.5) within group (order by z.price) into ref from (select price from stock_trades where company_id = c.id order by id desc limit 10) z;
+    select percentile_cont(0.5) within group (order by z.price) into ref from (select price from stock_trades where company_id = c.id
+             and created_at >= coalesce(c.price_from, c.listed_at, '-infinity'::timestamptz) order by id desc limit 10) z;
     ref := coalesce(ref, c.ipo_price);
     if ref is null then return 'skip ' || c.cid; end if;
     if bz is not null then ref := ref * power(bz / ref, 0.08); end if;
@@ -9943,7 +9982,7 @@ begin
     'error', (select value from app_settings where key = 'ai_error'),
     'admin', adm,
     'corps', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'role', a.role, 'fair', case when adm then round(_ai_fair(c.id)) end, 'mood', round(a.mood, 3),
-                 'price', coalesce((select price from stock_trades t where t.company_id = c.id order by t.id desc limit 1), c.ipo_price),
+                 'price', _stock_last(c.id),
                  'balance', case when adm then c.balance end,
                  'week_rev', case when adm then (select coalesce(sum(revenue), 0) from ai_days where company_id = c.id and day >= _kb_jday(_now()) - 7) end,
                  'week_profit', case when adm then (select coalesce(sum(revenue - cost), 0) from ai_days where company_id = c.id and day >= _kb_jday(_now()) - 7) end,
@@ -10026,7 +10065,7 @@ create table if not exists public.interventions (
   created_at timestamptz not null default now()
 );
 alter table public.interventions drop constraint if exists interventions_kind_check;
-alter table public.interventions add constraint interventions_kind_check check (kind in ('fx', 'stock', 'news'));
+alter table public.interventions add constraint interventions_kind_check check (kind in ('fx', 'stock', 'news', 'reprice', 'split'));
 alter table public.interventions add column if not exists note text;      -- 新聞の記事の見出し
 alter table public.interventions enable row level security;
 revoke all on public.interventions from anon, authenticated;
@@ -10072,7 +10111,7 @@ begin
             'ask', (select min(price) from fx_orders where exch_id = xc.id and side = 'sell' and status = 'open')) end,
     'x', (select balance from treasury where id = 1), 'ca', (select ca_balance from treasury where id = 1),
     'holds', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'shares', h.shares,
-                'price', coalesce((select price from stock_trades t where t.company_id = c.id order by t.id desc limit 1), c.ipo_price)) order by c.name), '[]'::jsonb)
+                'price', _stock_last(c.id)) order by c.name), '[]'::jsonb)
               from corp_holders h join companies c on c.id = h.company_id where h.user_id = g),
     'log', (select coalesce(jsonb_agg(jsonb_build_object('id', i.id, 'kind', i.kind, 'side', i.side, 'name', c.name, 'price', i.price, 'qty', i.qty,
                 'filled', i.filled, 'paid', i.paid, 'got', i.got, 'before', i.before_p, 'after', i.after_p, 'announced', i.announced, 'note', i.note,
@@ -10111,7 +10150,7 @@ begin
   end if;
   perform _ai_article(t, b, '経済部');
   -- 上場している会社なら、1日のあいだ AI がうわさに乗って売り買いする
-  base := coalesce((select price from stock_trades where company_id = c.id order by id desc limit 1), c.ipo_price);
+  base := _stock_last(c.id);
   f := case when p_good then (array[1.1, 1.25, 1.5])[p_power] else (array[0.9, 0.8, 0.65])[p_power] end;
   if c.listed and base is not null then
     insert into ai_buzz(company_id, base, factor, until) values (c.id, base, f, _now() + interval '1 day')
@@ -10121,6 +10160,81 @@ begin
   values ('news', c.id, case when p_good then 'buy' else 'sell' end, coalesce(base, 0), p_power, base,
           case when c.listed and base is not null then round(base * f) end, true, u, t, _now());
   return admin_iv_state();
+end $$;
+
+-- この株の注文を全部取り消して返す（理由を通知。AIには通知しない）
+create or replace function public._stock_cancel_all(cid_int int, why text) returns int
+language plpgsql set search_path = public as $$
+declare r record; n int := 0; c companies;
+begin
+  select * into c from companies where id = cid_int;
+  perform 1 from profiles where id in (select user_id from stock_orders where company_id = cid_int and status = 'open') order by id for update;
+  for r in select * from stock_orders where company_id = cid_int and status = 'open' order by id loop
+    perform _stock_cancel_order(r.id);
+    perform _notice_l(r.user_id, format('【株】「%s」の%sため、%s注文 #%s（%s株・1株 %s X）を取り消し、預けていた%sを返しました。', c.name, why,
+                      case r.side when 'buy' then '買い' else '売り' end, r.id, _fmt(r.remain), _fmt(r.price), case r.side when 'buy' then ' X ' else '株' end),
+                      jsonb_build_object('go', 'stock', 'cid', c.cid), null);
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+
+-- 株式分割（1株を p_ratio 株に）：社長（AI会社は管理者）ができる。全員の持ち株が p_ratio 倍、値段は 1/p_ratio に
+--   出ている注文は取り消して返す。代金つきの譲渡の申し出は株数を p_ratio 倍（代金はそのまま）。これまでの取引の値段・株数も分割にあわせて直す
+create or replace function public.stock_split(p_cid text, p_ratio int) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies; r record; n int; was bigint;
+begin
+  if p_ratio is null or p_ratio < 2 or p_ratio > 100 then raise exception '分割は1株を2〜100株にできます'; end if;
+  select * into c from companies where cid = _cid_norm(p_cid) for update;
+  if not found or c.status not in ('active', 'suspended') then raise exception '会社が見つかりません'; end if;
+  if not (_is_admin(u) or (c.owner = u and not c.ai)) then raise exception '株式分割は社長だけができます'; end if;
+  if c.form <> '株式会社' then raise exception '株式分割は株式会社だけです'; end if;
+  if c.shares * p_ratio > 1000000000000 then raise exception '株数が多くなりすぎます'; end if;
+  perform pg_advisory_xact_lock(7400, c.id);
+  n := _stock_cancel_all(c.id, '株式分割（1株→' || p_ratio || '株）の');
+  update companies set shares = shares * p_ratio, ipo_price = case when ipo_price is null then null else greatest(1, round(ipo_price::numeric / p_ratio)) end where id = c.id;
+  update ai_corps set ipo_price = greatest(1, round(ipo_price::numeric / p_ratio)) where company_id = c.id;
+  update ai_buzz set base = greatest(1, round(base::numeric / p_ratio)) where company_id = c.id;
+  update stock_trades set price = greatest(1, round(price::numeric / p_ratio)), qty = qty * p_ratio where company_id = c.id;
+  update share_offers set shares = shares * p_ratio where company_id = c.id and status = 'open';
+  for r in select h.user_id, h.shares from corp_holders h where h.company_id = c.id order by h.user_id loop
+    update corp_holders set shares = shares * p_ratio where company_id = c.id and user_id = r.user_id;
+    perform _notice_l(r.user_id, format('【株】「%s」が株式分割をしました（1株→%s株）。あなたの持ち株は %s株 → %s株になりました（株価は 1/%s）。', c.name, p_ratio,
+                      _fmt(r.shares), _fmt(r.shares * p_ratio), p_ratio), jsonb_build_object('go', 'corp', 'cid', c.cid), u);
+  end loop;
+  insert into interventions(kind, company_id, side, price, qty, announced, by_user, note, created_at)
+  values ('split', c.id, 'buy', 0, p_ratio, false, u, format('株式分割 1株→%s株（発行 %s株 → %s株）', p_ratio, _fmt(c.shares), _fmt(c.shares * p_ratio)), _now());
+  if c.listed then
+    perform _ai_article(format('【企業】%s、株式分割（1株→%s株）', c.name, p_ratio),
+      format('%sは、1株を%s株に分ける株式分割をした。発行株数は %s株 から %s株 になり、1株の値段は分割の前のおよそ %s分の1 になる。持ち株の価値は変わらない。',
+             c.name, p_ratio, _fmt(c.shares), _fmt(c.shares * p_ratio), p_ratio), '市場部');
+  end if;
+  return my_corps();
+end $$;
+
+-- 管理者：株価を決めなおす（いまから、この値段を公開価格・基準値段にする。出ている注文は取り消して返す）
+create or replace function public.admin_stock_reprice(p_cid text, p_price bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); c companies; old bigint; r record;
+begin
+  if not _is_admin(u) then raise exception '株価を決めなおせるのは管理者だけです'; end if;
+  if p_price is null or p_price < 1 or p_price > 1000000000 then raise exception '値段は1〜10億 X にしてください'; end if;
+  select * into c from companies where cid = _cid_norm(p_cid) for update;
+  if not found or not c.listed or c.status not in ('active', 'suspended') then raise exception 'その会社は上場していません'; end if;
+  perform pg_advisory_xact_lock(7400, c.id);
+  old := _stock_last(c.id);
+  perform _stock_cancel_all(c.id, '株価の決めなおしの');
+  update companies set ipo_price = p_price, price_from = _tnow() where id = c.id;   -- ロックを取ったあとの時刻（これより前の取引は使わない）
+  update ai_corps set ipo_price = p_price where company_id = c.id;
+  delete from ai_buzz where company_id = c.id;
+  insert into interventions(kind, company_id, side, price, qty, before_p, after_p, announced, by_user, note, created_at)
+  values ('reprice', c.id, 'buy', p_price, 0, old, p_price, false, u, format('株価を決めなおし（%s X → %s X）', coalesce(_fmt(old), '—'), _fmt(p_price)), _now());
+  for r in select h.user_id from corp_holders h join profiles p on p.id = h.user_id where h.company_id = c.id and p.ai is null loop
+    perform _notice_l(r.user_id, format('【株】「%s」の株価を、管理者が %s X に決めなおしました（きょうはこの値段が基準値段）。', c.name, _fmt(p_price)),
+                      jsonb_build_object('go', 'stock', 'cid', c.cid), u);
+  end loop;
+  return admin_state();
 end $$;
 
 -- 管理者：介入する
@@ -10179,7 +10293,7 @@ begin
     xc := _stock_exch();
     if xc.id is null or xc.status <> 'active' then raise exception '取引所がいま開いていません'; end if;
     perform pg_advisory_xact_lock(7400, c.id);
-    bef := coalesce((select price from stock_trades where company_id = c.id order by id desc limit 1), c.ipo_price);
+    bef := _stock_last(c.id);
     if p_side = 'buy' then
       need := p_price::bigint * p_qty + ceil(p_price * p_qty * xc.fx_fee / 100)::bigint;
       update treasury set balance = balance - need where id = 1 and balance >= need;
@@ -10194,7 +10308,7 @@ begin
     o := _stock_exec(g, c.id, p_side, p_price::bigint, p_qty, true);
     select * into so from stock_orders where id = o;
     select balance into x1 from profiles where id = g;
-    aft := coalesce((select price from stock_trades where company_id = c.id order by id desc limit 1), c.ipo_price);
+    aft := _stock_last(c.id);
     insert into interventions(kind, company_id, side, price, qty, filled, paid, got, before_p, after_p, announced, by_user, created_at)
     values ('stock', c.id, p_side, p_price, p_qty, so.qty - so.remain,
             case when p_side = 'buy' then greatest(x0 - x1, 0) else 0 end, case when p_side = 'sell' then greatest(x1 - x0, 0) else 0 end,
@@ -10275,7 +10389,7 @@ begin
             '_stock_width','_jday_start','_stock_base','_stock_band','_stock_day','_tnow','info_today','_stock_exec',
             '_ai_uid','_randn','_ai_name','_ai_account','_ai_fund','_ai_hire','_ai_ceo','_ai_stock_value','_ai_fair','_ai_article','_ai_event',
             '_ai_business','_ai_settle_week','_ai_news_morning','_ai_news_items','_ai_news_flash','_ai_invest','_ai_market','_ai_market_cancel',
-            '_ai_setup','_ai_add_investors','_ai_tick','_fx_exec','_stock_width_x','_ai_buzz_target','_ai_fair_p','_ai_found','admin_ai_news','_gov_uid','_gov_sweep','_fx_last','admin_iv_state','admin_intervene','_ai_err','admin_ai','admin_ai_set','admin_ai_fund',
+            '_ai_setup','_ai_add_investors','_ai_tick','_fx_exec','_stock_width_x','_ai_buzz_target','_ai_fair_p','_ai_found','_ok7_ins','_stock_last','_stock_cancel_all','stock_split','admin_stock_reprice','admin_ai_news','_gov_uid','_gov_sweep','_fx_last','admin_iv_state','admin_intervene','_ai_err','admin_ai','admin_ai_set','admin_ai_fund',
             'stock_order','stock_cancel','stock_list_apply','stock_list_withdraw','admin_stock_decide','admin_stock_delist','_unlock_orders',
             'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse') loop
     execute format('revoke all on function %s from public, anon', f.sig);

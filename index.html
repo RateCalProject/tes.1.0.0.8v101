@@ -521,7 +521,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <p class="small" style="margin:0 0 8px">今週関わった会社（買い物・口座・借入・勤め先・持ち株・新聞・請求・送金・取引所）を★で評価すると、<b>週に1回 500 X</b> もらえます。★5がいちばん良い評価です。</p>
     <div id="rvList"></div>
     <button class="btn main wide" id="rvSend" style="margin-top:8px">評価を送る</button>
-    <p class="muted small" style="margin:8px 0 0">会社の平均は、1人1社につき最新の評価で計算します。評価が3人以上ついて、平均4.1以上は「良企業」、4.7以上は「優良企業」になります。自分の会社は評価できません。登録から7日たつと評価できます。500 Xは国庫から出て、所得になります。</p>
+    <p class="muted small" style="margin:8px 0 0">会社の平均は、1人1社につき最新の評価で計算します。評価が3人以上ついて、平均4.1以上は「良企業」、4.7以上は「優良企業」になります。自分の会社は評価できません。500 Xは国庫から出て、所得になります。</p>
   </div>
   <div class="card" data-sub="pin"><h3 style="margin-top:0">ピン留めした企業</h3><div id="coPins"></div></div>
   <div class="card" data-sub="desk"><h3 style="margin-top:0">窓口の相談</h3><div id="dkList"></div>
@@ -556,7 +556,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <input class="inp" id="fxQty" type="number" inputmode="numeric" min="1" step="1" placeholder="数量（X）">
     <p class="small" id="fxPrev" style="min-height:20px;margin:6px 0"></p>
     <button class="btn main big wide" id="fxGo">AiliNaX を買う</button>
-    <p class="muted small" style="margin:8px 0 0">指値の注文です。値段の合う注文があれば、すぐに取引されます（先に出ていた注文の値段で）。合わなければ注文として残り、取り消すと預けた分が戻ります。手数料（はじめ0.1%）は風の芽証券取引所に入ります。登録から7日たつと使えます。</p>
+    <p class="muted small" style="margin:8px 0 0">指値の注文です。値段の合う注文があれば、すぐに取引されます（先に出ていた注文の値段で）。合わなければ注文として残り、取り消すと預けた分が戻ります。手数料（はじめ0.1%）は風の芽証券取引所に入ります。</p>
   </div>
   <div class="card" data-sub="invest"><h3 style="margin-top:0">注文の一覧（板）</h3><div id="fxBook"></div></div>
   <div class="card" data-sub="invest"><h3 style="margin-top:0">自分の注文</h3><div id="fxMine"></div></div>
@@ -570,7 +570,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <h4 style="margin:12px 0 4px">自分の申請</h4><div id="fxReqs"></div>
   </div>
   <div class="card" data-sub="stock"><h3 style="margin-top:0">持ち株</h3><div id="stList"></div>
-    <p class="muted small" style="margin:8px 0 0">株（有限会社・合同会社は出資）を持っていると、会社が配当を出したとき、持ち分に合わせてもらえます。「ゆずる・売る」で代金をつけると、相手が払ったときに株が動きます（手数料1%は買う人。代金つきは登録7日から）。</p></div>
+    <p class="muted small" style="margin:8px 0 0">株（有限会社・合同会社は出資）を持っていると、会社が配当を出したとき、持ち分に合わせてもらえます。「ゆずる・売る」で代金をつけると、相手が払ったときに株が動きます（手数料1%は買う人。代金つきもできる）。</p></div>
   <p class="muted small" data-sub="search pin" style="margin:8px 4px">ブロックなどゲーム内アイテムは、会社の商品として売り買いできます。今後：Discord連携の送金・借入も企業から使えるようにする予定です。</p>
 </section>
 
@@ -766,7 +766,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   <div data-sub="xfer" class="card" id="xferCard">
     <h3 style="margin-top:0">送金</h3>
     <div class="row"><span class="muted small grow">あなたのID</span><b class="num" id="myAcct" style="font-size:18px;letter-spacing:.08em">-------</b><button class="btn" id="acctCopy" style="padding:6px 10px;font-size:13px">コピー</button></div>
-    <p class="muted small" id="xferNote" style="margin:6px 0 8px">手数料は送る額の1%（最低1 X）で、国庫に入ります。登録から7日たつと送金・受け取りができます。</p>
+    <p class="muted small" id="xferNote" style="margin:6px 0 8px">手数料は送る額の1%（最低1 X）で、国庫に入ります。</p>
     <input class="inp" id="xTo" inputmode="numeric" maxlength="11" placeholder="相手のID（ユーザー5けた・会社3けた）">
     <input class="inp" id="xAmt" type="number" inputmode="numeric" min="1" step="1" placeholder="送る額（X）">
     <p class="small" id="xPrev" style="min-height:20px;margin:6px 0"></p>
@@ -1711,7 +1711,7 @@ const RANK = ['', 'A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', '
 const cardHtml = (c, cls = '') => `<div class="pc ${c.s === 1 || c.s === 2 ? 'red' : ''} ${cls}">${RANK[c.r]}<small>${SUIT[c.s]}</small></div>`;
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 // 名前の横のしるし（オレンジのチェック・管理者タグ）
-const badgeH = b => !b ? '' : (b.ok ? '<span class="chk" title="チェック：滞納なし・登録7日・半年以内にメール認証">✓</span>' : '')
+const badgeH = b => !b ? '' : (b.ok ? '<span class="chk" title="チェック：滞納なし・半年以内にメール認証">✓</span>' : '')
   + (b.role ? `<span class="admtag ${b.role === 'sub' ? 'sub' : ''}">${b.role === 'admin' ? '管理者' : '副管理者'}</span>` : '');
 const nameB = (n, b) => esc(n) + badgeH(b);
 const AITAG = '<span class="aitag">AI</span>';   // AIが運営する会社・AIのアカウントの印
@@ -2162,7 +2162,7 @@ async function xferLoad() {
     const me = await call('my_profile');
     $('#myAcct').textContent = me.account_no || '-------';
     $('#xferNote').textContent = `手数料は送る額の1%（最低1 X）で、国庫に入ります。` +
-      (me.send_ok ? '登録から7日たっているので送金できます。' : `${me.send_from}から送金・受け取りができます。`);
+      (me.send_ok ? '' : `${me.send_from}から送金・受け取りができます。`);
   } catch (e) {}
 }
 $('#acctCopy').onclick = async () => {
@@ -2635,8 +2635,8 @@ function ownSections(c) {
   if (!c.official) S.push(['shares', unitOf(c) === '株' ? '株・株主' : '出資・出資者', `発行 ${fmt(c.shares)} ${unitOf(c)}・${c.holders.length}人`, 0, `
       <p class="small" style="margin:0 0 4px">発行 <b>${fmt(c.shares)} ${unitOf(c)}</b></p>${holdersHtml(c, 30)}
       <div class="row" style="margin-top:6px;flex-wrap:wrap"><button class="btn s" data-act="sh_add">発行をふやす</button><button class="btn s" data-act="sh_sub">へらす</button>
-        <button class="btn main s" data-act="dividend">配当を出す</button><button class="btn s" data-act="owner">社長を交代</button></div>
-      <p class="muted small" style="margin:6px 0 0">ふやした分は社長のものになります。へらせるのは社長が持っている分だけ。株をほかの人にゆずるのは「企業 → 持ち株」から。配当は会社のお金から持ち分に合わせて配り、もらった人の所得になります。</p>`]);
+        <button class="btn main s" data-act="dividend">配当を出す</button><button class="btn s" data-act="owner">社長を交代</button>${c.form === '株式会社' ? '<button class="btn s" data-act="split">株式分割</button>' : ''}</div>
+      <p class="muted small" style="margin:6px 0 0">ふやした分は社長のものになります。へらせるのは社長が持っている分だけ。${c.form === '株式会社' ? '株式分割は、全員の持ち株を同じ倍数でふやし、1株の値段をその分だけ下げます（持ち株の価値は変わらない。上場中もできる。出ている注文は取り消して返す）。' : ''}株をほかの人にゆずるのは「企業 → 持ち株」から。配当は会社のお金から持ち分に合わせて配り、もらった人の所得になります。</p>`]);
   if (bank) S.push(['bank', '銀行（口座・貸出パック）', `口座の申込 ${c.acct_requests.length}件・借入の申込 ${c.loan_requests.length}件`, c.acct_requests.length + c.loan_requests.length, bankAdmin(c)]);
   if (c.kind === '証券') S.push(['exch', '取引所の設定', `${c.fx_pairs.includes('X/CA') ? '開いている' : '閉じている'}・手数料 ${fmtP(c.fx_fee)}%`, 0, `
       <label class="small" style="display:block;margin:4px 0"><input type="checkbox" data-f="pair_xca" ${c.fx_pairs.includes('X/CA') ? 'checked' : ''}> AiliNaX ⇄ Cièlani-Alpićsk を取り扱う（取引所を開く）</label>
@@ -2809,6 +2809,10 @@ $('#owCorp').onclick = async ev => {
         r = await call('corp_send', { p_cid: cid, p_to: to, p_amount: n }); }
     else if (a === 'sh_add' || a === 'sh_sub') { const n = num(a === 'sh_add' ? 'ふやす数' : 'へらす数', ''); if (!n) return;
         r = await call('corp_shares_change', { p_cid: cid, p_delta: a === 'sh_add' ? n : -n }); }
+    else if (a === 'split') { const n = num('1株を何株に分けますか？（2〜100）', '2'); if (!n) return;
+        if (n < 2 || n > 100) return toast('2〜100 で入れてください');
+        if (!confirm(`1株を ${n}株に分けます。全員の持ち株が ${n}倍になり、1株の値段は 1/${n} になります。出ている株の注文は取り消して返します。よろしいですか？`)) return;
+        r = await call('stock_split', { p_cid: cid, p_ratio: n }); }
     else if (a === 'dividend') { const n = num('配当に使う額（X）。会社のお金から、株主の持ち分に合わせて配ります', ''); if (!n) return; r = await call('corp_dividend', { p_cid: cid, p_amount: n }); }
     else if (a === 'owner') { const to = prompt('新しい社長のID（ユーザー・5けた）。交代すると、あなたはこの会社を動かせなくなります', ''); if (!to) return;
         if (!confirm(`ID ${to} の人に社長を交代します。もとに戻すには新しい社長に頼む必要があります。よろしいですか？`)) return;
@@ -2890,7 +2894,7 @@ async function adminLoad() {
         : '<p class="muted small" style="margin:0">審査待ちはありません</p>'}
       <h3>上場している会社</h3>
       ${d.listed.map(x => `<div class="line"><span class="grow">${esc(x.name)}${x.ai ? AITAG : ''}${x.status === 'suspended' ? '<span class="stag">売買停止</span>' : ''}<small>株価 ${x.last != null ? fmt(x.last) + ' X' : '—'}${x.stop === 'high' ? '（ストップ高）' : x.stop === 'low' ? '（ストップ安）' : ''}・きょう ${fmt(x.vol)}株・${x.listed_at}から</small></span>
-          <button class="btn s" data-stk="${x.cid}">板</button>${adm ? `<button class="btn s" data-delist="${x.cid}">上場廃止</button>` : ''}</div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
+          <button class="btn s" data-stk="${x.cid}">板</button>${adm ? `<button class="btn s" data-reprice="${x.cid}" data-nm="${esc(x.name)}">株価</button><button class="btn s" data-delist="${x.cid}">上場廃止</button>` : ''}</div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
       <h3>AI会社</h3><div id="adAi"><p class="muted small" style="margin:0">読みこみ中…</p></div>
       <h3>訴えの審理</h3>
       ${d.cases.length ? d.cases.map(caseForm).join('') : '<p class="muted small" style="margin:0">審理中の訴えはありません</p>'}
@@ -2950,6 +2954,12 @@ async function adminLoad() {
       if (ok && !confirm(`公開価格 ${fmt(price)} X で上場を許可します。社長の持ち株から発行株数の5%を国に渡します（半分はAIトレーダーへ）。よろしいですか？`)) return;
       try { await call('admin_stock_decide', { p_cid: cid, p_ok: ok, p_reason: why, p_price: price }); toast(ok ? '上場を許可しました' : '見送りました'); adminLoad(); } catch (e) { toast(e.message); }
     });
+    $$('#adminBox [data-reprice]').forEach(b => b.onclick = async () => {
+      const v = prompt(`「${b.dataset.nm}」の株価を何 X に決めなおしますか？（いまから、この値段を基準値段にします。出ている注文は取り消して返します）`, ''); if (v === null) return;
+      const p = Math.floor(Number(String(v).replace(/[,，\s]/g, '')) || 0); if (p < 1) return toast('値段を入れてください');
+      if (!confirm(`「${b.dataset.nm}」の株価を ${fmt(p)} X に決めなおします。よろしいですか？`)) return;
+      try { await call('admin_stock_reprice', { p_cid: b.dataset.reprice, p_price: p }); toast('株価を決めなおしました'); adminLoad(); } catch (e) { toast(e.message); }
+    });
     $$('#adminBox [data-delist]').forEach(b => b.onclick = async () => {
       const why = prompt('上場廃止の理由（社長と、注文を出していた人に届きます）', ''); if (why === null) return;
       if (!confirm('上場廃止にしますか？出ている注文は全部取り消して返します。')) return;
@@ -2977,7 +2987,8 @@ async function adIvLoad(v, listed) {
   const SD = K === 'fx' ? { buy: 'X を買う（CA を払う・X 高へ）', sell: 'X を売る（CA を受け取る・X 安へ）' } : { buy: '買い支える', sell: '国の株を売る' };
   const pick = `<select class="inp" id="ivCid" style="margin:0 0 6px">${L.map(x => `<option value="${x.cid}" ${IV.cid === x.cid ? 'selected' : ''}>${esc(x.name)}（${x.last != null ? fmt(x.last) + ' X' : '—'}${x.base != null ? `・きょう ${fmt(x.stop_lo)}〜${fmt(x.stop_hi)}` : ''}）</option>`).join('')}</select>`;
   const KN = { fx: '為替', stock: '株', news: '新聞（うわさ）' };
-  const logRow = x => x.kind === 'news'
+  const logRow = x => (x.kind === 'reprice' || x.kind === 'split') ? `<div class="line"><span class="grow">${x.kind === 'reprice' ? '株価の決めなおし' : '株式分割'}「${esc(x.name || '')}」<small>${x.at} ${x.time}・${esc(x.note || '')}</small></span></div>`
+    : x.kind === 'news'
     ? `<div class="line"><span class="grow">新聞「${esc(x.name || '')}」・${x.side === 'buy' ? '良いうわさ' : '悪いうわさ'}（${['', '小', '中', '大'][x.qty] || ''}）
         <small>${x.at} ${x.time}・${esc(x.note || '')}${x.after != null ? `・目標 ${fmt(x.before)} → ${fmt(x.after)} X（1日）` : ''}</small></span></div>`
     : `<div class="line"><span class="grow">${x.kind === 'fx' ? '為替' : '株「' + esc(x.name || '') + '」'}・${x.kind === 'fx' ? (x.side === 'buy' ? 'X 買い' : 'X 売り') : (x.side === 'buy' ? '買い支え' : '売り')}${x.announced ? '<span class="kindtag">記事</span>' : ''}
@@ -3247,7 +3258,7 @@ async function stkOpen(cid) {
     <h4 style="margin:14px 0 4px">注文の一覧（板）</h4><div id="stkBook"></div>
     <h4 style="margin:14px 0 4px">自分の注文</h4><div id="stkMine"></div>
     <h4 style="margin:14px 0 4px">最近の取引</h4><div id="stkTrades"></div>
-    <p class="muted small" style="margin:10px 0 0">指値の注文です。値段の合う注文があればすぐ約定し（値段は先に出ていた注文の値段）、合わなければ残ります。取り消すと、預けたお金・株は戻ります。手数料は取引所の手数料（%）を、買う人・売る人の両方から X で払います。登録から7日たつと使えます。</p>
+    <p class="muted small" style="margin:10px 0 0">指値の注文です。値段の合う注文があればすぐ約定し（値段は先に出ていた注文の値段）、合わなければ残ります。取り消すと、預けたお金・株は戻ります。手数料は取引所の手数料（%）を、買う人・売る人の両方から X で払います。</p>
     <p class="muted small" style="margin:6px 0 0">値幅制限：1日（日本時間）に動ける値段の幅は、前の日の終値（基準値段）から、東証の表の4倍の幅で決まります（例：100 X 未満は上下120 X、1,000 X 未満は上下600 X）。上限がストップ高、下限がストップ安で、その外の値段では注文できません。前の日までの注文で幅の外にあるものは、幅のはしの値段で約定します。上場した日は、管理者が決めた公開価格が基準値段です。</p></div>`;
   m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) { m.remove(); clearTimeout(STK.timer); STK.cid = null; } };
   document.body.appendChild(m);
@@ -3437,7 +3448,7 @@ const ROOM_RULES_M = `<p class="small muted" style="margin:6px 0 0">
   ・席がうまると始まります。主催は「コンピューターを入れて始める」で、空いている席にコンピューターを入れられます（ワンカードは「いまの人数で始める」も）。席はランダムです。<br>
   ・持ち時間は1人ずつ。自分が考えているあいだだけ減ります。0になったり「抜ける」を押したりすると、そのあとはコンピューターが代わりに打ちます（賭けはそのまま）。麻雀では、自分の持ち時間だけが見えます（ほかの人が鳴けるかどうか、わからないように）。<br>
   ・参加中（待っている・対局中）の部屋は、1人3つまでです。<br>
-  ・賭け金は主催が決めます（0なら賭けなし）。入るときにはらい、始まる前に出れば返ります。コンピューターは賭けません。人がひとりだけのときは返します。賭けありの部屋に入れるのは、登録から7日たってからです。<br>
+  ・賭け金は主催が決めます（0なら賭けなし）。入るときにはらい、始まる前に出れば返ります。コンピューターは賭けません。人がひとりだけのときは返します。<br>
   ・<b>1位の総取り</b>：人の中でいちばん上の人が、全員の賭け金を受け取ります。<b>点数で分ける</b>：ワンカードは、負けた人が手札の点数ぶん（100点で賭け金ぜんぶ）を1位の人にはらいます。麻雀は、人どうしの点数の差でやりとりします（25,000点の差で賭け金ぶん）。どちらも負けは賭け金まで。国庫がもうけの5%をとり、もうけは所得になります。<br>
   ・観戦はだれでもできます（手札・手牌は見えません）。観戦の賭けはありません。</p>`;
 const stakeTxt = r => r.stake > 0 ? `賭け金 ${fmt(r.stake)} X（${r.stake_mode === 'points' ? '点数で分ける' : '1位の総取り'}）` : '賭けなし';
