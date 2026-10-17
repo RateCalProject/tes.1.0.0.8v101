@@ -14,7 +14,7 @@
   --font:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic",sans-serif;
 }
 @media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){
+  :root:not([data-theme]){
     --bg:#151614; --panel:#1F201E; --ink:#ECEBE6; --muted:#9C9B94; --line:#33342F;
     --accent:#4FB98E; --accent-ink:#0F1F18; --soft:#1E2B25; --black:#0E0E0D; --night:#9AA6F0; --noon:#F2B648; --up:#5CC79A; --down:#F07B70;
   }
@@ -436,7 +436,170 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 .tag.bad{color:var(--lose);border-color:rgba(196,58,49,.35)}
 .tag.good{color:var(--win);border-color:rgba(31,107,79,.35)}
 @media (min-width:700px){ .reel{width:110px;height:120px;font-size:56px} }
+
+/* 上のタブ（サブメニュー）：下線の形。スクロールしても上に残る */
+#subNav{position:sticky;top:53px;z-index:4;background:var(--bg);margin:0 -16px 8px;padding:0 8px;gap:0;border-bottom:1px solid var(--line);scrollbar-width:none}
+#subNav::-webkit-scrollbar{display:none}
+#subNav button{border:0;border-radius:0;background:none;padding:12px 11px 9px;font-size:14px;color:var(--muted);border-bottom:3px solid transparent;margin-bottom:-1px}
+#subNav button.on{background:none;color:var(--accent);border-bottom-color:var(--accent)}
+/* 残高の字は、ヘッダーの色に関係なく本文の色（ヘッダーが暗いテーマでも読める） */
+.bal{color:var(--ink)}
+:root[data-theme="famicom"] .hm-w{border-radius:0!important}
+/* 角を小さく（パステルはそのまま） */
+:root:not([data-theme="pastel"]){--radius:4px}
+:root:not([data-theme="pastel"]) :is(.btn,.seg,.seg2,.inp,.item,.kb-row,.hm-tile,.hm-w,.th-tile,.toast,.okbox,.warnbox,.td-sum div,.ip-list,.mj-row,.pl,.oc-pick button,.picks button,.bet input,.mailform input,.wk-q input,.slots div,.nt-row.new,.mj-res,.kb-stage,.reel,.game-row .ic,.srv-ic){border-radius:4px}
+:root:not([data-theme="pastel"]) :is(.bal,.bell,.chips button,.tabs-s button,.men-box button,.tag,.chip,.ind){border-radius:4px}
+:root:not([data-theme="pastel"]) .modal .sheet{border-radius:8px 8px 0 0}
+:root:not([data-theme="pastel"]) .dk-m{border-radius:6px}
+/* メニューのウィジェット */
+.hm-w{grid-column:1/-1;border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:10px 12px;text-align:left}
+.hm-wh{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.hm-wh b{flex:1}
+.hm-nw{padding:7px 0;border-top:1px solid var(--line);cursor:pointer}
+.hm-nw:first-of-type{border-top:0}
+.hm-nw b{display:block;font-size:14px;line-height:1.45}
+.hm-nw small{color:var(--muted);font-size:11px}
+.hm-st{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--line);cursor:pointer;font-size:14px}
+.hm-st:first-of-type{border-top:0}
+.hm-st .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}
+.hm-co{display:flex;align-items:center;gap:10px;cursor:pointer}
+.hm-co .px{font-size:24px;font-weight:900;font-variant-numeric:tabular-nums}
+
+/* =================================================================
+   テーマ（設定 → スタイル）。html の data-theme で切りかえる
+   ================================================================= */
+.mt{position:relative}
+/* ---- 2000年代ネット風 ---- */
+:root[data-theme="net2000"]{--bg:#E8EEF7;--panel:#FFFFFF;--ink:#000000;--muted:#4F5566;--line:#7F9DB9;--accent:#0A54C4;--accent-ink:#FFFFFF;--soft:#DCE8FA;
+  --red:#D40000;--win:#007A00;--lose:#D40000;--up:#007A00;--down:#D40000;--radius:3px;
+  --font:"MS PGothic","ＭＳ Ｐゴシック","Osaka","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif}
+:root[data-theme="net2000"] body{background:#E8EEF7 repeating-linear-gradient(45deg,rgba(255,255,255,.6) 0 2px,transparent 2px 7px)}
+:root[data-theme="net2000"] header{background:linear-gradient(#6FA8F0,#2E66C4);border-bottom:2px solid #1E4A99;color:#fff}
+:root[data-theme="net2000"] .logo small{color:#DDE8FF}
+:root[data-theme="net2000"] .card{box-shadow:2px 2px 0 rgba(30,74,153,.18)}
+:root[data-theme="net2000"] .card>h3:first-child{background:linear-gradient(#F7FAFF,#C9DAF5);margin:-14px -14px 10px!important;padding:6px 10px;border-bottom:1px solid #7F9DB9;font-size:14px}
+:root[data-theme="net2000"] h3::before{content:"■";color:var(--accent);margin-right:4px;font-size:.85em}
+:root[data-theme="net2000"] .btn,:root[data-theme="net2000"] .chips button{background:linear-gradient(#FFFFFF,#DDE5F1);border:1px solid #7F9DB9;border-radius:3px;box-shadow:inset 0 1px 0 #fff}
+:root[data-theme="net2000"] .btn.main{background:linear-gradient(#FFD08A,#FF8C00);border-color:#C76A00;color:#3A1D00}
+:root[data-theme="net2000"] .seg{border-radius:3px;border-color:#7F9DB9}
+:root[data-theme="net2000"] .seg button.on,:root[data-theme="net2000"] .tabs-s button.on{background:linear-gradient(#6FA8F0,#2E66C4);color:#fff;border-color:#1E4A99}
+:root[data-theme="net2000"] .tabs-s button{border-radius:4px 4px 0 0;background:linear-gradient(#fff,#E3EAF5);border-color:#7F9DB9}
+:root[data-theme="net2000"] nav.tabs{background:linear-gradient(#F4F6FA,#C9D4E6);border-top:1px solid #7F9DB9}
+:root[data-theme="net2000"] nav.tabs button.on{color:#0A54C4;text-decoration:underline}
+:root[data-theme="net2000"] nav.tabs button.tb-mid b{border-radius:6px;background:linear-gradient(#FFD08A,#FF8C00);color:#3A1D00}
+:root[data-theme="net2000"] .men{color:#0033CC;text-decoration:underline}
+:root[data-theme="net2000"] .inp{background:#fff;border-radius:2px}
+:root[data-theme="net2000"] .modal .sheet{border-radius:4px 4px 0 0;border:2px solid #2E66C4;border-bottom:0}
+:root[data-theme="net2000"] .bal,:root[data-theme="net2000"] .bell{border-radius:3px}
+/* ---- ファミコン風 ---- */
+:root[data-theme="famicom"]{--bg:#000000;--panel:#000000;--ink:#FCFCFC;--muted:#BCBCBC;--line:#FCFCFC;--accent:#E40058;--accent-ink:#FCFCFC;--soft:#2A0016;
+  --red:#F83800;--black:#000000;--win:#58D854;--lose:#F83800;--up:#58D854;--down:#F83800;--night:#6888FC;--noon:#FCA044;--radius:0px;
+  --font:"DotGothic16","Courier New",monospace}
+:root[data-theme="famicom"] .card,:root[data-theme="famicom"] .item{border:3px solid #FCFCFC;border-radius:0;box-shadow:4px 4px 0 #6844FC}
+:root[data-theme="famicom"] .btn,:root[data-theme="famicom"] .seg,:root[data-theme="famicom"] .tabs-s button,:root[data-theme="famicom"] .chips button,
+:root[data-theme="famicom"] .inp,:root[data-theme="famicom"] .bal,:root[data-theme="famicom"] .bell,:root[data-theme="famicom"] .chip,:root[data-theme="famicom"] .tag,
+:root[data-theme="famicom"] .hm-tile,:root[data-theme="famicom"] .kindtag{border-radius:0!important}
+:root[data-theme="famicom"] .btn{border:2px solid #FCFCFC;background:#000}
+:root[data-theme="famicom"] .btn.main{background:#E40058;border-color:#FCFCFC}
+:root[data-theme="famicom"] .seg{border:2px solid #FCFCFC}
+:root[data-theme="famicom"] .seg button.on,:root[data-theme="famicom"] .tabs-s button.on{background:#FCFCFC;color:#000}
+:root[data-theme="famicom"] header{background:#0000BC;border-bottom:4px solid #FCFCFC}
+:root[data-theme="famicom"] nav.tabs{background:#0000BC;border-top:4px solid #FCFCFC}
+:root[data-theme="famicom"] nav.tabs button{color:#BCBCBC}
+:root[data-theme="famicom"] nav.tabs button.on{color:#FCD000}
+:root[data-theme="famicom"] nav.tabs button.tb-mid b{border-radius:0;border-color:#FCFCFC;background:#E40058}
+:root[data-theme="famicom"] .modal .sheet{border:4px solid #FCFCFC;border-bottom:0;border-radius:0}
+:root[data-theme="famicom"] h3::before{content:"▶";color:#FCD000;margin-right:6px}
+:root[data-theme="famicom"] .toast{border:3px solid #000;border-radius:0}
+/* ---- 和風 ---- */
+:root[data-theme="wa"]{--bg:#F3ECDD;--panel:#FBF7EE;--ink:#2B2723;--muted:#7A6F60;--line:#D9CDB6;--accent:#B33A2E;--accent-ink:#FFF8EE;--soft:#F2E1D6;
+  --red:#B33A2E;--win:#2E5E4E;--lose:#B33A2E;--up:#2E5E4E;--down:#B33A2E;--night:#2E4A7A;--noon:#B5651D;--radius:4px;
+  --font:"Shippori Mincho","Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif}
+:root[data-theme="wa"] body{background:#F3ECDD radial-gradient(rgba(120,90,40,.06) 1px,transparent 1px) 0 0/6px 6px}
+:root[data-theme="wa"] header{background:#2B2723;color:#FBF7EE;border-bottom:3px solid #B33A2E}
+:root[data-theme="wa"] .logo small{color:#D9CDB6}
+:root[data-theme="wa"] h3{letter-spacing:.06em}
+:root[data-theme="wa"] h3::before{content:"";display:inline-block;width:4px;height:1em;background:#B33A2E;margin-right:8px;vertical-align:-2px}
+:root[data-theme="wa"] nav.tabs{background:#2B2723;border-top:2px solid #B33A2E}
+:root[data-theme="wa"] nav.tabs button{color:#C9BCA4}
+:root[data-theme="wa"] nav.tabs button.on{color:#F3C5A0}
+:root[data-theme="wa"] nav.tabs button.tb-mid b{border-color:#2B2723}
+:root[data-theme="wa"] .card{box-shadow:0 1px 0 rgba(0,0,0,.05)}
+/* ---- 夜空 ---- */
+:root[data-theme="night"]{--bg:#0B1020;--panel:#141B33;--ink:#E9ECF7;--muted:#9AA3C0;--line:#2A3457;--accent:#E8C15A;--accent-ink:#1A1405;--soft:#232B4A;
+  --red:#FF6B6B;--black:#05070F;--win:#7BD88F;--lose:#FF6B6B;--up:#7BD88F;--down:#FF8A80;--night:#A9B8FF;--noon:#F2B648;--felt:#1F4D3D}
+:root[data-theme="night"] body{background:#0B1020 radial-gradient(circle,rgba(255,255,255,.22) 0 1px,transparent 1.5px) 0 0/70px 70px}
+:root[data-theme="night"] header,:root[data-theme="night"] nav.tabs{background:#0E1428}
+/* ---- ネオン ---- */
+:root[data-theme="neon"]{--bg:#07060F;--panel:#110F24;--ink:#F2F0FF;--muted:#A29BD0;--line:#3A2F7A;--accent:#00E5FF;--accent-ink:#04121A;--soft:#1B1640;
+  --red:#FF2E88;--black:#05040C;--win:#39FF14;--lose:#FF2E88;--up:#39FF14;--down:#FF2E88;--night:#B388FF;--noon:#FFB300;--felt:#1A3D4A}
+:root[data-theme="neon"] .card{border-color:#FF2E88;box-shadow:0 0 0 1px rgba(255,46,136,.3),0 0 14px rgba(255,46,136,.22)}
+:root[data-theme="neon"] header{background:#07060F;border-bottom-color:#00E5FF;box-shadow:0 0 12px rgba(0,229,255,.35)}
+:root[data-theme="neon"] nav.tabs{background:#07060F;border-top-color:#00E5FF;box-shadow:0 0 12px rgba(0,229,255,.35)}
+:root[data-theme="neon"] .btn.main,:root[data-theme="neon"] nav.tabs button.tb-mid b{box-shadow:0 0 12px rgba(0,229,255,.6)}
+:root[data-theme="neon"] h3{text-shadow:0 0 8px rgba(0,229,255,.55)}
+:root[data-theme="neon"] .logo{text-shadow:0 0 10px #FF2E88}
+/* ---- パステル ---- */
+:root[data-theme="pastel"]{--bg:#FFF4F8;--panel:#FFFFFF;--ink:#4A3B4F;--muted:#9B8AA0;--line:#F2D5E3;--accent:#E07AA8;--accent-ink:#FFFFFF;--soft:#FCE6F0;
+  --red:#E8708A;--win:#4FA889;--lose:#E8708A;--up:#4FA889;--down:#E8708A;--night:#8C8BE0;--noon:#D9903F;--radius:18px;
+  --font:"M PLUS Rounded 1c","Hiragino Maru Gothic ProN","Hiragino Sans",sans-serif}
+:root[data-theme="pastel"] body{background:linear-gradient(160deg,#FFF4F8,#F3F0FF 55%,#EFFAF6) fixed}
+:root[data-theme="pastel"] .btn,:root[data-theme="pastel"] .seg,:root[data-theme="pastel"] .inp{border-radius:999px}
+:root[data-theme="pastel"] .card{box-shadow:0 4px 14px rgba(224,122,168,.12)}
+:root[data-theme="pastel"] header,:root[data-theme="pastel"] nav.tabs{background:rgba(255,255,255,.92)}
+/* テーマの見本（設定） */
+.th-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:8px}
+.th-tile{border:2px solid var(--line);border-radius:12px;padding:0;overflow:hidden;text-align:left;background:var(--panel)}
+.th-tile.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+.th-tile .pv{display:flex;align-items:center;gap:6px;height:46px;padding:0 10px}
+.th-tile .pv i{display:inline-block;width:18px;height:18px;border-radius:50%;border:1px solid rgba(0,0,0,.15)}
+.th-tile .pv b{font-size:13px;margin-left:auto}
+.th-tile .nm{display:block;padding:6px 10px 8px;font-weight:800;font-size:13px}
+.th-tile .nm small{display:block;font-weight:400;font-size:11px;color:var(--muted);margin-top:2px}
+
+/* =================================================================
+   色覚サポート（設定 → スタイル）。html の data-cvd：mark＝記号をつける／safe＝記号＋見分けやすい色
+   ================================================================= */
+:root[data-cvd] .occ:not(.w):not(.back)::before{position:absolute;left:3px;top:2px;font-size:11px;line-height:1;text-shadow:none}
+:root[data-cvd] .occ.big:not(.w)::before{font-size:14px;left:4px;top:3px}
+:root[data-cvd] .occ.r::before{content:"●"}:root[data-cvd] .occ.y::before{content:"★"}:root[data-cvd] .occ.g::before{content:"▲"}:root[data-cvd] .occ.b::before{content:"■"}
+:root[data-cvd] .occ .ch,:root[data-cvd] .oc-dot{width:17px;height:17px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;color:#fff;line-height:1}
+:root[data-cvd] .ch.r::after,:root[data-cvd] .oc-dot.r::after{content:"●"}:root[data-cvd] .ch.y::after,:root[data-cvd] .oc-dot.y::after{content:"★"}
+:root[data-cvd] .ch.g::after,:root[data-cvd] .oc-dot.g::after{content:"▲"}:root[data-cvd] .ch.b::after,:root[data-cvd] .oc-dot.b::after{content:"■"}
+:root[data-cvd] .oc-pick button[data-ocol="0"]::before{content:"● "}:root[data-cvd] .oc-pick button[data-ocol="1"]::before{content:"★ "}
+:root[data-cvd] .oc-pick button[data-ocol="2"]::before{content:"▲ "}:root[data-cvd] .oc-pick button[data-ocol="3"]::before{content:"■ "}
+:root[data-cvd] .board .r::after,:root[data-cvd] #ruLast .red::after{content:"◆";position:absolute;left:3px;top:1px;font-size:9px}
+:root[data-cvd] #ruLast span{position:relative}
+:root[data-cvd] .wheelnum{position:relative}
+:root[data-cvd] .wheelnum.red::after{content:"赤 ◆";position:absolute;bottom:12px;font-size:11px}
+:root[data-cvd] .wheelnum.black::after{content:"黒";position:absolute;bottom:12px;font-size:11px}
+:root[data-cvd] .mt.red::after{content:"赤";position:absolute;top:1px;right:1px;font-size:7px;line-height:1;color:#C0281E;font-weight:900}
+:root[data-cvd] .mt.sm.red::after{font-size:6px}
+:root[data-cvd="safe"]{--up:#0072B2;--down:#D55E00;--win:#0072B2;--lose:#D55E00}
+:root[data-cvd="safe"] .occ.r,:root[data-cvd="safe"] .ch.r,:root[data-cvd="safe"] .oc-dot.r{background:#D55E00}
+:root[data-cvd="safe"] .occ.y,:root[data-cvd="safe"] .ch.y,:root[data-cvd="safe"] .oc-dot.y{background:#F0E442;color:#1C1C1A}
+:root[data-cvd="safe"] .occ.y{text-shadow:none}
+:root[data-cvd="safe"] .occ.g,:root[data-cvd="safe"] .ch.g,:root[data-cvd="safe"] .oc-dot.g{background:#009E73}
+:root[data-cvd="safe"] .occ.b,:root[data-cvd="safe"] .ch.b,:root[data-cvd="safe"] .oc-dot.b{background:#0072B2}
+:root[data-cvd="safe"] .occ.w{background:conic-gradient(#D55E00 0 25%,#F0E442 0 50%,#009E73 0 75%,#0072B2 0)}
+:root[data-cvd="safe"] .oc-pick button[data-ocol="0"]{background:#D55E00!important}
+:root[data-cvd="safe"] .oc-pick button[data-ocol="1"]{background:#F0E442!important;color:#1C1C1A!important}
+:root[data-cvd="safe"] .oc-pick button[data-ocol="2"]{background:#009E73!important}
+:root[data-cvd="safe"] .oc-pick button[data-ocol="3"]{background:#0072B2!important}
+:root[data-cvd="safe"] .board .r,:root[data-cvd="safe"] .wheelnum.red,:root[data-cvd="safe"] #ruLast .red{background:#D55E00!important}
 </style>
+<script>
+/* テーマと色覚サポートを、画面が出る前にあてる（この端末に保存したもの） */
+(function () {
+  try {
+    var r = document.documentElement, t = localStorage.getItem('theme'), c = localStorage.getItem('cvd');
+    if (t && t !== 'std') r.dataset.theme = t;
+    if (c && c !== 'off') r.dataset.cvd = c;
+    var F = { famicom: 'DotGothic16', wa: 'Shippori+Mincho:wght@400;700;800', pastel: 'M+PLUS+Rounded+1c:wght@400;700;800' };
+    if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
+  } catch (e) {}
+})();
+</script>
 </head>
 <body>
 <header><div class="wrap">
@@ -860,7 +1023,18 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 
 <!-- 設定 -->
 <section id="vMore" class="view hidden">
-  <div class="card" data-sub="prof">
+  <div class="card" data-sub="style">
+    <h3 style="margin-top:0">テーマ</h3>
+    <div class="th-grid" id="thGrid"></div>
+    <p class="muted small" style="margin:8px 0 0">サイト全体の見た目が変わります。保存すると、ほかの端末でも同じになります。</p>
+  </div>
+  <div class="card" data-sub="style">
+    <h3 style="margin-top:0">色覚サポート</h3>
+    <div class="seg sm" id="cvdSeg" style="display:flex;flex-wrap:wrap"><button data-k="off">ふつう</button><button data-k="mark">記号をつける</button><button data-k="safe">記号＋見分けやすい色</button></div>
+    <div id="cvdEx" style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center"></div>
+    <p class="muted small" style="margin:8px 0 0">色の見分けがむずかしい人のための設定です。ワンカードの色に記号（●赤・★黄・▲緑・■青）がつき、ルーレットの赤（◆）と麻雀の赤ドラ（赤）にも印がつきます。「見分けやすい色」では、カードの色と、株の上がり下がり・勝ち負けの色も見分けやすい組み合わせ（青とオレンジなど）になります。</p>
+  </div>
+  <div class="card" data-sub="style">
     <h3 style="margin-top:0">数字の表示</h3>
     <div class="seg sm" id="numF"><button data-k="comma">1,234,567</button><button data-k="jp">123万4567</button><button data-k="four">123&#8239;4567</button></div>
     <p class="muted small" id="numFEx" style="margin:6px 0 0"></p>
@@ -973,6 +1147,48 @@ function toast(t) {
   e.textContent = numT(t); e.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => e.hidden = true, 2600);
 }
 function show(id) { $$('main > section').forEach(s => s.classList.toggle('hidden', s.id !== id)); }
+
+/* ---------------- スタイル（テーマ・色覚サポート） ---------------- */
+const THEMES = [
+  ['std', '標準', 'いつもの見た目（端末の明るい・暗いに合わせる）', '#F6F5F1', '#FFFFFF', '#1F6B4F', '#1C1C1A'],
+  ['net2000', '2000年代ネット風', 'なつかしい個人サイトやポータルの見た目', '#E8EEF7', '#FFFFFF', '#0A54C4', '#000000'],
+  ['famicom', 'ファミコン風', '黒い画面とドットの文字', '#000000', '#0000BC', '#E40058', '#FCFCFC'],
+  ['wa', '和風', '和紙と墨と朱色', '#F3ECDD', '#FBF7EE', '#B33A2E', '#2B2723'],
+  ['night', '夜空', '紺色の夜空と金色', '#0B1020', '#141B33', '#E8C15A', '#E9ECF7'],
+  ['neon', 'ネオン', '暗い街に光るピンクと水色', '#07060F', '#110F24', '#00E5FF', '#FF2E88'],
+  ['pastel', 'パステル', 'やさしい色と丸い形', '#FFF4F8', '#FFFFFF', '#E07AA8', '#4A3B4F']];
+const THEME_FONT = { famicom: 'DotGothic16', wa: 'Shippori+Mincho:wght@400;700;800', pastel: 'M+PLUS+Rounded+1c:wght@400;700;800' };
+const lookLocal = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+function applyLook(theme, cvd) {
+  const r = document.documentElement;
+  theme = THEMES.some(t => t[0] === theme) ? theme : 'std'; cvd = ['off', 'mark', 'safe'].includes(cvd) ? cvd : 'off';
+  if (theme !== 'std') r.dataset.theme = theme; else delete r.dataset.theme;
+  if (cvd !== 'off') r.dataset.cvd = cvd; else delete r.dataset.cvd;
+  const f = THEME_FONT[theme];
+  if (f && !document.getElementById('tf-' + theme)) {
+    const l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + theme; l.href = `https://fonts.googleapis.com/css2?family=${f}&display=swap`; document.head.appendChild(l);
+  }
+  try { localStorage.setItem('theme', theme); localStorage.setItem('cvd', cvd); } catch (e) {}
+}
+// ログインしたら、サーバーに保存してある設定をあてる（なければ、この端末のもの）
+function lookFromServer() {
+  const p = ME.prefs || {};
+  applyLook(p.theme || lookLocal('theme') || 'std', p.cvd || lookLocal('cvd') || 'off');
+}
+async function lookSave(k, v) {
+  const theme = k === 'theme' ? v : (document.documentElement.dataset.theme || 'std'), cvd = k === 'cvd' ? v : (document.documentElement.dataset.cvd || 'off');
+  applyLook(theme, cvd); styleLoad();
+  try { ME.prefs = await call('prefs_save', { p_prefs: { [k]: v } }); } catch (e) { toast(e.message); }
+}
+function styleLoad() {
+  const cur = document.documentElement.dataset.theme || 'std', cv = document.documentElement.dataset.cvd || 'off';
+  $('#thGrid').innerHTML = THEMES.map(t => `<button class="th-tile ${t[0] === cur ? 'on' : ''}" data-th="${t[0]}">
+      <span class="pv" style="background:${t[3]}"><i style="background:${t[4]}"></i><i style="background:${t[5]}"></i><b style="color:${t[6]}">Aa あ</b></span>
+      <span class="nm">${t[1]}<small>${t[2]}</small></span></button>`).join('');
+  $$('#thGrid [data-th]').forEach(b => b.onclick = () => lookSave('theme', b.dataset.th));
+  $$('#cvdSeg button').forEach(b => { b.classList.toggle('on', b.dataset.k === cv); b.onclick = () => lookSave('cvd', b.dataset.k); });
+  $('#cvdEx').innerHTML = [0, 26, 52, 78].map(c => ocCard(c)).join('') + `<span class="small muted" style="margin-left:6px">← ワンカードの色（赤・黄・緑・青）</span>`;
+}
 
 /* ---------------- 数字の表示（設定） ---------------- */
 $$('#numF button').forEach(b => {
@@ -1108,7 +1324,7 @@ async function enter() {
   entered = true;
   try {
     const p = await call('ensure_profile');
-    ME = p; ME.prefs = p.prefs || {}; setBal(p.balance); $('#nick').value = p.nickname; setTaxDot(p.tax);
+    ME = p; ME.prefs = p.prefs || {}; lookFromServer(); setBal(p.balance); $('#nick').value = p.nickname; setTaxDot(p.tax);
     if (p.role && !MENU_OF.vMore[3].some(x => x[0] === 'admin')) MENU_OF.vMore[3].push(['admin', '管理']);
     if (p.role === 'admin' && !MENU_OF.vMore[3].some(x => x[0] === 'users')) MENU_OF.vMore[3].push(['users', '登録者']);   // 登録者の情報は管理者だけ
     if (p.role === 'admin') $('#auQ').placeholder = 'ID・ニックネーム・メールで検索'; else { const db = $('#auF [data-k="debt"]'); if (db) db.remove(); }
@@ -1128,7 +1344,7 @@ const MENU = [
   ['vHome', 'メイン', '◉', [['menu', 'メニュー'], ['friend', 'フレンド'], ['msg', '連絡']]],
   ['vCorp', '企業', '社', [['search', '会社検索'], ['review', '評価（500 X）'], ['pin', 'ピン留め'], ['desk', '相談'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所']]],
   ['vTax', '役所', '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['court', '訴え'], ['kokko', '国庫・番付']]],
-  ['vMore', '設定', '⚙', [['prof', 'プロフィール'], ['hist', '記録'], ['rule', '規約']]],
+  ['vMore', '設定', '⚙', [['prof', 'プロフィール'], ['style', 'スタイル'], ['hist', '記録'], ['rule', '規約']]],
 ];
 const MENU_OF = Object.fromEntries(MENU.map(m => [m[0], m]));
 $('#tabs .wrap').innerHTML = MENU.map(m => `<button data-v="${m[0]}" class="${m[0] === 'vHome' ? 'tb-mid' : ''}"><b>${m[2]}</b>${m[1]}${m[0] === 'vHome' ? '<i class="tb-n hidden" id="msgN"></i>' : ''}</button>`).join('');
@@ -1148,6 +1364,7 @@ function go(v, sub) {
   $('#subNav').classList.remove('hidden');
   $('#subNav').innerHTML = subs.map(x => `<button data-s="${x[0]}" class="${x[0] === sub ? 'on' : ''}">${x[1]}${main === 'vHome' && x[0] === 'msg' && MSGN ? `<span class="dm-n">${MSGN}</span>` : ''}</button>`).join('');
   $$('#subNav button').forEach(b => b.onclick = () => go(main, b.dataset.s));
+  { const sn = $('#subNav'), on = sn.querySelector('button.on'); if (on) sn.scrollLeft = on.offsetLeft - (sn.clientWidth - on.offsetWidth) / 2; }
   window.scrollTo(0, 0);
   if (sec === 'vInfo') { if (sub === 'today') todayLoad(); if (sub === 'cur' || sub === 'jack') infoLoad(); if (sub === 'tl') tlLoad(true); if (sub === 'mkt') mktLoad(); if (sub === 'pub') pubLoad(); if (sub === 'people') peopleLoad(); }
   if (sec === 'vHome') homeLoad(sub);
@@ -1158,6 +1375,7 @@ function go(v, sub) {
   if (sec === 'vBj') bjLoad();
   if (sec === 'vHilo') hiloLoad();
   if (sec === 'vMore') moreLoad();
+  if (sec === 'vMore' && sub === 'style') styleLoad();
   if (sec === 'vTax') taxLoad();
   if (sec === 'vCorp') corpLoad(sub);
   if (sec === 'vWork' && sub === 'corp') ownLoad();
@@ -1166,6 +1384,48 @@ function go(v, sub) {
   if (sec === 'vMore' && sub === 'users') auLoad(true);
 }
 $$('#tabs button').forEach(b => b.onclick = () => go(b.dataset.v, b.dataset.v === 'vGame' ? 'vGameList' : undefined));
+// 横にスライドすると、上のタブ（サブメニュー）のとなりへ（指でも、Mac のトラックパッドの横スクロールでも）
+function subStep(d) {
+  const main = sessionStorageGet('view'); if (!main || !MENU_OF[main] || HIDDEN_SUBS.includes(view) || $('.modal')) return;
+  const subs = MENU_OF[main][3].filter(x => x[0] !== 'vRace' || RACE_ON).map(x => x[0]);
+  const i = subs.indexOf(sessionStorageGet('sub:' + main)), j = i + d;
+  if (i < 0 || j < 0 || j >= subs.length) return;
+  go(main, subs[j]);
+  const m = document.querySelector('main');
+  if (m.animate) m.animate([{ transform: `translateX(${d * 36}px)`, opacity: 0.4 }, { transform: 'none', opacity: 1 }], { duration: 170, easing: 'ease-out' });
+}
+(function () {
+  const main = document.querySelector('main');
+  const scrollX = (el, dx) => {
+    for (; el && el !== main && el !== document.body; el = el.parentElement) {
+      if (el.scrollWidth > el.clientWidth + 2 && /auto|scroll/.test(getComputedStyle(el).overflowX)) {
+        if (dx == null) return true;
+        if (dx > 0 ? el.scrollLeft + el.clientWidth < el.scrollWidth - 1 : el.scrollLeft > 0) return true;
+      }
+    }
+    return false;
+  };
+  const blocked = el => !!el.closest('input, textarea, select, canvas, .board, .rv, .oc-hand, .mj-hand, .kb-stage, [data-noswipe]');
+  let sx = 0, sy = 0, st = 0, ok = false;
+  main.addEventListener('touchstart', e => {
+    ok = e.touches.length === 1 && !blocked(e.target) && !scrollX(e.target);
+    if (ok) { sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now(); }
+  }, { passive: true });
+  main.addEventListener('touchend', e => {
+    if (!ok) return; ok = false;
+    const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
+    if (Date.now() - st > 700 || Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.8) return;
+    subStep(dx < 0 ? 1 : -1);
+  }, { passive: true });
+  let acc = 0, at = 0, lock = 0;
+  main.addEventListener('wheel', e => {
+    if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) * 1.5 || blocked(e.target) || scrollX(e.target, e.deltaX)) return;
+    const now = Date.now(); if (now < lock) return;
+    if (now - at > 250) acc = 0;
+    at = now; acc += e.deltaX;
+    if (Math.abs(acc) > 150) { subStep(acc > 0 ? 1 : -1); acc = 0; lock = now + 800; }
+  }, { passive: true });
+})();
 // 遊戯の一覧
 const GAME_LIST = [
   ['vRace', '🏇', '競馬', '毎日 12:30〜13:30（昼競馬）と 16:30〜22:30（20:30はメインレース、そのあと深夜競馬）。みんなで同じレースに賭ける、いちばんの目玉'],
@@ -1944,7 +2204,7 @@ $('#ruSpin').onclick = async () => {
     clearInterval(iv);
     el.textContent = d.number; el.className = 'wheelnum ' + ruCls(d.number);
     ruHist.unshift(d.number); ruHist = ruHist.slice(0, 12);
-    $('#ruLast').innerHTML = ruHist.map(n => `<span style="background:${n === 0 ? 'var(--felt)' : REDS.has(n) ? 'var(--red)' : 'var(--black)'}">${n}</span>`).join('');
+    $('#ruLast').innerHTML = ruHist.map(n => `<span class="${ruCls(n)}" style="background:${n === 0 ? 'var(--felt)' : REDS.has(n) ? 'var(--red)' : 'var(--black)'}">${n}</span>`).join('');
     const net = d.payout - d.bet;
     $('#ruMsg').className = 'msg ' + (d.payout > 0 ? 'win' : 'lose');
     $('#ruMsg').textContent = d.payout > 0 ? `払い戻し ${fmt(d.payout)}（${net >= 0 ? '+' : ''}${fmt(net)}）` : 'はずれ';
@@ -3372,11 +3632,57 @@ function hmCatalog() {
     L.push({ k: m[0] + ':' + x[0], label, ic, group: m[1] });
   }
   for (const g of GAME_LIST) if (!g[0].startsWith('v') && BOARD_GAMES[g[0]]) L.push({ k: 'g:' + g[0], label: g[2], ic: g[1], group: '遊戯' });
+  L.push({ k: 'w:news', label: '新着ニュース', ic: '🗞️', group: 'ウィジェット（大きく出る）', wide: true });
+  L.push({ k: 'w:stocks', label: '株価の一覧', ic: '📈', group: 'ウィジェット（大きく出る）', wide: true });
+  for (const x of (HM.listed || [])) L.push({ k: 'st:' + x.cid, label: x.name, ic: '💹', group: '株価（会社ごと・大きく出る）', wide: true });
   return L;
+}
+const HM = { names: {}, listed: null, at: 0 };
+function hmItem(k, cat) {
+  const c = cat.find(x => x.k === k); if (c) return c;
+  if (k.startsWith('st:')) return { k, label: HM.names[k.slice(3)] || '株価', ic: '💹', group: '株価（会社ごと・大きく出る）', wide: true };
+  return null;
+}
+const spark = (P, w = 110, h = 34) => {
+  if (!P || P.length < 2) return '';
+  const lo = Math.min(...P), hi = Math.max(...P), sp = hi - lo || 1;
+  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="flex:none"><polyline points="${P.map((p, i) => `${(i / (P.length - 1) * (w - 2) + 1).toFixed(1)},${(h - 2 - (p - lo) / sp * (h - 4)).toFixed(1)}`).join(' ')}"
+    fill="none" stroke="${P[P.length - 1] >= P[0] ? 'var(--up)' : 'var(--down)'}" stroke-width="2" stroke-linejoin="round"/></svg>`;
+};
+async function hmWidgets(L) {
+  const news = L.some(c => c.k === 'w:news'), stocks = L.some(c => c.k === 'w:stocks'), cids = L.filter(c => c.k.startsWith('st:')).map(c => c.k.slice(3));
+  if (!news && !stocks && !cids.length) return;
+  HM.at = Date.now();
+  let d; try { d = await call('home_widgets', { p_news: news, p_stocks: stocks, p_cids: cids }); } catch (e) { return; }
+  const box = k => $(`#hmGrid [data-hw="${k}"]`);
+  if (news && box('w:news')) {
+    box('w:news').innerHTML = `<div class="hm-wh"><b>🗞️ 新着ニュース</b><a class="men small" data-hgo="vInfo:pub">もっと見る ›</a></div>`
+      + (d.news.map(n => `<div class="hm-nw" data-nid="${n.id}"><b>${esc(n.title)}</b><small>${esc(n.paper)}${n.ai ? AITAG : ''}・${n.at} ${n.time}</small></div>`).join('')
+        || '<p class="muted small" style="margin:0">まだニュースはありません</p>');
+  }
+  if (stocks && box('w:stocks')) {
+    const S = [...(d.stocks || [])].sort((a, b) => (b.value || 0) - (a.value || 0)).slice(0, 8);
+    box('w:stocks').innerHTML = `<div class="hm-wh"><b>📈 株価</b><a class="men small" data-hgo="vInfo:mkt">相場を見る ›</a></div>`
+      + (S.map(x => `<div class="hm-st" data-stk="${x.cid}"><span class="nm">${esc(x.name)}${x.ai ? AITAG : ''}</span>
+          <b class="num">${x.last != null ? fmt(x.last) + ' X' : '—'}</b><small style="min-width:5.5em;text-align:right">${chgH(x.close, x.base)}</small></div>`).join('')
+        || '<p class="muted small" style="margin:0">上場している会社はまだありません</p>');
+  }
+  for (const x of d.cos || []) {
+    HM.names[x.cid] = x.name;
+    const el = box('st:' + x.cid); if (!el) continue;
+    el.innerHTML = `<div class="hm-co" data-stk="${x.cid}"><div style="flex:1;min-width:0"><b style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">💹 ${esc(x.name)}${x.ai ? AITAG : ''}</b>
+        <span class="px">${x.last != null ? fmt(x.last) : '—'}</span><span class="muted small"> X</span>　<small>${chgH(x.close, x.base)}</small></div>${spark(x.spark)}</div>`;
+  }
+  for (const c of L.filter(c => c.k.startsWith('st:'))) {
+    const el = box(c.k); if (el && !(d.cos || []).some(x => 'st:' + x.cid === c.k)) el.innerHTML = '<p class="muted small" style="margin:0">💹 この会社はいま上場していません</p>';
+  }
+  $$('#hmGrid [data-nid]').forEach(el => el.onclick = () => pubReader(Number(el.dataset.nid)));
+  $$('#hmGrid [data-stk]').forEach(el => el.onclick = () => stkOpen(el.dataset.stk));
+  $$('#hmGrid [data-hgo]').forEach(el => el.onclick = ev => { ev.stopPropagation(); hmGo(el.dataset.hgo); });
 }
 function hmList() {
   const cat = hmCatalog(), keys = Array.isArray((ME.prefs || {}).shortcuts) ? ME.prefs.shortcuts : HM_DEF;
-  return keys.map(k => cat.find(c => c.k === k)).filter(Boolean);
+  return keys.map(k => hmItem(k, cat)).filter(Boolean);
 }
 function hmGo(k) {
   const [a, b] = k.split(':');
@@ -3385,10 +3691,12 @@ function hmGo(k) {
 }
 function hmRender() {
   const L = hmList();
-  $('#hmGrid').innerHTML = L.map(c => `<button class="hm-tile" data-hm="${c.k}"><span class="ic">${c.ic}</span>${esc(c.label)}<small>${esc(c.group)}</small>
+  $('#hmGrid').innerHTML = L.map(c => c.wide ? `<div class="hm-w" data-hw="${c.k}"><p class="muted small" style="margin:0">${c.ic} ${esc(c.label)}　読みこみ中…</p></div>`
+      : `<button class="hm-tile" data-hm="${c.k}"><span class="ic">${c.ic}</span>${esc(c.label)}<small>${esc(c.group)}</small>
       ${c.k === 'vHome:msg' ? `<i class="tb-n ${MSGN ? '' : 'hidden'}">${MSGN}</i>` : ''}</button>`).join('')
     || '<p class="muted small" style="grid-column:1/-1;margin:0">「編集」から、よく使うメニューを足せます。</p>';
   $$('#hmGrid [data-hm]').forEach(b => b.onclick = () => hmGo(b.dataset.hm));
+  hmWidgets(L);
 }
 let HM_EDIT = null;
 $('#hmEdit').onclick = () => {
@@ -3396,9 +3704,11 @@ $('#hmEdit').onclick = () => {
   HM_EDIT = hmList().map(c => c.k);
   $('#hmGrid').classList.add('hidden'); $('#hmEd').classList.remove('hidden'); $('#hmEdit').textContent = 'やめる';
   hmEdRender();
+  if (!HM.listed) call('stock_list').then(d => { HM.listed = d.stocks.map(x => ({ cid: x.cid, name: x.name })); d.stocks.forEach(x => HM.names[x.cid] = x.name); if (HM_EDIT) hmEdRender(); }).catch(() => {});
 };
 function hmEdRender() {
   const cat = hmCatalog(), sel = HM_EDIT, groups = [...new Set(cat.map(c => c.group))];
+  for (const k of sel) if (!cat.some(c => c.k === k)) { const it = hmItem(k, cat); if (it) cat.push(it); }
   $('#hmEd').innerHTML = `<h4 style="margin:10px 0 4px">ならべる順（${sel.length} / 16）</h4>
     ${sel.map((k, i) => { const c = cat.find(x => x.k === k); return c ? `<div class="line"><span class="grow">${c.ic} ${esc(c.label)}<small>${esc(c.group)}</small></span>
       <button class="btn s" data-up="${i}" ${i ? '' : 'disabled'}>↑</button><button class="btn s" data-dn="${i}" ${i < sel.length - 1 ? '' : 'disabled'}>↓</button><button class="btn s" data-hmrm="${i}">✕</button></div>` : ''; }).join('')
@@ -4764,6 +5074,7 @@ async function bellPoll() {
   if (!document.hidden || ntLocal('ntPush') === '1') {
     try {
       const d = await call('notice_count'); setBell(d.unread); setMsgN((d.msg || 0) + (d.staff || 0));
+      if (view === 'vHome' && sessionStorageGet('sub:vHome') === 'menu' && !HM_EDIT && Date.now() - HM.at > 55000) hmWidgets(hmList());
       const seen = Number(ntLocal('ntLatest') || 0);
       if (d.latest && d.latest > seen) {
         if (seen && document.hidden && ntLocal('ntPush') === '1' && 'Notification' in window && Notification.permission === 'granted') {

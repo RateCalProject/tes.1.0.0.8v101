@@ -9383,6 +9383,29 @@ begin
     'first', (select _dlabel(min(created_at)) from stock_trades where company_id = c.id));
 end $$;
 
+-- メインのメニューのウィジェット：新着ニュース（無料の新聞記事の新しい5本）・株価の一覧・会社ごとの株価（1日の動き）
+create or replace function public.home_widgets(p_news boolean, p_stocks boolean, p_cids text[]) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me();
+begin
+  return jsonb_build_object(
+    'news', case when coalesce(p_news, false) then (select coalesce(jsonb_agg(jsonb_build_object('id', z.id, 'title', z.title, 'paper', z.paper, 'ai', z.ai,
+                'at', _dlabel(z.created_at), 'time', to_char(z.created_at at time zone 'Asia/Tokyo', 'HH24:MI')) order by z.id desc), '[]'::jsonb)
+              from (select i.id, i.title, p.title paper, c.ai, i.created_at
+                      from pub_items i join pubs p on p.id = i.pub_id join companies c on c.id = p.company_id
+                     where i.free and p.kind = 'paper' and p.status = 'active' and c.status in ('active', 'suspended')
+                     order by i.id desc limit 5) z) end,
+    'stocks', case when coalesce(p_stocks, false) then _stock_list() end,
+    'cos', (select coalesce(jsonb_agg(_stock_day(c.id, _kb_jday(_now())) || jsonb_build_object('cid', c.cid, 'name', c.name, 'ai', c.ai, 'status', c.status,
+                'last', _stock_last(c.id),
+                'spark', (select coalesce(jsonb_agg(z.p order by z.b), '[]'::jsonb)
+                            from (select floor(extract(epoch from (t.created_at - (_now() - interval '1 day'))) / 1800)::int b,
+                                         (array_agg(t.price order by t.id desc))[1] p
+                                    from stock_trades t where t.company_id = c.id and t.created_at > _now() - interval '1 day' group by 1) z))
+              order by array_position(p_cids, c.cid)), '[]'::jsonb)
+            from companies c where c.cid = any(coalesce(p_cids, '{}'::text[])) and c.listed and c.status in ('active', 'suspended')));
+end $$;
+
 -- 上場している株の一覧（相場・取引所に出す）
 create or replace function public._stock_list() returns jsonb
 language sql stable set search_path = public as $$
@@ -11049,7 +11072,7 @@ begin
             '_desk_staff','_desk_json','_desk_people','_desk_unread','desk_thread','desk_open','desk_send','desk_close','desk_list',
             'desk_settings','corp_member_desk','_user_row','admin_users','admin_user',
             '_holdings','_stock_exch','_stock_market','_stock_list','_stock_cancel_order','_stock_delist','stock_list','stock_state',
-            '_stock_width','_jday_start','_stock_base','_stock_band','_stock_day','_tnow','info_today','_stock_exec','stock_chart',
+            '_stock_width','_jday_start','_stock_base','_stock_band','_stock_day','_tnow','info_today','_stock_exec','stock_chart','home_widgets',
             '_ai_uid','_randn','_ai_name','_ai_account','_ai_fund','_ai_hire','_ai_ceo','_ai_stock_value','_ai_fair','_ai_article','_ai_event',
             '_ai_business','_ai_settle_week','_ai_news_morning','_ai_news_items','_ai_news_flash','_ai_invest','_ai_market','_ai_market_cancel',
             '_ai_setup','_ai_add_investors','_ai_tick','_fx_exec','_stock_width_x','_ai_buzz_target','_ai_fair_p','_ai_found','_ok7_ins','_stock_last','_stock_cancel_all','stock_split','admin_stock_reprice','admin_gov_share_give','admin_ai_news','_gov_uid','_gov_sweep','_fx_last','admin_iv_state','admin_intervene','_ai_err','admin_ai','admin_ai_set','admin_ai_fund',
