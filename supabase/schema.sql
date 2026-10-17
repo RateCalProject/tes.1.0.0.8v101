@@ -9552,7 +9552,7 @@ begin
 end $$;
 
 -- AI投資家の売り買い（上場しているすべての株）。考え方は4つ（inv1・5・9 値打ち／inv2・6・10 勢い／inv3・7 逆張り／inv4・8 気まぐれ）。すぐ約定しなければ7割は取り消す
---   うわさ（国の記事）があれば、目標の値段をそちらに寄せる。プレイヤーの会社1社に入れるのは、自分の資産の1割まで
+--   うわさ（国の記事）があれば、目標の値段をそちらに寄せる。プレイヤーの会社1社に入れるのは、自分の資産の4割まで
 create or replace function public._ai_invest(u uuid, st text, co int, ref numeric, fv numeric, lo bigint, hi bigint) returns int
 language plpgsql set search_path = public as $$
 declare lastp bigint; oldp bigint; ret numeric := 0; tg numeric; sd text; px bigint; q bigint; cash bigint; hold bigint; r record;
@@ -9578,10 +9578,10 @@ begin
     px := ceil(least(tg, lastp * 1.05));
     if lo is not null then px := least(greatest(px, lo), hi); end if;
     q := floor(cash * (0.01 + random() * 0.04) / greatest(px, 1));
-    if not aico then      -- プレイヤーの会社：1社あたり資産の1割まで
+    if not aico then      -- プレイヤーの会社：1社あたり資産の4割まで
       onsale := coalesce((select sum(remain) from stock_orders where user_id = u and company_id = co and side = 'sell' and status = 'open'), 0);
       nav := cash + coalesce((select sum(locked) from stock_orders where user_id = u and side = 'buy' and status = 'open'), 0) + _ai_stock_value(u);
-      q := least(q, floor(greatest(nav * 0.10 - (hold + onsale) * lastp, 0) / greatest(px, 1))::bigint);
+      q := least(q, floor(greatest(nav * 0.40 - (hold + onsale) * lastp, 0) / greatest(px, 1))::bigint);
     end if;
   else
     px := floor(greatest(tg, lastp * 0.95));
@@ -9650,7 +9650,7 @@ begin
     qa := least(inv, floor(held * 0.05)::bigint, floor(100000 / greatest(ask, 1))::bigint);
   else
     nav := cash + coalesce((select sum(locked) from stock_orders where user_id = mm and side = 'buy' and status = 'open'), 0) + _ai_stock_value(mm);
-    cap := least(500000, nav * 0.05);          -- プレイヤーの会社1社に入れるのは、50万 X か資産の5%まで
+    cap := nav * 0.30;                         -- プレイヤーの会社1社に入れるのは、資産の3割まで（発行株数の1割まで）
     qb := case when held * ref < cap and held < c.shares * 0.10 then least(floor(least(cap - held * ref, 20000) / greatest(bid, 1)), floor(c.shares * 0.10) - held) else 0 end;
     qa := least(inv, floor(20000 / greatest(ask, 1))::bigint);
   end if;
