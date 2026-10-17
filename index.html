@@ -2608,7 +2608,7 @@ function ownSections(c) {
       ${la.note ? `<p class="small muted" style="white-space:pre-wrap;margin:0 0 6px">${esc(la.note)}</p>` : ''}
       <button class="btn s" data-act="list_withdraw">申請を取り下げる</button>` : `
       ${la.status === 'rejected' ? `<p class="small" style="margin:0 0 6px">前回の申請（${la.at}）は見送りになりました。${la.reason ? '理由：' + esc(la.reason) : ''}</p>` : ''}
-      <p class="small" style="margin:0 0 6px">上場すると、会社の株を風の芽証券取引所でだれでも売り買いできるようになります（1株あたりの値段は X・手数料は取引所の手数料）。上場中は発行株数を変えられません。</p>
+      <p class="small" style="margin:0 0 6px">上場すると、会社の株を風の芽証券取引所でだれでも売り買いできるようになります（1株あたりの値段は X・手数料は取引所の手数料）。上場のときの値段（公開価格）は、審査で管理者が決めます。上場した日は公開価格を基準に値幅制限がかかります。上場中は発行株数を変えられません。</p>
       <textarea class="inp" rows="3" data-f="list_note" maxlength="500" placeholder="上場したい理由・会社の紹介（審査する人が読みます）"></textarea>
       <button class="btn main s" data-act="list_apply">上場を申請する</button>`]);
   }
@@ -2883,9 +2883,9 @@ async function adminLoad() {
         : '<p class="muted small" style="margin:0">審査待ちはありません</p>'}
       <h3>上場の審査</h3>
       ${d.list_apps.length ? d.list_apps.map(a => `<div class="item"><div class="row"><b>${esc(a.name)}</b></div>
-          <p class="small muted" style="margin:4px 0">社長 ${nameB(a.owner, a.owner_badge)}（ID ${a.owner_id}）・申請 ${a.at}・会社の許可 ${a.since || '—'}・発行 ${fmt(a.shares)}株・株主 ${a.holders}人・評価 ${ratingH(a.rating || { n: 0 })}</p>
+          <p class="small muted" style="margin:4px 0">社長 ${nameB(a.owner, a.owner_badge)}（ID ${a.owner_id}）・申請 ${a.at}・会社の許可 ${a.since || '—'}・発行 ${fmt(a.shares)}株・株主 ${a.holders}人${a.per_share != null ? `・1株あたりの会社のお金 ${fmtP(a.per_share)} X` : ''}・評価 ${ratingH(a.rating || { n: 0 })}</p>
           ${a.note ? `<p class="small" style="white-space:pre-wrap;margin:4px 0">${esc(a.note)}</p>` : ''}
-          <div class="row"><button class="btn main s" data-lok="${a.cid}">上場を許可</button><button class="btn s" data-lng="${a.cid}">見送る</button><button class="btn s" data-lco="${a.cid}">会社を見る</button></div></div>`).join('')
+          <div class="row"><button class="btn main s" data-lok="${a.cid}" data-ps="${a.per_share ?? ''}">上場を許可（公開価格を決める）</button><button class="btn s" data-lng="${a.cid}">見送る</button><button class="btn s" data-lco="${a.cid}">会社を見る</button></div></div>`).join('')
         : '<p class="muted small" style="margin:0">審査待ちはありません</p>'}
       <h3>上場している会社</h3>
       ${d.listed.map(x => `<div class="line"><span class="grow">${esc(x.name)}${x.ai ? AITAG : ''}${x.status === 'suspended' ? '<span class="stag">売買停止</span>' : ''}<small>株価 ${x.last != null ? fmt(x.last) + ' X' : '—'}${x.stop === 'high' ? '（ストップ高）' : x.stop === 'low' ? '（ストップ安）' : ''}・きょう ${fmt(x.vol)}株・${x.listed_at}から</small></span>
@@ -2939,8 +2939,14 @@ async function adminLoad() {
     $$('#adminBox [data-lco]').forEach(b => b.onclick = () => corpOpen(b.dataset.lco));
     $$('#adminBox [data-lok], #adminBox [data-lng]').forEach(b => b.onclick = async () => {
       const ok = !!b.dataset.lok, cid = b.dataset.lok || b.dataset.lng;
+      let price = null;
+      if (ok) {
+        const v = prompt(`公開価格（上場のときの1株の値段・X）を決めてください。上場した日は、この値段を基準に値幅制限がかかります（社長は好きな値段にできません）。${b.dataset.ps ? `\n目安：1株あたりの会社のお金 ${fmtP(b.dataset.ps)} X` : ''}`, ''); if (v === null) return;
+        price = Math.floor(Number(String(v).replace(/[,，\s]/g, '')) || 0); if (price < 1) return toast('公開価格を1 X 以上で入れてください');
+      }
       const why = prompt(ok ? '社長へのひとこと（なくてもOK）' : '見送る理由（社長に届きます）', ''); if (why === null) return;
-      try { await call('admin_stock_decide', { p_cid: cid, p_ok: ok, p_reason: why }); toast(ok ? '上場を許可しました' : '見送りました'); adminLoad(); } catch (e) { toast(e.message); }
+      if (ok && !confirm(`公開価格 ${fmt(price)} X で上場を許可します。よろしいですか？`)) return;
+      try { await call('admin_stock_decide', { p_cid: cid, p_ok: ok, p_reason: why, p_price: price }); toast(ok ? '上場を許可しました' : '見送りました'); adminLoad(); } catch (e) { toast(e.message); }
     });
     $$('#adminBox [data-delist]').forEach(b => b.onclick = async () => {
       const why = prompt('上場廃止の理由（社長と、注文を出していた人に届きます）', ''); if (why === null) return;
@@ -3183,7 +3189,7 @@ async function stkOpen(cid) {
     <h4 style="margin:14px 0 4px">自分の注文</h4><div id="stkMine"></div>
     <h4 style="margin:14px 0 4px">最近の取引</h4><div id="stkTrades"></div>
     <p class="muted small" style="margin:10px 0 0">指値の注文です。値段の合う注文があればすぐ約定し（値段は先に出ていた注文の値段）、合わなければ残ります。取り消すと、預けたお金・株は戻ります。手数料は取引所の手数料（%）を、買う人・売る人の両方から X で払います。登録から7日たつと使えます。</p>
-    <p class="muted small" style="margin:6px 0 0">値幅制限：1日（日本時間）に動ける値段の幅は、前の日の終値（基準値段）から東証と同じ表で決まります（例：100 X 未満は上下30 X、1,000 X 未満は上下150 X）。上限がストップ高、下限がストップ安で、その外の値段では注文できません。前の日までの注文で幅の外にあるものは、幅のはしの値段で約定します。はじめて取引がある日は値幅制限がありません。</p></div>`;
+    <p class="muted small" style="margin:6px 0 0">値幅制限：1日（日本時間）に動ける値段の幅は、前の日の終値（基準値段）から東証と同じ表で決まります（例：100 X 未満は上下30 X、1,000 X 未満は上下150 X）。上限がストップ高、下限がストップ安で、その外の値段では注文できません。前の日までの注文で幅の外にあるものは、幅のはしの値段で約定します。上場した日は、管理者が決めた公開価格が基準値段です。</p></div>`;
   m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) { m.remove(); clearTimeout(STK.timer); STK.cid = null; } };
   document.body.appendChild(m);
   m.querySelector('[data-stkco]').onclick = () => corpOpen(STK.cid);
@@ -3219,11 +3225,12 @@ function stkRender() {
       <b style="font-size:28px">${mk.last != null ? fmt(mk.last) : '—'}</b><span class="muted small">X</span>${stopTag(mk)}
       <span style="margin-left:auto">${chgX(mk)}</span></div>
     <div class="kv" style="margin-top:6px"><span class="muted">前日の終値（基準値段）</span><b>${mk.base != null ? fmt(mk.base) + ' X' : '—'}</b>
-      <span class="muted">きょうの値幅</span><b>${mk.base != null ? `${fmt(mk.stop_lo)} 〜 ${fmt(mk.stop_hi)} X` : 'なし（はじめて取引がある日）'}</b>
+      <span class="muted">きょうの値幅</span><b>${mk.base != null ? `${fmt(mk.stop_lo)} 〜 ${fmt(mk.stop_hi)} X` : 'なし'}</b>
       ${mk.n ? `<span class="muted">始値・高値・安値</span><b>${fmt(mk.open)}・${fmt(mk.high)}・${fmt(mk.low)}</b>` : ''}
       <span class="muted">買い（いちばん高い）</span><b>${mk.bid != null ? fmt(mk.bid) + ' X' : '—'}</b>
       <span class="muted">売り（いちばん安い）</span><b>${mk.ask != null ? fmt(mk.ask) + ' X' : '—'}</b>
       <span class="muted">きょうの出来高</span><b>${fmt(mk.vol)}株${mk.value ? `（${fmt(mk.value)} X）` : ''}</b>
+      ${d.ipo_price ? `<span class="muted">公開価格</span><b>${fmt(d.ipo_price)} X${d.listed_at ? `（${d.listed_at}上場）` : ''}</b>` : ''}
       <span class="muted">発行株数</span><b>${fmt(mk.shares)}株</b>
       ${mk.last != null ? `<span class="muted">時価総額</span><b>${fmt(mk.last * mk.shares)} X</b>` : ''}
       <span class="muted">手数料</span><b>${fmtP(fee)}%</b>
