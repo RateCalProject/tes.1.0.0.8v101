@@ -1609,9 +1609,9 @@ begin
     raw[i] := -(rtrue[i] - 50) * 0.1 * dist / 1000.0 - beta * _kb_gumbel();
   end loop;
   if inc = 'deokure' then raw[iu] := raw[iu] + 0.8 + random() * 1.5; end if;      -- 出遅れた分だけ遅い
-  -- ゴールする馬（除外・落馬の馬はのぞく）の着順
+  -- ゴールする馬（除外・落馬の馬はのぞく）の着順。inc が NULL（ハプニングなし）でも全頭が入るように coalesce
   select array_agg(g order by raw[g]) into order_ix from generate_series(1, n) g
-   where not (inc in ('jogai', 'rakuba') and g = iu);
+   where not (coalesce(inc, '') in ('jogai', 'rakuba') and g = iu);
   m := array_length(order_ix, 1);
 
   -- タイム（表示用。着差は本物らしい大きさにちぢめる）
@@ -3637,7 +3637,7 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); i invoices; to_id text; payer text; notify uuid; ctx bigint;
 begin
   select * into i from invoices where id = p_id for update;
-  if not found or not (i.to_user = u or i.to_comp in (select id from companies where owner = u)) then raise exception '請求が見つかりません'; end if;
+  if not found or not (coalesce(i.to_user = u, false) or coalesce(i.to_comp in (select id from companies where owner = u), false)) then raise exception '請求が見つかりません'; end if;
   if i.status <> 'open' then raise exception 'この請求はもう終わっています'; end if;
   to_id := coalesce((select account_no from profiles where id = i.from_user), (select cid from companies where id = i.from_comp and status = 'active'));
   if to_id is null then raise exception '請求した会社が活動していないので払えません'; end if;

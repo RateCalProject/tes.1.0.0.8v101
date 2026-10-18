@@ -1861,7 +1861,8 @@ function kbSky(hour, weather) {
 }
 function kbDraw() {
   const now = Date.now(), dtSec = Math.min(0.1, (now - (kbLastDraw || now)) / 1000); kbLastDraw = now;
-  const R = KR.race, E = KR.entries.filter(e => !e.scratched), D = R.dist, V = R.venue;
+  // 除外の馬と、タイムのない馬（走らなかった馬）は描かない（タイムがないとゴールに立ったままになり、カメラがそこで止まる）
+  const R = KR.race, E = KR.entries.filter(e => !e.scratched && !(e.run && e.run.time_ms == null && e.run.stop == null)), D = R.dist, V = R.venue;
   const W = kbCan.clientWidth; if (!W) return;
   const H = 300, dpr = window.devicePixelRatio || 1;
   if (kbCan.width !== Math.round(W * dpr)) { kbCan.width = Math.round(W * dpr); kbCan.height = Math.round(H * dpr); kbCan.style.height = H + 'px'; }
@@ -1889,8 +1890,9 @@ function kbDraw() {
   const act = order.filter(o => !o.fell), lead = act[0].d, tail = act[Math.min(act.length - 1, 7)].d;
   const want = Math.max(W / 120, Math.min(W / 38, W / (lead - tail + 28)));
   if (!kbCam || kbCam.race !== R.id) kbCam = { race: R.id, d: lead, ppm: want };
+  // 落馬した馬は2.5秒だけ映して先頭にもどる（最後の直線では、ゴールを映したまま）
   const fo = pos.find(o => o.fell);
-  const camT = fo && t < kbFall(fo.e, D).ts + 3.5 ? fo.d + 6 : Math.min(lead, D + 6);
+  const camT = fo && t < kbFall(fo.e, D).ts + 2.5 && D - lead > Math.max(300, V.straight) ? fo.d + 6 : Math.min(lead, D + 6);
   kbCam.d = Math.abs(camT - kbCam.d) > 150 ? camT : kbCam.d + (camT - kbCam.d) * Math.min(1, dtSec * 4);
   kbCam.ppm += (want - kbCam.ppm) * Math.min(1, dtSec * 1.5);
   const ppm = kbCam.ppm, ax = dir > 0 ? W * 0.66 : W * 0.34;
