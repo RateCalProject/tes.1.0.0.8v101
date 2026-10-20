@@ -667,7 +667,9 @@ begin
     cur := cur || jsonb_build_object('shortcuts', p->'shortcuts');
   end if;
   if p ? 'theme' then
-    if coalesce(p->>'theme', '') not in ('std', 'net2000', 'famicom', 'wa', 'night', 'neon', 'pastel') then raise exception 'テーマが正しくありません'; end if;
+    if coalesce(p->>'theme', '') not in ('std', 'net2000', 'famicom', 'wa', 'night', 'neon', 'pastel', 'chalk', 'casino', 'win95', 'paper', 'citypop') then
+      raise exception 'テーマが正しくありません';
+    end if;
     cur := cur || jsonb_build_object('theme', p->>'theme');
   end if;
   if p ? 'cvd' then

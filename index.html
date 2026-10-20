@@ -504,11 +504,11 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 .bal{color:var(--ink)}
 :root[data-theme="famicom"] .hm-w{border-radius:0!important}
 /* 角を小さく（パステルはそのまま） */
-:root:not([data-theme="pastel"]){--radius:4px}
-:root:not([data-theme="pastel"]) :is(.btn,.seg,.seg2,.inp,.item,.kb-row,.hm-tile,.hm-w,.th-tile,.toast,.okbox,.warnbox,.td-sum div,.ip-list,.mj-row,.pl,.oc-pick button,.picks button,.bet input,.mailform input,.wk-q input,.slots div,.nt-row.new,.mj-res,.kb-stage,.reel,.game-row .ic,.srv-ic){border-radius:4px}
-:root:not([data-theme="pastel"]) :is(.bal,.bell,.chips button,.tabs-s button,.men-box button,.tag,.chip,.ind){border-radius:4px}
-:root:not([data-theme="pastel"]) .modal .sheet{border-radius:8px 8px 0 0}
-:root:not([data-theme="pastel"]) .dk-m{border-radius:6px}
+:root:not([data-theme="pastel"]):not([data-theme="citypop"]){--radius:4px}
+:root:not([data-theme="pastel"]):not([data-theme="citypop"]) :is(.btn,.seg,.seg2,.inp,.item,.kb-row,.hm-tile,.hm-w,.th-tile,.toast,.okbox,.warnbox,.td-sum div,.ip-list,.mj-row,.pl,.oc-pick button,.picks button,.bet input,.mailform input,.wk-q input,.slots div,.nt-row.new,.mj-res,.kb-stage,.reel,.game-row .ic,.srv-ic){border-radius:4px}
+:root:not([data-theme="pastel"]):not([data-theme="citypop"]) :is(.bal,.bell,.chips button,.tabs-s button,.men-box button,.tag,.chip,.ind){border-radius:4px}
+:root:not([data-theme="pastel"]):not([data-theme="citypop"]) .modal .sheet{border-radius:8px 8px 0 0}
+:root:not([data-theme="pastel"]):not([data-theme="citypop"]) .dk-m{border-radius:6px}
 /* メニューのウィジェット */
 .hm-w{grid-column:1/-1;border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:10px 12px;text-align:left}
 .hm-wh{display:flex;align-items:center;gap:8px;margin-bottom:4px}
@@ -605,6 +605,102 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 :root[data-theme="pastel"] .btn,:root[data-theme="pastel"] .seg,:root[data-theme="pastel"] .inp{border-radius:999px}
 :root[data-theme="pastel"] .card{box-shadow:0 4px 14px rgba(224,122,168,.12)}
 :root[data-theme="pastel"] header,:root[data-theme="pastel"] nav.tabs{background:rgba(255,255,255,.92)}
+/* ---- 黒板 ---- */
+:root[data-theme="chalk"]{--bg:#26392F;--panel:#2C4236;--ink:#F3F1E7;--muted:#B9C4B6;--line:#5E7768;--accent:#F2D16B;--accent-ink:#1F2B24;--soft:#35503F;
+  --red:#FF9A8F;--black:#16211B;--win:#A7E3A0;--lose:#FF9A8F;--up:#A7E3A0;--down:#FF9A8F;--night:#B5C6FF;--noon:#FFC870;--felt:#1E4A38;
+  --font:"Klee One","Hiragino Maru Gothic ProN","Hiragino Sans",sans-serif}
+:root[data-theme="chalk"] body{background:#26392F radial-gradient(rgba(255,255,255,.035) 1px,transparent 1px) 0 0/4px 4px}
+:root[data-theme="chalk"] header{background:#6B4428;border-bottom:4px solid #3E2716;color:#F7E9D6}
+:root[data-theme="chalk"] .logo small{color:#E2C9A8}
+:root[data-theme="chalk"] nav.tabs{background:#6B4428;border-top:4px solid #3E2716}
+:root[data-theme="chalk"] nav.tabs button{color:#E2C9A8}
+:root[data-theme="chalk"] nav.tabs button.on{color:#FFE7A0}
+:root[data-theme="chalk"] nav.tabs button.tb-mid b{border-color:#6B4428}
+:root[data-theme="chalk"] .card{border:1.5px dashed rgba(243,241,231,.35);box-shadow:none}
+:root[data-theme="chalk"] h3,:root[data-theme="chalk"] h2{text-shadow:0 0 1px rgba(243,241,231,.6)}
+:root[data-theme="chalk"] h3::before{content:"✎";color:var(--accent);margin-right:6px}
+:root[data-theme="chalk"] .btn{background:transparent;border:1.5px solid rgba(243,241,231,.55)}
+:root[data-theme="chalk"] .btn.main{background:#F2D16B;border-color:#F2D16B;color:#1F2B24}
+:root[data-theme="chalk"] .inp{background:#22332A;border-color:rgba(243,241,231,.35)}
+:root[data-theme="chalk"] .toast{background:#F3F1E7;color:#1F2B24}
+/* ---- カジノ ---- */
+:root[data-theme="casino"]{--bg:#0E3B2C;--panel:#0B2F23;--ink:#F6EED9;--muted:#BDB497;--line:#2E6A52;--accent:#D4AF37;--accent-ink:#1F1600;--soft:#14493A;
+  --red:#E85B52;--black:#08201A;--win:#86E3AE;--lose:#FF8075;--up:#86E3AE;--down:#FF8075;--night:#AEBEFF;--noon:#F2C35B;--felt:#17583F}
+:root[data-theme="casino"] body{background:#0E3B2C radial-gradient(ellipse at 50% 0,#1A6047 0,#0E3B2C 70%) fixed}
+:root[data-theme="casino"] header{background:#2A170D;border-bottom:3px solid #D4AF37;color:#F6EED9}
+:root[data-theme="casino"] .logo{color:#E9C866;letter-spacing:.06em}
+:root[data-theme="casino"] .logo small{color:#C9B27A}
+:root[data-theme="casino"] nav.tabs{background:#2A170D;border-top:3px solid #D4AF37}
+:root[data-theme="casino"] nav.tabs button{color:#C9B27A}
+:root[data-theme="casino"] nav.tabs button.on{color:#F3D27A}
+:root[data-theme="casino"] nav.tabs button.tb-mid b{border-color:#2A170D;background:linear-gradient(#F3D27A,#C9A13B)}
+:root[data-theme="casino"] .card{border-color:rgba(212,175,55,.55);box-shadow:inset 0 0 0 1px rgba(212,175,55,.15),0 4px 14px rgba(0,0,0,.3)}
+:root[data-theme="casino"] h3,:root[data-theme="casino"] h2{color:#E9C866;letter-spacing:.04em}
+:root[data-theme="casino"] h3::before{content:"♦";color:#E85B52;margin-right:6px}
+:root[data-theme="casino"] .btn{background:#0E3B2C;border-color:rgba(212,175,55,.6)}
+:root[data-theme="casino"] .btn.main{background:linear-gradient(#F3D27A,#C9A13B);border-color:#A9852A;color:#1F1600}
+:root[data-theme="casino"] .seg button.on{background:linear-gradient(#F3D27A,#C9A13B);color:#1F1600}
+:root[data-theme="casino"] .inp{background:#08261C;border-color:rgba(212,175,55,.4)}
+/* ---- 90年代パソコン風 ---- */
+:root[data-theme="win95"]{--bg:#C0C0C0;--panel:#C0C0C0;--ink:#000000;--muted:#404040;--line:#808080;--accent:#000080;--accent-ink:#FFFFFF;--soft:#D4D0C8;
+  --red:#C00000;--win:#007000;--lose:#C00000;--up:#007000;--down:#C00000;--night:#000080;--noon:#806000;--radius:0px;
+  --font:"MS UI Gothic","MS PGothic","ＭＳ Ｐゴシック","Osaka","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif}
+:root[data-theme="win95"] body{background:#008080}
+:root[data-theme="win95"] main{background:#C0C0C0;min-height:100vh;box-shadow:inset 1px 0 0 #FFFFFF,inset -1px 0 0 #808080}
+:root[data-theme="win95"] header{background:linear-gradient(90deg,#000080,#1084D0);color:#FFFFFF;border-bottom:0}
+:root[data-theme="win95"] .logo small{color:#DDE6FF}
+:root[data-theme="win95"] .card,:root[data-theme="win95"] .modal .sheet{background:#C0C0C0;border:2px solid;border-color:#FFFFFF #404040 #404040 #FFFFFF;box-shadow:inset -1px -1px 0 #808080,inset 1px 1px 0 #DFDFDF;border-radius:0}
+:root[data-theme="win95"] .card>h3:first-child{background:linear-gradient(90deg,#000080,#1084D0);color:#FFFFFF;margin:-14px -14px 10px!important;padding:3px 8px;font-size:13px}
+:root[data-theme="win95"] .card>h3:first-child :is(small,.muted){color:#DDE6FF!important}
+:root[data-theme="win95"] :is(.btn,.seg button,.seg2 button,.chips button,.tabs-s button,.hm-tile,.bal,.bell){background:#C0C0C0;color:#000000;border:2px solid;border-color:#FFFFFF #404040 #404040 #FFFFFF;box-shadow:inset -1px -1px 0 #808080,inset 1px 1px 0 #DFDFDF;border-radius:0!important}
+:root[data-theme="win95"] :is(.btn,.seg button,.seg2 button,.chips button):active:not(:disabled){border-color:#404040 #FFFFFF #FFFFFF #404040;box-shadow:inset 1px 1px 0 #808080;transform:none}
+:root[data-theme="win95"] .btn.main{font-weight:800;outline:1px solid #000000;outline-offset:-1px}
+:root[data-theme="win95"] .seg,:root[data-theme="win95"] .seg2{border:0;gap:2px;border-radius:0}
+:root[data-theme="win95"] :is(.seg,.seg2,.tabs-s) button.on{background:#C0C0C0 repeating-conic-gradient(#FFFFFF 0 25%,#C0C0C0 0 50%) 0 0/2px 2px;color:#000000;border-color:#404040 #FFFFFF #FFFFFF #404040;box-shadow:inset 1px 1px 0 #808080}
+:root[data-theme="win95"] :is(.inp,textarea.inp,.bet input,.wk-q input,.mailform input){background:#FFFFFF;color:#000000;border:2px solid;border-color:#808080 #FFFFFF #FFFFFF #808080;box-shadow:inset 1px 1px 0 #404040;border-radius:0!important}
+:root[data-theme="win95"] #subNav{background:#C0C0C0;border-bottom:2px solid #808080}
+:root[data-theme="win95"] #subNav button.on{color:#000080;border-bottom-color:#000080}
+:root[data-theme="win95"] nav.tabs{background:#C0C0C0;border-top:2px solid #FFFFFF;box-shadow:0 -1px 0 #DFDFDF}
+:root[data-theme="win95"] nav.tabs button{color:#000000}
+:root[data-theme="win95"] nav.tabs button.on{color:#000080;text-decoration:underline}
+:root[data-theme="win95"] nav.tabs button.tb-mid b{border-radius:0;background:#C0C0C0;color:#000000;border:2px solid;border-color:#FFFFFF #404040 #404040 #FFFFFF}
+:root[data-theme="win95"] .game-row .ic,:root[data-theme="win95"] .srv-ic{background:#008080;color:#FFFFFF;border-radius:0!important}
+:root[data-theme="win95"] .toast{background:#FFFFE1;color:#000000;border:1px solid #000000;border-radius:0;box-shadow:2px 2px 0 rgba(0,0,0,.4)}
+/* ---- 新聞 ---- */
+:root[data-theme="paper"]{--bg:#ECE8DF;--panel:#F7F4ED;--ink:#141414;--muted:#5A554B;--line:#BDB6A6;--accent:#141414;--accent-ink:#F7F4ED;--soft:#E3DED2;
+  --red:#9E1B1B;--win:#1E5631;--lose:#9E1B1B;--up:#1E5631;--down:#9E1B1B;--night:#283C78;--noon:#7A4E12;--radius:0px;
+  --font:"Zen Old Mincho","Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif}
+:root[data-theme="paper"] body{background:#ECE8DF radial-gradient(rgba(0,0,0,.035) 1px,transparent 1px) 0 0/3px 3px}
+:root[data-theme="paper"] header{background:#F7F4ED;border-bottom:4px double #141414}
+:root[data-theme="paper"] .logo{font-weight:900;font-size:19px;letter-spacing:.08em}
+:root[data-theme="paper"] .card{border:1px solid #BDB6A6;border-top:3px solid #141414;box-shadow:none;border-radius:0}
+:root[data-theme="paper"] h3{border-bottom:1px solid #141414;padding-bottom:4px;font-weight:900;letter-spacing:.04em}
+:root[data-theme="paper"] h2{font-weight:900}
+:root[data-theme="paper"] .btn{background:#F7F4ED;border:1px solid #141414;border-radius:0}
+:root[data-theme="paper"] .btn.main{background:#141414;color:#F7F4ED}
+:root[data-theme="paper"] .seg{border-color:#141414;border-radius:0}
+:root[data-theme="paper"] nav.tabs{background:#F7F4ED;border-top:4px double #141414}
+:root[data-theme="paper"] nav.tabs button.on{text-decoration:underline;text-underline-offset:3px}
+:root[data-theme="paper"] nav.tabs button.tb-mid b{border-radius:0;border-color:#F7F4ED}
+:root[data-theme="paper"] .game-row .ic,:root[data-theme="paper"] .srv-ic{background:#141414;color:#F7F4ED}
+/* ---- シティポップ ---- */
+:root[data-theme="citypop"]{--bg:#FFE6EE;--panel:#FFFFFF;--ink:#26203F;--muted:#6E6290;--line:#F0D3E2;--accent:#F2547D;--accent-ink:#FFFFFF;--soft:#FFE8F0;
+  --red:#F2547D;--win:#0F9C94;--lose:#F2547D;--up:#0F9C94;--down:#F2547D;--night:#5B5BD6;--noon:#E9802A;--radius:14px;
+  --font:"Zen Maru Gothic","Hiragino Maru Gothic ProN","Hiragino Sans",sans-serif}
+:root[data-theme="citypop"] body{background:linear-gradient(180deg,#FFE3CF 0%,#FFD3E3 38%,#E4DAFF 72%,#CFEFFF 100%) fixed}
+:root[data-theme="citypop"] header{background:linear-gradient(90deg,#26203F,#4C2C72);color:#FFFFFF;border-bottom:4px solid;border-image:linear-gradient(90deg,#FFB86B,#F2547D,#7A6FF0,#38C9E0) 1}
+:root[data-theme="citypop"] .logo{font-style:italic;background:linear-gradient(90deg,#FFC48A,#FF7BA5);-webkit-background-clip:text;background-clip:text;color:transparent}
+:root[data-theme="citypop"] .logo small{color:#C9B8FF;-webkit-text-fill-color:#C9B8FF}
+:root[data-theme="citypop"] nav.tabs{background:linear-gradient(90deg,#26203F,#4C2C72);border-top:4px solid;border-image:linear-gradient(90deg,#38C9E0,#7A6FF0,#F2547D,#FFB86B) 1}
+:root[data-theme="citypop"] nav.tabs button{color:#C9B8FF}
+:root[data-theme="citypop"] nav.tabs button.on{color:#FFC48A}
+:root[data-theme="citypop"] nav.tabs button.tb-mid b{border-color:#3A2659;background:linear-gradient(135deg,#FFB86B,#F2547D)}
+:root[data-theme="citypop"] .card{border-color:#FFFFFF;box-shadow:0 6px 18px rgba(76,44,114,.13)}
+:root[data-theme="citypop"] h3::before{content:"";display:inline-block;width:14px;height:4px;border-radius:2px;background:linear-gradient(90deg,#FFB86B,#F2547D,#7A6FF0);margin-right:7px;vertical-align:4px}
+:root[data-theme="citypop"] .btn.main{background:linear-gradient(90deg,#FF8A5B,#F2547D);border-color:#F2547D}
+:root[data-theme="citypop"] .seg button.on{background:linear-gradient(90deg,#7A6FF0,#38C9E0)}
+:root[data-theme="citypop"] .game-row .ic,:root[data-theme="citypop"] .srv-ic{background:linear-gradient(135deg,#FFB86B,#F2547D 55%,#7A6FF0)}
+:root[data-theme="citypop"] .btn,:root[data-theme="citypop"] .seg,:root[data-theme="citypop"] .inp{border-radius:999px}
 /* テーマの見本（設定） */
 .th-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:8px}
 .th-tile{border:2px solid var(--line);border-radius:12px;padding:0;overflow:hidden;text-align:left;background:var(--panel)}
@@ -653,11 +749,12 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     var r = document.documentElement, t = localStorage.getItem('theme'), c = localStorage.getItem('cvd');
     if (t && t !== 'std') r.dataset.theme = t;
     if (c && c !== 'off') r.dataset.cvd = c;
-    var F = { famicom: 'DotGothic16', wa: 'Shippori+Mincho:wght@400;700;800', pastel: 'M+PLUS+Rounded+1c:wght@400;700;800' };
+    var F = { famicom: 'DotGothic16', wa: 'Shippori+Mincho:wght@400;700;800', pastel: 'M+PLUS+Rounded+1c:wght@400;700;800',
+      chalk: 'Klee+One:wght@400;600', paper: 'Zen+Old+Mincho:wght@400;700;900', citypop: 'Zen+Maru+Gothic:wght@400;700;900' };
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：English をえらんだ端末では、英語の辞書（i18n/en.js）を先に読みこむ */
-  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=4f3b94c0"><\/script>'); } } catch (e) {}
+  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=c3d34ac9"><\/script>'); } } catch (e) {}
 })();
 </script>
 </head>
@@ -1296,8 +1393,14 @@ const THEMES = [
   ['wa', '和風', '和紙と墨と朱色', '#F3ECDD', '#FBF7EE', '#B33A2E', '#2B2723'],
   ['night', '夜空', '紺色の夜空と金色', '#0B1020', '#141B33', '#E8C15A', '#E9ECF7'],
   ['neon', 'ネオン', '暗い街に光るピンクと水色', '#07060F', '#110F24', '#00E5FF', '#FF2E88'],
-  ['pastel', 'パステル', 'やさしい色と丸い形', '#FFF4F8', '#FFFFFF', '#E07AA8', '#4A3B4F']];
-const THEME_FONT = { famicom: 'DotGothic16', wa: 'Shippori+Mincho:wght@400;700;800', pastel: 'M+PLUS+Rounded+1c:wght@400;700;800' };
+  ['pastel', 'パステル', 'やさしい色と丸い形', '#FFF4F8', '#FFFFFF', '#E07AA8', '#4A3B4F'],
+  ['chalk', '黒板', '深い緑の黒板に、チョークの字', '#26392F', '#6B4428', '#F2D16B', '#F3F1E7'],
+  ['casino', 'カジノ', '緑のフェルトと金色', '#0E3B2C', '#2A170D', '#D4AF37', '#F6EED9'],
+  ['win95', '90年代パソコン風', '灰色の立体ボタンと青いタイトルバー', '#008080', '#C0C0C0', '#000080', '#FFFFFF'],
+  ['paper', '新聞', 'モノクロの紙面と明朝体', '#ECE8DF', '#F7F4ED', '#141414', '#141414'],
+  ['citypop', 'シティポップ', '80年代の夕焼けとネオン色', 'linear-gradient(90deg,#FFC48A,#FF7BA5,#9C8CFF)', '#FFFFFF', '#26203F', '#26203F']];
+const THEME_FONT = { famicom: 'DotGothic16', wa: 'Shippori+Mincho:wght@400;700;800', pastel: 'M+PLUS+Rounded+1c:wght@400;700;800',
+  chalk: 'Klee+One:wght@400;600', paper: 'Zen+Old+Mincho:wght@400;700;900', citypop: 'Zen+Maru+Gothic:wght@400;700;900' };
 const lookLocal = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
 function applyLook(theme, cvd) {
   const r = document.documentElement;
