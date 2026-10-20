@@ -858,6 +858,10 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 :root[data-cvd="safe"] .oc-pick button[data-ocol="2"]{background:#009E73!important}
 :root[data-cvd="safe"] .oc-pick button[data-ocol="3"]{background:#0072B2!important}
 :root[data-cvd="safe"] .board .r,:root[data-cvd="safe"] .wheelnum.red,:root[data-cvd="safe"] #ruLast .red{background:#D55E00!important}
+/* お金の動き（自分・会社） */
+.mh li{align-items:flex-start}
+.mh li .grow{flex:1;min-width:0}.mh li small{display:block;color:var(--muted);font-size:11px;line-height:1.35;margin-top:1px}
+.mh li .v{text-align:right;white-space:nowrap}.mh li .v small{font-weight:500}
 /* ことば（設定・ログイン） */
 .langs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;max-width:420px}
 .langs button{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;padding:8px 6px;font-weight:700;font-size:13px;font-family:inherit}
@@ -880,7 +884,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=cafb2b6f"};
+  window.AX_LANGS = {"en":"en.js?v=2510d862"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -1423,7 +1427,10 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <div class="row"><input id="newPass" type="password" autocomplete="new-password" minlength="6" placeholder="新しいパスワード（6文字以上）" class="grow" style="padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg)"><button class="btn main" id="passSave">決める</button></div>
     <p class="muted small" style="margin:6px 0 0">パスワードを決めると、次からはメールを待たずにログインできます。</p>
   </div>
-  <div class="card" data-sub="hist"><h3 style="margin-top:0">自分の記録</h3><ul class="rank" id="hist"></ul></div>
+  <div class="card" data-sub="hist"><h3 style="margin-top:0">お金の動き</h3>
+    <p class="muted small" style="margin:-4px 0 6px">所持金がかわったことを、すべて記録しています（消えません）。新しい順です。</p>
+    <ul class="rank mh" id="hist"></ul>
+    <div class="row" style="margin-top:8px"><button class="btn s hidden" id="histMore">もっと見る</button><button class="btn s" id="histCsv">CSVで保存</button></div></div>
   <div class="card links" data-sub="rule">
     <h3 style="margin-top:0">付属ゲーム</h3>
     <a href="battle/">市区町村バトル</a><span class="muted small"> — 日本全国の市区町村の地図で遊ぶ陣取り将棋</span>
@@ -4235,11 +4242,37 @@ function ownSections(c) {
       <p class="muted small" style="margin:6px 0 0">休業中は、買い物・送金・請求を受けられず、求人も出ません（あとで再開できます）。
         廃業・倒産すると、銀行の預金はみんなに返し、渡していない注文の代金を返して、残ったお金を株主に持ち株の割合で分けます。
         渡していない注文の代金は <b>${fmt(c.owed)} X</b>。会社のお金が足りれば「廃業」、足りなければ「倒産」です（倒産では代金を割合で返し、株は消えます）。</p>`]);
+  const clm = CL_MORE[c.cid] || { items: [], more: c.ledger.length >= 20 };
   S.push(['ledger', 'お金の出入り', c.ledger.length ? esc((c.ledger[0].memo || c.ledger[0].kind).slice(0, 20)) : 'まだありません', 0, `
+      <p class="muted small" style="margin:0 0 6px">会社のお金の出入りは、すべて記録しています（消えません）。新しい順です。</p>
       ${c.ledger.map(l => `<div class="line"><span class="grow">${esc(numT(l.memo || l.kind))}<small>${l.at}・残り ${fmt(l.balance_after)} X</small></span>
-        <b class="num" style="color:${l.amount >= 0 ? 'var(--win)' : 'var(--lose)'}">${l.amount >= 0 ? '+' : ''}${fmt(l.amount)}</b></div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}`]);
+        <b class="num" style="color:${l.amount >= 0 ? 'var(--win)' : 'var(--lose)'}">${l.amount >= 0 ? '+' : ''}${fmt(l.amount)}</b></div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
+      ${clm.items.map(l => `<div class="line"><span class="grow">${esc(numT(l.memo || l.kind))}<small>${mhDate(l.at_ms)}・残り ${fmt(l.bal)} X</small></span>
+        <b class="num" style="color:${l.amount >= 0 ? 'var(--win)' : 'var(--lose)'}">${l.amount >= 0 ? '+' : ''}${fmt(l.amount)}</b></div>`).join('')}
+      <div class="row" style="margin-top:8px">${clm.more ? `<button class="btn s" data-clmore="${c.cid}">もっと見る</button>` : ''}${c.ledger.length ? `<button class="btn s" data-clcsv="${c.cid}">CSVで保存</button>` : ''}</div>`]);
   return S;
 }
+// 会社のお金の出入り：もっと見る・CSV
+const CL_MORE = {};
+document.addEventListener('click', async ev => {
+  const m = ev.target.closest('[data-clmore]'), cv = ev.target.closest('[data-clcsv]');
+  if (m) {
+    const cid = m.dataset.clmore, c = OW && OW.corps.find(x => x.cid === cid); if (!c) return;
+    const st = CL_MORE[cid] || { items: [], more: true }, last = st.items.length ? st.items[st.items.length - 1].id : c.ledger.length ? c.ledger[c.ledger.length - 1].id : null;
+    m.disabled = true;
+    try { const d = await call('corp_ledger_page', { p_cid: cid, p_before: last, p_limit: 100 }); CL_MORE[cid] = { items: st.items.concat(d.items), more: d.more }; ownRender(); }
+    catch (e) { toast(e.message); m.disabled = false; }
+  }
+  if (cv) {
+    const cid = cv.dataset.clcsv; cv.disabled = true;
+    try {
+      let all = [], before = null;
+      for (let i = 0; i < 400; i++) { const d = await call('corp_ledger_page', { p_cid: cid, p_before: before, p_limit: 500 }); all = all.concat(d.items); if (!d.more || !d.items.length) break; before = d.items[d.items.length - 1].id; }
+      csvSave(`company-${cid}-ledger.csv`, [tr('日時'), tr('内容'), tr('金額'), tr('残高')], all.map(l => [mhDate(l.at_ms), l.memo || l.kind, l.amount, l.bal]));
+    } catch (e) { toast(e.message); }
+    cv.disabled = false;
+  }
+});
 const dot = n => n > 0 ? `<span class="tag" style="background:#F8D7D0;color:#9A2A14;margin-left:6px">${n}</span>` : '';
 function ownRender() {
   if (!OW) return;
@@ -6782,18 +6815,63 @@ $('#rvSend').onclick = async () => {
 };
 
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て', guest_rest: 'ゲストの残り（上限をこえた分・消えたゲスト）', lottery: '風の芽ジャンボ', auction: '競り市', boat: '競艇', keirin: '競輪' };
+const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て', guest_rest: 'ゲストの残り（上限をこえた分・消えたゲスト）', lottery: '風の芽ジャンボ', auction: '競り市', boat: '競艇', keirin: '競輪', fishing: '釣り', review: '評価のお礼', gov_share: '国から株' };
+// 記録のない所持金の動き（あずかり・返金など）は、呼ばれた操作から
+const MH_SRC = { room_move: '競り市・対戦（あずかり・返金）', room_state: '競り市・対戦（返金など）', room_list: '競り市・対戦（返金など）', room_join: '対戦の賭け金',
+  room_start: '対戦の賭け金', room_leave: '対戦の賭け金（返金）', room_quit: '対戦の賭け金', stock_order: '株の注文（代金をあずかる）', stock_cancel: '株の注文の取り消し（返金）',
+  fx_order: '為替の注文（あずかる）', fx_cancel: '為替の注文の取り消し（返金）', corp_buy: '買い物', invoice_pay: '請求の支払い' };
+const mhDate = ms => { const d = new Date(ms + 9 * 3600000); return `${d.getUTCFullYear()}/${d.getUTCMonth() + 1}/${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`; };
+function mhLabel(it) {
+  if (it.logs && it.logs.length) return it.logs.map(l => GAME[l.game] || l.game).filter((x, i, a) => a.indexOf(x) === i).join('・');
+  const k = String(it.src || '').replace(/^.*\/rpc\//, '');
+  return MH_SRC[k] || 'お金の動き';
+}
+function mhSub(it) {
+  const d = (it.logs || []).map(l => l.detail || {}).find(x => x.to || x.from || x.company || x.bank || x.title || x.item || x.lot) || {};
+  return d.to ? `→ ${d.to}` : d.from ? `← ${d.from}` : d.item ? `${d.company || ''} ${d.item}` : d.company || d.bank || d.title || d.lot || '';
+}
+const MH = { items: [], more: false, busy: false };
+function mhRender() {
+  $('#hist').innerHTML = MH.items.map(h => `<li><span class="grow"><span>${esc(mhLabel(h))}</span><small>${mhDate(h.at_ms)}${mhSub(h) ? `・<span>${esc(mhSub(h))}</span>` : ''}</small></span>
+      <span class="v" style="color:${h.delta > 0 ? 'var(--win)' : h.delta < 0 ? 'var(--lose)' : 'inherit'}">${h.delta > 0 ? '+' : ''}${fmt(h.delta)}<small>残高 ${fmt(h.bal)}</small></span></li>`).join('')
+    || '<li class="muted">まだありません</li>';
+  $('#histMore').classList.toggle('hidden', !MH.more);
+}
+async function mhMore() {
+  if (MH.busy) return; MH.busy = true;
+  try { const last = MH.items[MH.items.length - 1]; const d = await call('money_history', { p_before: last ? last.at_ms : null, p_before_k: last ? last.k : null, p_limit: 100 }); MH.items.push(...d.items); MH.more = d.more; mhRender(); }
+  catch (e) { toast(e.message); }
+  MH.busy = false;
+}
+// CSV（Excel でも開けるように BOM つき）
+function csvSave(name, head, rows) {
+  const q = v => { const x = String(v == null ? '' : v); return /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; };
+  const text = '\ufeff' + [head, ...rows].map(r => r.map(q).join(',')).join('\r\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' })); a.download = name;
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+$('#histMore').onclick = mhMore;
+$('#histCsv').onclick = async () => {
+  const b = $('#histCsv'); b.disabled = true;
+  try {
+    let all = [], before = null;
+    let bk = null;
+    for (let i = 0; i < 400; i++) { const d = await call('money_history', { p_before: before, p_before_k: bk, p_limit: 500 }); all = all.concat(d.items); if (!d.more || !d.items.length) break; before = d.items[d.items.length - 1].at_ms; bk = d.items[d.items.length - 1].k; }
+    csvSave('money-history.csv', [tr('日時'), tr('内容'), tr('くわしく'), tr('金額'), tr('残高')], all.map(h => [mhDate(h.at_ms), tr(mhLabel(h)), mhSub(h), h.delta, h.bal]));
+  } catch (e) { toast(e.message); }
+  b.disabled = false;
+};
 async function moreLoad() {
   idLoad();
   try {
-    const [hs, me] = await Promise.all([call('my_history'), call('my_profile')]);
+    const [hs, me] = await Promise.all([call('money_history', { p_limit: 100 }), call('my_profile')]);
     setBal(me.balance);
     const ck = me.check, row = (ok, t) => `<div class="cond"><span class="${ok ? 'y' : 'n'}">${ok ? '✓' : '×'}</span><span>${t}</span></div>`;
     $('#chkBox').innerHTML = `<p style="margin:0 0 6px">いまの状態：${me.badge && me.badge.ok ? '<b style="color:#F08A24">チェックあり</b>' : '<b>チェックなし</b>'}${badgeH(me.badge)}</p>`
       + row(ck.days, ck.days ? '登録から7日たっている' : `登録から7日（${ck.days_from}から）`)
       + row(ck.debt === 0, ck.debt === 0 ? '税金の滞納がない' : `税金の滞納がある（${fmt(ck.debt)} X。納めればOK）`)
       + row(ck.mail, ck.mail ? `メールで認証ずみ（${ck.mail_at}。${ck.mail_until}まで有効）` : (ck.mail_at ? `メールの認証が切れました（${ck.mail_at}に認証）` : 'メールでの認証がまだ'));
-    $('#hist').innerHTML = hs.map(h => { const net = h.payout - h.bet; return `<li><span>${GAME[h.game] || h.game}</span><span class="v" style="color:${net > 0 ? 'var(--win)' : net < 0 ? 'var(--lose)' : 'inherit'}">${net > 0 ? '+' : ''}${fmt(net)}</span></li>`; }).join('') || '<li class="muted">まだありません</li>';
+    MH.items = hs.items; MH.more = hs.more; mhRender();
   } catch (e) { toast(e.message); }
 }
 $('#mailVerify').onclick = async () => {

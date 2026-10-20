@@ -606,7 +606,7 @@ begin
   if a is not null then return; end if;      -- AIのアカウントは記録しない
   insert into tx_log(user_id, game, bet, payout, balance_after, detail)
   values (u, g, bet, pay, b, d);
-  if g in ('slot','roulette','hilo','blackjack','race','lottery','auction','boat','keirin') then
+  if g in ('slot','roulette','hilo','blackjack','race','lottery','auction','boat','keirin','fishing') then
     update treasury set balance = balance + (bet - pay), casino_total = casino_total + (bet - pay) where id = 1;
   end if;
 end $$;
@@ -1034,7 +1034,7 @@ end $$;
 create or replace function public._income(u uuid, m int) returns bigint
 language sql stable set search_path = public as $$
   select greatest(coalesce(sum(payout - bet), 0), 0)::bigint from tx_log
-   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend','liquidation','game_bet','game_stake','pub_sale','review','auction','boat','keirin')
+   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend','liquidation','game_bet','game_stake','pub_sale','review','auction','boat','keirin','fishing')
      and created_at >= _month_start(m) and created_at < _month_start(_next_month(m))
 $$;
 
@@ -7538,6 +7538,7 @@ begin
     if st->>'phase' <> 'bid' then raise exception 'この品の競りは終わりました'; end if;
     if t >= (st->>'t_close')::bigint then raise exception 'この品の競りは終わりました'; end if;
     if coalesce((st->>'high')::int, -1) = s then raise exception 'いちばん高い値をつけているのは、あなたです'; end if;
+    if st->'lots'->k->>'seller' is not null and (st->'lots'->k->>'seller')::int = s then raise exception '自分の魚には値をつけられません'; end if;
     x := (mv->>'x')::bigint; mn := _au_min(st);
     if x is null or x < mn then raise exception '% X以上をつけてください', _fmt(mn); end if;
     if x > mn + 50 * _au_step(mn) then raise exception '一度に上げられるのは % Xまでです', _fmt(mn + 50 * _au_step(mn)); end if;
@@ -7601,7 +7602,7 @@ begin
     l := st->'lots'->i;
     open := l ? 'res';
     if i < k or (i = k and open) then
-      done := done || jsonb_build_object('nm', l->'nm', 'em', l->'em', 'info', l->'info', 'mk', l->'mk', 'start', l->'start', 'res', l->'res', 'v', l->'v', 'fake', l->'fake');
+      done := done || jsonb_build_object('nm', l->'nm', 'em', l->'em', 'info', l->'info', 'mk', l->'mk', 'start', l->'start', 'res', l->'res', 'v', l->'v', 'fake', l->'fake', 'by', l->'by');
     end if;
   end loop;
   return jsonb_build_object('g', 'auction', 'market', st->'market', 'n', st->'n', 'nb', st->'nb', 'k', k, 'lots_n', jsonb_array_length(st->'lots'),
@@ -7609,7 +7610,8 @@ begin
     'step', case when st->>'phase' = 'bid' then _au_step(_au_min(st)) end,
     't_close', st->'t_close', 't_next', st->'t_next', 'timer_at', st->'timer_at', 'bids', st->'bids', 'pnl', st->'pnl', 'won', st->'won',
     'cpus', coalesce(st->'cpus', '[]'), 'over', coalesce(st->'over', 'false'), 'final', st->'final', 'why', st->'why',
-    'lot', case when st->>'phase' in ('show', 'bid', 'sold') then jsonb_build_object('nm', lot->'nm', 'em', lot->'em', 'info', lot->'info', 'mk', lot->'mk', 'start', lot->'start') end,
+    'lot', case when st->>'phase' in ('show', 'bid', 'sold') then jsonb_build_object('nm', lot->'nm', 'em', lot->'em', 'info', lot->'info', 'mk', lot->'mk', 'start', lot->'start',
+             'by', lot->'by', 'own', coalesce(me is not null and lot->>'seller' is not null and (lot->>'seller')::int = me, false)) end,
     'my', case when me is not null and me >= 0 and st->>'phase' in ('show', 'bid', 'sold') then
             jsonb_build_object('est', lot->'est'->me, 'hint', lot->'hint'->me) end,
     'done', done);
@@ -7646,6 +7648,7 @@ begin
       perform _give(uid, v);
       perform _log(uid, 'auction', p, v, jsonb_build_object('room', rid, 'lot', lot->>'nm', 'fake', coalesce((lot->>'fake')::boolean, false)));
     end if;
+    if lot ? 'cid' then perform _fi_sold((lot->>'cid')::bigint, w, p, rid); end if;   -- 釣った魚の出品
   end if;
 end $$;
 
@@ -7662,6 +7665,7 @@ begin
   end if;
   update game_rooms set status = 'finished', finished_at = _now(), reason = '時間がかかりすぎたので終わり（あずかっていた額は返しました）',
          state = state || jsonb_build_object('over', true, 'phase', 'end') where id = rid;
+  update fi_lots set status = 'queued', room_id = null where room_id = rid and status = 'auction';   -- 競られなかった出品はもどす
 end $$;
 
 -- 毎分：人が見ていなくても競りを進める（2時間たったら終わり）
@@ -8260,6 +8264,7 @@ begin
     delete from game_stakes where room_id = rid;
   end if;
   st := _mg_init(r.game, n, r.opts);
+  if r.game = 'auction' then st := _au_consign(rid, s, st); end if;   -- 釣った魚の出品
   r.seats := s; r.auto := '{}';
   st := st || jsonb_build_object('hum', _mroom_hum(r), 'cpus', to_jsonb(cs));
   update game_rooms set seats = s, cpu = cs, auto = '{}', status = 'playing', started_at = _now(), act_at = _now(), turn_at = _now(),
@@ -13545,6 +13550,700 @@ begin
   end if;
 end $$;
 
+-- =====================================================================
+-- 釣り（風の芽製作所）：ひとりで釣る＋毎日の釣り大会。釣った魚は競り市に出して売る
+--   釣り場：堤防・磯・沖（船）・川・湖。季節（春夏秋冬）と時間帯（朝まずめ・日中・夕まずめ・夜）で釣れる魚がかわる
+--   1回投げるごとにエサ代。アタリ（浮きがしずむ）で「合わせる」→ やりとり（あばれたらゆるめ、休んだら巻く）→ 釣り上げたら、いけすへ
+--   いけすの魚は競り市に出す（出品）。競り市（魚市場・まぜた市）が始まると、出品した魚が品になって競られ、売れた額（手数料5%をのぞく）を受け取る
+--   12時間たっても売れない出品と、2日たったいけすの魚は、仲卸が引き取る（7割・5割）
+--   釣り大会：毎日16:00〜16:20（夕まずめ）。参加費100 X。いちばん重い1匹で順位。参加費の95%を1〜3位で分ける（50・30・20%）
+--   やりとりは、決まった手順で（サーバーと画面で同じ計算）：50msごとに、巻いているか・魚の力から、糸の張り（0〜1000）と距離を計算
+-- =====================================================================
+create table if not exists public.fi_casts (
+  id        bigserial primary key,
+  user_id   uuid not null references public.profiles(id) on delete cascade,
+  spot      text not null,
+  cost      bigint not null,
+  at        timestamptz not null default now(),
+  bite_ms   int,                                  -- アタリまで（null＝アタリなし）
+  window_ms int,
+  nib       int[] not null default '{}',          -- 小さなアタリ（合わせると早合わせ）
+  fish      jsonb,                                -- 決まった魚（見せるのは釣り上げたあと）
+  fight     jsonb,                                -- やりとりの決まり（合わせたあと）
+  state     text not null default 'wait',         -- wait / fight / landed / lost
+  hook_at   timestamptz,
+  result    text,
+  tourney   date                                  -- 大会のあいだに大会の釣り場で投げた
+);
+create index if not exists fi_casts_user on public.fi_casts(user_id, id desc);
+create index if not exists fi_casts_open on public.fi_casts(state) where state in ('wait', 'fight');
+create table if not exists public.fi_catches (
+  id       bigserial primary key,
+  user_id  uuid not null references public.profiles(id) on delete cascade,
+  spot     text not null,
+  sp       text not null,                        -- 魚の種類
+  nm       text not null,
+  em       text not null,
+  len      numeric not null,                     -- cm
+  kg       numeric not null,
+  v_est    bigint not null,                      -- 値打ちの目安
+  v        bigint not null,                      -- 本当の値打ち（売れるまで見せない）
+  at       timestamptz not null default now(),
+  status   text not null default 'keep',         -- keep いけす / lot 出品 / sold 売れた / wholesale 仲卸
+  lot_id   bigint,
+  tourney  date
+);
+create index if not exists fi_catches_user on public.fi_catches(user_id, status);
+create index if not exists fi_catches_at on public.fi_catches(at);
+create table if not exists public.fi_lots (
+  id       bigserial primary key,
+  user_id  uuid not null references public.profiles(id) on delete cascade,
+  nm       text not null,
+  em       text not null,
+  info     text not null,
+  n        int not null,
+  kg       numeric not null,
+  v        bigint not null,                      -- 本当の値打ち（合計）
+  e0       bigint not null,                      -- 目安（合計）
+  status   text not null default 'queued',       -- queued 出品中 / auction 競り中 / sold 売れた / wholesale 仲卸
+  room_id  bigint,
+  price    bigint,
+  net      bigint,
+  at       timestamptz not null default now(),
+  sold_at  timestamptz
+);
+create index if not exists fi_lots_q on public.fi_lots(status, at);
+create index if not exists fi_lots_user on public.fi_lots(user_id, id desc);
+create table if not exists public.fi_tourneys (
+  day      date primary key,
+  spot     text not null,
+  start_at timestamptz not null,
+  end_at   timestamptz not null,
+  fee      bigint not null,
+  status   text not null default 'open',         -- open / done
+  result   jsonb
+);
+create table if not exists public.fi_entries (
+  day      date not null references public.fi_tourneys(day),
+  user_id  uuid not null references public.profiles(id) on delete cascade,
+  paid     bigint not null,
+  best_kg  numeric,
+  best_len numeric,
+  best_nm  text,
+  best_at  timestamptz,
+  prize    bigint,
+  primary key (day, user_id)
+);
+alter table public.fi_casts    enable row level security;
+alter table public.fi_catches  enable row level security;
+alter table public.fi_lots     enable row level security;
+alter table public.fi_tourneys enable row level security;
+alter table public.fi_entries  enable row level security;
+revoke all on public.fi_casts, public.fi_catches, public.fi_lots, public.fi_tourneys, public.fi_entries from anon, authenticated;
+
+-- 魚の表（spot 釣り場, k 種類, nm 名前, em 絵, seas 季節（春1・夏2・秋4・冬8）, tod 時間帯（朝まずめ1・日中2・夕まずめ4・夜8）, w 釣れやすさ,
+--   lmin/lmed/lmax 長さ（cm）, kgm lmed のときの重さ（kg）, ppk 1kgの値段（X）, pw 力, st 粘り（あばれる回数）, win 合わせの猶予（ms））
+create or replace function public._fi_species()
+returns table(spot text, k text, nm text, em text, seas int, tod int, w numeric, lmin numeric, lmed numeric, lmax numeric, kgm numeric, ppk numeric, pw int, st int, win int)
+language sql immutable as $$
+  select * from (values
+    ('pier','aji','マアジ','🐟',15,15,30,12,20,34,0.1,84.0,22,2,1300),
+    ('pier','saba','マサバ','🐟',14,7,18,18,28,42,0.28,52.5,38,3,1300),
+    ('pier','iwashi','カタクチイワシ','🐟',15,7,14,8,11,15,0.012,42.0,8,1,1500),
+    ('pier','kisu','シロギス','🐟',7,7,12,12,18,28,0.06,262.5,15,1,1100),
+    ('pier','haze','マハゼ','🐟',6,7,12,8,13,20,0.025,157.5,8,1,1300),
+    ('pier','kasago','カサゴ','🐟',15,15,8,12,19,30,0.13,210.0,22,2,1100),
+    ('pier','mebaru','メバル','🐟',9,13,8,12,20,32,0.15,210.0,20,2,1000),
+    ('pier','kurodai','クロダイ','🐟',15,13,4,25,38,55,1.0,105.0,55,4,900),
+    ('pier','suzuki','スズキ','🐟',15,13,4,35,55,90,1.8,126.0,60,4,1000),
+    ('pier','aori','アオリイカ','🦑',5,13,4,15,25,45,0.8,315.0,45,3,1200),
+    ('pier','tachiuo','タチウオ','🐟',4,12,6,70,95,130,0.5,157.5,40,3,900),
+    ('pier','bora','ボラ','🐟',15,15,6,30,45,65,1.0,21.0,50,3,1300),
+    ('rock','mejina','メジナ','🐟',15,7,30,20,30,50,0.5,95.3,50,3,900),
+    ('rock','budai','ブダイ','🐟',12,2,10,25,35,50,0.8,57.2,40,3,1100),
+    ('rock','kawahagi','カワハギ','🐟',12,2,12,15,22,30,0.25,285.9,20,2,800),
+    ('rock','ishidai','イシダイ','🐟',6,7,6,30,45,65,1.8,285.9,70,5,900),
+    ('rock','ishigaki','イシガキダイ','🐟',6,7,4,30,45,70,2.0,238.2,70,5,900),
+    ('rock','warasa','ワラサ','🐟',12,5,6,50,65,85,3.0,95.3,75,5,1100),
+    ('rock','hiramasa','ヒラマサ','🐟',6,5,3,60,80,120,5.0,190.6,85,6,1000),
+    ('rock','akahata','アカハタ','🐟',6,6,8,20,30,45,0.5,238.2,40,3,1000),
+    ('rock','kurodai','クロダイ','🐟',15,13,4,25,38,55,1.0,95.3,55,4,900),
+    ('off','madai','マダイ','🐟',15,7,25,25,40,80,1.0,202.4,50,4,1000),
+    ('off','hirame','ヒラメ','🐟',12,7,12,35,50,85,1.4,303.6,55,4,900),
+    ('off','buri','ブリ','🐟',12,7,12,70,85,105,7.0,121.4,85,6,1000),
+    ('off','kanpachi','カンパチ','🐟',6,7,8,50,70,110,4.0,253.0,85,6,1000),
+    ('off','katsuo','カツオ','🐟',3,7,12,40,50,70,2.5,81.0,75,5,1200),
+    ('off','kihada','キハダ','🐟',6,7,4,70,100,150,15,151.8,95,8,1000),
+    ('off','maguro','本マグロ','🐟',12,5,0.4,120,165,250,70,506.0,100,12,900),
+    ('off','amadai','アマダイ','🐟',13,7,10,25,35,50,0.6,404.8,30,2,1000),
+    ('off','aji','マアジ','🐟',15,7,20,20,28,40,0.25,81.0,25,2,1300),
+    ('off','kue','クエ','🐟',15,14,1,50,70,110,6,607.2,95,8,900),
+    ('off','nodoguro','ノドグロ','🐟',15,2,4,20,28,40,0.4,607.2,25,2,1000),
+    ('river','ayu','アユ','🐟',6,2,25,15,20,28,0.08,331.8,25,2,1000),
+    ('river','oikawa','オイカワ','🐟',15,7,20,8,12,16,0.02,110.6,10,1,1200),
+    ('river','ugui','ウグイ','🐟',15,15,20,15,25,40,0.15,33.2,25,2,1200),
+    ('river','yamame','ヤマメ','🐟',3,7,10,15,22,32,0.12,331.8,30,2,900),
+    ('river','iwana','イワナ','🐟',7,7,8,18,26,45,0.2,331.8,35,3,900),
+    ('river','koi','コイ','🐟',15,15,10,40,60,90,3.0,33.2,70,5,1300),
+    ('river','namazu','ナマズ','🐟',6,12,6,35,50,70,1.2,55.3,55,4,1200),
+    ('river','unagi','ウナギ','🐟',6,8,4,40,55,80,0.25,663.6,45,3,1000),
+    ('river','sakuramasu','サクラマス','🐟',1,5,1,40,55,70,2.0,442.4,75,6,900),
+    ('lake','bass','ブラックバス','🐟',7,5,25,25,35,55,0.7,30.7,50,4,1000),
+    ('lake','gill','ブルーギル','🐟',6,15,20,10,15,22,0.08,10.2,12,1,1300),
+    ('lake','hera','ヘラブナ','🐟',15,7,20,25,35,48,0.8,41.0,40,3,800),
+    ('lake','wakasagi','ワカサギ','🐟',8,7,30,7,10,14,0.008,410.0,6,1,1100),
+    ('lake','niji','ニジマス','🐟',15,7,12,25,35,55,0.5,153.8,45,3,1000),
+    ('lake','himemasu','ヒメマス','🐟',6,5,6,20,28,38,0.25,307.5,30,2,1000),
+    ('lake','raigyo','ライギョ','🐟',2,7,5,50,65,90,2.0,30.7,70,5,1100),
+    ('lake','ito','イトウ','🐟',5,13,0.3,70,95,140,8.0,512.5,95,9,900)
+  ) x(spot, k, nm, em, seas, tod, w, lmin, lmed, lmax, kgm, ppk, pw, st, win)
+$$;
+
+-- 釣り場（名前・絵・エサ代・はじめの距離（cm））
+create or replace function public._fi_spot(s text) returns jsonb
+language sql immutable as $$
+  select case s
+    when 'pier'  then '{"k":"pier","nm":"堤防","em":"🌊","cost":25,"d0":1500}'::jsonb
+    when 'rock'  then '{"k":"rock","nm":"磯","em":"🪨","cost":100,"d0":2000}'::jsonb
+    when 'off'   then '{"k":"off","nm":"沖（船）","em":"🚢","cost":400,"d0":3000}'::jsonb
+    when 'river' then '{"k":"river","nm":"川","em":"🏞","cost":30,"d0":1200}'::jsonb
+    when 'lake'  then '{"k":"lake","nm":"湖","em":"🛶","cost":40,"d0":1800}'::jsonb
+  end
+$$;
+create or replace function public._fi_spots() returns text[]
+language sql immutable as $$ select array['pier', 'rock', 'off', 'river', 'lake'] $$;
+
+-- 時間帯（日本時間）：朝まずめ 4:30〜7:30・日中 〜16:00・夕まずめ 〜19:00・夜
+create or replace function public._fi_tod(ts timestamptz) returns int
+language sql stable as $$
+  select case when m >= 270 and m < 450 then 1 when m >= 450 and m < 960 then 2 when m >= 960 and m < 1140 then 4 else 8 end
+    from (select extract(hour from ts at time zone 'Asia/Tokyo')::int * 60 + extract(minute from ts at time zone 'Asia/Tokyo')::int m) z
+$$;
+create or replace function public._fi_season(ts timestamptz) returns int
+language sql stable as $$
+  select case when mo between 3 and 5 then 1 when mo between 6 and 8 then 2 when mo between 9 and 11 then 4 else 8 end
+    from (select extract(month from ts at time zone 'Asia/Tokyo')::int mo) z
+$$;
+-- 文字から決まる正規乱数（その日の魚の相場に使う）
+create or replace function public._fi_hnorm(t text) returns double precision
+language sql immutable as $$
+  select sqrt(-2 * ln(greatest(1e-9, ('x' || substr(h, 1, 8))::bit(32)::bigint::double precision / 4294967296.0)))
+         * cos(2 * pi() * (('x' || substr(h, 9, 8))::bit(32)::bigint::double precision / 4294967296.0))
+    from (select md5(t) h) z
+$$;
+-- その日の相場（魚ごと。平均がほぼ1）
+create or replace function public._fi_market(sp text, d date) returns numeric
+language sql immutable as $$ select exp(0.15 * _fi_hnorm(sp || ':' || d::text) - 0.0112)::numeric $$;
+
+-- 魚を決める（5%はゴミ）
+create or replace function public._fi_pick(s text, ts timestamptz) returns jsonb
+language plpgsql volatile set search_path = public as $$
+declare r record; t int := _fi_tod(ts); se int := _fi_season(ts); L numeric; kg numeric; ve bigint; v bigint; j record;
+begin
+  if random() < 0.05 then
+    select * into j from (values ('boot', '長靴', '👢'), ('can', '空き缶', '🥫'), ('wood', '流木', '🪵'),
+                                 ('weed', '海藻', '🌿')) x(k, nm, em)
+     where x.k <> 'weed' or s in ('pier', 'rock', 'off') order by random() limit 1;
+    return jsonb_build_object('junk', true, 'sp', j.k, 'nm', j.nm, 'em', j.em, 'pw', 3, 'st', 0, 'win', 1500, 'kg', 0.5, 'kgm', 0.5);
+  end if;
+  select * into r from _fi_species() f
+   where f.spot = s and (f.seas & se) > 0
+   order by -ln(1 - random()) / (f.w * case when (f.tod & t) > 0 then 1 else 0.2 end) limit 1;
+  L := r.lmed * exp(_randn() * 0.18) * case when random() < 0.03 then 1.25 else 1 end;
+  L := round(least(r.lmax, greatest(r.lmin, L)), 1);
+  kg := round(r.kgm * power(L / r.lmed, 3), 3);
+  ve := greatest(1, round(r.ppk * kg * sqrt(L / r.lmed)))::bigint;
+  v := greatest(1, round(ve * _fi_market(r.k, _kb_jday(ts)) * exp(_randn() * 0.08 - 0.0032)))::bigint;
+  return jsonb_build_object('junk', false, 'sp', r.k, 'nm', r.nm, 'em', r.em, 'len', L, 'kg', kg, 'v_est', ve, 'v', v,
+                            'pw', r.pw, 'st', r.st, 'win', r.win, 'kgm', r.kgm);
+end $$;
+
+-- やりとりの決まり：魚の力・あばれる回数から、あばれる（強く引く）と休むのくり返し（[50msの回数, 力]）
+create or replace function public._fi_fight(f jsonb, s text) returns jsonb
+language plpgsql volatile as $$
+declare P int; nr int; i int; segs jsonb := '[]'; ratio numeric := greatest(0.05, (f->>'kg')::numeric / greatest(0.001, (f->>'kgm')::numeric));
+begin
+  if coalesce((f->>'junk')::boolean, false) then
+    return jsonb_build_object('d0', round((_fi_spot(s)->>'d0')::int * 0.6), 'segs', '[]'::jsonb, 'tired', 3, 'tmax', 2400);
+  end if;
+  P := least(100, greatest(5, round((f->>'pw')::int * power(ratio, 0.35))))::int;
+  nr := least(14, greatest(1, (f->>'st')::int + round(ln(1 + ratio) / ln(2))::int - 1));
+  for i in 0..nr - 1 loop
+    segs := segs || jsonb_build_array(jsonb_build_array(10 + floor(random() * 18)::int + P / 8, least(100, round(P * (0.85 + random() * 0.15) * (1 - 0.035 * i))::int)));
+    segs := segs || jsonb_build_array(jsonb_build_array(16 + floor(random() * 24)::int, round(P * (0.10 + random() * 0.08))::int + 4));
+  end loop;
+  return jsonb_build_object('d0', round((_fi_spot(s)->>'d0')::int * (0.9 + random() * 0.2))::int, 'segs', segs,
+                            'tired', greatest(4, round(P * 0.06))::int, 'tmax', 2400);
+end $$;
+
+-- やりとりの計算（画面の fiSim と同じ。整数だけ）。tg：巻く・ゆるめるを切りかえた時刻（50ms の回数）
+create or replace function public._fi_sim(fg jsonb, tg int[]) returns jsonb
+language plpgsql immutable as $$
+declare d int := (fg->>'d0')::int; d0 int := (fg->>'d0')::int; tm int := (fg->>'tmax')::int; tired int := (fg->>'tired')::int;
+        segs jsonb := fg->'segs'; ns int := jsonb_array_length(fg->'segs'); si int := 0; lft int; k int; ti int := 1; nt int := coalesce(cardinality(tg), 0);
+        hold boolean := false; f int; tg2 int; t int := 0; slack int := 0;
+begin
+  lft := case when ns > 0 then (segs->0->>0)::int else 0 end;
+  for k in 0..tm - 1 loop
+    while ti <= nt and tg[ti] <= k loop hold := not hold; ti := ti + 1; end loop;
+    f := case when si < ns then (segs->si->>1)::int else tired end;
+    if hold then
+      tg2 := 100 + 11 * f; t := t + (tg2 - t) / 8; d := d - (15 * (100 - f)) / 100;
+    else
+      tg2 := 2 * f; t := t + (tg2 - t) / 4; d := d + (10 * f) / 100;
+    end if;
+    if si < ns then
+      lft := lft - 1;
+      if lft <= 0 then si := si + 1; lft := case when si < ns then (segs->si->>0)::int else 0 end; end if;
+    end if;
+    if t >= 1000 then return jsonb_build_object('res', 'break', 'k', k); end if;
+    if not hold and t < 120 then slack := slack + 1; else slack := 0; end if;
+    if slack >= 50 then return jsonb_build_object('res', 'spit', 'k', k); end if;
+    if d <= 0 then return jsonb_build_object('res', 'landed', 'k', k); end if;
+    if d >= d0 + 3000 then return jsonb_build_object('res', 'run', 'k', k); end if;
+  end loop;
+  return jsonb_build_object('res', 'timeout', 'k', tm);
+end $$;
+
+-- 釣り大会（毎日16:00〜16:20。釣り場は曜日で：月 堤防・火 川・水 磯・木 湖・金 堤防・土 沖・日 磯）
+create or replace function public._fi_tourney(d date) returns fi_tourneys
+language plpgsql volatile set search_path = public as $$
+declare t fi_tourneys; s text;
+begin
+  select * into t from fi_tourneys where day = d;
+  if found then return t; end if;
+  s := (array['pier', 'river', 'rock', 'lake', 'pier', 'off', 'rock'])[extract(isodow from d)::int];
+  insert into fi_tourneys(day, spot, start_at, end_at, fee)
+  values (d, s, make_timestamptz(extract(year from d)::int, extract(month from d)::int, extract(day from d)::int, 16, 0, 0, 'Asia/Tokyo'),
+          make_timestamptz(extract(year from d)::int, extract(month from d)::int, extract(day from d)::int, 16, 20, 0, 'Asia/Tokyo'), 100)
+  on conflict (day) do nothing;
+  select * into t from fi_tourneys where day = d;
+  return t;
+end $$;
+
+-- 大会の精算（参加費の95%を、いちばん重い1匹の順に 50・30・20%。釣れた人がいなければ、ひとりだけなら、参加費を返す）
+create or replace function public._fi_settle(d date) returns void
+language plpgsql volatile set search_path = public as $$
+declare t fi_tourneys; e record; n int; nf int; pool bigint; sh numeric[] := array[0.5, 0.3, 0.2]; i int := 0; pz bigint; given bigint := 0; ids uuid[] := '{}';
+        board jsonb;
+begin
+  select * into t from fi_tourneys where day = d for update;
+  if not found or t.status <> 'open' then return; end if;
+  select count(*), count(best_kg), coalesce(sum(paid), 0) into n, nf, pool from fi_entries where day = d;
+  board := (select coalesce(jsonb_agg(jsonb_build_object('nick', p.nickname, 'kg', x.best_kg, 'len', x.best_len, 'nm', x.best_nm) order by x.best_kg desc, x.best_at), '[]'::jsonb)
+              from (select * from fi_entries where day = d and best_kg is not null order by best_kg desc, best_at limit 10) x join profiles p on p.id = x.user_id);
+  if n <= 1 or nf = 0 then
+    for e in select * from fi_entries where day = d loop
+      perform _give(e.user_id, e.paid);
+      perform _log(e.user_id, 'fishing', 0, e.paid, jsonb_build_object('tourney', d, 'refund', true));
+      update fi_entries set prize = 0 where day = d and user_id = e.user_id;
+      perform _notice(e.user_id, format('【釣り大会】%s の夕まずめ釣り大会は、%s ので参加費 %s X を返しました。', to_char(d, 'FMMM月FMDD日'),
+                      case when n <= 1 then '参加者がひとりだった' else 'だれも釣れなかった' end, _fmt(e.paid)));
+    end loop;
+  else
+    pool := floor(pool * 0.95);
+    for e in select * from fi_entries where day = d and best_kg is not null order by best_kg desc, best_at loop
+      i := i + 1;
+      exit when i > 3;
+      pz := floor(pool * (case when i = 1 then sh[1] + (case when nf < 2 then sh[2] else 0 end) + (case when nf < 3 then sh[3] else 0 end) else sh[i] end));
+      given := given + pz;
+      perform _give(e.user_id, pz);
+      perform _log(e.user_id, 'fishing', 0, pz, jsonb_build_object('tourney', d, 'rank', i));
+      update fi_entries set prize = pz where day = d and user_id = e.user_id;
+      ids := ids || e.user_id;
+      perform _notice(e.user_id, format('【釣り大会】%s の夕まずめ釣り大会で %s位 に入りました（%s %s kg）。賞金 %s X を受け取りました。',
+                      to_char(d, 'FMMM月FMDD日'), i, e.best_nm, round(e.best_kg, 2), _fmt(pz)));
+    end loop;
+    for e in select * from fi_entries where day = d and not (user_id = any(ids)) loop
+      update fi_entries set prize = 0 where day = d and user_id = e.user_id;
+      perform _notice(e.user_id, format('【釣り大会】%s の夕まずめ釣り大会が終わりました。%s', to_char(d, 'FMMM月FMDD日'),
+                      case when e.best_kg is null then '今回は釣れませんでした。' else format('あなたの記録：%s %s kg', e.best_nm, round(e.best_kg, 2)) end));
+    end loop;
+  end if;
+  update fi_tourneys set status = 'done', result = jsonb_build_object('n', n, 'board', board) where day = d;
+end $$;
+
+-- 仲卸が引き取る（出品して12時間たっても売れない → 値打ちの7割、いけすで2日たった魚 → 5割）
+create or replace function public._fi_wholesale() returns void
+language plpgsql volatile set search_path = public as $$
+declare l record; c record; amt bigint;
+begin
+  for l in select * from fi_lots where status = 'queued' and at < _now() - interval '12 hours' for update skip locked loop
+    amt := greatest(1, round(l.v * 0.7))::bigint;
+    perform _give(l.user_id, amt);
+    perform _log(l.user_id, 'fishing', 0, amt, jsonb_build_object('lot', l.id, 'wholesale', true));
+    update fi_lots set status = 'wholesale', price = amt, net = amt, sold_at = _now() where id = l.id;
+    update fi_catches set status = 'wholesale' where lot_id = l.id;
+    perform _notice(l.user_id, format('【釣り】出品した「%s」は12時間たっても競りがなかったので、仲卸が %s X で引き取りました。', l.nm, _fmt(amt)));
+  end loop;
+  for c in select user_id, count(*) n, sum(greatest(1, round(v * 0.5)))::bigint s, array_agg(id) ids from fi_catches
+            where status = 'keep' and at < _now() - interval '2 days' group by user_id loop
+    perform _give(c.user_id, c.s);
+    perform _log(c.user_id, 'fishing', 0, c.s, jsonb_build_object('wholesale', true, 'n', c.n));
+    update fi_catches set status = 'wholesale' where id = any(c.ids);
+    perform _notice(c.user_id, format('【釣り】いけすで2日たった魚 %s匹を、仲卸が %s X で引き取りました。', c.n, _fmt(c.s)));
+  end loop;
+end $$;
+
+-- 毎分：きょうの大会をつくる・終わった大会の精算・仲卸・放っておかれた仕掛けを片づける
+create or replace function public._fi_tick() returns void
+language plpgsql volatile set search_path = public as $$
+declare t record;
+begin
+  perform _fi_tourney(_kb_jday(_now()));
+  for t in select day from fi_tourneys where status = 'open' and end_at + interval '90 seconds' < _now() order by day loop
+    perform _fi_settle(t.day);
+  end loop;
+  perform _fi_wholesale();
+  update fi_casts set state = 'lost', result = coalesce(result, 'abandon') where state in ('wait', 'fight') and at < _now() - interval '10 minutes';
+end $$;
+
+-- 大会の見せかた
+create or replace function public._fi_tjson(t fi_tourneys, u uuid) returns jsonb
+language sql stable set search_path = public as $$
+  select jsonb_build_object('day', t.day, 'spot', t.spot, 'spot_nm', _fi_spot(t.spot)->>'nm', 'spot_em', _fi_spot(t.spot)->>'em',
+    'start_ms', _kb_ms(t.start_at), 'end_ms', _kb_ms(t.end_at), 'join_until_ms', _kb_ms(t.end_at - interval '5 minutes'), 'fee', t.fee, 'status', t.status,
+    'n', (select count(*) from fi_entries where day = t.day),
+    'pool', (select floor(coalesce(sum(paid), 0) * 0.95) from fi_entries where day = t.day),
+    'joined', exists (select 1 from fi_entries where day = t.day and user_id = u),
+    'me', (select jsonb_build_object('kg', best_kg, 'len', best_len, 'nm', best_nm, 'prize', prize) from fi_entries where day = t.day and user_id = u),
+    'board', (select coalesce(jsonb_agg(jsonb_build_object('nick', p.nickname, 'kg', x.best_kg, 'len', x.best_len, 'nm', x.best_nm, 'me', x.user_id = u, 'prize', x.prize)
+                order by x.best_kg desc, x.best_at), '[]'::jsonb)
+                from (select * from fi_entries where day = t.day and best_kg is not null order by best_kg desc, best_at limit 10) x join profiles p on p.id = x.user_id))
+$$;
+
+-- 画面に出すもの
+create or replace function public.fi_state() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); t fi_tourneys; se int := _fi_season(_now()); td int := _fi_tod(_now()); today date := _kb_jday(_now());
+begin
+  if not _beta_ok(u, 'fishing') then raise exception '準備中です。もうしばらくお待ちください'; end if;
+  perform _fi_tick();
+  t := _fi_tourney(today);
+  return jsonb_build_object('now_ms', _kb_ms(_now()), 'tod', td, 'season', se, 'balance', _bal(u), 'cap', 30,
+    'spots', (select jsonb_agg(_fi_spot(s) || jsonb_build_object('fish',
+                (select coalesce(jsonb_agg(jsonb_build_object('k', f.k, 'nm', f.nm, 'em', f.em, 'now', (f.tod & td) > 0) order by ((f.tod & td) > 0) desc, f.w desc), '[]'::jsonb)
+                   from _fi_species() f where f.spot = s and (f.seas & se) > 0)) order by o)
+              from unnest(_fi_spots()) with ordinality z(s, o)),
+    'keep', (select coalesce(jsonb_agg(jsonb_build_object('id', c.id, 'sp', c.sp, 'nm', c.nm, 'em', c.em, 'len', c.len, 'kg', c.kg, 'v_est', c.v_est,
+               'spot', c.spot, 'at_ms', _kb_ms(c.at), 'until_ms', _kb_ms(c.at + interval '2 days')) order by c.id desc), '[]'::jsonb)
+             from fi_catches c where c.user_id = u and c.status = 'keep'),
+    'lots', (select coalesce(jsonb_agg(jsonb_build_object('id', l.id, 'nm', l.nm, 'em', l.em, 'info', l.info, 'status', l.status, 'room', l.room_id,
+               'price', l.price, 'net', l.net, 'at_ms', _kb_ms(l.at), 'sold_ms', _kb_ms(l.sold_at)) order by l.id desc), '[]'::jsonb)
+             from (select * from fi_lots where user_id = u order by id desc limit 20) l),
+    'book', (select coalesce(jsonb_agg(jsonb_build_object('k', s.k, 'nm', s.nm, 'em', s.em, 'n', coalesce(c.n, 0), 'len', c.len, 'kg', c.kg) order by s.o), '[]'::jsonb)
+             from (select f.k, min(f.nm) nm, min(f.em) em, min(array_position(_fi_spots(), f.spot) * 100 + 0) o from _fi_species() f group by f.k) s
+             left join (select sp, count(*) n, max(len) len, max(kg) kg from fi_catches where user_id = u group by sp) c on c.sp = s.k),
+    'big', (select coalesce(jsonb_agg(jsonb_build_object('nick', p.nickname, 'nm', c.nm, 'em', c.em, 'len', c.len, 'kg', c.kg, 'spot', c.spot, 'me', c.user_id = u) order by c.kg desc), '[]'::jsonb)
+            from (select * from fi_catches where at >= _now() - interval '1 day' order by kg desc limit 5) c join profiles p on p.id = c.user_id),
+    'tourney', _fi_tjson(t, u),
+    'last', (select jsonb_build_object('day', x.day, 'spot_nm', _fi_spot(x.spot)->>'nm', 'board', coalesce(x.result->'board', '[]'::jsonb))
+             from fi_tourneys x where x.status = 'done' order by x.day desc limit 1));
+end $$;
+
+-- 投げる（エサ代をはらう）
+create or replace function public.fi_cast(p_spot text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); sp jsonb := _fi_spot(p_spot); f jsonb; pb numeric; bite int; nib int[] := '{}'; i int; x int; cid bigint; t fi_tourneys; td date := null;
+        last timestamptz;
+begin
+  if not _beta_ok(u, 'fishing') then raise exception '準備中です。もうしばらくお待ちください'; end if;
+  if sp is null then raise exception '釣り場をえらんでください'; end if;
+  if (select count(*) from fi_catches where user_id = u and status = 'keep') >= 30 then
+    raise exception 'いけすがいっぱいです（30匹まで）。競り市に出してから、また釣ってください';
+  end if;
+  select max(at) into last from fi_casts where user_id = u;
+  if last is not null and last > _now() - interval '1500 milliseconds' then raise exception 'すこし待ってから投げてください'; end if;
+  update fi_casts set state = 'lost', result = coalesce(result, 'abandon') where user_id = u and state in ('wait', 'fight');
+  perform _take(u, (sp->>'cost')::bigint);
+  perform _log(u, 'fishing', (sp->>'cost')::bigint, 0, jsonb_build_object('spot', p_spot));
+  t := _fi_tourney(_kb_jday(_now()));
+  if t.spot = p_spot and _now() >= t.start_at and _now() < t.end_at and exists (select 1 from fi_entries where day = t.day and user_id = u) then td := t.day; end if;
+  pb := case when _fi_tod(_now()) in (1, 4) then 0.88 else 0.78 end;
+  if random() < pb then
+    f := _fi_pick(p_spot, _now());
+    bite := 2500 + least(12500, floor(-ln(1 - random()) * 4500))::int;
+    x := 700;
+    for i in 1..floor(random() * 3.2)::int loop
+      x := x + 700 + floor(random() * 2500)::int;
+      exit when x > bite - 1200;
+      nib := nib || x;
+    end loop;
+  end if;
+  insert into fi_casts(user_id, spot, cost, at, bite_ms, window_ms, nib, fish, tourney)
+  values (u, p_spot, (sp->>'cost')::bigint, _now(), bite, case when f is null then null else (f->>'win')::int end, nib, f, td)
+  returning id into cid;
+  return jsonb_build_object('cast', jsonb_build_object('id', cid, 'bite_ms', bite, 'window_ms', case when f is null then null else (f->>'win')::int end,
+                              'nib', to_jsonb(nib), 'wait_ms', case when bite is null then 12000 end, 'tourney', td is not null),
+                            'balance', _bal(u));
+end $$;
+
+-- 合わせる（p_dt：浮きがしずんでから押すまで ms。しずむ前に押したら -1）
+create or replace function public.fi_hook(p_cast bigint, p_dt int) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); c fi_casts; el bigint; why text; fg jsonb;
+begin
+  if not _beta_ok(u, 'fishing') then raise exception '準備中です。もうしばらくお待ちください'; end if;
+  select * into c from fi_casts where id = p_cast and user_id = u for update;
+  if not found then raise exception '仕掛けが見つかりません'; end if;
+  if c.state <> 'wait' then raise exception 'この仕掛けはもう終わっています'; end if;
+  el := _kb_ms(_now()) - _kb_ms(c.at);
+  if c.bite_ms is null then why := 'nobite';
+  elsif p_dt is null or p_dt < 0 or el < c.bite_ms - 400 then why := 'early';
+  elsif p_dt > c.window_ms + 300 or el > c.bite_ms + c.window_ms + 20000 then why := 'late';
+  end if;
+  if why is not null then
+    update fi_casts set state = 'lost', result = why where id = c.id;
+    return jsonb_build_object('ok', false, 'why', why);
+  end if;
+  fg := _fi_fight(c.fish, c.spot);
+  update fi_casts set state = 'fight', hook_at = _now(), fight = fg where id = c.id;
+  return jsonb_build_object('ok', true, 'fight', fg, 'junk', coalesce((c.fish->>'junk')::boolean, false));
+end $$;
+
+-- やりとりの結果（p_ticks：巻く・ゆるめるを切りかえた時刻（50ms の回数））
+create or replace function public.fi_land(p_cast bigint, p_ticks int[]) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); c fi_casts; r jsonb; k int; i int; f jsonb; cid bigint; t fi_tourneys; tb jsonb; nk int; e fi_entries;
+begin
+  if not _beta_ok(u, 'fishing') then raise exception '準備中です。もうしばらくお待ちください'; end if;
+  select * into c from fi_casts where id = p_cast and user_id = u for update;
+  if not found then raise exception '仕掛けが見つかりません'; end if;
+  if c.state <> 'fight' then raise exception 'この仕掛けはもう終わっています'; end if;
+  if coalesce(cardinality(p_ticks), 0) > 3000 then raise exception '記録が長すぎます'; end if;
+  for i in 1..coalesce(cardinality(p_ticks), 0) loop
+    if p_ticks[i] is null or p_ticks[i] < 0 or p_ticks[i] > (c.fight->>'tmax')::int or (i > 1 and p_ticks[i] <= p_ticks[i - 1]) then
+      raise exception '記録が正しくありません';
+    end if;
+  end loop;
+  r := _fi_sim(c.fight, coalesce(p_ticks, '{}'));
+  k := (r->>'k')::int;
+  if _kb_ms(_now()) - _kb_ms(c.hook_at) < k * 50 - 2500 then raise exception 'まだやりとりの途中です'; end if;
+  f := c.fish;
+  if r->>'res' <> 'landed' then
+    update fi_casts set state = 'lost', result = r->>'res' where id = c.id;
+    return jsonb_build_object('ok', false, 'why', r->>'res', 'balance', _bal(u));
+  end if;
+  update fi_casts set state = 'landed', result = 'landed' where id = c.id;
+  if coalesce((f->>'junk')::boolean, false) then
+    return jsonb_build_object('ok', true, 'junk', true, 'fish', jsonb_build_object('nm', f->>'nm', 'em', f->>'em'), 'balance', _bal(u));
+  end if;
+  if c.tourney is not null then
+    select * into t from fi_tourneys where day = c.tourney;
+    if found and _now() <= t.end_at + interval '60 seconds' then
+      update fi_entries set best_kg = (f->>'kg')::numeric, best_len = (f->>'len')::numeric, best_nm = f->>'nm', best_at = _now()
+       where day = t.day and user_id = u and (best_kg is null or best_kg < (f->>'kg')::numeric);
+      select * into e from fi_entries where day = t.day and user_id = u;
+      select count(*) + 1 into nk from fi_entries where day = t.day and best_kg is not null and (best_kg > e.best_kg or (best_kg = e.best_kg and best_at < e.best_at));
+      tb := jsonb_build_object('kg', e.best_kg, 'nm', e.best_nm, 'rank', nk);
+    else
+      c.tourney := null;
+    end if;
+  end if;
+  insert into fi_catches(user_id, spot, sp, nm, em, len, kg, v_est, v, at, tourney)
+  values (u, c.spot, f->>'sp', f->>'nm', f->>'em', (f->>'len')::numeric, (f->>'kg')::numeric, (f->>'v_est')::bigint, (f->>'v')::bigint, _now(), c.tourney)
+  returning id into cid;
+  return jsonb_build_object('ok', true, 'junk', false, 'fish', jsonb_build_object('id', cid, 'sp', f->>'sp', 'nm', f->>'nm', 'em', f->>'em', 'len', (f->>'len')::numeric,
+           'kg', (f->>'kg')::numeric, 'v_est', (f->>'v_est')::bigint,
+           'first', (select count(*) from fi_catches where user_id = u and sp = f->>'sp') = 1,
+           'best', not exists (select 1 from fi_catches where user_id = u and sp = f->>'sp' and id <> cid and len >= (f->>'len')::numeric)),
+         'tourney', tb, 'keep_n', (select count(*) from fi_catches where user_id = u and status = 'keep'), 'balance', _bal(u));
+end $$;
+
+-- いけすの魚を競り市に出す（大物 300 X〜 は1匹ずつ、ほかは種類ごと。目安60 X に足りない小物は、まとめて盛り合わせ。それでも足りなければ仲卸が8割で）
+create or replace function public.fi_consign(p_ids bigint[]) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); ids bigint[]; g record; c record; small bigint[] := '{}'; sv bigint := 0; se bigint := 0; skg numeric := 0; sn int := 0; snm text[] := '{}';
+        lid bigint; amt bigint; nl int := 0;
+begin
+  if not _beta_ok(u, 'fishing') then raise exception '準備中です。もうしばらくお待ちください'; end if;
+  ids := array(select c2.id from fi_catches c2 where c2.id = any(coalesce(p_ids, '{}')) and c2.user_id = u and c2.status = 'keep');
+  if cardinality(ids) = 0 then raise exception '出す魚をえらんでください'; end if;
+  if (select count(*) from fi_lots where user_id = u and status in ('queued', 'auction')) >= 12 then raise exception '出品中の品が多すぎます（12品まで）。売れてから出してください'; end if;
+  -- 大物は1匹ずつ
+  for c in select * from fi_catches where id = any(ids) and v_est >= 300 order by v_est desc loop
+    insert into fi_lots(user_id, at, nm, em, info, n, kg, v, e0) values (u, _now(), c.nm, c.em, format('%scm・%skg・%s', c.len, round(c.kg, 2), _fi_spot(c.spot)->>'nm'), 1, c.kg, c.v, c.v_est)
+    returning id into lid;
+    update fi_catches set status = 'lot', lot_id = lid where id = c.id; nl := nl + 1;
+  end loop;
+  -- 種類ごと
+  for g in select sp, min(nm) nm, min(em) em, count(*) n, sum(kg) kg, sum(v) v, sum(v_est) e, array_agg(id) gids
+             from fi_catches where id = any(ids) and v_est < 300 group by sp order by sum(v_est) desc loop
+    if g.e >= 60 then
+      insert into fi_lots(user_id, at, nm, em, info, n, kg, v, e0) values (u, _now(), format('%s %s匹', g.nm, g.n), g.em, format('計%skg', round(g.kg, 2)), g.n, g.kg, g.v, g.e)
+      returning id into lid;
+      update fi_catches set status = 'lot', lot_id = lid where id = any(g.gids); nl := nl + 1;
+    else
+      small := small || g.gids; sv := sv + g.v; se := se + g.e; skg := skg + g.kg; sn := sn + g.n; snm := snm || format('%s %s', g.nm, g.n);
+    end if;
+  end loop;
+  if sn > 0 then
+    if se >= 60 then
+      insert into fi_lots(user_id, at, nm, em, info, n, kg, v, e0) values (u, _now(), format('小物の盛り合わせ %s匹', sn), '🧺', array_to_string(snm, '・'), sn, skg, sv, se)
+      returning id into lid;
+      update fi_catches set status = 'lot', lot_id = lid where id = any(small); nl := nl + 1;
+    else
+      amt := greatest(1, round(sv * 0.8))::bigint;
+      perform _give(u, amt);
+      perform _log(u, 'fishing', 0, amt, jsonb_build_object('wholesale', true, 'n', sn));
+      update fi_catches set status = 'wholesale' where id = any(small);
+      return fi_state() || jsonb_build_object('lots_new', nl, 'wholesale', jsonb_build_object('n', sn, 'amt', amt));
+    end if;
+  end if;
+  return fi_state() || jsonb_build_object('lots_new', nl);
+end $$;
+
+-- 大会に参加する（参加費。しめきりは終わりの5分前）
+create or replace function public.fi_join() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); t fi_tourneys;
+begin
+  if not _beta_ok(u, 'fishing') then raise exception '準備中です。もうしばらくお待ちください'; end if;
+  t := _fi_tourney(_kb_jday(_now()));
+  if t.status <> 'open' or _now() >= t.end_at - interval '5 minutes' then raise exception 'きょうの大会の受付は終わりました'; end if;
+  if exists (select 1 from fi_entries where day = t.day and user_id = u) then raise exception 'もう参加しています'; end if;
+  perform _take(u, t.fee);
+  perform _log(u, 'fishing', t.fee, 0, jsonb_build_object('tourney', t.day));
+  insert into fi_entries(day, user_id, paid) values (t.day, u, t.fee);
+  return fi_state();
+end $$;
+
+-- 競り市：出品された魚を品にする（値打ちは魚の本当の値打ち。目利きの見立てとコンピューターの値は、市場の品と同じつくり）
+create or replace function public._au_lot_fi(l fi_lots, nb int) returns jsonb
+language plpgsql volatile set search_path = public as $$
+declare est jsonb := '[]'; hint jsonb := '[]'; rs jsonb := '[]'; i int; e numeric; step bigint; st0 bigint;
+begin
+  for i in 1..nb loop
+    e := round(l.v * exp(_randn() * 0.16) / 10) * 10;
+    est := est || to_jsonb(greatest(e, 10)); hint := hint || 'null'::jsonb;
+    rs := rs || to_jsonb(round(greatest(e, 10) * (0.88 + random() * 0.14)));
+  end loop;
+  step := _au_step((l.e0 * 0.45)::bigint);
+  st0 := greatest(round(l.e0 * 0.45 / step) * step, step);
+  return jsonb_build_object('nm', l.nm, 'em', l.em, 'info', l.info, 'mk', 'fish', 'v', l.v, 'fake', false, 'start', st0, 'est', est, 'hint', hint, 'rs', rs,
+                            'cid', l.id, 'by', (select nickname from profiles where id = l.user_id));
+end $$;
+-- 競りが始まるとき：出品された魚を品に入れる（席にいる人の品から先に、5品まで）
+create or replace function public._au_consign(rid bigint, seats uuid[], st jsonb) returns jsonb
+language plpgsql volatile set search_path = public as $$
+declare l fi_lots; i int := 0; lot jsonb; seat int;
+begin
+  if coalesce(st->>'market', 'fish') not in ('fish', 'mix') then return st; end if;
+  for l in select * from fi_lots where status = 'queued' order by (user_id = any(seats)) desc, at limit 5 for update skip locked loop
+    seat := array_position(seats, l.user_id) - 1;
+    lot := _au_lot_fi(l, (st->>'nb')::int) || jsonb_build_object('seller', seat);
+    st := jsonb_set(st, array['lots', i::text], lot);
+    update fi_lots set status = 'auction', room_id = rid where id = l.id;
+    i := i + 1;
+  end loop;
+  return st;
+end $$;
+-- 競り市：出品された魚の落札（または流れ）
+create or replace function public._fi_sold(cid bigint, w int, p bigint, rid bigint) returns void
+language plpgsql volatile set search_path = public as $$
+declare l fi_lots; fee bigint; nt bigint;
+begin
+  select * into l from fi_lots where id = cid for update;
+  if not found or l.status <> 'auction' then return; end if;
+  if w >= 0 and p is not null then
+    fee := floor(p * 0.05); nt := p - fee;
+    perform _give(l.user_id, nt);
+    perform _log(l.user_id, 'fishing', 0, nt, jsonb_build_object('lot', cid, 'room', rid, 'price', p));
+    update fi_lots set status = 'sold', price = p, net = nt, sold_at = _now() where id = cid;
+    update fi_catches set status = 'sold' where lot_id = cid;
+    perform _notice(l.user_id, format('【釣り】競り市で「%s」が %s X で売れました（手数料をのぞいて %s X）。', l.nm, _fmt(p), _fmt(nt)));
+  else
+    update fi_lots set status = 'queued', room_id = null where id = cid;
+  end if;
+end $$;
+
+-- 毎分：大会・仲卸（pg_cron があるとき）
+do $$
+begin
+  if exists (select 1 from pg_namespace where nspname = 'cron') then
+    perform cron.schedule('ailinax-fish', '* * * * *', 'select public._fi_tick()');
+  end if;
+end $$;
+
+-- =====================================================================
+-- お金の動き（自分・会社）：すべて記録して消さない。画面ではさかのぼって全部見られる（CSV でも保存できる）
+--   自分：所持金がかわるたびに money_log に1行（人のアカウントだけ）。同じ操作（トランザクション）の記録（tx_log）とまとめて見せる
+--   会社：会社のお金は corp_ledger（_corp_move）に、すでに全部ある
+-- =====================================================================
+create table if not exists public.money_log (
+  id      bigserial primary key,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  delta   bigint not null,                       -- ＋入る −出る
+  bal     bigint not null,                       -- かわったあとの所持金
+  at      timestamptz not null default now(),
+  txid    bigint not null default txid_current(),
+  src     text                                   -- 呼ばれた操作（/rpc/…）。毎分の処理などは null
+);
+create index if not exists money_log_user on public.money_log(user_id, id desc);
+alter table public.money_log enable row level security;
+revoke all on public.money_log from anon, authenticated;
+-- tx_log：同じ操作の所持金の動きとむすびつける（前からある行は null のまま）
+alter table public.tx_log add column if not exists txid bigint;
+alter table public.tx_log alter column txid set default txid_current();
+create index if not exists tx_log_txid on public.tx_log(user_id, txid);
+
+create or replace function public._money_trg() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.ai is not null then return new; end if;   -- AIのアカウントは記録しない
+  if tg_op = 'INSERT' then
+    if coalesce(new.balance, 0) <> 0 then
+      insert into money_log(user_id, delta, bal, at, src) values (new.id, new.balance, new.balance, _now(), nullif(current_setting('request.path', true), ''));
+    end if;
+  elsif new.balance is distinct from old.balance then
+    insert into money_log(user_id, delta, bal, at, src) values (new.id, new.balance - old.balance, new.balance, _now(), nullif(current_setting('request.path', true), ''));
+  end if;
+  return new;
+end $$;
+drop trigger if exists money_trg on public.profiles;
+create trigger money_trg after insert or update of balance on public.profiles for each row execute function public._money_trg();
+
+-- 自分のお金の動き（新しい順。p_before・p_before_k：前のページの最後（時刻 ms と番号）より前。p_limit 件まで）
+drop function if exists public.money_history(bigint, int);
+create or replace function public.money_history(p_before bigint default null, p_before_k bigint default null, p_limit int default 100) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); lim int := least(greatest(coalesce(p_limit, 100), 1), 500);
+        bt timestamptz := case when p_before is null then 'infinity'::timestamptz else to_timestamp(p_before / 1000.0) end;
+        bk bigint := coalesce(p_before_k, 9223372036854775807); items jsonb;
+begin
+  with grp as (
+    select m.txid k, max(m.at) at, sum(m.delta) delta, (array_agg(m.bal order by m.id desc))[1] bal, min(m.src) src
+      from money_log m where m.user_id = u group by m.txid
+    having (date_trunc('milliseconds', max(m.at)), m.txid) < (date_trunc('milliseconds', bt), bk)
+     order by max(m.at) desc, m.txid desc limit lim + 5),
+  j as (
+    select g.k, g.at, g.delta, g.bal, g.src,
+           (select coalesce(jsonb_agg(jsonb_build_object('game', t.game, 'bet', t.bet, 'payout', t.payout, 'detail', t.detail) order by t.id), '[]'::jsonb)
+              from tx_log t where t.user_id = u and t.txid = g.k) logs
+      from grp g),
+  old as (
+    select t.id k, t.created_at at, t.payout - t.bet delta, t.balance_after bal, null::text src,
+           jsonb_build_array(jsonb_build_object('game', t.game, 'bet', t.bet, 'payout', t.payout, 'detail', t.detail)) logs
+      from tx_log t where t.user_id = u and t.txid is null and (date_trunc('milliseconds', t.created_at), t.id) < (date_trunc('milliseconds', bt), bk)
+     order by t.created_at desc, t.id desc limit lim)
+  select coalesce(jsonb_agg(jsonb_build_object('at_ms', _kb_ms(x.at), 'k', x.k, 'delta', x.delta, 'bal', x.bal, 'src', x.src, 'logs', x.logs) order by x.at desc, x.k desc), '[]'::jsonb)
+    into items
+    from (select * from (select * from j where delta <> 0 or jsonb_array_length(logs) > 0 union all select * from old) y order by date_trunc('milliseconds', y.at) desc, y.k desc limit lim) x;
+  return jsonb_build_object('items', items, 'more', jsonb_array_length(items) >= lim, 'balance', _bal(u));
+end $$;
+
+-- 会社のお金の出入り（社長だけ。新しい順。p_before：この番号より前）
+create or replace function public.corp_ledger_page(p_cid text, p_before bigint default null, p_limit int default 100) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); c companies; lim int := least(greatest(coalesce(p_limit, 100), 1), 500); items jsonb;
+begin
+  c := _my_corp(u, p_cid);
+  select coalesce(jsonb_agg(jsonb_build_object('id', z.id, 'kind', z.kind, 'amount', z.amount, 'memo', z.memo, 'bal', z.balance_after, 'at_ms', _kb_ms(z.created_at)) order by z.id desc), '[]'::jsonb)
+    into items
+    from (select * from corp_ledger where company_id = c.id and (p_before is null or id < p_before) order by id desc limit lim) z;
+  return jsonb_build_object('items', items, 'more', jsonb_array_length(items) >= lim);
+end $$;
+
 -- ---------------------------------------------------------------------
 -- 実行権限：内部用（_ではじまる）は画面から呼べないようにする
 -- ---------------------------------------------------------------------
@@ -13619,6 +14318,7 @@ begin
             'bt_lobby_set','bt_bet','bt_react',
             '_lot_seed','_lot_prize','_lot_tier_name','_rnd','_lot_next_at','_lot_tick','_lot_draw','lot_buy','lot_state','dm_list','dm_thread','dm_send','_sp_json','support_list','support_thread','support_open','support_send','support_close',
             'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse',
+            'money_history','corp_ledger_page','fi_cast','fi_consign','fi_hook','fi_join','fi_land','fi_state',
             '_pr_bonus','_pr_check_sel','_pr_hit','_pr_make_day','_pr_make_race','_pr_margin','_pr_month','_pr_name','_pr_new_racer','_pr_odds','_pr_open','_pr_prob','_pr_rate','_pr_seed','_pr_settle','_pr_status','_pr_tick','_pr_wx','pr_bet','pr_day','pr_odds','pr_race','pr_racer') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
