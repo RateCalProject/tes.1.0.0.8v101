@@ -858,6 +858,33 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 :root[data-cvd="safe"] .oc-pick button[data-ocol="2"]{background:#009E73!important}
 :root[data-cvd="safe"] .oc-pick button[data-ocol="3"]{background:#0072B2!important}
 :root[data-cvd="safe"] .board .r,:root[data-cvd="safe"] .wheelnum.red,:root[data-cvd="safe"] #ruLast .red{background:#D55E00!important}
+/* 釣り */
+.fi-stage{border-radius:12px;overflow:hidden;background:#2C6E9E;margin-top:8px}
+.fi-stage canvas{display:block;width:100%;height:220px}
+.fi-cap{min-height:22px;font-weight:700;text-align:center;margin:8px 0 4px}
+.fi-gauge{display:flex;align-items:center;gap:8px;margin:0 0 8px}
+.fi-ten{flex:1;height:12px;border-radius:999px;background:var(--soft);overflow:hidden;border:1px solid var(--line)}
+.fi-ten i{display:block;height:100%;width:0;background:var(--win);transition:width .05s linear}
+.fi-dist{font-weight:800;font-variant-numeric:tabular-nums;min-width:56px;text-align:right}
+#fiBtn{touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+#fiBtn.fi-hold{background:#1F5F8B;border-color:#1F5F8B;color:#fff}
+#fiBtn.fi-hit{animation:fiHit .25s ease-in-out infinite alternate}
+@keyframes fiHit{from{transform:scale(1)}to{transform:scale(1.04)}}
+.fi-spots{margin:10px 0}
+.fi-spots button.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.fi-r{display:flex;align-items:center;gap:10px}.fi-r .em{font-size:34px}.fi-r small{display:block;color:var(--muted)}
+.fi-r.win b{font-size:17px}.fi-r.lose b{color:var(--lose)}
+.fi-list{list-style:none;margin:8px 0 0;padding:0}
+.fi-list li{display:flex;align-items:center;gap:8px;padding:7px 4px;border-top:1px solid var(--line);cursor:pointer;border-radius:6px}
+.fi-list li:first-child{border-top:0}.fi-list li.on{background:var(--soft);outline:2px solid var(--accent)}
+.fi-list .em{font-size:22px}.fi-list .grow{flex:1;min-width:0}.fi-list small{display:block;color:var(--muted);font-size:11px}
+.fi-list .num{text-align:right;white-space:nowrap;font-weight:700}.fi-list .num small{font-weight:500}
+.fi-board div{display:grid;grid-template-columns:22px 1fr auto auto auto;gap:6px;align-items:center;padding:4px 0;border-top:1px solid var(--line);font-size:13px}
+.fi-board div:first-child{border-top:0}.fi-board div.me{font-weight:800;color:var(--accent)}
+.fi-bk{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:6px;margin-top:8px}
+.fi-bk div{border:1px solid var(--line);border-radius:10px;padding:6px;text-align:center;font-size:12px}
+.fi-bk div span{display:block;font-size:22px}.fi-bk div b{display:block;font-size:12px}.fi-bk div small{color:var(--muted);font-size:10px}
+.fi-bk div.no{opacity:.45}
 /* お金の動き（自分・会社） */
 .mh li{align-items:flex-start}
 .mh li .grow{flex:1;min-width:0}.mh li small{display:block;color:var(--muted);font-size:11px;line-height:1.35;margin-top:1px}
@@ -884,7 +911,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=2510d862"};
+  window.AX_LANGS = {"en":"en.js?v=62427387"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -1237,6 +1264,29 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 <!-- 競艇・競輪（中身はスクリプトでつくる） -->
 <section id="vBoat" class="view hidden"></section>
 <section id="vBike" class="view hidden"></section>
+
+<!-- 釣り（中身はスクリプトでつくる） -->
+<section id="vFish" class="view hidden">
+  <div class="card">
+    <button class="btn s" id="fiBack">‹ 風の芽製作所</button>
+    <div class="row" style="margin-top:10px"><h2 style="margin:0">🎣 釣り</h2><span class="chip fi-tod"></span><span class="chip fi-sea"></span></div>
+    <p class="muted small" style="margin:6px 0 0">釣り場をえらんで投げる（1回ごとにエサ代）。浮きがしずんだら「合わせる」、やりとりでは、魚があばれたらはなしてゆるめ、休んだら押して巻く。釣った魚はいけすに入れて、競り市で売れます。</p>
+  </div>
+  <div class="card fi-tour"></div>
+  <div class="tabs-s fi-spots"></div>
+  <div class="card">
+    <div class="fi-stage"><canvas id="fiCv" height="220"></canvas></div>
+    <div class="fi-cap"></div>
+    <div class="fi-gauge hidden"><span class="small muted">糸の張り</span><div class="fi-ten"><i></i></div><span class="fi-dist"></span></div>
+    <button class="btn main big wide" id="fiBtn">投げる</button>
+    <p class="small fi-now" style="margin:8px 0 0"></p>
+  </div>
+  <div class="card fi-res hidden"></div>
+  <div class="card fi-keep"></div>
+  <div class="card fi-lots"></div>
+  <div class="card fi-book"></div>
+  <div class="card fi-big"></div>
+</section>
 
 <!-- スロット -->
 <section id="vSlot" class="view hidden">
@@ -1792,8 +1842,8 @@ async function enter() {
   }
 }
 function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
-const GAMES = ['vGameList', 'vRace', 'vBoat', 'vBike', 'vSlot', 'vBj', 'vRou', 'vHilo', 'vLobby', 'vRoom', 'vLot'];
-const HIDDEN_SUBS = ['vLobby', 'vRoom', 'vLot'];
+const GAMES = ['vGameList', 'vRace', 'vBoat', 'vBike', 'vSlot', 'vBj', 'vRou', 'vHilo', 'vLobby', 'vRoom', 'vLot', 'vFish'];
+const HIDDEN_SUBS = ['vLobby', 'vRoom', 'vLot', 'vFish'];
 // メインメニュー（左から）とサブメニュー
 const MENU = [
   ['vInfo', '情報', 'i', [['today', '今日'], ['cur', '通貨'], ['pub', '広報・書籍'], ['mkt', '相場'], ['tl', 'TL'], ['people', '人をさがす'], ['jack', '競馬億万長者']]],
@@ -1837,6 +1887,7 @@ function go(v, sub) {
   if (sec === 'vGameList') renderGameList();
   if (sec === 'vRoom') roomStart();
   if (sec === 'vLot') lotLoad();
+  if (sec === 'vFish') fiLoad();
   if (sec === 'vBj') bjLoad();
   if (sec === 'vHilo') hiloLoad();
   if (sec === 'vMore') moreLoad();
@@ -1895,7 +1946,7 @@ function subStep(d) {
 const GAME_GROUPS = [
   ['公営競技', '', ['vRace', 'vBike', 'vBoat'], '🏇'],
   ['ミニゲーム', 'その他', ['vSlot', 'vBj', 'vRou', 'vHilo', 'reversi', 'chess', 'shogi', 'onecard', 'mahjong'], '🎲'],
-  ['風の芽製作所', 'オリジナル', ['battle', 'vLot', 'auction', 'koikoi'], '🌱'],
+  ['風の芽製作所', 'オリジナル', ['battle', 'vLot', 'auction', 'koikoi', 'vFish'], '🌱'],
   ['メダカ研究所', '', ['medaka'], '🐟'],
 ];
 const GAME_LIST = [
@@ -1905,6 +1956,7 @@ const GAME_LIST = [
   ['battle', '⚔', '市区町村バトル', '日本全国の市区町村の地図で遊ぶ陣取り将棋（最大16人）。賭けありの部屋では、所持金を賭けて対戦できます（観戦して賭けることも）'],
   ['auction', '🔨', '競り市', '魚市場や骨董市の競り（2〜6人）。自分だけの目利きで値打ちを見きわめて値をつけ、落札した品の値打ちをそのまま受け取る'],
   ['koikoi', '🎴', '花札こいこい', 'ふたりで遊ぶ花札。同じ月の札を合わせてとり、役をそろえる。「こいこい」でつづけるか「勝負」で上がるか（3・6・12か月。コンピューターとも）'],
+  ['vFish', '🎣', '釣り', '堤防・磯・沖・川・湖で釣る。季節と時間で釣れる魚がかわる。釣った魚は競り市で売れる。毎日16:00から夕まずめ釣り大会'],
   ['vLot', '🎫', '風の芽ジャンボ', '週に1回の宝くじ（1枚100 X）。毎週日曜21:30に抽せん。1等はジャックポットで、当たりが出なければ次の回に持ちこし'],
   ['medaka', '🐟', 'メダカ研究所', '準備中'],
   ['vSlot', '7', 'スロット', '絵柄を3つそろえて当たり'],
@@ -3263,6 +3315,309 @@ function prBikeCap(S, t, K, order) {
 }
 
 /* =================================================================
+   釣り（風の芽製作所）
+   ================================================================= */
+const FI_TOD = { 1: '🌅 朝まずめ', 2: '☀ 日中', 4: '🌇 夕まずめ', 8: '🌙 夜' };
+const FI_SEA = { 1: '🌸 春', 2: '🌻 夏', 4: '🍁 秋', 8: '❄ 冬' };
+const FI_WHY = { early: '早合わせ…（浮きがしずむ前に合わせました）', late: 'のがした…（合わせがおそかった）', nobite: 'アタリがありませんでした',
+  break: '糸が切れた！（あばれているのに巻きすぎ）', spit: 'バレた…（糸がゆるみすぎて、針がはずれた）', run: '走られた…（糸を出されすぎた）',
+  timeout: 'バレた…（時間がかかりすぎた）', miss: 'のがした…（合わせなかった）' };
+const FI = { st: null, spot: null, ph: 'idle', cast: null, t0: 0, biteAt: 0, fg: null, sim: null, tg: [], hold: false, down: false, res: null, busy: false, loop: false,
+  sel: new Set(), splash: 0, fish: null, last: 0, msg: '' };
+const fiQ = s => $('#vFish').querySelector(s);
+const fiKg = kg => Number(kg) >= 10 ? Number(kg).toFixed(1) : Number(kg).toFixed(2);
+// やりとりの計算（サーバーの _fi_sim と同じ。整数だけ）
+function fiSimNew(fg) { return { d: fg.d0, t: 0, slack: 0, si: 0, lft: fg.segs.length ? fg.segs[0][0] : 0, k: 0, end: null, f: 0 }; }
+function fiStep(fg, s, hold) {
+  const ns = fg.segs.length, f = s.si < ns ? fg.segs[s.si][1] : fg.tired;
+  s.f = f;
+  if (hold) { s.t += Math.trunc((100 + 11 * f - s.t) / 8); s.d -= Math.trunc(15 * (100 - f) / 100); }
+  else { s.t += Math.trunc((2 * f - s.t) / 4); s.d += Math.trunc(10 * f / 100); }
+  if (s.si < ns) { s.lft -= 1; if (s.lft <= 0) { s.si += 1; s.lft = s.si < ns ? fg.segs[s.si][0] : 0; } }
+  const k = s.k; s.k += 1;
+  if (s.t >= 1000) return s.end = { res: 'break', k };
+  s.slack = !hold && s.t < 120 ? s.slack + 1 : 0;
+  if (s.slack >= 50) return s.end = { res: 'spit', k };
+  if (s.d <= 0) return s.end = { res: 'landed', k };
+  if (s.d >= fg.d0 + 3000) return s.end = { res: 'run', k };
+  if (s.k >= fg.tmax) return s.end = { res: 'timeout', k: fg.tmax };
+  return null;
+}
+
+async function fiLoad() {
+  try { FI.st = await call('fi_state'); setBal(FI.st.balance); }
+  catch (e) { toast(e.message); return; }
+  if (!FI.spot || !FI.st.spots.some(s => s.k === FI.spot)) FI.spot = FI.st.spots[0].k;
+  fiRender();
+  fiStartLoop();
+}
+function fiSpot() { return FI.st.spots.find(s => s.k === FI.spot); }
+function fiRender() {
+  const S = FI.st; if (!S) return;
+  fiQ('.fi-tod').textContent = FI_TOD[S.tod] || '';
+  fiQ('.fi-sea').textContent = FI_SEA[S.season] || '';
+  fiQ('.fi-spots').innerHTML = S.spots.map(s => `<button data-s="${s.k}" class="${s.k === FI.spot ? 'on' : ''}">${s.em} ${esc(s.nm)}<small style="margin-left:4px;opacity:.75">${fmt(s.cost)} X</small></button>`).join('');
+  fiQ('.fi-spots').querySelectorAll('button').forEach(b => b.onclick = () => {
+    if (FI.ph === 'wait' || FI.ph === 'bite' || FI.ph === 'fight' || FI.busy) return toast('いまの仕掛けが終わってから釣り場をかえてください');
+    FI.spot = b.dataset.s; FI.ph = 'idle'; FI.res = null; fiRender();
+  });
+  const sp = fiSpot();
+  fiQ('.fi-now').innerHTML = `<b>${esc(sp.nm)}でいま釣れる魚：</b>${sp.fish.filter(f => f.now).map(f => `${f.em}${esc(f.nm)}`).join('・') || '—'}`
+    + (sp.fish.some(f => !f.now) ? `<br><span class="muted">ほかの時間帯に：${sp.fish.filter(f => !f.now).map(f => esc(f.nm)).join('・')}</span>` : '');
+  fiRenderTour(); fiRenderKeep(); fiRenderLots(); fiRenderBook(); fiRenderBig(); fiButton(); fiCaption();
+}
+function fiRenderTour() {
+  const S = FI.st, T = S.tourney, now = kbNow(), el = fiQ('.fi-tour');
+  if (!T) { el.innerHTML = ''; return; }
+  const on = now >= T.start_ms && now < T.end_ms, before = now < T.start_ms, open = T.status === 'open' && now < T.join_until_ms;
+  let h = `<div class="row"><b>🏆 夕まずめ釣り大会</b><span class="chip ${on ? 'run' : open ? 'sale' : ''}">${on ? '開催中' : before ? '受付中' : T.status === 'done' ? '終わりました' : '集計中'}</span></div>
+    <p class="small" style="margin:6px 0">毎日 16:00〜16:20・きょうは <b>${T.spot_em} ${esc(T.spot_nm)}</b>・参加費 ${fmt(T.fee)} X・いちばん重い1匹で順位（1〜3位で賞金を分ける）</p>
+    <p class="small" style="margin:0 0 6px">参加 ${T.n}人・賞金 ${fmt(T.pool)} X${on ? `・のこり <b class="fi-tleft">${mmss((T.end_ms - now) / 1000)}</b>` : before ? `・はじまるまで <b class="fi-tleft">${mmss((T.start_ms - now) / 1000)}</b>` : ''}</p>`;
+  if (T.joined) h += `<p class="small" style="margin:0 0 6px;color:var(--win);font-weight:700">参加しています${T.me && T.me.kg != null ? `（あなたの記録：${esc(T.me.nm)} ${fiKg(T.me.kg)} kg）` : ''}${on && FI.spot !== T.spot ? `<button class="btn s" data-tspot style="margin-left:6px">大会の釣り場へ</button>` : ''}</p>`;
+  else if (open) h += `<button class="btn main s" data-tjoin>参加する（${fmt(T.fee)} X）</button>`;
+  if (T.board && T.board.length) {
+    h += `<div class="fi-board">${T.board.map((b, i) => `<div class="${b.me ? 'me' : ''}"><b>${i + 1}</b><span translate="no">${esc(b.nick)}</span><span>${esc(b.nm)}</span><b>${fiKg(b.kg)} kg</b>${b.prize ? `<span class="muted">${fmt(b.prize)} X</span>` : ''}</div>`).join('')}</div>`;
+  } else if (!before && !T.board.length && S.last && S.last.board.length) {
+    h += `<p class="muted small" style="margin:6px 0 0">前回（${esc(S.last.spot_nm)}）：${S.last.board.slice(0, 3).map((b, i) => `<span>${i + 1}位</span> <span translate="no">${esc(b.nick)}</span> ${fiKg(b.kg)} kg`).join('・')}</p>`;
+  }
+  el.innerHTML = h;
+  const j = el.querySelector('[data-tjoin]');
+  if (j) j.onclick = async () => {
+    if (!confirm(`夕まずめ釣り大会に参加しますか？（参加費 ${fmt(T.fee)} X）`)) return;
+    try { FI.st = await call('fi_join'); setBal(FI.st.balance); toast('参加しました。16:00から、きょうの釣り場で釣ってください'); fiRender(); } catch (e) { toast(e.message); }
+  };
+  const g = el.querySelector('[data-tspot]');
+  if (g) g.onclick = () => { if (FI.ph === 'wait' || FI.ph === 'bite' || FI.ph === 'fight') return; FI.spot = T.spot; FI.ph = 'idle'; fiRender(); };
+}
+function fiRenderKeep() {
+  const S = FI.st, K = S.keep;
+  for (const id of [...FI.sel]) if (!K.some(k => k.id === id)) FI.sel.delete(id);
+  fiQ('.fi-keep').innerHTML = `<div class="row"><h3 style="margin:0">いけす</h3><span class="muted small">${K.length}/${S.cap}匹</span>
+      ${K.length ? `<button class="btn s" data-kall style="margin-left:auto">${FI.sel.size === K.length ? '選ぶのをやめる' : 'ぜんぶ選ぶ'}</button>` : ''}</div>`
+    + (K.length ? `<ul class="fi-list">${K.map(k => `<li class="${FI.sel.has(k.id) ? 'on' : ''}" data-k="${k.id}"><span class="em">${k.em}</span>
+        <span class="grow"><b>${esc(k.nm)}</b><small>${k.len}cm・${fiKg(k.kg)}kg・のこり ${fiLeft(k.until_ms)}</small></span>
+        <span class="num"><small>目安</small>${fmt(k.v_est)} X</span></li>`).join('')}</ul>
+      <button class="btn main wide" data-cons style="margin-top:8px" ${FI.sel.size ? '' : 'disabled'}>えらんだ ${FI.sel.size}匹を競り市に出す</button>
+      <p class="muted small" style="margin:6px 0 0">大物（目安 300 X〜）は1匹ずつ、ほかは種類ごとにまとめて出品します（小物は盛り合わせ）。競り市（魚市場）が始まると品になり、売れた額から手数料5%をのぞいて受け取ります。いけすで2日たった魚は、仲卸が目安の半分くらいで引き取ります。</p>`
+      : '<p class="muted small" style="margin:6px 0 0">まだ魚はいません。釣った魚はここに入ります（30匹まで）。</p>');
+  fiQ('.fi-keep').querySelectorAll('[data-k]').forEach(li => li.onclick = () => { const id = Number(li.dataset.k); FI.sel.has(id) ? FI.sel.delete(id) : FI.sel.add(id); fiRenderKeep(); });
+  const all = fiQ('[data-kall]');
+  if (all) all.onclick = () => { if (FI.sel.size === K.length) FI.sel.clear(); else K.forEach(k => FI.sel.add(k.id)); fiRenderKeep(); };
+  const cs = fiQ('[data-cons]');
+  if (cs) cs.onclick = async () => {
+    if (!FI.sel.size) return;
+    cs.disabled = true;
+    try {
+      const d = await call('fi_consign', { p_ids: [...FI.sel] });
+      FI.st = d; FI.sel.clear(); setBal(d.balance);
+      toast(d.wholesale ? `${d.lots_new}品を出品しました（小物 ${d.wholesale.n}匹は仲卸が ${fmt(d.wholesale.amt)} X で引き取りました）` : `${d.lots_new}品を出品しました。競り市で売れたら知らせます`);
+      fiRender();
+    } catch (e) { toast(e.message); cs.disabled = false; }
+  };
+}
+function fiLeft(ms) { const s = Math.max(0, (ms - kbNow()) / 1000), h = Math.floor(s / 3600); return h >= 1 ? `${h}時間` : `${Math.ceil(s / 60)}分`; }
+function fiRenderLots() {
+  const L = FI.st.lots;
+  const lab = l => l.status === 'queued' ? '<span class="chip sale">競り待ち</span>' : l.status === 'auction' ? `<span class="chip run">競り中 #${l.room}</span>`
+    : l.status === 'sold' ? `<b style="color:var(--win)">${fmt(l.price)} X</b><small class="muted" style="display:block">手取り ${fmt(l.net)} X</small>`
+    : `<span class="muted small">仲卸 ${fmt(l.net)} X</span>`;
+  fiQ('.fi-lots').innerHTML = `<div class="row"><h3 style="margin:0">出品</h3><button class="btn s" data-auc style="margin-left:auto">🔨 競り市へ</button></div>`
+    + (L.length ? `<ul class="fi-list">${L.map(l => `<li><span class="em">${l.em}</span><span class="grow"><b>${esc(l.nm)}</b><small>${esc(l.info)}</small></span><span class="num">${lab(l)}</span></li>`).join('')}</ul>`
+      : '<p class="muted small" style="margin:6px 0 0">まだ出品していません。</p>');
+  fiQ('[data-auc]').onclick = () => { LB.game = 'auction'; go('vLobby'); };
+}
+function fiRenderBook() {
+  const B = FI.st.book, n = B.filter(b => b.n > 0).length;
+  fiQ('.fi-book').innerHTML = `<div class="row"><h3 style="margin:0">図鑑</h3><span class="muted small">${n}/${B.length}種</span></div>
+    <div class="fi-bk">${B.map(b => b.n ? `<div><span>${b.em}</span><b>${esc(b.nm)}</b><small>${b.n}匹・最大 ${b.len}cm</small></div>`
+      : `<div class="no"><span>❔</span><b>？？？</b><small>まだ</small></div>`).join('')}</div>`;
+}
+function fiRenderBig() {
+  const G = FI.st.big;
+  fiQ('.fi-big').innerHTML = `<h3 style="margin:0 0 6px">きょうの大物</h3>` + (G.length
+    ? `<div class="fi-board">${G.map((b, i) => `<div class="${b.me ? 'me' : ''}"><b>${i + 1}</b><span translate="no">${esc(b.nick)}</span><span>${b.em}${esc(b.nm)}</span><b>${fiKg(b.kg)} kg</b></div>`).join('')}</div>`
+    : '<p class="muted small" style="margin:0">まだだれも釣っていません</p>');
+}
+function fiButton() {
+  const b = $('#fiBtn'), sp = fiSpot();
+  b.classList.toggle('fi-hold', FI.ph === 'fight');
+  b.classList.toggle('fi-hit', FI.ph === 'bite');
+  b.disabled = FI.busy || FI.ph === 'cast' || FI.ph === 'landing';
+  b.textContent = FI.ph === 'wait' || FI.ph === 'bite' ? '合わせる！' : FI.ph === 'fight' ? (FI.down ? '巻いている…（はなすとゆるめる）' : '押しつづけて巻く') : `投げる（エサ代 ${fmt(sp.cost)} X）`;
+}
+function fiCaption() {
+  const c = fiQ('.fi-cap'); let t = FI.msg;
+  if (!t) {
+    if (FI.ph === 'idle') t = '釣り場をえらんで、投げてください';
+    else if (FI.ph === 'cast') t = '投げた！';
+    else if (FI.ph === 'wait') t = '浮きを見て…しずんだら「合わせる」！（ちょんちょん動くのは、まだ）';
+    else if (FI.ph === 'bite') t = 'しずんだ！ いま！';
+    else if (FI.ph === 'fight') t = FI.sim && FI.sim.f > 80 ? '🐟 あばれている！ はなして、ゆるめて！' : FI.down ? '巻いている…' : '押しつづけて巻いて！';
+  }
+  if (c.textContent !== tr(t)) c.textContent = tr(t);
+}
+function fiShowRes(h) { const el = fiQ('.fi-res'); el.innerHTML = h; el.classList.toggle('hidden', !h); }
+
+// 投げる・合わせる・巻く（ひとつのボタン）
+async function fiPress() {
+  if (FI.busy) return;
+  if (FI.ph === 'idle' || FI.ph === 'done') return fiCast();
+  if (FI.ph === 'wait' || FI.ph === 'bite') return fiHook();
+}
+async function fiCast() {
+  FI.busy = true; FI.msg = ''; fiShowRes(''); fiButton();
+  try {
+    const d = await call('fi_cast', { p_spot: FI.spot });
+    setBal(d.balance);
+    FI.cast = d.cast; FI.t0 = performance.now() + 700; FI.ph = 'cast'; FI.res = null; FI.fish = null;
+    setTimeout(() => { if (FI.ph === 'cast') { FI.ph = 'wait'; fiButton(); fiCaption(); } }, 700);
+  } catch (e) { toast(e.message); }
+  FI.busy = false; fiButton(); fiCaption();
+}
+async function fiHook() {
+  const C = FI.cast; if (!C) return;
+  const dt = FI.ph === 'bite' ? Math.round(performance.now() - FI.biteAt) : -1;
+  FI.busy = true; fiButton();
+  try {
+    const d = await call('fi_hook', { p_cast: C.id, p_dt: dt });
+    if (!d.ok) { fiEnd(d.why); }
+    else { FI.fg = d.fight; FI.sim = fiSimNew(d.fight); FI.tg = []; FI.hold = false; FI.down = false; FI.fs = performance.now(); FI.ph = 'fight'; FI.junk = d.junk; FI.msg = ''; if (navigator.vibrate) navigator.vibrate(60); }
+  } catch (e) { toast(e.message); FI.ph = 'idle'; }
+  FI.busy = false; fiButton(); fiCaption();
+}
+function fiEnd(why) {
+  FI.ph = 'done'; FI.msg = FI_WHY[why] || '';
+  fiShowRes(`<div class="fi-r lose"><b>${esc(FI_WHY[why] || 'のがした…')}</b></div>`);
+  fiButton(); fiCaption();
+}
+async function fiLand() {
+  FI.ph = 'landing'; fiButton();
+  const C = FI.cast, tg = FI.tg.slice(), res = FI.sim.end.res;
+  try {
+    const d = await call('fi_land', { p_cast: C.id, p_ticks: tg });
+    setBal(d.balance);
+    if (!d.ok) { fiEnd(d.why); }
+    else if (d.junk) {
+      FI.ph = 'done'; FI.msg = '';
+      fiShowRes(`<div class="fi-r"><span class="em">${d.fish.em}</span><b>${esc(d.fish.nm)}</b><span class="muted small">…だった（魚ではありません）</span></div>`);
+    } else {
+      const f = d.fish; FI.fish = f; FI.ph = 'done'; FI.msg = ''; FI.splash = performance.now();
+      fiShowRes(`<div class="fi-r win"><span class="em">${f.em}</span><span class="grow"><b>${esc(f.nm)}</b> ${f.first ? '<span class="chip sale">はじめて！</span>' : f.best ? '<span class="chip run">自己ベスト</span>' : ''}
+        <small>${f.len}cm・${fiKg(f.kg)}kg・目安 ${fmt(f.v_est)} X</small>${d.tourney ? `<small style="color:var(--win)">大会の記録：${esc(d.tourney.nm)} ${fiKg(d.tourney.kg)} kg（いま ${d.tourney.rank}位）</small>` : ''}</span></div>`);
+      if (navigator.vibrate) navigator.vibrate([40, 40, 80]);
+      call('fi_state').then(s => { FI.st = s; fiRender(); }).catch(() => {});
+    }
+  } catch (e) { toast(e.message); FI.ph = 'done'; fiShowRes(''); }
+  fiButton(); fiCaption();
+}
+function fiSetDown(v) {
+  if (FI.down === v) return;
+  FI.down = v;
+  if (FI.ph === 'fight') { fiButton(); fiCaption(); }
+}
+{
+  const b = $('#fiBtn');
+  b.addEventListener('pointerdown', ev => { if (FI.ph === 'fight') { ev.preventDefault(); fiSetDown(true); try { b.setPointerCapture(ev.pointerId); } catch (e) {} } else fiPress(); });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(n => b.addEventListener(n, () => fiSetDown(false)));
+  b.addEventListener('contextmenu', ev => ev.preventDefault());
+  document.addEventListener('keydown', ev => { if (view !== 'vFish' || ev.code !== 'Space' || ev.target.closest('input,textarea')) return; ev.preventDefault(); if (FI.ph === 'fight') fiSetDown(true); else if (!ev.repeat) fiPress(); });
+  document.addEventListener('keyup', ev => { if (ev.code === 'Space') fiSetDown(false); });
+  $('#fiBack').onclick = () => { setGcat(GAME_GROUPS.findIndex(g => g[2].includes('vFish'))); go('vGameList'); };
+}
+
+// 時計：浮き・アタリ・やりとりを進めて、絵をかく
+function fiStartLoop() { if (!FI.loop) { FI.loop = true; requestAnimationFrame(fiFrame); } }
+function fiFrame() {
+  if (view !== 'vFish') { FI.loop = false; if (FI.ph === 'fight') fiSetDown(false); return; }
+  const now = performance.now(), C = FI.cast;
+  if (FI.ph === 'wait' && C) {
+    const el = now - FI.t0;
+    if (C.bite_ms == null && el >= C.wait_ms) fiEnd('nobite');
+    else if (C.bite_ms != null && el >= C.bite_ms) { FI.ph = 'bite'; FI.biteAt = FI.t0 + C.bite_ms; fiButton(); fiCaption(); if (navigator.vibrate) navigator.vibrate(120); }
+  } else if (FI.ph === 'bite' && C && now - FI.biteAt > C.window_ms + 600) {
+    fiEnd('miss');
+  } else if (FI.ph === 'fight' && FI.sim && !FI.sim.end) {
+    const want = Math.floor((now - FI.fs) / 50);
+    let n = 0;
+    while (FI.sim.k < want && !FI.sim.end && n < 400) {
+      if (FI.down !== FI.hold) { FI.tg.push(FI.sim.k); FI.hold = FI.down; }
+      fiStep(FI.fg, FI.sim, FI.hold); n++;
+    }
+    if (FI.sim.end) { FI.down = false; fiLand(); }
+    else { fiGauge(); fiCaption(); }
+  }
+  if (now - FI.last > 1000) { FI.last = now; if (FI.st) { const tl = fiQ('.fi-tleft'); if (tl) fiRenderTour(); } }
+  try { fiDraw(now); } catch (e) { /* 絵のエラーで止めない */ }
+  requestAnimationFrame(fiFrame);
+}
+function fiGauge() {
+  const g = fiQ('.fi-gauge'); if (!g) return;
+  const on = FI.ph === 'fight' && FI.sim;
+  g.classList.toggle('hidden', !on);
+  if (!on) return;
+  const t = Math.min(1000, Math.max(0, FI.sim.t)), d = Math.max(0, FI.sim.d);
+  const bar = g.querySelector('.fi-ten i');
+  bar.style.width = (t / 10) + '%';
+  bar.style.background = t > 850 ? 'var(--lose)' : t > 600 ? '#E8A33D' : 'var(--win)';
+  g.querySelector('.fi-dist').textContent = `${(d / 100).toFixed(1)} m`;
+}
+// 絵：上が空、下が水。左上の竿から糸、浮き（待っているとき）・魚の影（やりとり）
+function fiDraw(now) {
+  const cv = $('#fiCv'), W = cv.clientWidth; if (!W) return;
+  const H = 220, dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); cv.style.height = H + 'px'; }
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const S = FI.st, tod = S ? S.tod : 2, sp = FI.spot || 'pier';
+  const sky = { 1: ['#F7B27A', '#FBE3C2'], 2: ['#7DB9E8', '#CFE8F7'], 4: ['#E9775A', '#F5C17E'], 8: ['#141C38', '#2C3A66'] }[tod];
+  const water = { pier: ['#2C6E9E', '#174466'], rock: ['#1F5878', '#0F3048'], off: ['#16507F', '#0B2747'], river: ['#4E8C86', '#2E5E58'], lake: ['#3F7F86', '#24545B'] }[sp];
+  const hz = 78;
+  let gr = g.createLinearGradient(0, 0, 0, hz); gr.addColorStop(0, sky[0]); gr.addColorStop(1, sky[1]); g.fillStyle = gr; g.fillRect(0, 0, W, hz);
+  gr = g.createLinearGradient(0, hz, 0, H); gr.addColorStop(0, water[0]); gr.addColorStop(1, water[1]); g.fillStyle = gr; g.fillRect(0, hz, W, H - hz);
+  if (tod === 8) { g.fillStyle = '#F4F1D0'; g.beginPath(); g.arc(W - 40, 26, 9, 0, 7); g.fill(); }
+  else { g.fillStyle = tod === 2 ? '#FFF6C9' : '#FFD39A'; g.beginPath(); g.arc(W - 46, tod === 2 ? 24 : 60, 13, 0, 7); g.fill(); }
+  // 景色
+  g.fillStyle = 'rgba(0,0,0,.25)';
+  if (sp === 'rock') { g.beginPath(); g.moveTo(0, hz + 10); g.lineTo(40, hz - 18); g.lineTo(80, hz + 6); g.lineTo(110, hz - 6); g.lineTo(150, hz + 14); g.lineTo(0, hz + 30); g.fill(); }
+  if (sp === 'river' || sp === 'lake') { g.fillStyle = sp === 'river' ? '#5B7F3A' : '#3E6B48'; g.fillRect(0, hz - 8, W, 10); g.fillStyle = '#2F5233'; for (let i = 0; i < W; i += 23) { g.beginPath(); g.moveTo(i, hz - 6); g.lineTo(i + 10, hz - 26 - (i % 3) * 6); g.lineTo(i + 20, hz - 6); g.fill(); } }
+  if (sp === 'off') { g.fillStyle = '#ECE6D6'; g.fillRect(0, H - 22, W, 22); g.fillStyle = '#B8AE94'; g.fillRect(0, H - 22, W, 3); }
+  if (sp === 'pier') { g.fillStyle = '#9A9A92'; g.fillRect(0, H - 26, W * 0.42, 26); g.fillStyle = '#7F7F78'; g.fillRect(0, H - 26, W * 0.42, 3); }
+  // 波
+  g.strokeStyle = 'rgba(255,255,255,.12)'; g.lineWidth = 1;
+  for (let i = 0; i < 7; i++) { const y = hz + 14 + i * 18 + Math.sin(now / 800 + i) * 2; g.beginPath(); g.moveTo(0, y); g.bezierCurveTo(W / 3, y + 3, W * 2 / 3, y - 3, W, y); g.stroke(); }
+  const rx = 18, ry = H - 30;   // 竿の先
+  g.strokeStyle = '#3B2A1A'; g.lineWidth = 3; g.beginPath(); g.moveTo(-6, H + 4); g.lineTo(rx, ry); g.stroke();
+  const fx = W * 0.62, fy = hz + 52;
+  if (FI.ph === 'cast' || FI.ph === 'wait' || FI.ph === 'bite' || (FI.ph === 'done' && !FI.fish)) {
+    const C = FI.cast; let dip = 0, sink = false;
+    if (FI.ph === 'cast') { const p = Math.min(1, (now - (FI.t0 - 700)) / 700); const x = rx + (fx - rx) * p, y = ry + (fy - ry) * p - Math.sin(p * Math.PI) * 70;
+      g.strokeStyle = 'rgba(255,255,255,.7)'; g.lineWidth = 1; g.beginPath(); g.moveTo(rx, ry); g.lineTo(x, y); g.stroke(); fiFloat(g, x, y, 0); return; }
+    if (FI.ph === 'wait' && C) { const el = now - FI.t0; for (const n of C.nib || []) if (el >= n && el < n + 260) dip = 3 * Math.sin((el - n) / 260 * Math.PI); }
+    if (FI.ph === 'bite') sink = true;
+    const bob = Math.sin(now / 420) * 1.5;
+    g.strokeStyle = 'rgba(255,255,255,.65)'; g.lineWidth = 1; g.beginPath(); g.moveTo(rx, ry); g.quadraticCurveTo((rx + fx) / 2, fy - 30, fx, fy + bob); g.stroke();
+    if (sink) { const p = Math.min(1, (now - FI.biteAt) / 220); g.strokeStyle = 'rgba(255,255,255,.8)'; g.lineWidth = 2; for (let r = 0; r < 3; r++) { g.beginPath(); g.ellipse(fx, fy, 8 + r * 7 + p * 6, 3 + r * 2, 0, 0, 7); g.stroke(); } fiFloat(g, fx, fy + bob + 9 * p, p); }
+    else fiFloat(g, fx, fy + bob + dip, 0);
+  } else if (FI.ph === 'fight' || FI.ph === 'landing') {
+    const s = FI.sim, dd = Math.max(0, s.d) / Math.max(1, FI.fg.d0 + 1500), x = rx + 30 + (W - 80) * Math.min(1, dd), shake = s.f > 80 ? Math.sin(now / 35) * 6 : Math.sin(now / 180) * 2;
+    const y = hz + 40 + Math.min(1, dd) * 60 + shake;
+    g.strokeStyle = s.t > 850 ? '#FF6B5A' : 'rgba(255,255,255,.85)'; g.lineWidth = s.t > 600 ? 2 : 1; g.beginPath(); g.moveTo(rx, ry); g.lineTo(x, y); g.stroke();
+    g.fillStyle = 'rgba(0,0,0,.35)'; g.beginPath(); g.ellipse(x + 10, y, 16 + Math.min(14, (FI.fg.segs.length || 1) * 1.2), 6, Math.sin(now / 300) * 0.2, 0, 7); g.fill();
+    if (s.f > 80) { g.strokeStyle = 'rgba(255,255,255,.7)'; g.lineWidth = 1.5; for (let i = 0; i < 4; i++) { const a = now / 90 + i * 1.6; g.beginPath(); g.moveTo(x + Math.cos(a) * 18, y - 8 + Math.sin(a) * 4); g.lineTo(x + Math.cos(a) * 26, y - 12 + Math.sin(a) * 6); g.stroke(); } }
+  } else if (FI.ph === 'done' && FI.fish) {
+    const p = Math.min(1, (now - FI.splash) / 500);
+    g.font = `${Math.round(40 + 20 * p)}px "AX Emoji UI","AX Emoji",sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(FI.fish.em, W / 2, hz + 40 - 20 * Math.sin(p * Math.PI));
+  }
+}
+function fiFloat(g, x, y, sink) {
+  g.save(); g.globalAlpha = 1 - sink * 0.8;
+  g.fillStyle = '#E8392E'; g.beginPath(); g.arc(x, y - 3, 5, Math.PI, 0); g.fill();
+  g.fillStyle = '#FFFFFF'; g.beginPath(); g.arc(x, y - 3, 5, 0, Math.PI); g.fill();
+  g.strokeStyle = '#222'; g.lineWidth = 1; g.beginPath(); g.moveTo(x, y - 8); g.lineTo(x, y - 14); g.stroke();
+  g.restore();
+}
+
+/* =================================================================
    スロット
    ================================================================= */
 const SYM = ['<span class="seven">7</span>', '<span class="bar">BAR</span>', '🔔', '🍉', '🍋', '🍒'];
@@ -4447,7 +4802,8 @@ $('#owCorp').onclick = async ev => {
     else if (a === 'close' || a === 'bankrupt') {
       const w = a === 'close' ? '廃業' : '倒産';
       if (!confirm(`本当に${w}しますか？もとに戻せません。\n銀行の預金は返し、渡していない注文の代金を返し、残ったお金は株主に分けます。`)) return;
-      if (prompt(`確認のため「${w}」と入力してください`, '') !== w) return toast('やめました');
+      const ans = String(prompt(`確認のため「${w}」と入力してください`, '') || '').trim(), wt = window.I18N ? String(I18N.t(w)).trim() : w;
+      if (ans !== w && ans.toLowerCase() !== wt.toLowerCase()) return toast('やめました');
       r = await call('corp_close', { p_cid: cid, p_kind: a }); }
     else if (a === 'ca_out') { const n = num('社長に移す Cièlani-Alpićsk（CA）', ''); if (!n) return; r = await call('corp_ca_withdraw', { p_cid: cid, p_amount: n }); }
     else if (a === 'bill') { go('vTax', 'bill'); setTimeout(() => { $('#bFrom').value = cid; }, 600); return; }
@@ -5897,7 +6253,7 @@ function auBoard(d) {
   if (st.phase === 'end' || st.over) { $('#rmBoard').innerHTML = auFinal(d); return; }
   const lot = st.lot, my = st.my, sold = st.phase === 'sold' ? st.done[st.done.length - 1] : null;
   let h = `<div class="au"><div class="au-hd"><span>${AU_MK[lot.mk] || ''}</span><span>${st.k + 1}/${st.lots_n}品目</span></div>
-    <div class="au-item"><span class="au-em">${lot.em}</span><span class="au-nm"><b>${esc(lot.nm)}</b><small>${esc(lot.info)}</small><small>せり始め ${fmt(lot.start)} X</small></span></div>
+    <div class="au-item"><span class="au-em">${lot.em}</span><span class="au-nm"><b>${esc(lot.nm)}</b><small>${esc(lot.info)}</small>${lot.by ? `<small>🎣 <span>出品：</span><span translate="no">${esc(lot.by)}</span><span>${lot.own ? '（あなたの魚）' : 'さんの釣った魚'}</span></small>` : ''}<small>せり始め ${fmt(lot.start)} X</small></span></div>
     ${my ? `<div class="au-me">あなたの目利き：<b>およそ ${fmt(Math.round(my.est * 0.9 / 10) * 10)}〜${fmt(Math.round(my.est * 1.1 / 10) * 10)} X</b>${my.hint ? `<br>真贋の見立て：<b>${my.hint === 'sus' ? 'あやしい（偽物かも）' : '本物っぽい'}</b>` : ''}</div>` : ''}`;
   if (sold) {
     const w = sold.res.w, mine = w === me && me != null, pn = w >= 0 ? sold.v - sold.res.p : 0;
@@ -5915,6 +6271,7 @@ function auBoard(d) {
 function auButtons(d) {
   const st = d.state;
   if (!st || st.phase !== 'bid') return '';
+  if (st.lot && st.lot.own) return '<span class="small muted">あなたの魚です（値はつけられません）</span>';
   if (st.high === d.me) return '<span class="small" style="color:var(--win);font-weight:700">いちばん高い値をつけています</span>';
   const mn = st.min, sp = st.step;
   return `<button class="btn main s" data-au="${mn}">${fmt(mn)} X</button><button class="btn s" data-au="${mn + 2 * sp}">3段上 ${fmt(mn + 2 * sp)} X</button>`
