@@ -426,6 +426,21 @@ h3{font-size:15px;margin:16px 0 8px}
 .chk{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:#F08A24;color:#fff;font-size:10px;font-weight:900;margin-left:3px;vertical-align:-2px}
 .admtag{display:inline-block;font-size:10px;line-height:1;padding:3px 5px;border-radius:5px;background:#1C1C1A;color:#fff;margin-left:4px;vertical-align:1px;font-weight:800}
 .admtag.sub{background:#6B6A64}
+.admtag.ev{background:#C2427A}
+/* 管理の画面 */
+.ad-top .ad-ttl{font-size:17px}
+.ad-todo{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.ad-td{border:1px solid color-mix(in srgb,var(--red) 45%,var(--line));background:color-mix(in srgb,var(--red) 10%,var(--panel));color:var(--ink);border-radius:999px;padding:5px 11px;font-size:13px;font-weight:700}
+.ad-td b{color:var(--red);margin-left:6px}
+.ad-tabs{display:flex;max-width:100%;overflow-x:auto}
+.ad-tabs button{white-space:nowrap;flex:1}
+.ad-n{font-style:normal;display:inline-block;min-width:18px;height:18px;line-height:18px;border-radius:9px;background:var(--red);color:#fff;font-size:11px;font-weight:800;margin-left:5px;padding:0 5px;vertical-align:1px}
+.ad-c{display:inline-block;min-width:20px;height:20px;line-height:20px;text-align:center;border-radius:10px;background:var(--red);color:#fff;font-size:12px;margin-left:8px;padding:0 6px;vertical-align:2px}
+.ad-staff{padding:10px 0;border-top:1px solid var(--line)}
+.ad-staff:first-child{border-top:0;padding-top:0}
+.ad-people{display:flex;flex-wrap:wrap;gap:6px}
+.ad-pp{display:inline-flex;align-items:baseline;gap:5px;border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:13px;font-weight:700;background:var(--bg)}
+.ad-pp small{color:var(--muted);font-weight:600;font-size:11px}
 .offtag{font-size:11px;font-weight:900;border-radius:4px;padding:1px 6px;background:#1F5FA8;color:#fff;margin-left:6px}
 .offtag::before{content:'✓ '}
 .aitag{font-size:11px;font-weight:900;border-radius:4px;padding:1px 6px;background:#6B4FA8;color:#fff;margin-left:6px;white-space:nowrap}
@@ -754,7 +769,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：English をえらんだ端末では、英語の辞書（i18n/en.js）を先に読みこむ */
-  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=c3d34ac9"><\/script>'); } } catch (e) {}
+  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=cbf4d4cf"><\/script>'); } } catch (e) {}
 })();
 </script>
 </head>
@@ -1309,7 +1324,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <p class="small muted" style="margin:10px 0 0">制作：<a href="https://x.com/Airln_7" target="_blank" rel="noopener">@Airln_7</a></p>
   </div>
   <button class="btn wide" id="logout" data-sub="prof">ログアウト</button>
-  <div class="card" data-sub="admin" id="adminBox"></div>
+  <div data-sub="admin" id="adminBox"></div>
   <div class="card" data-sub="users">
     <h3 style="margin-top:0">登録した人</h3>
     <p class="small" id="auSum" style="margin:0 0 6px"></p>
@@ -1630,7 +1645,7 @@ async function enter() {
   try {
     const p = await call('ensure_profile'); up = !!p.upgraded;
     ME = p; ME.prefs = p.prefs || {}; guestUI(); lookFromServer(); setBal(p.balance); $('#nick').value = p.nickname; setTaxDot(p.tax);
-    if (p.role && !MENU_OF.vMore[3].some(x => x[0] === 'admin')) MENU_OF.vMore[3].push(['admin', '管理']);
+    if ((p.role || p.event) && !MENU_OF.vMore[3].some(x => x[0] === 'admin')) MENU_OF.vMore[3].push(['admin', '管理']);
     if (p.role === 'admin' && !MENU_OF.vMore[3].some(x => x[0] === 'users')) MENU_OF.vMore[3].push(['users', '登録者']);   // 登録者の情報は管理者だけ
     if (p.role === 'admin') $('#auQ').placeholder = 'ID・ニックネーム・メールで検索'; else { const db = $('#auF [data-k="debt"]'); if (db) db.remove(); }
   } catch (e) {
@@ -2579,7 +2594,7 @@ const cardHtml = (c, cls = '') => `<div class="pc ${c.s === 1 || c.s === 2 ? 're
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 // 名前の横のしるし（オレンジのチェック・管理者タグ）
 const badgeH = b => !b ? '' : (b.ok ? '<span class="chk" title="チェック：滞納なし・半年以内にメール認証">✓</span>' : '')
-  + (b.role ? `<span class="admtag ${b.role === 'sub' ? 'sub' : ''}">${b.role === 'admin' ? '管理者' : '副管理者'}</span>` : '');
+  + (b.role ? `<span class="admtag ${b.role === 'sub' ? 'sub' : ''}">${b.role === 'admin' ? '管理者' : '副管理者'}</span>` : b.ev ? '<span class="admtag ev">イベント</span>' : '');
 const nameB = (n, b) => esc(n) + badgeH(b);
 const AITAG = '<span class="aitag">AI</span>';   // AIが運営する会社・AIのアカウントの印
 const fmtP = n => numStr(n, 4);
@@ -3733,9 +3748,34 @@ async function myWorkLoad() {
 /* =================================================================
    管理（管理者だけ）
    ================================================================= */
+// 管理の画面：タブ（審査・会社と株・お金・イベント・人）。タブを開いたときに、そこの中身を読みこむ
+const AD = { tab: sessionStorageGet('adTab') || '', d: null, loaded: {} };
+const AD_TABS = [['review', '審査'], ['corp', '会社・株'], ['money', 'お金'], ['event', 'イベント'], ['staff', '人']];
+const adTabsFor = (role, ev) => AD_TABS.filter(([k]) => k === 'event' ? ev : k === 'review' || k === 'corp' ? !!role : role === 'admin');
+const adEventCards = () => `<div class="card" data-adtab="event"><h3 style="margin-top:0">臨時のレース</h3><div id="adKb"><p class="muted small" style="margin:0">読みこみ中…</p></div></div>
+  <div class="card" data-adtab="event"><h3 style="margin-top:0">お知らせバナー</h3><div id="adBn"><p class="muted small" style="margin:0">読みこみ中…</p></div></div>`;
+function adShow(tab) {
+  AD.tab = tab; try { sessionStorage.setItem('adTab', tab); } catch (e) {}
+  $$('#adTabs button').forEach(b => b.classList.toggle('on', b.dataset.k === tab));
+  $$('#adminBox [data-adtab]').forEach(c => c.classList.toggle('hidden', c.dataset.adtab !== tab));
+  if (AD.loaded[tab]) return;
+  AD.loaded[tab] = true;
+  if (tab === 'corp') adAiLoad();
+  if (tab === 'money') adIvLoad(null, AD.d ? AD.d.listed : []);
+  if (tab === 'event') { adKbLoad(); adBnLoad(); }
+  if (tab === 'staff') adStaffLoad();
+}
 async function adminLoad() {
+  AD.loaded = {};
+  if (!ME.role) {   // イベント製作者だけ（審査などは見られない）
+    AD.d = null;
+    $('#adminBox').innerHTML = `<div class="card ad-top"><div class="row"><b class="ad-ttl">管理</b><span class="admtag ev">イベント</span></div>
+      <p class="small muted" style="margin:6px 0 0">あなたは<b>イベント製作者</b>です。臨時のレースとお知らせバナーをつくれます。</p></div>` + adEventCards();
+    return adShow('event');
+  }
   try {
     const d = await call('admin_state'), t = d.treasury, adm = d.role === 'admin';
+    AD.d = d;
     const caseForm = x => `<div class="item case" data-case="${x.id}">
       <div class="row"><b>#${x.id} ${esc(x.kind)}</b><span class="muted small" style="margin-left:auto">${x.at}</span></div>
       <div class="small">訴えた人：${nameB(x.p_name, x.p_badge)}（ID ${x.p_id}）</div>
@@ -3753,54 +3793,60 @@ async function adminLoad() {
         <div class="row"><button class="btn main s" data-judge="1">認める</button><button class="btn s" data-judge="0">棄却する</button></div>
         <p class="muted small" style="margin:4px 0 0">賠償金は相手のお金→銀行の預金の順に取り、足りない分は相手にお金が入るたびに取り立てます。罰金はあるだけ国庫へ。</p>
       </details></div>`;
-    $('#adminBox').innerHTML = `<p class="small muted" style="margin:0 0 8px">あなたは<b>${adm ? '管理者' : '副管理者'}</b>です。${adm ? '' : '国のお金のようすや手数料の設定は、管理者だけが見られます。'}</p>
-      <h3 style="margin-top:0">企業の審査</h3>
-      ${d.pending.length ? d.pending.map(c => `<div class="item"><div class="row"><b>${esc(c.name)}</b>${kindTag(c)}</div>
+    const cnt = n => n ? `<span class="ad-c">${n}</span>` : '';
+    const nRev = d.pending.length + d.list_apps.length + d.cases.length + d.fx_requests.length;
+    const tabs = adTabsFor(d.role, !!ME.event);
+    const todo = [['adPend', '企業の審査', d.pending.length], ['adList', '上場の審査', d.list_apps.length], ['adCase', '訴えの審理', d.cases.length], ['adFx', '交換の申請', d.fx_requests.length]].filter(x => x[2]);
+    const card = (tab, id, title, body) => `<div class="card" data-adtab="${tab}"${id ? ` id="${id}"` : ''}><h3 style="margin-top:0">${title}</h3>${body}</div>`;
+    $('#adminBox').innerHTML = `<div class="card ad-top">
+        <div class="row"><b class="ad-ttl">管理</b><span class="admtag ${adm ? '' : 'sub'}">${adm ? '管理者' : '副管理者'}</span>${!adm && ME.event ? '<span class="admtag ev">イベント</span>' : ''}<span class="grow"></span><button class="btn s" id="adReload">↻ 更新</button></div>
+        <div class="ad-todo">${todo.length ? todo.map(x => `<button class="ad-td" data-adgo="${x[0]}">${x[1]}<b>${x[2]}</b></button>`).join('') : '<span class="muted small">審査や処理を待っているものは、いまはありません</span>'}</div>
+        <div class="seg sm ad-tabs" id="adTabs">${tabs.map(([k, l]) => `<button data-k="${k}">${l}${k === 'review' && nRev ? `<i class="ad-n">${nRev}</i>` : ''}</button>`).join('')}</div>
+        ${adm ? '' : '<p class="small muted" style="margin:8px 0 0">国のお金・介入・手数料・役割の設定は、管理者だけが見られます。</p>'}</div>`
+      + card('review', 'adPend', `企業の審査${cnt(d.pending.length)}`, `      ${d.pending.length ? d.pending.map(c => `<div class="item"><div class="row"><b>${esc(c.name)}</b>${kindTag(c)}</div>
           <p class="small muted" style="margin:4px 0">申請者 ${nameB(c.owner, c.owner_badge)}（ID ${c.owner_id}）・${c.at}・会社ID ${c.cid_full}</p>
           <div>${c.industries && c.industries.length ? indChips(c.industries) : '<span class="muted small">業種：未設定</span>'}</div>
           ${c.description ? `<p class="small" style="white-space:pre-wrap;margin:4px 0">${esc(c.description)}</p>` : ''}
           <div class="row"><button class="btn main s" data-ok="${c.cid}">許可</button><button class="btn s" data-ng="${c.cid}">却下</button></div></div>`).join('')
         : '<p class="muted small" style="margin:0">審査待ちはありません</p>'}
-      <h3>上場の審査</h3>
-      ${d.list_apps.length ? d.list_apps.map(a => `<div class="item"><div class="row"><b>${esc(a.name)}</b></div>
+`)
+      + card('review', 'adList', `上場の審査${cnt(d.list_apps.length)}`, `      ${d.list_apps.length ? d.list_apps.map(a => `<div class="item"><div class="row"><b>${esc(a.name)}</b></div>
           <p class="small muted" style="margin:4px 0">社長 ${nameB(a.owner, a.owner_badge)}（ID ${a.owner_id}）・申請 ${a.at}・会社の許可 ${a.since || '—'}・発行 ${fmt(a.shares)}株・株主 ${a.holders}人${a.per_share != null ? `・1株あたりの会社のお金 ${fmtP(a.per_share)} X` : ''}・評価 ${ratingH(a.rating || { n: 0 })}</p>
           ${a.note ? `<p class="small" style="white-space:pre-wrap;margin:4px 0">${esc(a.note)}</p>` : ''}
           <div class="row"><button class="btn main s" data-lok="${a.cid}" data-ps="${a.per_share ?? ''}">上場を許可（公開価格を決める）</button><button class="btn s" data-lng="${a.cid}">見送る</button><button class="btn s" data-lco="${a.cid}">会社を見る</button></div></div>`).join('')
         : '<p class="muted small" style="margin:0">審査待ちはありません</p>'}
-      <h3>上場している会社</h3>
-      ${d.listed.map(x => `<div class="line"><span class="grow">${esc(x.name)}${x.ai ? AITAG : ''}${x.status === 'suspended' ? '<span class="stag">売買停止</span>' : ''}<small>株価 ${x.last != null ? fmt(x.last) + ' X' : '—'}${x.stop === 'high' ? '（ストップ高）' : x.stop === 'low' ? '（ストップ安）' : ''}・きょう ${fmt(x.vol)}株・${x.listed_at}から</small></span>
-          <button class="btn s" data-stk="${x.cid}">板</button>${adm ? `<button class="btn s" data-reprice="${x.cid}" data-nm="${esc(x.name)}">株価</button><button class="btn s" data-delist="${x.cid}">上場廃止</button>` : ''}</div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
-      <h3>AI会社</h3><div id="adAi"><p class="muted small" style="margin:0">読みこみ中…</p></div>
-      <h3>訴えの審理</h3>
-      ${d.cases.length ? d.cases.map(caseForm).join('') : '<p class="muted small" style="margin:0">審理中の訴えはありません</p>'}
-      <h3>Cièlani-Nièpha との交換申請</h3>
-      ${adm ? `<p class="small muted" style="margin:0 0 4px">国が持っている Cièlani-Alpićsk：<b>${fmt(d.ca_reserve)} CA</b>（発行 ${fmt(d.ca_issued)} CA・これ以上は発行しません）／出回っている合計：<b>${fmt(d.ca_total)} CA</b></p>` : ''}
+`)
+      + card('review', 'adCase', `訴えの審理${cnt(d.cases.length)}`, `      ${d.cases.length ? d.cases.map(caseForm).join('') : '<p class="muted small" style="margin:0">審理中の訴えはありません</p>'}
+`)
+      + card('review', 'adFx', `Cièlani-Nièpha との交換申請${cnt(d.fx_requests.length)}`, `      ${adm ? `<p class="small muted" style="margin:0 0 4px">国が持っている Cièlani-Alpićsk：<b>${fmt(d.ca_reserve)} CA</b>（発行 ${fmt(d.ca_issued)} CA・これ以上は発行しません）／出回っている合計：<b>${fmt(d.ca_total)} CA</b></p>` : ''}
       ${d.fx_requests.length ? d.fx_requests.map(r => `<div class="item"><div class="row"><b>${r.kind === 'in' ? 'Nièpha → Alpićsk' : 'Alpićsk → Nièpha'} ${fmt(r.amount)}</b></div>
           <p class="small muted" style="margin:4px 0">#${r.id}・${esc(r.nickname)}（ID ${r.uid}）・${r.at}・連絡先 <b style="user-select:all">${esc(r.contact)}</b></p>
           <p class="small" style="margin:0 0 6px">${r.kind === 'in' ? '公式サーバーで Nièpha を受け取ったら「処理した」を押すと、国の CA から渡します。' : 'CA は預かりずみ。公式サーバーで Nièpha を渡したら「処理した」を押してください（CA は国にもどります）。'}</p>
           <div class="row"><button class="btn main s" data-fxok="${r.id}">処理した</button><button class="btn s" data-fxng="${r.id}">断る</button></div></div>`).join('')
         : '<p class="muted small" style="margin:0">処理待ちはありません</p>'}
-      ${adm ? `<h3>国のお金（管理者だけに見えます）</h3>
-      <div class="kv"><span>国庫</span><b>${fmt(t.balance)} X</b><span>発行</span><b>${fmt(t.issued_total)} X</b>
+`)
+      + card('corp', '', '上場している会社', `      ${d.listed.map(x => `<div class="line"><span class="grow">${esc(x.name)}${x.ai ? AITAG : ''}${x.status === 'suspended' ? '<span class="stag">売買停止</span>' : ''}<small>株価 ${x.last != null ? fmt(x.last) + ' X' : '—'}${x.stop === 'high' ? '（ストップ高）' : x.stop === 'low' ? '（ストップ安）' : ''}・きょう ${fmt(x.vol)}株・${x.listed_at}から</small></span>
+          <button class="btn s" data-stk="${x.cid}">板</button>${adm ? `<button class="btn s" data-reprice="${x.cid}" data-nm="${esc(x.name)}">株価</button><button class="btn s" data-delist="${x.cid}">上場廃止</button>` : ''}</div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
+`)
+      + card('corp', '', '活動中の企業', `      ${d.active.map(c => `<div class="line"><span class="grow">${esc(c.name)}${c.ai ? AITAG : ''}${c.cert_until ? `<span class="cert">${CERT_SVG}認証</span>` : ''}${c.status === 'suspended' ? `<span class="stag">${c.court_lock ? '休業命令' : '休業中'}</span>` : ''}
+          <small>${esc(c.kind === '一般' ? c.form : c.kind)}・ID ${c.cid_full}・社長 ${esc(c.owner)}${adm ? `・お金 ${fmt(c.balance)} X` : ''}${c.cert_until ? `・認証 ${c.cert_until}まで` : ''}</small>
+          <small>${c.industries && c.industries.length ? esc(c.industries.map(indName).join('・')) : '業種：未設定'}${c.servers ? `・サーバー ${c.servers}件` : ''}</small></span>
+          ${adm && c.status === 'active' ? `<button class="btn s" data-certopen="${c.cid}">認証マーク</button>` : ''}
+          ${adm ? (c.status === 'suspended' ? `<button class="btn s" data-cact="resume" data-cid="${c.cid}">再開させる</button>` : `<button class="btn s" data-cact="suspend" data-cid="${c.cid}">休業命令</button>`)
+            + `<button class="btn s" data-cact="bankrupt" data-cid="${c.cid}">倒産させる</button>` : ''}</div>`).join('') || '<p class="muted small">まだありません</p>'}`)
+      + card('corp', '', 'AI会社', '<div id="adAi"><p class="muted small" style="margin:0">読みこみ中…</p></div>')
+      + (adm ? card('corp', '', '取引所の手数料', `      <div class="row"><input class="inp" id="adFee" type="number" min="0" max="10" step="0.01" value="${Number(d.fee_pct)}" style="width:110px;margin:0"><span class="small">%</span><button class="btn s" id="adFeeSave">保存</button></div>
+      <p class="muted small" style="margin:4px 0 0">買った人の X と、売った人の CA から引いて、風の芽証券取引所に入ります。</p>
+`) : '')
+      + (adm ? card('money', '', '国のお金（管理者だけ）', `      <div class="kv"><span>国庫</span><b>${fmt(t.balance)} X</b><span>発行</span><b>${fmt(t.issued_total)} X</b>
         <span>ユーザーの残高の合計</span><b>${fmt(d.supply)} X</b><span>会社のお金の合計</span><b>${fmt(d.corp_money)} X</b>
         <span>銀行預金の合計</span><b>${fmt(d.bank_money)} X</b><span>注文で預かっている X</span><b>${fmt(d.order_money)} X</b><span class="muted">カジノのもうけ</span><b>${fmt(t.casino_total)}</b>
         <span class="muted">税収</span><b>${fmt(t.tax_total)}</b><span class="muted">給付金</span><b>${fmt(t.benefit_total)}</b>
         <span class="muted">手数料・申請料</span><b>${fmt(t.fee_total)}</b><span class="muted">給料（仕事）</span><b>${fmt(t.wage_total)}</b>
         <span class="muted">没収・罰金</span><b>${fmt(t.confiscated_total)}</b></div>
-      <h3>介入（管理者だけ）</h3><div id="adIv"><p class="muted small" style="margin:0">読みこみ中…</p></div>
-      <h3>お知らせバナー（管理者だけ）</h3><div id="adBn"><p class="muted small" style="margin:0">読みこみ中…</p></div>
-      <h3>臨時のレース（管理者だけ）</h3><div id="adKb"><p class="muted small" style="margin:0">読みこみ中…</p></div>
-      <h3>取引所の手数料</h3>
-      <div class="row"><input class="inp" id="adFee" type="number" min="0" max="10" step="0.01" value="${Number(d.fee_pct)}" style="width:110px;margin:0"><span class="small">%</span><button class="btn s" id="adFeeSave">保存</button></div>
-      <p class="muted small" style="margin:4px 0 0">買った人の X と、売った人の CA から引いて、風の芽証券取引所に入ります。</p>
-      <p class="small muted">副管理者（ID）：${esc(d.subadmins || 'なし')}</p>` : ''}
-      <h3>活動中の企業</h3>
-      ${d.active.map(c => `<div class="line"><span class="grow">${esc(c.name)}${c.ai ? AITAG : ''}${c.cert_until ? `<span class="cert">${CERT_SVG}認証</span>` : ''}${c.status === 'suspended' ? `<span class="stag">${c.court_lock ? '休業命令' : '休業中'}</span>` : ''}
-          <small>${esc(c.kind === '一般' ? c.form : c.kind)}・ID ${c.cid_full}・社長 ${esc(c.owner)}${adm ? `・お金 ${fmt(c.balance)} X` : ''}${c.cert_until ? `・認証 ${c.cert_until}まで` : ''}</small>
-          <small>${c.industries && c.industries.length ? esc(c.industries.map(indName).join('・')) : '業種：未設定'}${c.servers ? `・サーバー ${c.servers}件` : ''}</small></span>
-          ${adm && c.status === 'active' ? `<button class="btn s" data-certopen="${c.cid}">認証マーク</button>` : ''}
-          ${adm ? (c.status === 'suspended' ? `<button class="btn s" data-cact="resume" data-cid="${c.cid}">再開させる</button>` : `<button class="btn s" data-cact="suspend" data-cid="${c.cid}">休業命令</button>`)
-            + `<button class="btn s" data-cact="bankrupt" data-cid="${c.cid}">倒産させる</button>` : ''}</div>`).join('') || '<p class="muted small">まだありません</p>'}`;
+`) + card('money', '', '介入', '<div id="adIv"><p class="muted small" style="margin:0">読みこみ中…</p></div>') : '')
+      + (ME.event ? adEventCards() : '')
+      + (adm ? card('staff', '', '副管理者・イベント製作者', '<div id="adStaff"><p class="muted small" style="margin:0">読みこみ中…</p></div>') : '');
     $$('#adminBox [data-fxok], #adminBox [data-fxng]').forEach(b => b.onclick = async () => {
       const ok = !!b.dataset.fxok, note = prompt(ok ? 'メモ（なくてもOK）' : '断る理由（申請者に届きます）', ''); if (note === null) return;
       try { await call('admin_fx_decide', { p_id: Number(b.dataset.fxok || b.dataset.fxng), p_ok: ok, p_note: note }); toast(ok ? '処理しました' : '断りました'); adminLoad(); } catch (e) { toast(e.message); }
@@ -3850,9 +3896,29 @@ async function adminLoad() {
     });
     const fs = $('#adFeeSave');
     if (fs) fs.onclick = async () => { try { await call('admin_fx_fee', { p_pct: Number($('#adFee').value) }); toast('手数料を変えました'); adminLoad(); } catch (e) { toast(e.message); } };
-    adAiLoad();
-    if (adm) { adIvLoad(null, d.listed); adBnLoad(); adKbLoad(); }
+    $('#adReload').onclick = () => adminLoad();
+    $$('#adTabs button').forEach(b => b.onclick = () => adShow(b.dataset.k));
+    $$('#adminBox [data-adgo]').forEach(b => b.onclick = () => {
+      adShow('review'); const el = document.getElementById(b.dataset.adgo);
+      if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 110, behavior: 'smooth' });
+    });
+    adShow(tabs.some(x => x[0] === AD.tab) ? AD.tab : tabs[0][0]);
   } catch (e) { toast(e.message); }
+}
+// 管理：副管理者・イベント製作者（管理者だけ）
+async function adStaffLoad() {
+  const box = $('#adStaff'); if (!box) return;
+  let st; try { st = await call('admin_staff'); } catch (e) { box.innerHTML = `<p class="muted small" style="margin:0">${esc(e.message)}</p>`; return; }
+  const row = (k, title, desc, L) => `<div class="ad-staff" data-kind="${k}"><b>${title}</b><p class="muted small" style="margin:2px 0 6px">${desc}</p>
+    <div class="ad-people">${L.map(x => `<span class="ad-pp">${esc(x.nickname)}<small>ID ${esc(x.id)}</small></span>`).join('') || '<span class="muted small">いません</span>'}</div>
+    <div class="row" style="margin-top:6px"><input class="inp grow" data-ids value="${esc(L.map(x => x.id).join(' '))}" placeholder="ユーザーのID（空白かカンマで区切る）" style="margin:0"><button class="btn s" data-save>保存</button></div></div>`;
+  box.innerHTML = row('sub', '副管理者', '企業・上場の審査、訴えの審理、交換の申請の処理ができます（国のお金・介入・手数料・役割の設定はできません）。', st.sub)
+    + row('event', 'イベント製作者', '臨時のレース（オッズの倍率は20倍まで）とお知らせバナーをつくれます。取り消す・消すのは自分がつくったものだけで、自分がつくったレースの馬券は買えません。', st.event)
+    + '<p class="muted small" style="margin:8px 0 0">IDは、プロフィールや「人をさがす」で見られます。なった人・はずれた人には通知が届きます。</p>';
+  $$('#adStaff [data-save]').forEach(b => b.onclick = async () => {
+    const w = b.closest('[data-kind]');
+    try { await call('admin_staff_set', { p_kind: w.dataset.kind, p_ids: w.querySelector('[data-ids]').value }); toast('保存しました'); adStaffLoad(); } catch (e) { toast(e.message); }
+  });
 }
 // 管理：お知らせバナー
 async function adBnLoad() {
@@ -3868,7 +3934,7 @@ async function adBnLoad() {
     <button class="btn main s" id="bnGo">出す</button>
     <p class="muted small" style="margin:6px 0 0">みんなの画面のいちばん上に出ます。見た人は × で閉じられます（閉じたものは、その端末ではもう出ません）。</p>
     ${L.length ? `<h4 style="margin:10px 0 2px">これまでのお知らせ</h4>` + L.map(b => `<div class="line"><span class="grow">${b.live ? '<span class="kindtag">表示中</span>' : ''}${{ info: '📢', warn: '⚠️', event: '🎉' }[b.kind] || ''} ${esc(b.body)}
-        <small>${b.at} ${b.time}・${b.until ? b.until + ' まで' : '消すまで'}${b.by ? '・' + esc(b.by) : ''}</small></span>${b.live ? `<button class="btn s" data-bnend="${b.id}">消す</button>` : ''}</div>`).join('') : ''}`;
+        <small>${b.at} ${b.time}・${b.until ? b.until + ' まで' : '消すまで'}${b.by ? '・' + esc(b.by) : ''}</small></span>${b.live && b.can_end !== false ? `<button class="btn s" data-bnend="${b.id}">消す</button>` : ''}</div>`).join('') : ''}`;
   $$('#bnKind button').forEach(b => b.onclick = () => { kind = b.dataset.k; $$('#bnKind button').forEach(x => x.classList.toggle('on', x === b)); });
   $('#bnGo').onclick = async () => {
     const body = $('#bnBody').value.trim(); if (!body) return toast('お知らせの文を入れてください');
@@ -3901,14 +3967,15 @@ async function adKbLoad() {
     <div class="row"><span class="small" style="width:6em">頭数</span><input class="inp grow" id="kxN" type="number" inputmode="numeric" min="8" max="18" value="18" style="margin:0"><span class="small">頭</span></div>
     <div class="row"><span class="small" style="width:6em">レース番号</span><input class="inp grow" id="kxR" type="number" inputmode="numeric" min="1" max="12" value="11" style="margin:0"><span class="small">R</span></div>
     <label class="small" style="display:block;margin:6px 0"><input type="checkbox" id="kxHc"> ハンデ戦</label>
-    <div class="row"><span class="small" style="width:6em">オッズ</span><input class="inp" id="kxMult" type="number" inputmode="decimal" min="1" max="100" step="0.1" value="1" style="margin:0;width:5em"><span class="small">倍（単勝・複勝。1 = ふだん）</span></div>
+    <div class="row"><span class="small" style="width:6em">オッズ</span><input class="inp" id="kxMult" type="number" inputmode="decimal" min="1" max="${v.mult_max || 100}" step="0.1" value="1" style="margin:0;width:5em"><span class="small">倍（単勝・複勝）</span></div>
     <label class="small" style="display:block;margin:6px 0"><input type="checkbox" id="kxBn" checked> お知らせバナーを出す（発走の5分後まで）</label>
     <button class="btn main s" id="kxGo">レースをつくる</button>
     <p class="muted small" style="margin:6px 0 0">きょうかあしたの、発走の5分以上前に。天気と馬場はその日の同じ競馬場と同じになり、出走馬は自動でえらびます（G1〜オープンは強い馬から）。発走の前なら取り消せます（買われた馬券は全額返します）。</p>
+    ${v.admin === false ? '<p class="muted small" style="margin:4px 0 0">イベント製作者がつけられるオッズの倍率は20倍まで。取り消せるのは自分がつくったレースだけで、自分がつくったレースの馬券は買えません。</p>' : ''}
     ${v.races.length ? `<h4 style="margin:10px 0 2px">臨時のレース（この1週間）</h4>` + v.races.map(r => `<div class="line"><span class="grow">${esc(r.name)}${gradeTag(r.grade)}
-        <small>${r.day.slice(5).replace('-', '/')} ${hhmm(r.post_ms)}・${esc(r.venue)}${r.rnum}R ${r.surface === '芝' ? '芝' : 'ダート'}${r.dist}m・${r.n}頭・${esc(r.weather)}・${esc(r.going)}・${KB_STATUS[r.status] || ''}・馬券${fmt(r.tickets)}枚 ${fmt(r.bet)} X</small>
+        <small>${r.day.slice(5).replace('-', '/')} ${hhmm(r.post_ms)}・${esc(r.venue)}${r.rnum}R ${r.surface === '芝' ? '芝' : 'ダート'}${r.dist}m・${r.n}頭・${esc(r.weather)}・${esc(r.going)}・${KB_STATUS[r.status] || ''}・馬券${fmt(r.tickets)}枚 ${fmt(r.bet)} X${r.by ? '・' + esc(r.by) : ''}</small>
         ${r.mult ? `<small>★ オッズ ${KINDS.filter(k => r.mult[k[0]]).map(k => `${k[1]}×${multStr(r.mult[k[0]])}`).join('・')}</small>` : ''}</span>
-        <button class="btn s" data-kxopen="${r.id}">見る</button>${r.status === 'sale' || r.status === 'closed' ? `<button class="btn s" data-kxcancel="${r.id}" data-nm="${esc(r.name)}">取り消す</button>` : ''}</div>`).join('') : ''}`;
+        <button class="btn s" data-kxopen="${r.id}">見る</button>${(r.status === 'sale' || r.status === 'closed') && r.can_cancel !== false ? `<button class="btn s" data-kxcancel="${r.id}" data-nm="${esc(r.name)}">取り消す</button>` : ''}</div>`).join('') : ''}`;
   const dist = () => {
     const V = v.venues.find(x => x.id === KX.venue) || v.venues[0], L = KX.surface === '芝' ? V.turf_d : V.dirt_d, cur = Number($('#kxDist').value);
     $('#kxDist').innerHTML = L.map(d => `<option value="${d}" ${d === (L.includes(cur) ? cur : L.includes(2400) ? 2400 : L[Math.floor(L.length / 2)]) ? 'selected' : ''}>${d}m</option>`).join('');

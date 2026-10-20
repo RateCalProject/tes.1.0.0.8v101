@@ -646,7 +646,7 @@ begin
     raise warning 'tax tick failed: %', sqlerrm;
   end;
   return (select jsonb_build_object('nickname', nickname, 'balance', balance, 'tax', case when _is_guest(u) then null else _tax_badge(u) end,
-            'account_no', account_no, 'is_admin', _is_admin(u), 'role', _role(u), 'badge', _badge(u), 'prefs', prefs, 'guest', _is_guest(u),
+            'account_no', account_no, 'is_admin', _is_admin(u), 'role', _role(u), 'event', _is_event(u), 'badge', _badge(u), 'prefs', prefs, 'guest', _is_guest(u),
             'guest_info', _guest_json(u), 'upgraded', up)
             from profiles where id = u);
 end $$;
@@ -1063,6 +1063,15 @@ begin
 end $$;
 create or replace function public._is_staff(u uuid) returns boolean
 language plpgsql stable set search_path = public as $$ begin return _role(u) is not null; end $$;
+-- イベント製作者（app_settings 'eventmakers'：ユーザーのID。カンマ区切り）。管理者もイベントをつくれる
+create or replace function public._is_event(u uuid) returns boolean
+language plpgsql stable set search_path = public as $$
+begin
+  if u is null then return false; end if;
+  if exists (select 1 from app_settings where key = 'admins' and u::text = any(string_to_array(value, ','))) then return true; end if;
+  return exists (select 1 from app_settings s join profiles p on p.id = u
+                  where s.key = 'eventmakers' and p.account_no = any(string_to_array(replace(s.value, ' ', ''), ',')));
+end $$;
 
 -- 名前の横のしるし：role（管理者タグ）と ok（オレンジのチェック）
 --   チェック：税金の滞納がない（前に滞納していても、いま払い終わっていればOK）・登録から7日・半年以内にメールで認証
@@ -1072,7 +1081,7 @@ declare p profiles;
 begin
   select * into p from profiles where id = u;
   if not found then return null; end if;
-  return jsonb_build_object('role', _role(u),
+  return jsonb_build_object('role', _role(u), 'ev', _role(u) is null and _is_event(u),
     'ok', _debt(u) = 0 and _now() >= coalesce(p.ok7_at, p.created_at + interval '7 days')
           and p.mail_verified_at is not null and p.mail_verified_at >= _now() - interval '183 days');
 end $$;
@@ -1556,9 +1565,10 @@ language sql immutable as $$
               when lens < 3.75 then '3 1/2' when lens < 10.5 then round(lens)::int::text else '大差' end
 $$;
 
--- 臨時のレースだけ：単勝・複勝などのオッズを、ふだんの何倍にするか（{"tan": 20, "fuku": 20}）
+-- 臨時のレースだけ：単勝・複勝などのオッズを、ふだんの何倍にするか（{"tan": 20, "fuku": 20}）・つくった人
 alter table public.keiba_races drop column if exists odds_floor;
 alter table public.keiba_races add column if not exists odds_mult jsonb;
+alter table public.keiba_races add column if not exists made_by uuid references public.profiles(id) on delete set null;
 
 create or replace function public._kb_make_race(d date, no int, vid int, rnum int, posttime timestamptz,
   nm text, grade text, cls int, cond text, surface text, dist int, going text, weather text, tier text,
@@ -2353,6 +2363,7 @@ begin
   select * into r from keiba_races where id = p_race;
   if not found then raise exception 'レースが見つかりません'; end if;
   if _now() >= r.post - interval '60 seconds' then raise exception 'このレースの発売は締め切りました'; end if;
+  if r.made_by = u and not _is_admin(u) then raise exception '自分がつくった臨時のレースの馬券は買えません'; end if;
   s := _kb_check_sel(p_race, p_kind, p_sel);
   od := _kb_odds(p_race, p_kind, s);
   perform _take(u, p_amount);
@@ -2392,12 +2403,12 @@ end $$;
 -- ---------------------------------------------------------------------
 create or replace function public.admin_kb_extras() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); today date;
+declare u uuid := _me(); today date; adm boolean := _is_admin(u);
 begin
-  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  if not _is_event(u) then raise exception '管理者とイベント製作者だけが使えます'; end if;
   today := _kb_jday(_now());
   return jsonb_build_object(
-    'now_ms', _kb_ms(_now()), 'today', today,
+    'now_ms', _kb_ms(_now()), 'today', today, 'admin', adm, 'mult_max', case when adm then 100 else 20 end,
     'venues', (select jsonb_agg(jsonb_build_object('id', id, 'name', name, 'turf_d', turf_d, 'dirt_d', dirt_d)
                  order by case id when 3 then 1 when 2 then 2 else 3 end) from keiba_venues where id in (1, 2, 3)),
     'races', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'day', r.day, 'post_ms', _kb_ms(r.post), 'rnum', r.rnum,
@@ -2405,7 +2416,8 @@ begin
                 'weather', r.weather, 'going', r.going, 'status', _kb_status(r), 'mult', r.odds_mult,
                 'n', (select count(*) from keiba_entries e where e.race_id = r.id),
                 'tickets', (select count(*) from keiba_tickets t where t.race_id = r.id),
-                'bet', (select coalesce(sum(t.amount), 0) from keiba_tickets t where t.race_id = r.id)) order by r.post desc), '[]'::jsonb)
+                'bet', (select coalesce(sum(t.amount), 0) from keiba_tickets t where t.race_id = r.id),
+                'by', (select nickname from profiles where id = r.made_by), 'mine', r.made_by = u, 'can_cancel', adm or r.made_by = u) order by r.post desc), '[]'::jsonb)
               from keiba_races r join keiba_venues v on v.id = r.venue where r.no >= 60 and r.day >= today - 7));
 end $$;
 
@@ -2417,10 +2429,10 @@ create or replace function public.admin_kb_extra(p_name text, p_day int, p_time 
 language plpgsql security definer set search_path = public as $$
 declare
   u uuid := _me(); nm text := btrim(coalesce(p_name, '')); gr text := nullif(btrim(coalesce(p_grade, '')), '');
-  fl numeric := nullif(nullif(round(p_mult, 1), 0), 1);
+  fl numeric := nullif(nullif(round(p_mult, 1), 0), 1); adm boolean := _is_admin(u);
   cnd text := coalesce(p_cond, '3up'); d date; pt timestamptz; v keiba_venues; no int; rid bigint; wx text[]; cl int; hh int; mi int;
 begin
-  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  if not _is_event(u) then raise exception '管理者とイベント製作者だけが使えます'; end if;
   perform _kb_tick();
   if char_length(nm) < 1 or char_length(nm) > 30 then raise exception 'レース名は1〜30文字にしてください'; end if;
   if p_day is null or p_day not in (0, 1) then raise exception '日にちは、きょうかあしたです'; end if;
@@ -2445,6 +2457,7 @@ begin
   if p_n is null or p_n not between 8 and 18 then raise exception '頭数は8〜18頭です'; end if;
   if p_rnum is null or p_rnum not between 1 and 12 then raise exception 'レース番号は1〜12Rです'; end if;
   if fl is not null and (fl < 1.1 or fl > 100) then raise exception 'オッズの倍率は1.1〜100倍にしてください（ふだんのオッズの何倍か）'; end if;
+  if fl is not null and fl > 20 and not adm then raise exception 'イベント製作者がつけられるオッズの倍率は20倍までです'; end if;
   perform pg_advisory_xact_lock(4242);
   select coalesce(max(k.no), 59) + 1 into no from keiba_races k where k.day = d and k.no >= 60;
   if no > 99 then raise exception '臨時のレースは1日40レースまでです'; end if;
@@ -2455,6 +2468,7 @@ begin
                         case when gr = 'G1' then 'g1' when gr is not null then 'graded' else 'normal' end,
                         coalesce(p_handicap, false), p_n, p_n);
   perform set_config('kb.mult', '', true);
+  update keiba_races set made_by = u where id = rid;
   if coalesce(p_banner, false) then
     insert into banners(body, kind, link, starts_at, ends_at, by_user, created_at)
     values (format('臨時競馬「%s」%s　%s %s 発走（%s %s%sm）', nm, case when gr is not null then '（' || gr || '）' else '' end,
@@ -2471,9 +2485,10 @@ create or replace function public.admin_kb_extra_cancel(p_race bigint) returns j
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); r keiba_races; t keiba_tickets; n int := 0; tot bigint := 0; hs int[]; x record;
 begin
-  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  if not _is_event(u) then raise exception '管理者とイベント製作者だけが使えます'; end if;
   select * into r from keiba_races where id = p_race for update;
   if not found or r.no < 60 then raise exception '臨時のレースが見つかりません'; end if;
+  if not _is_admin(u) and r.made_by is distinct from u then raise exception '自分がつくった臨時のレースだけ取り消せます'; end if;
   if r.settled or r.post <= _now() then raise exception '発走したレースは取り消せません'; end if;
   for t in select * from keiba_tickets where race_id = p_race and payout is null order by id for update loop
     perform _give(t.user_id, t.amount);
@@ -2489,6 +2504,53 @@ begin
   update keiba_horses h set last_day = (select max(r2.day) from keiba_entries e join keiba_races r2 on r2.id = e.race_id where e.horse_id = h.id)
    where h.id = any(hs);
   return jsonb_build_object('refunded', n, 'amount', tot);
+end $$;
+
+-- ---------------------------------------------------------------------
+-- 副管理者・イベント製作者（管理者が決める。ユーザーのIDで）
+-- ---------------------------------------------------------------------
+create or replace function public._staff_list(k text) returns jsonb
+language sql stable set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id', p.account_no, 'nickname', p.nickname) order by x.o), '[]'::jsonb)
+    from unnest(string_to_array(replace(coalesce((select value from app_settings where key = k), ''), ' ', ''), ',')) with ordinality x(a, o)
+    join profiles p on p.account_no = x.a
+$$;
+create or replace function public.admin_staff() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me();
+begin
+  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  return jsonb_build_object('sub', _staff_list('subadmins'), 'event', _staff_list('eventmakers'));
+end $$;
+-- p_kind：sub（副管理者）/ event（イベント製作者）。p_ids：ユーザーのID（カンマ・空白区切り。空なら、だれもいない）
+create or replace function public.admin_staff_set(p_kind text, p_ids text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); k text; ids text[]; a text; old text[]; pid uuid; nm text; lbl text;
+begin
+  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  k := case p_kind when 'sub' then 'subadmins' when 'event' then 'eventmakers' end;
+  if k is null then raise exception '役割をえらんでください'; end if;
+  lbl := case p_kind when 'sub' then '副管理者' else 'イベント製作者' end;
+  select coalesce(array_agg(distinct z) filter (where z <> ''), '{}') into ids
+    from unnest(regexp_split_to_array(coalesce(p_ids, ''), '[\s,、，]+')) z;
+  if array_length(ids, 1) > 20 then raise exception '%は20人までです', lbl; end if;
+  foreach a in array ids loop
+    select id, nickname into pid, nm from profiles where account_no = a and ai is null;
+    if not found then raise exception 'ID %の人が見つかりません', a; end if;
+    if _is_guest(pid) then raise exception '%さんはゲストなので、%にできません', nm, lbl; end if;
+    if _is_admin(pid) then raise exception '%さんは管理者です', nm; end if;
+  end loop;
+  old := string_to_array(replace(coalesce((select value from app_settings where key = k), ''), ' ', ''), ',');
+  insert into app_settings(key, value) values (k, array_to_string(ids, ',')) on conflict (key) do update set value = excluded.value;
+  -- なった人・はずれた人に知らせる
+  for pid in select p.id from profiles p where p.account_no = any(ids) and not (p.account_no = any(coalesce(old, '{}'))) loop
+    perform _notice(pid, case p_kind when 'sub' then '【お知らせ】副管理者になりました。設定 → 管理 から、企業や上場の審査・訴えの審理などができます。'
+                              else '【お知らせ】イベント製作者になりました。設定 → 管理 から、臨時のレースとお知らせバナーをつくれます。' end);
+  end loop;
+  for pid in select p.id from profiles p where p.account_no = any(coalesce(old, '{}')) and not (p.account_no = any(ids)) loop
+    perform _notice(pid, format('【お知らせ】%sからはずれました。', lbl));
+  end loop;
+  return admin_staff();
 end $$;
 
 -- ---------------------------------------------------------------------
@@ -2519,14 +2581,14 @@ end $$;
 
 create or replace function public.admin_banners() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me();
+declare u uuid := _me(); adm boolean := _is_admin(u);
 begin
-  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  if not _is_event(u) then raise exception '管理者とイベント製作者だけが使えます'; end if;
   return (select coalesce(jsonb_agg(jsonb_build_object('id', b.id, 'body', b.body, 'kind', b.kind, 'link', b.link,
             'at', _dlabel(b.created_at), 'time', to_char(b.created_at at time zone 'Asia/Tokyo', 'HH24:MI'),
             'until', case when b.ends_at is null then null else to_char(b.ends_at at time zone 'Asia/Tokyo', 'FMMM/FMDD HH24:MI') end,
             'live', not b.ended and b.starts_at <= _now() and (b.ends_at is null or b.ends_at > _now()),
-            'by', p.nickname) order by b.id desc), '[]'::jsonb)
+            'by', p.nickname, 'mine', b.by_user = u, 'can_end', adm or b.by_user = u) order by b.id desc), '[]'::jsonb)
           from (select * from banners order by id desc limit 20) b left join profiles p on p.id = b.by_user);
 end $$;
 
@@ -2535,7 +2597,7 @@ create or replace function public.admin_banner_save(p_body text, p_kind text, p_
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); b text := btrim(coalesce(p_body, '')); lk text := nullif(btrim(coalesce(p_link, '')), ''); en timestamptz; id0 bigint;
 begin
-  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
+  if not _is_event(u) then raise exception '管理者とイベント製作者だけが使えます'; end if;
   if char_length(b) < 1 or char_length(b) > 200 then raise exception 'お知らせは1〜200文字にしてください'; end if;
   if coalesce(p_kind, '') not in ('info', 'warn', 'event') then raise exception '種類が正しくありません'; end if;
   if lk is not null and not (lk ~ '^race:[0-9]+$' or (lk ~* '^https://[^ ]+$' and char_length(lk) <= 300)) then
@@ -2551,11 +2613,13 @@ end $$;
 
 create or replace function public.admin_banner_end(p_id bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me();
+declare u uuid := _me(); by0 uuid;
 begin
-  if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
-  update banners set ended = true where id = p_id;
+  if not _is_event(u) then raise exception '管理者とイベント製作者だけが使えます'; end if;
+  select by_user into by0 from banners where id = p_id;
   if not found then raise exception 'お知らせが見つかりません'; end if;
+  if not _is_admin(u) and by0 is distinct from u then raise exception '自分が出したお知らせだけ消せます'; end if;
+  update banners set ended = true where id = p_id;
   return jsonb_build_object('ok', true);
 end $$;
 
@@ -11990,7 +12054,7 @@ begin
             '_ai_setup','_ai_add_investors','_ai_tick','_fx_exec','_stock_width_x','_ai_buzz_target','_ai_fair_p','_ai_found','_ok7_ins','_stock_last','_stock_cancel_all','stock_split','admin_stock_reprice','admin_gov_share_give','admin_ai_news','_gov_uid','_gov_sweep','_fx_last','admin_iv_state','admin_intervene','_ai_err','admin_ai','admin_ai_set','admin_ai_fund',
             'stock_order','stock_cancel','stock_list_apply','stock_list_withdraw','admin_stock_decide','admin_stock_delist','_unlock_orders',
             '_kb_wx','admin_kb_extras','admin_kb_extra','admin_kb_extra_cancel','banner_list','admin_banners','admin_banner_save','admin_banner_end',
-            'prefs_save','_admin_ids','_msg_unread','_is_guest','_me_g',
+            'prefs_save','_admin_ids','_msg_unread','_is_guest','_me_g','_is_event','_staff_list','admin_staff','admin_staff_set',
             '_guest_last','_guest_until','_guest_sent5','_guest_json','_guest_send_check','_guest_verify','_guest_cap_trg','_sink_user','_guest_flush',
             '_guest_purge','_req_ip','guest_signup','guest_set_email',
             '_bt_tok','_bt_auth','_bt_row','_bt_create','_bt_start','_bt_settle','_bt_cron','bt_ticket','bt_list','bt_state','bt_join','bt_leave',
