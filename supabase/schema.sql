@@ -7362,7 +7362,8 @@ end $$;
 create or replace function public._game_name(g text) returns text
 language sql immutable as $$
   select case g when 'reversi' then 'オセロ' when 'chess' then 'チェス' when 'shogi' then '将棋'
-                when 'onecard' then 'ワンカード' when 'mahjong' then '麻雀' when 'auction' then '競り市' else g end $$;
+                when 'onecard' then 'ワンカード' when 'mahjong' then '麻雀' when 'auction' then '競り市'
+                when 'koikoi' then '花札こいこい' else g end $$;
 
 -- =====================================================================
 -- 競り市（みんなで遊ぶ。競り上げ）：魚市場・骨董市
@@ -7672,9 +7673,405 @@ begin
   end if;
 end $$;
 
--- みんなで遊ぶゲーム（ワンカード・麻雀・競り市）
+-- =====================================================================
+-- 花札こいこい（ふたり。3・6・12か月。人どうし・コンピューターとも）
+--   札：0〜47（月 = id / 4）。0 松・1 梅・2 桜・3 藤・4 菖蒲・5 牡丹・6 萩・7 芒・8 菊・9 紅葉・10 柳・11 桐
+--   同じ月の中では、強い札ほど番号が小さい（光・タネ → 短冊 → カス）
+--   光　：0 松に鶴・8 桜に幕・28 芒に月・40 柳に小野道風（雨）・44 桐に鳳凰
+--   タネ：4 梅に鶯・12 藤に不如帰・16 菖蒲に八橋・20 牡丹に蝶・24 萩に猪・29 芒に雁・32 菊に盃・36 紅葉に鹿・41 柳に燕
+--   短冊：1・5・9 赤短（あかよろし・みよしの）、21・33・37 青短、13・17・25・42 短冊
+--   カス：のこりの24枚（菊に盃はカスにも数える）
+--   役　：五光10・四光8・雨四光7・三光5・花見で一杯5・月見で一杯5・猪鹿蝶5・赤短5・青短5（両方で10）
+--         タネ5枚で1・タン5枚で1・カス10枚で1（1枚ふえるごとに+1）。配ったとき：手四6・くっつき6
+--   7点以上は2倍。相手がこいこいしたあとに上がると、さらに2倍。だれも上がらなければ親権（親に6点）
+--   場に同じ月が4枚配られたら配りなおし。場に同じ月が3枚あるとき、4枚目を出した人が全部とる
+-- =====================================================================
+create or replace function public._kk_ids(j jsonb) returns int[]
+language sql immutable as $$ select coalesce(array(select jsonb_array_elements_text(j)::int), '{}') $$;
+
+create or replace function public._kk_sort(a int[]) returns int[]
+language sql immutable as $$ select coalesce(array(select x from unnest(a) x order by x), '{}') $$;
+
+-- 札の種類（L 光・T タネ・R 短冊・K カス）
+create or replace function public._kk_kind(c int) returns text
+language sql immutable as $$
+  select case when c in (0, 8, 28, 40, 44) then 'L'
+              when c in (4, 12, 16, 20, 24, 29, 32, 36, 41) then 'T'
+              when c in (1, 5, 9, 13, 17, 21, 25, 33, 37, 42) then 'R'
+              else 'K' end $$;
+
+-- とった札でできている役（[[名前, 点], ...]）
+create or replace function public._kk_yaku(cs int[]) returns jsonb
+language plpgsql immutable as $$
+declare y jsonb := '[]'; l int; t int; r int; k int; rain boolean; aka int; ao int;
+begin
+  cs := coalesce(cs, '{}');
+  l := (select count(*) from unnest(cs) c where c in (0, 8, 28, 40, 44));
+  rain := 40 = any(cs);
+  t := (select count(*) from unnest(cs) c where c in (4, 12, 16, 20, 24, 29, 32, 36, 41));
+  r := (select count(*) from unnest(cs) c where c in (1, 5, 9, 13, 17, 21, 25, 33, 37, 42));
+  k := (select count(*) from unnest(cs) c where _kk_kind(c) = 'K') + case when 32 = any(cs) then 1 else 0 end;   -- 菊に盃はカスにも数える
+  aka := (select count(*) from unnest(cs) c where c in (1, 5, 9));
+  ao := (select count(*) from unnest(cs) c where c in (21, 33, 37));
+  if l = 5 then y := y || '[["五光", 10]]';
+  elsif l = 4 and not rain then y := y || '[["四光", 8]]';
+  elsif l = 4 then y := y || '[["雨四光", 7]]';
+  elsif l = 3 and not rain then y := y || '[["三光", 5]]';
+  end if;
+  if 8 = any(cs) and 32 = any(cs) then y := y || '[["花見で一杯", 5]]'; end if;
+  if 28 = any(cs) and 32 = any(cs) then y := y || '[["月見で一杯", 5]]'; end if;
+  if 20 = any(cs) and 24 = any(cs) and 36 = any(cs) then y := y || '[["猪鹿蝶", 5]]'; end if;
+  if aka = 3 and ao = 3 then y := y || '[["赤短・青短", 10]]';
+  elsif aka = 3 then y := y || '[["赤短", 5]]';
+  elsif ao = 3 then y := y || '[["青短", 5]]';
+  end if;
+  if t >= 5 then y := y || jsonb_build_array(jsonb_build_array('タネ', t - 4)); end if;
+  if r >= 5 then y := y || jsonb_build_array(jsonb_build_array('タン', r - 4)); end if;
+  if k >= 10 then y := y || jsonb_build_array(jsonb_build_array('カス', k - 9)); end if;
+  return y;
+end $$;
+
+create or replace function public._kk_pts(y jsonb) returns int
+language sql immutable as $$ select coalesce(sum((e->>1)::int), 0)::int from jsonb_array_elements(coalesce(y, '[]'::jsonb)) e $$;
+
+-- はじめの手札の手四（同じ月4枚）・くっつき（同じ月2枚が4組）
+create or replace function public._kk_teshi(h int[]) returns text
+language sql immutable as $$
+  select case when exists (select 1 from unnest(h) c group by c / 4 having count(*) = 4) then '手四'
+              when cardinality(h) = 8 and (select bool_and(n = 2) from (select count(*) n from unnest(h) c group by c / 4) z) then 'くっつき'
+              else null end $$;
+
+create or replace function public._kk_log(st jsonb, e jsonb) returns jsonb
+language sql immutable as $$
+  select st || jsonb_build_object('log', (select coalesce(jsonb_agg(x order by i), '[]'::jsonb) from (
+     select x, i from jsonb_array_elements(coalesce(st->'log', '[]'::jsonb) || jsonb_build_array(e)) with ordinality z(x, i) order by i desc limit 12) w)) $$;
+
+-- 点を足す
+create or replace function public._kk_add(st jsonb, s int, p int) returns jsonb
+language sql immutable as $$
+  select jsonb_set(st, '{score}', jsonb_set(st->'score', array[s::text], to_jsonb((st->'score'->>s)::int + p))) $$;
+
+-- 順位：点の多い順（同じ点なら引き分け）。点数で分けるときは、3か月10点・6か月20点・12か月30点の差で賭け金ぶん
+create or replace function public._kk_final(st jsonb) returns jsonb
+language sql immutable as $$
+  select jsonb_build_object('rank', case when (st->'score'->>0)::int >= (st->'score'->>1)::int then '[0,1]'::jsonb else '[1,0]'::jsonb end,
+    'v', st->'score', 'scale', case (st->>'months')::int when 3 then 10 when 6 then 20 else 30 end, 'ref', 'best',
+    'draw', (st->'score'->>0)::int = (st->'score'->>1)::int) $$;
+
+-- 月の終わり（nxt：次の月の親）。最後の月なら、そこでおしまい
+create or replace function public._kk_end(st jsonb, res jsonb, nxt int) returns jsonb
+language plpgsql volatile as $$
+declare m int := (st->>'mon')::int; fin boolean := m + 1 >= (st->>'months')::int;
+begin
+  st := st || jsonb_build_object('phase', 'end', 'result', res || jsonb_build_object('score', st->'score', 'mon', m),
+          'hist', coalesce(st->'hist', '[]'::jsonb) || jsonb_build_object('w', coalesce((res->>'s')::int, -1), 'p', coalesce((res->>'pts')::int, 0), 'k', res->>'kind'),
+          'next_oya', nxt, 'ready', '[false,false]'::jsonb, 'drawn', null, 'opts', null, 'win', coalesce((st->>'win')::int, 0) + 1,
+          'timer_at', case when fin then null else coalesce((st->>'now')::bigint, 0) + 20000 end);
+  if fin then
+    st := st || jsonb_build_object('over', true, 'why', format('%sか月が終わりました', st->>'months'));
+    st := st || jsonb_build_object('final', _kk_final(st));
+  end if;
+  return st;
+end $$;
+
+-- 配る（場に同じ月が4枚なら配りなおし）。手四・くっつきは、そこで6点（親が先）
+create or replace function public._kk_deal(st jsonb) returns jsonb
+language plpgsql volatile as $$
+declare d int[]; f int[]; h0 int[]; h1 int[]; o int := (st->>'oya')::int; t0 text; t1 text; w int; nm text;
+begin
+  loop
+    d := array(select g from generate_series(0, 47) g order by random());
+    h0 := d[1:8]; h1 := d[9:16]; f := d[17:24]; d := d[25:48];
+    exit when not exists (select 1 from unnest(f) c group by c / 4 having count(*) = 4);
+  end loop;
+  st := st || jsonb_build_object('hands', jsonb_build_array(to_jsonb(_kk_sort(h0)), to_jsonb(_kk_sort(h1))), 'field', to_jsonb(_kk_sort(f)), 'deck', to_jsonb(d),
+          'took', '[[],[]]'::jsonb, 'koi', '[0,0]'::jsonb, 'yp', '[0,0]'::jsonb, 'turn', o, 'phase', 'play', 'drawn', null, 'opts', null,
+          'lt', '[null,null]'::jsonb, 'log', '[]'::jsonb, 'result', null, 'ready', '[false,false]'::jsonb, 'timer_at', null,
+          'win', coalesce((st->>'win')::int, 0) + 1);
+  t0 := _kk_teshi(_kk_ids(st->'hands'->o)); t1 := _kk_teshi(_kk_ids(st->'hands'->(1 - o)));
+  if t0 is not null then w := o; nm := t0;
+  elsif t1 is not null then w := 1 - o; nm := t1;
+  end if;
+  if w is not null then
+    st := _kk_add(st, w, 6);
+    return _kk_end(st, jsonb_build_object('kind', 'teshi', 's', w, 'name', nm, 'pts', 6, 'hand', st->'hands'->w), w);
+  end if;
+  return st;
+end $$;
+
+-- はじめ：親決め（ひとり1枚ずつめくって、月の早いほう。同じ月なら強い札のほう）
+create or replace function public._kk_init(opts jsonb) returns jsonb
+language plpgsql volatile as $$
+declare c int[]; mo int := case when opts->>'months' in ('3', '6', '12') then (opts->>'months')::int else 6 end;
+begin
+  c := array(select g from generate_series(0, 47) g order by random() limit 2);
+  return _kk_deal(jsonb_build_object('n', 2, 'months', mo, 'mon', 0, 'oya', case when c[1] < c[2] then 0 else 1 end, 'score', '[0,0]'::jsonb,
+                  'hist', '[]'::jsonb, 'oyagime', to_jsonb(c), 'tn', 0, 'win', 0, 'over', false, 'now', _kb_ms(_now())));
+end $$;
+
+-- 次の月
+create or replace function public._kk_next(st jsonb) returns jsonb
+language plpgsql volatile as $$
+begin
+  st := st || jsonb_build_object('mon', (st->>'mon')::int + 1, 'oya', coalesce((st->>'next_oya')::int, (st->>'oya')::int), 'next_oya', null);
+  return _kk_deal(st);
+end $$;
+
+-- 札を場に出す（同じ月の札があればとる：1枚ならそれ、2枚なら t をえらぶ、3枚なら全部）。とった札は _g に
+create or replace function public._kk_put(st jsonb, s int, c int, t int) returns jsonb
+language plpgsql immutable as $$
+declare f int[] := _kk_ids(st->'field'); m int[]; g int[];
+begin
+  m := array(select x from unnest(f) x where x / 4 = c / 4 order by x);
+  if cardinality(m) = 0 then
+    return st || jsonb_build_object('field', to_jsonb(_kk_sort(f || c)), '_g', '[]'::jsonb);
+  end if;
+  if cardinality(m) = 2 then
+    if t is null or not (t = any(m)) then raise exception 'どちらの札をとるか、えらんでください'; end if;
+    g := array[c, t];
+  elsif cardinality(m) = 1 then g := array[c, m[1]];
+  else g := c || m;
+  end if;
+  return st || jsonb_build_object('field', to_jsonb(array(select x from unnest(f) x where not (x = any(g)) order by x)), '_g', to_jsonb(g),
+                                  'took', jsonb_set(st->'took', array[s::text], to_jsonb(_kk_sort(_kk_ids(st->'took'->s) || g))));
+end $$;
+
+-- 番を相手へ。ふたりとも手札がなくなったら、親権（親に6点）
+create or replace function public._kk_pass(st jsonb, s int) returns jsonb
+language plpgsql volatile as $$
+declare o int := (st->>'oya')::int;
+begin
+  if jsonb_array_length(st->'hands'->0) = 0 and jsonb_array_length(st->'hands'->1) = 0 then
+    st := _kk_add(st, o, 6);
+    st := _kk_log(st, jsonb_build_object('a', 'oyaken', 's', o));
+    return _kk_end(st, jsonb_build_object('kind', 'oyaken', 's', o, 'pts', 6), o);
+  end if;
+  return st || jsonb_build_object('turn', 1 - s, 'phase', 'play', 'win', (st->>'win')::int + 1);
+end $$;
+
+-- 勝負（上がり）：役の点の合計。7点以上で2倍、相手がこいこいしていたら2倍
+create or replace function public._kk_win(st jsonb, s int, auto boolean) returns jsonb
+language plpgsql volatile as $$
+declare y jsonb := _kk_yaku(_kk_ids(st->'took'->s)); b int := _kk_pts(y); m7 boolean := b >= 7;
+        mk boolean := (st->'koi'->>(1 - s))::int > 0; p int;
+begin
+  p := b * (case when m7 then 2 else 1 end) * (case when mk then 2 else 1 end);
+  st := _kk_add(st, s, p);
+  st := _kk_log(st, jsonb_build_object('a', 'stop', 's', s, 'auto', auto));
+  return _kk_end(st, jsonb_build_object('kind', 'win', 's', s, 'yaku', y, 'base', b, 'm7', m7, 'mk', mk, 'pts', p,
+                                        'koi', (st->'koi'->>s)::int, 'auto', auto, 'took', st->'took'->s), s);
+end $$;
+
+-- 1回の番が終わったあと：役がふえたら「こいこい」か「勝負」。最後の札なら、そのまま勝負
+create or replace function public._kk_after(st jsonb, s int) returns jsonb
+language plpgsql volatile as $$
+declare p int := _kk_pts(_kk_yaku(_kk_ids(st->'took'->s))); e jsonb;
+begin
+  e := (st->'cur') || jsonb_build_object('n', coalesce((st->>'tn')::int, 0) + 1);
+  st := (st - 'cur') || jsonb_build_object('lt', jsonb_set(st->'lt', array[s::text], e), 'tn', coalesce((st->>'tn')::int, 0) + 1);
+  st := _kk_log(st, e || jsonb_build_object('a', 'turn', 's', s));
+  if p > (st->'yp'->>s)::int then
+    if jsonb_array_length(st->'hands'->s) = 0 then return _kk_win(st, s, true); end if;
+    return st || jsonb_build_object('phase', 'koi', 'win', (st->>'win')::int + 1);
+  end if;
+  return _kk_pass(st, s);
+end $$;
+
+-- 山札を1枚めくる（場に同じ月が2枚あるときは、どちらをとるかえらぶ）
+create or replace function public._kk_draw(st jsonb, s int) returns jsonb
+language plpgsql volatile as $$
+declare d int[] := _kk_ids(st->'deck'); c int; m int[];
+begin
+  c := d[1];
+  st := st || jsonb_build_object('deck', to_jsonb(d[2:]));
+  m := array(select x from unnest(_kk_ids(st->'field')) x where x / 4 = c / 4 order by x);
+  if cardinality(m) = 2 then
+    return st || jsonb_build_object('phase', 'pick', 'drawn', c, 'opts', to_jsonb(m), 'win', (st->>'win')::int + 1);
+  end if;
+  st := _kk_put(st, s, c, null);
+  st := (st - '_g') || jsonb_build_object('cur', (st->'cur') || jsonb_build_object('d', c, 'dg', st->'_g'));
+  return _kk_after(st, s);
+end $$;
+
+-- 人・コンピューターの動き
+--   play：{a: play, c: 手札, t: とる場の札（同じ月が2枚のとき）}
+--   pick：{a: pick, t}（めくった札でとる札）。koi：{a: koi} / {a: stop}。end：{a: ready}（次の月へ）。timer：時間がきたら次の月
+create or replace function public._kk_act(st jsonb, s int, mv jsonb) returns jsonb
+language plpgsql volatile as $$
+declare a text := mv->>'a'; ph text := st->>'phase'; c int; t int; h int[];
+begin
+  if coalesce((st->>'over')::boolean, false) then raise exception 'このゲームはもう終わっています'; end if;
+  if a = 'timer' then
+    if st->>'timer_at' is null or coalesce((st->>'now')::bigint, 0) < (st->>'timer_at')::bigint then return st; end if;
+    if ph = 'end' then return _kk_next(st); end if;
+    return st;
+  end if;
+  if ph = 'end' then
+    if a <> 'ready' then raise exception '次の月を待っています'; end if;
+    st := jsonb_set(st, array['ready', s::text], 'true');
+    if (select coalesce(bool_and((st->'ready'->>(x::int))::boolean), true) from jsonb_array_elements_text(coalesce(st->'hum', '[]')) x) then
+      return _kk_next(st);
+    end if;
+    return st;
+  end if;
+  if s <> (st->>'turn')::int then raise exception 'いまはあなたの番ではありません'; end if;
+  if ph = 'play' then
+    if a <> 'play' then raise exception '手札から1枚えらんで出してください'; end if;
+    c := (mv->>'c')::int;
+    h := _kk_ids(st->'hands'->s);
+    if c is null or not (c = any(h)) then raise exception 'その札は持っていません'; end if;
+    st := jsonb_set(st, array['hands', s::text], to_jsonb(array_remove(h, c)));
+    st := _kk_put(st, s, c, (mv->>'t')::int);
+    st := (st - '_g') || jsonb_build_object('cur', jsonb_build_object('p', c, 'pg', st->'_g'));
+    return _kk_draw(st, s);
+  end if;
+  if ph = 'pick' then
+    if a <> 'pick' then raise exception 'めくった札でとる札をえらんでください'; end if;
+    t := (mv->>'t')::int;
+    if t is null or not (t = any(_kk_ids(st->'opts'))) then raise exception 'その札はとれません'; end if;
+    c := (st->>'drawn')::int;
+    st := _kk_put(st, s, c, t);
+    st := (st - '_g') || jsonb_build_object('cur', (st->'cur') || jsonb_build_object('d', c, 'dg', st->'_g'), 'phase', 'play', 'drawn', null, 'opts', null);
+    return _kk_after(st, s);
+  end if;
+  if ph = 'koi' then
+    if a = 'stop' then return _kk_win(st, s, false); end if;
+    if a = 'koi' then
+      st := st || jsonb_build_object('koi', jsonb_set(st->'koi', array[s::text], to_jsonb((st->'koi'->>s)::int + 1)),
+                                     'yp', jsonb_set(st->'yp', array[s::text], to_jsonb(_kk_pts(_kk_yaku(_kk_ids(st->'took'->s))))));
+      st := _kk_log(st, jsonb_build_object('a', 'koi', 's', s));
+      return _kk_pass(st, s);
+    end if;
+    raise exception '「こいこい」か「勝負」をえらんでください';
+  end if;
+  raise exception 'その動きはできません';
+end $$;
+
+-- いま考える番の席
+create or replace function public._kk_pending(st jsonb) returns int[]
+language sql immutable as $$
+  select case when coalesce((st->>'over')::boolean, false) or coalesce(st->>'phase', '') not in ('play', 'pick', 'koi') then '{}'::int[]
+              else array[(st->>'turn')::int] end $$;
+
+create or replace function public._kk_delay(st jsonb) returns int
+language sql immutable as $$ select case when st->>'phase' = 'play' then 1300 else 1000 end $$;
+
+-- コンピューター：札の値打ち・役のふえ方・あと何枚で役か（自分・相手）で、いちばんよい手
+create or replace function public._kk_val(c int) returns numeric
+language sql immutable as $$
+  select (case when c = 40 then 12 when c in (0, 8, 28, 44) then 20 when c = 32 then 16 when c in (20, 24, 36) then 12
+               when c in (1, 5, 9, 21, 33, 37) then 9 when c in (4, 12, 16, 29, 41) then 6 when c in (13, 17, 25, 42) then 4 else 1 end)::numeric $$;
+
+create or replace function public._kk_need_set(tk int[], av int[], s int[]) returns int
+language sql immutable as $$
+  select case when s <@ tk then 99 else least(99, (select sum(case when x = any(tk) then 0 when x = any(av) then 1 else 99 end) from unnest(s) x))::int end $$;
+
+-- あと何枚で点がふえるか（av：まだだれもとっていない札）。ふえようがなければ 99
+create or replace function public._kk_need(tk int[], av int[]) returns int
+language plpgsql immutable as $$
+declare n int := 99; x int; lt int; lv int; rain boolean := 40 = any(tk); t int; r int; k int;
+begin
+  lt := (select count(*) from unnest(tk) c where c in (0, 8, 28, 40, 44));
+  if lt < 5 then
+    if lt - (case when rain then 1 else 0 end) >= 3 or lt >= 4 then x := 1;
+      lv := (select count(*) from unnest(av) c where c in (0, 8, 28, 40, 44));
+    elsif rain then x := 4 - lt; lv := (select count(*) from unnest(av) c where c in (0, 8, 28, 44));
+    else x := 3 - lt; lv := (select count(*) from unnest(av) c where c in (0, 8, 28, 44));
+    end if;
+    if lv >= x then n := least(n, x); end if;
+  end if;
+  n := least(n, _kk_need_set(tk, av, array[8, 32]), _kk_need_set(tk, av, array[28, 32]), _kk_need_set(tk, av, array[20, 24, 36]),
+             _kk_need_set(tk, av, array[1, 5, 9]), _kk_need_set(tk, av, array[21, 33, 37]));
+  t := (select count(*) from unnest(tk) c where _kk_kind(c) = 'T'); x := greatest(5 - t, 1);
+  if (select count(*) from unnest(av) c where _kk_kind(c) = 'T') >= x then n := least(n, x); end if;
+  r := (select count(*) from unnest(tk) c where _kk_kind(c) = 'R'); x := greatest(5 - r, 1);
+  if (select count(*) from unnest(av) c where _kk_kind(c) = 'R') >= x then n := least(n, x); end if;
+  k := (select count(*) from unnest(tk) c where _kk_kind(c) = 'K' or c = 32); x := greatest(10 - k, 1);
+  if (select count(*) from unnest(av) c where _kk_kind(c) = 'K' or c = 32) >= x then n := least(n, x); end if;
+  return n;
+end $$;
+
+-- 札をとったときのよさ：値打ち・役のふえ方・自分の役に近づく・相手の役をじゃまする
+create or replace function public._kk_gain(tk int[], ot int[], g int[]) returns numeric
+language plpgsql immutable as $$
+declare av0 int[]; av1 int[]; me0 int; me1 int; op0 int; op1 int;
+begin
+  av0 := array(select c from generate_series(0, 47) c where not (c = any(tk)) and not (c = any(ot)));
+  av1 := array(select c from unnest(av0) c where not (c = any(g)));
+  me0 := _kk_need(tk, av0); me1 := _kk_need(tk || g, av1);
+  op0 := _kk_need(ot, av0); op1 := _kk_need(ot, av1);
+  return coalesce((select sum(_kk_val(x)) from unnest(g) x), 0)
+       + 10 * (_kk_pts(_kk_yaku(tk || g)) - _kk_pts(_kk_yaku(tk)))
+       + 6 * coalesce((select sum(_kk_pts(_kk_yaku(ot || x)) - _kk_pts(_kk_yaku(ot))) from unnest(g) x), 0)
+       + 3 * greatest(least(me0, 4) - least(me1, 4), 0)
+       + 4 * greatest(least(op1, 4) - least(op0, 4), 0);
+end $$;
+
+create or replace function public._kk_cpu(st jsonb, s int) returns jsonb
+language plpgsql volatile as $$
+declare ph text := st->>'phase'; h int[] := _kk_ids(st->'hands'->s); f int[] := _kk_ids(st->'field');
+        tk int[] := _kk_ids(st->'took'->s); ot int[] := _kk_ids(st->'took'->(1 - s)); c int; m int[]; t int; bc int; bt int;
+        v numeric; bv numeric := -1e9; p int; gap int; seen int; av int[]; dme int; dop int;
+begin
+  if ph = 'koi' then
+    p := _kk_pts(_kk_yaku(tk));
+    gap := (st->'score'->>(1 - s))::int - (st->'score'->>s)::int;
+    -- 相手がこいこいしている（いま上がれば2倍）・7点以上・手札が少ない → 勝負
+    if (st->'koi'->>(1 - s))::int > 0 or p >= 7 or cardinality(h) <= 2 then return '{"a":"stop"}'; end if;
+    av := array(select x from generate_series(0, 47) x where not (x = any(tk)) and not (x = any(ot)));
+    dme := _kk_need(tk, av); dop := _kk_need(ot, av);
+    -- 最後の月で、勝負しても追いつけないなら、こいこいして点をのばす
+    if (st->>'mon')::int + 1 >= (st->>'months')::int and gap >= p and cardinality(h) >= 3 and dme <= 3 then return '{"a":"koi"}'; end if;
+    if dop <= 1 then return '{"a":"stop"}'; end if;   -- 相手が役まであと1枚
+    if dme <= 1 and dop >= 3 and cardinality(h) >= 3 then return '{"a":"koi"}'; end if;
+    if dme <= 2 and dop >= 4 and cardinality(h) >= 5 and random() < 0.5 then return '{"a":"koi"}'; end if;
+    return '{"a":"stop"}';
+  end if;
+  if ph = 'pick' then
+    select x into t from unnest(_kk_ids(st->'opts')) x order by _kk_gain(tk, ot, array[(st->>'drawn')::int, x]) desc, x limit 1;
+    return jsonb_build_object('a', 'pick', 't', t);
+  end if;
+  foreach c in array h loop
+    m := array(select x from unnest(f) x where x / 4 = c / 4 order by x);
+    t := null;
+    if cardinality(m) = 0 then
+      -- 場に置く：値打ちのある札は出したくない（同じ月がもう出つくしていれば平気。手にもう1枚あれば、あとでとり返せる）
+      seen := (select count(*) from unnest(h || f || tk || ot) x where x / 4 = c / 4);
+      v := -2 - _kk_val(c) * (case when seen >= 4 then 0 when (select count(*) from unnest(h) x where x / 4 = c / 4) >= 2 then 0.4 else 1 end);
+    elsif cardinality(m) = 2 then
+      select x into t from unnest(m) x order by _kk_gain(tk, ot, array[c, x]) desc, x limit 1;
+      v := _kk_gain(tk, ot, array[c, t]);
+    elsif cardinality(m) = 1 then
+      t := m[1]; v := _kk_gain(tk, ot, array[c, t]);
+    else
+      v := _kk_gain(tk, ot, c || m);
+    end if;
+    v := v + random() * 0.8;
+    if v > bv then bv := v; bc := c; bt := t; end if;
+  end loop;
+  return jsonb_build_object('a', 'play', 'c', bc, 't', bt);
+end $$;
+
+-- 見えるもの：自分の手札・場・山の枚数・とった札（ふたりとも見える）。月が終わったら、ふたりの手札
+create or replace function public._kk_view(st jsonb, me int) returns jsonb
+language plpgsql immutable as $$
+declare over boolean := coalesce((st->>'over')::boolean, false); ph text := st->>'phase'; y0 jsonb; y1 jsonb;
+begin
+  y0 := _kk_yaku(_kk_ids(st->'took'->0)); y1 := _kk_yaku(_kk_ids(st->'took'->1));
+  return jsonb_build_object('n', 2, 'months', st->'months', 'mon', st->'mon', 'oya', st->'oya', 'score', st->'score', 'turn', st->'turn', 'phase', ph,
+    'field', st->'field', 'deck_n', jsonb_array_length(coalesce(st->'deck', '[]'::jsonb)),
+    'counts', jsonb_build_array(jsonb_array_length(st->'hands'->0), jsonb_array_length(st->'hands'->1)),
+    'hand', case when me is null or me not in (0, 1) then null else st->'hands'->me end,
+    'hands', case when over or ph = 'end' then st->'hands' else null end,
+    'took', st->'took', 'yaku', jsonb_build_array(y0, y1), 'pts', jsonb_build_array(_kk_pts(y0), _kk_pts(y1)),
+    'koi', st->'koi', 'yp', st->'yp', 'drawn', st->'drawn', 'opts', st->'opts', 'cur', st->'cur', 'lt', st->'lt', 'log', st->'log', 'tn', st->'tn',
+    'result', st->'result', 'ready', st->'ready', 'timer_at', st->'timer_at', 'hist', st->'hist', 'oyagime', st->'oyagime',
+    'over', over, 'final', st->'final');
+end $$;
+
+-- みんなで遊ぶゲーム（ワンカード・麻雀・競り市・花札こいこい）
 create or replace function public._is_multi(g text) returns boolean
-language sql immutable as $$ select g in ('onecard', 'mahjong', 'auction') $$;
+language sql immutable as $$ select g in ('onecard', 'mahjong', 'auction', 'koikoi') $$;
 
 create or replace function public._mg_init(g text, n int, opts jsonb) returns jsonb
 language plpgsql volatile as $$
@@ -7682,6 +8079,7 @@ begin
   if g = 'onecard' then return _oc_init(n); end if;
   if g = 'mahjong' then return _mj_init(opts); end if;
   if g = 'auction' then return _au_init(n, opts); end if;
+  if g = 'koikoi' then return _kk_init(opts); end if;
   raise exception 'そのゲームはまだ遊べません';
 end $$;
 
@@ -7691,6 +8089,7 @@ language plpgsql immutable as $$
 begin
   if g = 'onecard' then return _oc_pending(st); end if;
   if g = 'mahjong' then return _mj_pending(st); end if;
+  if g = 'koikoi' then return _kk_pending(st); end if;
   return '{}';
 end $$;
 
@@ -7700,6 +8099,7 @@ begin
   if g = 'onecard' then return _oc_act(st, s, mv); end if;
   if g = 'mahjong' then return _mj_act(st, s, mv); end if;
   if g = 'auction' then return _au_act(st, s, mv); end if;
+  if g = 'koikoi' then return _kk_act(st, s, mv); end if;
   raise exception 'そのゲームはまだ遊べません';
 end $$;
 
@@ -7708,6 +8108,7 @@ language plpgsql volatile as $$
 begin
   if g = 'onecard' then return _oc_cpu(st, s); end if;
   if g = 'mahjong' then return _mj_cpu(st, s); end if;
+  if g = 'koikoi' then return _kk_cpu(st, s); end if;
   raise exception 'そのゲームはまだ遊べません';
 end $$;
 
@@ -7717,6 +8118,7 @@ begin
   if g = 'onecard' then return _oc_view(st, me); end if;
   if g = 'mahjong' then return _mj_view(st, me); end if;
   if g = 'auction' then return _au_view(st, me); end if;
+  if g = 'koikoi' then return _kk_view(st, me); end if;
   return '{}';
 end $$;
 
@@ -7725,6 +8127,7 @@ create or replace function public._mg_delay(g text, st jsonb) returns int
 language plpgsql immutable as $$
 begin
   if g = 'mahjong' then return _mj_delay(st); end if;
+  if g = 'koikoi' then return _kk_delay(st); end if;
   return 1100;
 end $$;
 
@@ -7735,6 +8138,7 @@ begin
   if g = 'onecard' then return _oc_final(st); end if;
   if g = 'mahjong' then return _mj_final(st); end if;
   if g = 'auction' then return _au_final(st); end if;
+  if g = 'koikoi' then return _kk_final(st); end if;
   return '{}';
 end $$;
 
@@ -7867,8 +8271,10 @@ begin
   if not found or r.status <> 'playing' then return; end if;
   f := coalesce(r.state->'final', _mg_final(r.game, r.state));
   rk := array(select jsonb_array_elements_text(f->'rank')::int);
-  update game_rooms set status = 'finished', finished_at = _now(), winner = rk[1], reason = coalesce(r.state->>'why', '終わり') where id = rid;
+  update game_rooms set status = 'finished', finished_at = _now(), reason = coalesce(r.state->>'why', '終わり'),
+         winner = case when coalesce((f->>'draw')::boolean, false) then -1 else rk[1] end where id = rid;
   if not exists (select 1 from game_stakes where room_id = rid and payout is null) then return; end if;
+  if coalesce((f->>'draw')::boolean, false) then perform _room_refund(rid); return; end if;   -- 引き分け：賭け金は返す
   n := cardinality(r.seats);
   amt := r.stake;
   -- 賭けている人の席（順位の順）
@@ -8110,7 +8516,7 @@ begin
 end $$;
 
 -- 部屋を作る
---   ワンカード：p_seats 2〜4 人。麻雀：4人（p_opts の len：east 東風戦 / south 半荘戦）
+--   ワンカード：p_seats 2〜4 人。麻雀：4人（p_opts の len：east 東風戦 / south 半荘戦）。花札こいこい：2人（p_opts の months：3・6・12か月）
 --   p_stake：1人の賭け金（0は賭けなし）。p_mode：all（1位の総取り）/ points（点数で分ける）
 drop function if exists public.room_create(text, text, int, text, boolean);
 create or replace function public.room_create(p_game text, p_title text, p_time_min int, p_invite text, p_bets boolean,
@@ -8119,12 +8525,12 @@ returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me_g(); inv uuid; invs uuid[] := '{}'; rid bigint; n int := 2; x text; o jsonb := '{}'; r game_rooms;
 begin
-  if p_game not in ('reversi', 'chess', 'shogi', 'onecard', 'mahjong', 'auction') then raise exception 'そのゲームはまだ遊べません'; end if;
+  if p_game not in ('reversi', 'chess', 'shogi', 'onecard', 'mahjong', 'auction', 'koikoi') then raise exception 'そのゲームはまだ遊べません'; end if;
   if p_game = 'auction' and _is_guest(u) then raise exception '競り市はゲストでは遊べません（本登録すると遊べます）'; end if;
   if p_time_min is null or p_time_min < 1 or p_time_min > 180 then raise exception '持ち時間は1〜180分（3時間）です'; end if;
   if (select count(*) from game_rooms where host = u and status = 'waiting') >= 3 then raise exception '待っている部屋は3つまでです'; end if;
   if _is_multi(p_game) then
-    n := case when p_game = 'mahjong' then 4 else coalesce(p_seats, 4) end;
+    n := case when p_game = 'mahjong' then 4 when p_game = 'koikoi' then 2 else coalesce(p_seats, 4) end;
     if p_game = 'auction' then
       if n not between 2 and 6 then raise exception '人数は2〜6人です'; end if;
     elsif n not between 2 and 4 then raise exception '人数は2〜4人です'; end if;
@@ -8132,6 +8538,9 @@ begin
     if coalesce(p_mode, 'all') not in ('all', 'points') then raise exception '分け方は「1位の総取り」か「点数で分ける」です'; end if;
     if p_game = 'mahjong' then
       o := jsonb_build_object('len', case when coalesce(p_opts->>'len', 'east') = 'south' then 'south' else 'east' end);
+    end if;
+    if p_game = 'koikoi' then
+      o := jsonb_build_object('months', case when p_opts->>'months' in ('3', '6', '12') then (p_opts->>'months')::int else 6 end);
     end if;
     if p_game = 'auction' then   -- 競り市：賭け金はなし（落札した品でそのまま損得）
       o := jsonb_build_object('market', case when p_opts->>'market' in ('fish', 'antique', 'mix') then p_opts->>'market' else 'fish' end);
@@ -8146,7 +8555,7 @@ begin
     end loop;
     if cardinality(invs) > n - 1 then raise exception '招待できるのは%人までです', n - 1; end if;
     if (select count(*) from game_rooms where u = any(seats) and status in ('waiting', 'playing') and _is_multi(game)) >= 3 then
-      raise exception 'ワンカード・麻雀・競り市で参加中の部屋は3つまでです（終わってから作ってください）';
+      raise exception 'ワンカード・麻雀・競り市・花札こいこいで参加中の部屋は3つまでです（終わってから作ってください）';
     end if;
     insert into game_rooms(game, title, host, invites, seats, time_ms, bets_on, max_seats, stake, stake_mode, opts, created_at)
     values (p_game, left(btrim(coalesce(p_title, '')), 30), u, invs, array[u], p_time_min * 60000, false, n, coalesce(p_stake, 0), coalesce(p_mode, 'all'), o, _now())
@@ -8187,7 +8596,7 @@ begin
     if cardinality(r.seats) >= r.max_seats then raise exception '席がいっぱいです'; end if;
     if r.game = 'auction' and _is_guest(u) then raise exception '競り市はゲストでは遊べません（本登録すると遊べます）'; end if;
     if (select count(*) from game_rooms where u = any(seats) and status in ('waiting', 'playing') and _is_multi(game)) >= 3 then
-      raise exception 'ワンカード・麻雀・競り市で参加中の部屋は3つまでです';
+      raise exception 'ワンカード・麻雀・競り市・花札こいこいで参加中の部屋は3つまでです';
     end if;
     perform _room_stake(r, u);
     update game_rooms set seats = seats || u where id = r.id;
@@ -12360,6 +12769,8 @@ begin
             '_mj_ryukyoku','_mj_win','_mj_over','_mj_next_hand','_mj_after','_mj_call','_mj_resolve','_mj_discard','_mj_selfkan',
             '_mj_pending','_mj_delay','_mj_act','_mj_view','_mj_tval','_mj_safe','_mj_seen','_mj_sh_after','_mj_cpu',
             '_au_step','_au_min','_au_lot','_au_init','_au_plan','_au_next','_au_bid','_au_close','_au_act','_au_final','_au_view','_au_hold','_au_money','_au_abort','_au_cron',
+            '_kk_ids','_kk_sort','_kk_kind','_kk_yaku','_kk_pts','_kk_teshi','_kk_log','_kk_add','_kk_final','_kk_end','_kk_deal','_kk_init',
+            '_kk_next','_kk_put','_kk_pass','_kk_win','_kk_after','_kk_draw','_kk_act','_kk_pending','_kk_delay','_kk_val','_kk_need_set','_kk_need','_kk_gain','_kk_cpu','_kk_view',
             '_is_multi','_mg_init','_mg_pending','_mg_act','_mg_cpu','_mg_view','_mg_delay','_mg_final','_room_cancel','_room_refund','_room_stake',
             '_mroom_hum','_mroom_start','_mroom_settle','_mroom_tick','_mroom_move','room_start','room_quit',
             '_notice_l','notice_list','notice_count','notice_read_all','_mention_ids','_mention_names','_mention_notify',
