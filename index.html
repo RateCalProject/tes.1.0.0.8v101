@@ -149,6 +149,7 @@ h3{font-size:15px;margin:16px 0 8px}
 .kb-table tr.kb-scr td{opacity:.45}
 .tag.scr{color:var(--lose);border-color:var(--lose)}
 .kb-note{font-size:12px;color:var(--lose);margin:6px 0 0;line-height:1.5}
+.kb-bonus{font-size:13px;font-weight:700;margin:6px 0 0;line-height:1.5;padding:6px 10px;border-radius:8px;background:color-mix(in srgb,#E8B21A 18%,var(--panel));border:1px solid color-mix(in srgb,#E8B21A 45%,var(--line))}
 .kb-table small{color:var(--muted);display:block;font-size:11px;white-space:nowrap}
 .kb-table .nmcol small{white-space:normal}
 .kb-table .nmcol .hn{word-break:keep-all}
@@ -622,7 +623,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：English をえらんだ端末では、英語の辞書（i18n/en.js）を先に読みこむ */
-  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=6b197e6e"><\/script>'); } } catch (e) {}
+  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=160e396a"><\/script>'); } } catch (e) {}
 })();
 </script>
 </head>
@@ -1771,6 +1772,16 @@ function kbRenderRace() {
   $$('#kbCard .hn').forEach(el => el.onclick = () => kbHorse(Number(el.dataset.h)));
   kbRenderBet(); kbRenderMine(); kbRenderResult();
 }
+// 臨時のレース：オッズをふだんの何倍にしているか（単勝・複勝など）
+const multStr = v => String(Math.round(Number(v) * 10) / 10);
+function kbMultNote(R) {
+  const M = R.mult; if (!M) return '';
+  const ks = KINDS.filter(k => M[k[0]]);
+  if (!ks.length) return '';
+  const same = ks.every(k => Number(M[k[0]]) === Number(M[ks[0][0]]));
+  return `<p class="kb-bonus">${same ? `★ ${ks.map(k => k[1]).join('・')}のオッズが、ふだんの${multStr(M[ks[0][0]])}倍のレースです`
+    : ks.map(k => `★ ${k[1]}のオッズが、ふだんの${multStr(M[k[0]])}倍のレースです`).join('<br>')}</p>`;
+}
 function kbRenderHead() {
   const R = KR.race, s = kbStatus(R), v = R.venue;
   const left = (R.post_ms - kbNow()) / 1000;
@@ -1779,6 +1790,7 @@ function kbRenderHead() {
       <span class="chip ${s === 'sale' ? 'sale' : s === 'running' ? 'run' : ''}">${KB_STATUS[s]}${s === 'sale' || s === 'closed' ? ' ' + mmss(left) : ''}</span>
       <h2>${esc(R.name)}${gradeTag(R.grade)}${R.handicap ? '<span class="tag">ハンデ</span>' : ''}</h2></div>
     <p class="kb-cond">${R.surface === '芝' ? '芝' : 'ダート'}${R.dist}m（${v.turn}回り・直線${v.straight}m${v.slope ? '・坂あり' : ''}）・${R.weather}・馬場 ${R.going}・${KR.entries.length - KR.entries.filter(e => e.scratched).length}頭・払戻率 単勝${Math.round(R.rates.tan * 100)}%</p>
+    ${kbMultNote(R)}
     ${KR.entries.some(e => e.scratched) ? `<p class="kb-note">⚠ ${KR.entries.filter(e => e.scratched).map(e => `${e.uma}番 ${esc(e.name)}`).join('、')}は<b>競走除外</b>になりました。この馬をふくむ馬券は${R.status === 'final' ? '返しました' : '、レースのあとで返します'}</p>` : ''}`;
   $('#kbReplay').classList.toggle('hidden', !(s === 'judging' || s === 'final'));
 }
@@ -3587,11 +3599,13 @@ async function adKbLoad() {
     <div class="row"><span class="small" style="width:6em">頭数</span><input class="inp grow" id="kxN" type="number" inputmode="numeric" min="8" max="18" value="18" style="margin:0"><span class="small">頭</span></div>
     <div class="row"><span class="small" style="width:6em">レース番号</span><input class="inp grow" id="kxR" type="number" inputmode="numeric" min="1" max="12" value="11" style="margin:0"><span class="small">R</span></div>
     <label class="small" style="display:block;margin:6px 0"><input type="checkbox" id="kxHc"> ハンデ戦</label>
+    <div class="row"><span class="small" style="width:6em">オッズ</span><input class="inp" id="kxMult" type="number" inputmode="decimal" min="1" max="100" step="0.1" value="1" style="margin:0;width:5em"><span class="small">倍（単勝・複勝。1 = ふだん）</span></div>
     <label class="small" style="display:block;margin:6px 0"><input type="checkbox" id="kxBn" checked> お知らせバナーを出す（発走の5分後まで）</label>
     <button class="btn main s" id="kxGo">レースをつくる</button>
     <p class="muted small" style="margin:6px 0 0">きょうかあしたの、発走の5分以上前に。天気と馬場はその日の同じ競馬場と同じになり、出走馬は自動でえらびます（G1〜オープンは強い馬から）。発走の前なら取り消せます（買われた馬券は全額返します）。</p>
     ${v.races.length ? `<h4 style="margin:10px 0 2px">臨時のレース（この1週間）</h4>` + v.races.map(r => `<div class="line"><span class="grow">${esc(r.name)}${gradeTag(r.grade)}
-        <small>${r.day.slice(5).replace('-', '/')} ${hhmm(r.post_ms)}・${esc(r.venue)}${r.rnum}R ${r.surface === '芝' ? '芝' : 'ダート'}${r.dist}m・${r.n}頭・${esc(r.weather)}・${esc(r.going)}・${KB_STATUS[r.status] || ''}・馬券${fmt(r.tickets)}枚 ${fmt(r.bet)} X</small></span>
+        <small>${r.day.slice(5).replace('-', '/')} ${hhmm(r.post_ms)}・${esc(r.venue)}${r.rnum}R ${r.surface === '芝' ? '芝' : 'ダート'}${r.dist}m・${r.n}頭・${esc(r.weather)}・${esc(r.going)}・${KB_STATUS[r.status] || ''}・馬券${fmt(r.tickets)}枚 ${fmt(r.bet)} X</small>
+        ${r.mult ? `<small>★ オッズ ${KINDS.filter(k => r.mult[k[0]]).map(k => `${k[1]}×${multStr(r.mult[k[0]])}`).join('・')}</small>` : ''}</span>
         <button class="btn s" data-kxopen="${r.id}">見る</button>${r.status === 'sale' || r.status === 'closed' ? `<button class="btn s" data-kxcancel="${r.id}" data-nm="${esc(r.name)}">取り消す</button>` : ''}</div>`).join('') : ''}`;
   const dist = () => {
     const V = v.venues.find(x => x.id === KX.venue) || v.venues[0], L = KX.surface === '芝' ? V.turf_d : V.dirt_d, cur = Number($('#kxDist').value);
@@ -3605,11 +3619,14 @@ async function adKbLoad() {
     const name = $('#kxName').value.trim(), g = $('#kxGrade').value;
     if (!name) return toast('レース名を入れてください');
     if (!$('#kxTime').value) return toast('発走時刻を入れてください');
+    const mu = Number($('#kxMult').value);
+    if (mu > 1 && !confirm(`単勝・複勝のオッズを、ふだんの${multStr(mu)}倍にします。当たった人には国庫から多く払われます。つくりますか？`)) return;
     $('#kxGo').disabled = true;
     try {
       const r = await call('admin_kb_extra', { p_name: name, p_day: Number($('#kxDay').value), p_time: $('#kxTime').value.slice(0, 5), p_venue: KX.venue,
         p_surface: KX.surface, p_dist: Number($('#kxDist').value), p_grade: g.startsWith('c') ? null : g, p_cls: g.startsWith('c') ? Number(g.slice(1)) : null,
-        p_cond: $('#kxCond').value, p_handicap: $('#kxHc').checked, p_n: Number($('#kxN').value), p_rnum: Number($('#kxR').value), p_banner: $('#kxBn').checked });
+        p_cond: $('#kxCond').value, p_handicap: $('#kxHc').checked, p_n: Number($('#kxN').value), p_rnum: Number($('#kxR').value), p_banner: $('#kxBn').checked,
+        p_mult: Number($('#kxMult').value) > 1 ? Number($('#kxMult').value) : null });
       toast(`「${name}」をつくりました（${r.n}頭・${r.weather}・馬場 ${r.going}）`); adKbLoad(); bnLoad(true);
     } catch (e) { toast(e.message); }
     $('#kxGo').disabled = false;

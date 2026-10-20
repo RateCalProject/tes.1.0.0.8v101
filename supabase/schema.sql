@@ -1554,6 +1554,10 @@ language sql immutable as $$
               when lens < 3.75 then '3 1/2' when lens < 10.5 then round(lens)::int::text else '大差' end
 $$;
 
+-- 臨時のレースだけ：単勝・複勝などのオッズを、ふだんの何倍にするか（{"tan": 20, "fuku": 20}）
+alter table public.keiba_races drop column if exists odds_floor;
+alter table public.keiba_races add column if not exists odds_mult jsonb;
+
 create or replace function public._kb_make_race(d date, no int, vid int, rnum int, posttime timestamptz,
   nm text, grade text, cls int, cond text, surface text, dist int, going text, weather text, tier text,
   handicap boolean, nmin int, nmax int) returns void
@@ -1603,8 +1607,9 @@ begin
   end loop;
   update keiba_horses set last_day = d where id = any(ids);
 
-  insert into keiba_races(id, day, no, post, venue, rnum, name, grade, cls, cond, surface, dist, going, weather, tier, handicap)
-  values (rid, d, no, posttime, vid, rnum, nm, grade, cls, cond, surface, dist, going, weather, tier, handicap);
+  insert into keiba_races(id, day, no, post, venue, rnum, name, grade, cls, cond, surface, dist, going, weather, tier, handicap, odds_mult)
+  values (rid, d, no, posttime, vid, rnum, nm, grade, cls, cond, surface, dist, going, weather, tier, handicap,
+          nullif(coalesce(current_setting('kb.mult', true), ''), '')::jsonb);
 
   -- 馬番（くじ）と枠（多い頭数のときは外の枠から2頭ずつ）
   select array_agg(x order by random()) into perm from unnest(ids) x;
@@ -1761,7 +1766,7 @@ begin
   update keiba_entries set odds_win = _kb_odds(rid, 'tan', array[uma]), odds_place = _kb_odds(rid, 'fuku', array[uma])
    where race_id = rid;
   update keiba_entries e set ninki = z.rk
-    from (select uma, row_number() over (order by odds_win, uma) rk from keiba_entries where race_id = rid) z
+    from (select uma, row_number() over (order by odds_win, w desc, uma) rk from keiba_entries where race_id = rid) z
    where e.race_id = rid and e.uma = z.uma;
   update keiba_races
      set pace = case when p > 0.6 then 'ハイ' when p < -0.6 then 'スロー' else '平均' end,
@@ -2018,12 +2023,14 @@ $$;
 -- オッズ（0.1倍きざみで切り捨て。最低1.0倍）
 create or replace function public._kb_odds(rid bigint, kind text, sel int[]) returns numeric
 language plpgsql stable set search_path = public as $$
-declare p numeric; tr text;
+declare p numeric; tr text; mu jsonb; o numeric;
 begin
-  select tier into tr from keiba_races where id = rid;
+  select tier, odds_mult into tr, mu from keiba_races where id = rid;
   p := _kb_prob(rid, kind, sel);
   if p <= 0 then return 99999.9; end if;
-  return round(least(99999.9, greatest(1.0, floor(_kb_rate(tr, kind) / p * 10) / 10)), 1);
+  o := round(least(99999.9, greatest(1.0, floor(_kb_rate(tr, kind) / p * 10) / 10)), 1);
+  if mu ? kind then o := least(99999.9, round(o * (mu->>kind)::numeric, 1)); end if;     -- 臨時のレース：ふだんのオッズの何倍
+  return o;
 end $$;
 
 -- 馬券の選び方を確かめて、決まった形にそろえる
@@ -2075,7 +2082,7 @@ begin
   update keiba_entries set odds_win = _kb_odds(rid, 'tan', array[uma]), odds_place = _kb_odds(rid, 'fuku', array[uma])
    where race_id = rid and odds_win is not null;
   update keiba_entries e set ninki = z.rk
-    from (select uma, row_number() over (order by odds_win, uma) rk from keiba_entries where race_id = rid and odds_win is not null) z
+    from (select uma, row_number() over (order by odds_win, w desc, uma) rk from keiba_entries where race_id = rid and odds_win is not null) z
    where e.race_id = rid and e.uma = z.uma;
 end $$;
 
@@ -2314,7 +2321,7 @@ begin
     'race', jsonb_build_object(
       'id', r.id, 'no', r.no, 'rnum', r.rnum, 'day', r.day, 'post_ms', _kb_ms(r.post), 'status', st,
       'name', r.name, 'grade', r.grade, 'cls', r.cls, 'cond', r.cond, 'surface', r.surface, 'dist', r.dist,
-      'going', r.going, 'weather', r.weather, 'tier', r.tier, 'handicap', r.handicap,
+      'going', r.going, 'weather', r.weather, 'tier', r.tier, 'handicap', r.handicap, 'mult', r.odds_mult,
       'pace', case when started then r.pace end, 'finish_ms', case when started then r.finish_ms end,
       'inquiry', kou and started and _now() >= r.post + make_interval(secs => coalesce(r.finish_ms, 0) / 1000.0),   -- 審議（ゴールのあと）
       'venue', jsonb_build_object('name', v.name, 'turn', v.turn, 'straight', v.straight, 'slope', v.slope, 'circuit', v.circuit),
@@ -2393,18 +2400,22 @@ begin
                  order by case id when 3 then 1 when 2 then 2 else 3 end) from keiba_venues where id in (1, 2, 3)),
     'races', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'day', r.day, 'post_ms', _kb_ms(r.post), 'rnum', r.rnum,
                 'venue', v.name, 'name', r.name, 'grade', r.grade, 'cls', r.cls, 'surface', r.surface, 'dist', r.dist,
-                'weather', r.weather, 'going', r.going, 'status', _kb_status(r),
+                'weather', r.weather, 'going', r.going, 'status', _kb_status(r), 'mult', r.odds_mult,
                 'n', (select count(*) from keiba_entries e where e.race_id = r.id),
                 'tickets', (select count(*) from keiba_tickets t where t.race_id = r.id),
                 'bet', (select coalesce(sum(t.amount), 0) from keiba_tickets t where t.race_id = r.id)) order by r.post desc), '[]'::jsonb)
               from keiba_races r join keiba_venues v on v.id = r.venue where r.no >= 60 and r.day >= today - 7));
 end $$;
 
+drop function if exists public.admin_kb_extra(text, int, text, int, text, int, text, int, text, boolean, int, int, boolean);
+drop function if exists public.admin_kb_extra(text, int, text, int, text, int, text, int, text, boolean, int, int, boolean, numeric, boolean);   -- 前の版
 create or replace function public.admin_kb_extra(p_name text, p_day int, p_time text, p_venue int, p_surface text, p_dist int,
-  p_grade text, p_cls int, p_cond text, p_handicap boolean, p_n int, p_rnum int, p_banner boolean default false) returns jsonb
+  p_grade text, p_cls int, p_cond text, p_handicap boolean, p_n int, p_rnum int, p_banner boolean default false,
+  p_mult numeric default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   u uuid := _me(); nm text := btrim(coalesce(p_name, '')); gr text := nullif(btrim(coalesce(p_grade, '')), '');
+  fl numeric := nullif(nullif(round(p_mult, 1), 0), 1);
   cnd text := coalesce(p_cond, '3up'); d date; pt timestamptz; v keiba_venues; no int; rid bigint; wx text[]; cl int; hh int; mi int;
 begin
   if not _is_admin(u) then raise exception '管理者だけが使えます'; end if;
@@ -2431,19 +2442,23 @@ begin
   if cnd not in ('3up', '3yo') then raise exception '出走できる馬の条件が正しくありません'; end if;
   if p_n is null or p_n not between 8 and 18 then raise exception '頭数は8〜18頭です'; end if;
   if p_rnum is null or p_rnum not between 1 and 12 then raise exception 'レース番号は1〜12Rです'; end if;
+  if fl is not null and (fl < 1.1 or fl > 100) then raise exception 'オッズの倍率は1.1〜100倍にしてください（ふだんのオッズの何倍か）'; end if;
   perform pg_advisory_xact_lock(4242);
   select coalesce(max(k.no), 59) + 1 into no from keiba_races k where k.day = d and k.no >= 60;
   if no > 99 then raise exception '臨時のレースは1日40レースまでです'; end if;
   rid := to_char(d, 'YYYYMMDD')::bigint * 100 + no;
   wx := _kb_wx(d, p_venue, p_surface);
+  perform set_config('kb.mult', case when fl is not null then jsonb_build_object('tan', fl, 'fuku', fl)::text else '' end, true);
   perform _kb_make_race(d, no, p_venue, p_rnum, pt, nm, gr, cl, cnd, p_surface, p_dist, wx[2], wx[1],
                         case when gr = 'G1' then 'g1' when gr is not null then 'graded' else 'normal' end,
                         coalesce(p_handicap, false), p_n, p_n);
+  perform set_config('kb.mult', '', true);
   if coalesce(p_banner, false) then
     insert into banners(body, kind, link, starts_at, ends_at, by_user, created_at)
     values (format('臨時競馬「%s」%s　%s %s 発走（%s %s%sm）', nm, case when gr is not null then '（' || gr || '）' else '' end,
                    case when p_day = 0 then 'きょう' else 'あした' end, to_char(pt at time zone 'Asia/Tokyo', 'HH24:MI'),
-                   v.name, case when p_surface = '芝' then '芝' else 'ダート' end, p_dist),
+                   v.name, case when p_surface = '芝' then '芝' else 'ダート' end, p_dist)
+            || case when fl is not null then format('　単勝・複勝のオッズは、ふだんの%s倍', case when fl = trunc(fl) then trunc(fl)::text else fl::text end) else '' end,
             'event', 'race:' || rid, _now(), pt + interval '5 minutes', u, _now());
   end if;
   return jsonb_build_object('id', rid, 'weather', wx[1], 'going', wx[2], 'n', (select count(*) from keiba_entries where race_id = rid));
