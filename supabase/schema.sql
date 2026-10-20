@@ -13387,11 +13387,18 @@ begin
   end if;
 end $$;
 
+-- 公開しているか（app_settings 'pr_open' = 1 で公開。それまでは管理者だけ）
+create or replace function public._pr_open(u uuid) returns boolean
+language sql stable set search_path = public as $$
+  select _is_admin(u) or coalesce((select value from app_settings where key = 'pr_open'), '') = '1'
+$$;
+
 -- きょうの番組（p_sport：boat 競艇・bike 競輪）
 create or replace function public.pr_day(p_sport text) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me_g(); today date;
 begin
+  if not _pr_open(u) then raise exception '準備中です。もうしばらくお待ちください'; end if;
   if coalesce(p_sport, '') not in ('boat', 'bike') then raise exception '競艇か競輪をえらんでください'; end if;
   perform _pr_tick();
   today := _kb_jday(_now());
@@ -13412,6 +13419,7 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me_g(); r pr_races; v pr_venues; started boolean; ent jsonb; pays jsonb := '[]'::jsonb; mine jsonb; res int[]; wk int[];
         cur int := _kb_midx(_now()); s int[]; k text;
 begin
+  if not _pr_open(u) then raise exception '準備中です。もうしばらくお待ちください'; end if;
   perform _pr_tick();
   select * into r from pr_races where id = p_race;
   if not found then raise exception 'レースが見つかりません'; end if;
@@ -13473,6 +13481,7 @@ create or replace function public.pr_odds(p_race bigint, p_kind text, p_sel int[
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me_g(); s int[];
 begin
+  if not _pr_open(u) then raise exception '準備中です。もうしばらくお待ちください'; end if;
   s := _pr_check_sel(p_race, p_kind, p_sel);
   return jsonb_build_object('sel', s, 'odds', _pr_odds(p_race, p_kind, s));
 end $$;
@@ -13482,6 +13491,7 @@ create or replace function public.pr_bet(p_race bigint, p_kind text, p_sel int[]
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me_g(); r pr_races; s int[]; od numeric;
 begin
+  if not _pr_open(u) then raise exception '準備中です。もうしばらくお待ちください'; end if;
   perform _pr_tick();
   select * into r from pr_races where id = p_race;
   if not found then raise exception 'レースが見つかりません'; end if;
@@ -13501,6 +13511,7 @@ create or replace function public.pr_racer(p_id int) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me_g(); p pr_racers;
 begin
+  if not _pr_open(u) then raise exception '準備中です。もうしばらくお待ちください'; end if;
   select * into p from pr_racers where id = p_id;
   if not found then raise exception '選手が見つかりません'; end if;
   return jsonb_build_object('id', p.id, 'sport', p.sport, 'name', p.name, 'name_en', p.name_en, 'regno', p.regno, 'term', p.term, 'grade', p.grade,
@@ -13594,7 +13605,7 @@ begin
             'bt_lobby_set','bt_bet','bt_react',
             '_lot_seed','_lot_prize','_lot_tier_name','_rnd','_lot_next_at','_lot_tick','_lot_draw','lot_buy','lot_state','dm_list','dm_thread','dm_send','_sp_json','support_list','support_thread','support_open','support_send','support_close',
             'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse',
-            '_pr_bonus','_pr_check_sel','_pr_hit','_pr_make_day','_pr_make_race','_pr_margin','_pr_month','_pr_name','_pr_new_racer','_pr_odds','_pr_prob','_pr_rate','_pr_seed','_pr_settle','_pr_status','_pr_tick','_pr_wx','pr_bet','pr_day','pr_odds','pr_race','pr_racer') loop
+            '_pr_bonus','_pr_check_sel','_pr_hit','_pr_make_day','_pr_make_race','_pr_margin','_pr_month','_pr_name','_pr_new_racer','_pr_odds','_pr_open','_pr_prob','_pr_rate','_pr_seed','_pr_settle','_pr_status','_pr_tick','_pr_wx','pr_bet','pr_day','pr_odds','pr_race','pr_racer') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
       execute format('revoke all on function %s from authenticated', f.sig);
