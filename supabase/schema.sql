@@ -465,15 +465,83 @@ revoke all on public.profiles, public.tx_log, public.hilo_games, public.bj_games
 -- ---------------------------------------------------------------------
 -- 内部用の小さな関数
 -- ---------------------------------------------------------------------
-create or replace function public._me() returns uuid
+-- ゲスト（メールの確認なしで、メールアドレス＋数字4けたのパスワードで始めた人）。本登録（メールの確認）をすると、ここから消える
+--   くわしくは下の「ゲスト」
+create table if not exists public.guests (
+  id         uuid primary key references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  ip         text                                      -- 作りすぎを止めるため
+);
+create index if not exists guests_created_idx on public.guests(created_at);
+-- ゲストを作った記録（回線ごとの数の制限に使う。3日で消す）
+create table if not exists public.guest_signups (
+  id bigserial primary key,
+  ip text,
+  at timestamptz not null default now()
+);
+create index if not exists guest_signups_idx on public.guest_signups(ip, at);
+-- 所持金の上限をこえて受け取れなかった分・消えたゲストの所持金（10分ごとに運営へ）
+create table if not exists public.guest_overflow (
+  id         bigserial primary key,
+  user_id    uuid,
+  amount     bigint not null check (amount > 0),
+  kind       text not null,                            -- cap（上限をこえた分） / left（消えたゲストの残り）
+  created_at timestamptz not null default now()
+);
+alter table public.guests         enable row level security;
+alter table public.guest_signups  enable row level security;
+alter table public.guest_overflow enable row level security;
+revoke all on public.guests, public.guest_signups, public.guest_overflow from anon, authenticated;
+
+-- ゲストかどうか（本登録すると false）
+create or replace function public._is_guest(u uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from guests where id = u) or coalesce((select is_anonymous from auth.users where id = u), false)
+$$;
+-- ゲストが最後に来た時刻（サイトを開いた・遊んだ。はじめた時刻より前にはしない）
+create or replace function public._guest_last(u uuid) returns timestamptz
+language plpgsql stable set search_path = public as $$
+begin
+  return greatest((select created_at from guests where id = u),
+                  (select last_seen_at from profiles where id = u),
+                  (select created_at from tx_log where user_id = u order by id desc limit 1));
+end $$;
+-- ゲストが消える時刻：はじめてから31日・5日間来ないとき の早いほう
+create or replace function public._guest_until(u uuid) returns timestamptz
+language plpgsql stable set search_path = public as $$
+begin
+  return (select least(g.created_at + interval '31 days', _guest_last(u) + interval '5 days') from guests g where g.id = u);
+end $$;
+-- ゲストがこの5日間に送金した額（手数料はのぞく）
+create or replace function public._guest_sent5(u uuid) returns bigint
+language plpgsql stable set search_path = public as $$
+begin
+  return coalesce((select sum(coalesce((detail->>'amount')::bigint, bet)) from tx_log
+                    where user_id = u and game = 'send' and created_at > _now() - interval '5 days'), 0)::bigint;
+end $$;
+
+-- いまの人（ゲストもOK）：遊び・見るだけの関数で使う
+create or replace function public._me_g() returns uuid
 language plpgsql stable set search_path = public as $$
 declare u uuid := auth.uid(); bu timestamptz;
 begin
   if u is null then raise exception 'ログインしてください'; end if;
   select banned_until into bu from profiles where id = u;
+  if not found and not exists (select 1 from auth.users where id = u) then
+    raise exception 'このアカウントはもうありません（ゲストの期限が切れて消えました）';
+  end if;
   if bu is not null and bu > _now() then
     raise exception '利用停止中です（%まで）。役所の判決によるものです', to_char(bu at time zone 'Asia/Tokyo', 'FMMM"月"FMDD"日" HH24:MI');
   end if;
+  return u;
+end $$;
+
+-- いまの人（ゲストはことわる）：送金・株・会社・請求・訴え・投稿など、ほかの人とお金や文がやりとりされるもの
+create or replace function public._me() returns uuid
+language plpgsql stable set search_path = public as $$
+declare u uuid := _me_g();
+begin
+  if _is_guest(u) then raise exception 'ゲストではできません。本登録（メールの確認）をすると使えます（設定 → プロフィール）'; end if;
   return u;
 end $$;
 
@@ -496,6 +564,7 @@ language plpgsql set search_path = public as $$
 declare b bigint;
 begin
   if amt is null or amt < 1 then raise exception '賭け金は1以上にしてください'; end if;
+  if amt > 100 and _is_guest(u) then raise exception 'ゲストの賭け金は1回100 Xまでです（本登録すると上限はなくなります）'; end if;
   update profiles set balance = balance - amt where id = u and balance >= amt returning balance into b;
   if not found then raise exception 'AiliNaXが足りません'; end if;
   return b;
@@ -559,15 +628,16 @@ alter table public.profiles add column if not exists prefs jsonb not null defaul
 
 create or replace function public.ensure_profile() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me();
+declare u uuid := _me_g(); up boolean := false;
 begin
   insert into profiles(id, nickname, balance)
-  values (u, 'プレイヤー' || lpad(_rint(10000)::text, 4, '0'), 1000)
+  values (u, case when _is_guest(u) then 'ゲスト' else 'プレイヤー' end || lpad(_rint(10000)::text, 4, '0'), 1000)
   on conflict (id) do nothing;
   if found then perform _log(u, 'start', 0, 1000, '{"note":"はじめての配布"}'); end if;
   update profiles set account_no = _new_acct() where id = u and account_no is null;
   update profiles set last_seen_at = _now() where id = u;
   perform _mail_seen(u);
+  up := _guest_verify(u);     -- ゲストがメールのリンクで入った（メールを確認できた）ら本登録
   -- 締めの日を過ぎていたら、税の締め（調査・差し押さえ・給付金）をここで行う
   -- 万一失敗してもログインは止めない
   begin
@@ -575,15 +645,16 @@ begin
   exception when others then
     raise warning 'tax tick failed: %', sqlerrm;
   end;
-  return (select jsonb_build_object('nickname', nickname, 'balance', balance, 'tax', _tax_badge(u), 'account_no', account_no,
-            'is_admin', _is_admin(u), 'role', _role(u), 'badge', _badge(u), 'prefs', prefs)
+  return (select jsonb_build_object('nickname', nickname, 'balance', balance, 'tax', case when _is_guest(u) then null else _tax_badge(u) end,
+            'account_no', account_no, 'is_admin', _is_admin(u), 'role', _role(u), 'badge', _badge(u), 'prefs', prefs, 'guest', _is_guest(u),
+            'guest_info', _guest_json(u), 'upgraded', up)
             from profiles where id = u);
 end $$;
 
 -- 設定を保存（わたしたものだけ上書き）
 create or replace function public.prefs_save(p_prefs jsonb) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); p jsonb := coalesce(p_prefs, '{}'::jsonb); cur jsonb; x jsonb;
+declare u uuid := _me_g(); p jsonb := coalesce(p_prefs, '{}'::jsonb); cur jsonb; x jsonb;
 begin
   if jsonb_typeof(p) <> 'object' then raise exception '設定が正しくありません'; end if;
   select prefs into cur from profiles where id = u;
@@ -621,8 +692,9 @@ begin
             'check', jsonb_build_object('days', _now() >= coalesce(ok7_at, created_at + interval '7 days'), 'days_from', _dlabel(coalesce(ok7_at, created_at + interval '7 days')),
                        'debt', _debt(id), 'mail', mail_verified_at is not null and mail_verified_at >= _now() - interval '183 days',
                        'mail_at', case when mail_verified_at is null then null else _dlabel(mail_verified_at) end,
-                       'mail_until', case when mail_verified_at is null then null else _dlabel(mail_verified_at + interval '183 days') end))
-            from profiles where id = _me());
+                       'mail_until', case when mail_verified_at is null then null else _dlabel(mail_verified_at + interval '183 days') end),
+            'guest', _guest_json(id))
+            from profiles where id = _me_g());
 end $$;
 
 create or replace function public.set_nickname(p_name text) returns jsonb
@@ -630,7 +702,7 @@ language plpgsql security definer set search_path = public as $$
 declare n text := btrim(coalesce(p_name, ''));
 begin
   if char_length(n) < 1 or char_length(n) > 12 then raise exception 'ニックネームは1〜12文字です'; end if;
-  update profiles set nickname = n where id = _me();
+  update profiles set nickname = n where id = _me_g();
   return my_profile();
 end $$;
 
@@ -642,7 +714,7 @@ create or replace function public.my_history() returns jsonb
 language sql security definer set search_path = public as $$
   select coalesce(jsonb_agg(jsonb_build_object('game', game, 'bet', bet, 'payout', payout,
            'balance', balance_after, 'at', created_at) order by id desc), '[]'::jsonb)
-  from (select * from tx_log where user_id = _me() order by id desc limit 30) t
+  from (select * from tx_log where user_id = _me_g() order by id desc limit 30) t
 $$;
 
 -- ---------------------------------------------------------------------
@@ -660,7 +732,7 @@ end $$;
 
 create or replace function public.slot_spin(p_bet bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); a int; b int; c int; m int := 0; pay bigint;
+declare u uuid := _me_g(); a int; b int; c int; m int := 0; pay bigint;
 begin
   perform _take(u, p_bet);
   a := _slot_sym(); b := _slot_sym(); c := _slot_sym();
@@ -682,7 +754,7 @@ end $$;
 create or replace function public.roulette_spin(p_bets jsonb) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
-  u uuid := _me(); n int; total bigint := 0; pay bigint := 0; e jsonb;
+  u uuid := _me_g(); n int; total bigint := 0; pay bigint := 0; e jsonb;
   t text; v int; a bigint; win boolean; mult int; red boolean;
   reds int[] := array[1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36];
 begin
@@ -729,7 +801,7 @@ language plpgsql set search_path = public as $$
 declare r int;
 begin
   if g.user_id is null then
-    return jsonb_build_object('active', false, 'balance', _bal(_me())) || coalesce(extra, '{}'::jsonb);
+    return jsonb_build_object('active', false, 'balance', _bal(_me_g())) || coalesce(extra, '{}'::jsonb);
   end if;
   r := g.card % 13 + 1;
   return jsonb_build_object(
@@ -744,13 +816,13 @@ create or replace function public.hilo_state() returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare g hilo_games;
 begin
-  select * into g from hilo_games where user_id = _me();
+  select * into g from hilo_games where user_id = _me_g();
   return _hilo_json(g, null);
 end $$;
 
 create or replace function public.hilo_start(p_bet bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); g hilo_games; c int := _rint(52);
+declare u uuid := _me_g(); g hilo_games; c int := _rint(52);
 begin
   if exists (select 1 from hilo_games where user_id = u) then raise exception 'ゲームの途中です'; end if;
   perform _take(u, p_bet);
@@ -760,7 +832,7 @@ end $$;
 
 create or replace function public.hilo_guess(p_dir text) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); g hilo_games; c int; r int; nr int; p numeric; ok boolean; pay bigint;
+declare u uuid := _me_g(); g hilo_games; c int; r int; nr int; p numeric; ok boolean; pay bigint;
 begin
   select * into g from hilo_games where user_id = u for update;
   if not found then raise exception 'ゲームが始まっていません'; end if;
@@ -783,7 +855,7 @@ end $$;
 
 create or replace function public.hilo_cashout() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); g hilo_games; pay bigint;
+declare u uuid := _me_g(); g hilo_games; pay bigint;
 begin
   select * into g from hilo_games where user_id = u for update;
   if not found then raise exception 'ゲームが始まっていません'; end if;
@@ -852,14 +924,14 @@ create or replace function public.bj_state() returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare g bj_games;
 begin
-  select * into g from bj_games where user_id = _me();
-  if not found then return jsonb_build_object('active', false, 'balance', _bal(_me())); end if;
+  select * into g from bj_games where user_id = _me_g();
+  if not found then return jsonb_build_object('active', false, 'balance', _bal(_me_g())); end if;
   return _bj_json(g, false, null, null);
 end $$;
 
 create or replace function public.bj_start(p_bet bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); g bj_games; s int[]; pbj boolean; dbj boolean; pay bigint; res text;
+declare u uuid := _me_g(); g bj_games; s int[]; pbj boolean; dbj boolean; pay bigint; res text;
 begin
   if exists (select 1 from bj_games where user_id = u) then raise exception 'ゲームの途中です'; end if;
   perform _take(u, p_bet);
@@ -881,7 +953,7 @@ end $$;
 
 create or replace function public.bj_hit() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); g bj_games;
+declare u uuid := _me_g(); g bj_games;
 begin
   select * into g from bj_games where user_id = u for update;
   if not found then raise exception 'ゲームが始まっていません'; end if;
@@ -892,7 +964,7 @@ end $$;
 
 create or replace function public.bj_stand() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); g bj_games;
+declare u uuid := _me_g(); g bj_games;
 begin
   select * into g from bj_games where user_id = u for update;
   if not found then raise exception 'ゲームが始まっていません'; end if;
@@ -901,7 +973,7 @@ end $$;
 
 create or replace function public.bj_double() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); g bj_games;
+declare u uuid := _me_g(); g bj_games;
 begin
   select * into g from bj_games where user_id = u for update;
   if not found then raise exception 'ゲームが始まっていません'; end if;
@@ -1071,7 +1143,7 @@ begin
   insert into tax_months(month) values (m) on conflict (month) do nothing;
   if (select processed from tax_months where month = m for update) then return; end if;
 
-  for p in select id from profiles where created_at < mend and ai is null order by created_at loop
+  for p in select id from profiles where created_at < mend and ai is null and not _is_guest(id) order by created_at loop
     tru := _income(p.id, m);
     select * into r from tax_returns where user_id = p.id and month = m for update;
     if found and r.declared is not null then
@@ -1214,7 +1286,7 @@ end $$;
 create or replace function public.tax_state() returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
-  u uuid := _me(); nowt timestamptz; cm int; fm int; d int; created timestamptz; r tax_returns;
+  u uuid := _me_g(); nowt timestamptz; cm int; fm int; d int; created timestamptz; r tax_returns;
   filing jsonb; notes jsonb; rets jsonb; topm int; top jsonb; tr treasury; inc bigint; dl timestamptz; nx timestamptz;
 begin
   perform _tax_tick();
@@ -2142,7 +2214,7 @@ $$;
 -- きょうの開催
 create or replace function public.keiba_day() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); today date;
+declare u uuid := _me_g(); today date;
 begin
   perform _kb_tick();
   today := _kb_jday(_now());
@@ -2169,7 +2241,7 @@ end $$;
 create or replace function public.keiba_race(p_race bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
-  u uuid := _me(); r keiba_races; v keiba_venues; st text; started boolean; ent jsonb; pays jsonb := '[]'::jsonb;
+  u uuid := _me_g(); r keiba_races; v keiba_venues; st text; started boolean; ent jsonb; pays jsonb := '[]'::jsonb;
   mine jsonb; res int[]; wk int[]; n int; s int[]; kou boolean;
 begin
   perform _kb_tick();
@@ -2257,7 +2329,7 @@ end $$;
 -- 買う前にオッズを見る
 create or replace function public.keiba_odds(p_race bigint, p_kind text, p_sel int[]) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); s int[];
+declare u uuid := _me_g(); s int[];
 begin
   s := _kb_check_sel(p_race, p_kind, p_sel);
   return jsonb_build_object('sel', s, 'odds', _kb_odds(p_race, p_kind, s));
@@ -2266,7 +2338,7 @@ end $$;
 -- 馬券を買う（オッズは買った時点で決まる）
 create or replace function public.keiba_bet(p_race bigint, p_kind text, p_sel int[], p_amount bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); r keiba_races; s int[]; od numeric;
+declare u uuid := _me_g(); r keiba_races; s int[]; od numeric;
 begin
   perform _kb_tick();
   select * into r from keiba_races where id = p_race;
@@ -2286,7 +2358,7 @@ end $$;
 -- 馬のくわしい成績
 create or replace function public.keiba_horse(p_horse int) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); h keiba_horses;
+declare u uuid := _me_g(); h keiba_horses;
 begin
   select * into h from keiba_horses where id = p_horse;
   if not found then raise exception '馬が見つかりません'; end if;
@@ -2421,7 +2493,7 @@ revoke all on public.banners from anon, authenticated;
 
 create or replace function public.banner_list() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me();
+declare u uuid := _me_g();
 begin
   return (select coalesce(jsonb_agg(jsonb_build_object('id', b.id, 'body', b.body, 'kind', b.kind, 'link', b.link) order by b.id desc), '[]'::jsonb)
             from (select * from banners where not ended and starts_at <= _now() and (ends_at is null or ends_at > _now())
@@ -2539,6 +2611,7 @@ begin
     okday := coalesce(me.ok7_at, me.created_at + interval '7 days');
     if _now() < okday then raise exception '登録から7日たつまで送金できません（%から送れます）', _dlabel(okday); end if;
     if _debt(u) > 0 then raise exception '税金の滞納があるので送金できません'; end if;
+    perform _guest_send_check(u, p_amount);     -- ゲスト：はじめて7日は送れない・5日間で2,000 Xまで
     have := me.balance;
   else
     select * into c from companies where id = src_comp and owner = u and status = 'active';
@@ -2549,6 +2622,7 @@ begin
   if t.rid is not null and _now() < _ok7(t.rid) then
     raise exception '相手は登録から7日たっていないので、まだ受け取れません';
   end if;
+  if t.rid is not null and _is_guest(t.rid) then raise exception '相手はゲストなので、送金を受け取れません'; end if;
   fee := _xfer_fee(p_amount);
   if have < p_amount + fee then
     raise exception 'AiliNaXが足りません（手数料 % X をふくめて % X 必要です）', fee, p_amount + fee;
@@ -2593,13 +2667,13 @@ create or replace function public.transfer_preview(p_to text, p_amount bigint) r
 language plpgsql security definer set search_path = public as $$
 declare c record;
 begin
-  select * into c from _xfer_check(_me(), p_to, p_amount, null);
+  select * into c from _xfer_check(_me_g(), p_to, p_amount, null);
   return jsonb_build_object('nickname', c.rnick, 'company', c.rcomp is not null, 'amount', p_amount, 'fee', c.fee, 'total', p_amount + c.fee);
 end $$;
 
 create or replace function public.transfer_send(p_to text, p_amount bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); c record; me profiles;
+declare u uuid := _me_g(); c record; me profiles;
 begin
   select * into c from _xfer_check(u, p_to, p_amount, null);                  -- 相手をさがす
   perform 1 from profiles where id in (u, c.rid) order by id for update;     -- 自分と相手を id の順にロック
@@ -2643,7 +2717,7 @@ end $$;
 
 create or replace function public.work_state() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); today date := _kb_jday(_now());
+declare u uuid := _me_g(); today date := _kb_jday(_now());
 begin
   return jsonb_build_object(
     'limit', 8,
@@ -2657,7 +2731,7 @@ end $$;
 create or replace function public.work_start(p_kind text) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
-  u uuid := _me(); today date := _kb_jday(_now()); qs jsonb := '[]'; ans jsonb := '[]';
+  u uuid := _me_g(); today date := _kb_jday(_now()); qs jsonb := '[]'; ans jsonb := '[]';
   i int; a int; b int; op text; v int; items text[][]; pick int; grid text[]; target text; pool text[]; jid bigint; k int;
 begin
   if (select count(*) from work_jobs where user_id = u and day = today) >= 8 then
@@ -2705,7 +2779,7 @@ end $$;
 -- 答えを出して給料をもらう
 create or replace function public.work_submit(p_job bigint, p_answers jsonb) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); j work_jobs; i int; c int := 0; wage bigint; secs numeric;
+declare u uuid := _me_g(); j work_jobs; i int; c int := 0; wage bigint; secs numeric;
 begin
   select * into j from work_jobs where id = p_job and user_id = u for update;
   if not found then raise exception '仕事が見つかりません'; end if;
@@ -2730,11 +2804,11 @@ end $$;
 -- ---------------------------------------------------------------------
 create or replace function public.info_state() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); tr treasury;
+declare u uuid := _me_g(); tr treasury;
 begin
   select * into tr from treasury where id = 1;
   return jsonb_build_object(
-    'players', (select count(*) from profiles where ai is null),
+    'players', (select count(*) from profiles where ai is null and not _is_guest(id)),
     'companies', (select count(*) from companies where status = 'active'),
     'wage', coalesce(tr.wage_total, 0), 'fee', coalesce(tr.fee_total, 0),
     -- 競馬億万長者：今週（月曜から）の競馬の勝ち（払戻 − 賭け金）の合計
@@ -2743,7 +2817,7 @@ begin
         select p.nickname, _badge(p.id) badge, sum(t.payout - t.amount)::bigint net, sum(t.payout)::bigint payout, sum(t.amount)::bigint bet,
                count(*) filter (where t.payout > 0 and not t.refund) hits, max(t.payout)::bigint best
           from keiba_tickets t join profiles p on p.id = t.user_id join keiba_races r on r.id = t.race_id
-         where t.payout is not null and r.day >= _kb_jday(_now()) - (extract(isodow from _kb_jday(_now()))::int - 1)
+         where t.payout is not null and r.day >= _kb_jday(_now()) - (extract(isodow from _kb_jday(_now()))::int - 1) and not _is_guest(p.id)
          group by p.id, p.nickname having sum(t.payout - t.amount) > 0
          order by net desc limit 20) z),
     'balance', _bal(u));
@@ -2932,7 +3006,7 @@ $$;
 drop function if exists public.corp_search(text);
 create or replace function public.corp_search(p_q text, p_ind text default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); q text := btrim(coalesce(p_q, '')); ind text := upper(btrim(coalesce(p_ind, '')));
+declare u uuid := _me_g(); q text := btrim(coalesce(p_q, '')); ind text := upper(btrim(coalesce(p_ind, '')));
 begin
   return (select coalesce(jsonb_agg(_corp_card(c, u) order by (c.status in ('active', 'suspended')) desc, c.name), '[]'::jsonb) from (
     select * from companies x
@@ -2948,7 +3022,7 @@ end $$;
 
 create or replace function public.corp_pins() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me();
+declare u uuid := _me_g();
 begin
   return (select coalesce(jsonb_agg(_corp_card(c, u) order by c.name), '[]'::jsonb)
             from companies c join corp_pins p on p.company_id = c.id and p.user_id = u where c.status in ('active', 'suspended'));
@@ -2956,7 +3030,7 @@ end $$;
 
 create or replace function public.corp_pin(p_cid text, p_on boolean) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); c companies;
+declare u uuid := _me_g(); c companies;
 begin
   select * into c from companies where cid = _cid_norm(p_cid) and status in ('active', 'suspended');
   if not found then raise exception '会社が見つかりません'; end if;
@@ -2968,7 +3042,7 @@ end $$;
 -- 会社のページ（商品と、銀行なら自分の口座）
 create or replace function public.corp_page(p_cid text) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); c companies; acct bank_accounts;
+declare u uuid := _me_g(); c companies; acct bank_accounts;
 begin
   select * into c from companies where cid = _cid_norm(p_cid) and status in ('active', 'suspended', 'closed', 'bankrupt');
   if not found then raise exception '会社が見つかりません'; end if;
@@ -3025,7 +3099,7 @@ end $$;
 
 create or replace function public.my_orders() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me();
+declare u uuid := _me_g();
 begin
   return (select coalesce(jsonb_agg(jsonb_build_object('id', o.id, 'company', c.name, 'cid', c.cid, 'item', o.item_name,
             'price', o.price, 'fee', o.fee, 'tax', o.tax, 'note', o.note, 'status', o.status, 'at', _dlabel(o.created_at)) order by o.id desc), '[]'::jsonb)
@@ -3089,7 +3163,7 @@ end $$;
 
 create or replace function public.my_banks() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); r record;
+declare u uuid := _me_g(); r record;
 begin
   for r in select company_id from bank_accounts where user_id = u and status = 'active' loop perform _bank_accrue(r.company_id, u); end loop;
   return jsonb_build_object('accounts', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'rate', c.rate, 'balance', a.balance,
@@ -3131,7 +3205,7 @@ end $$;
 -- 自分の会社（申請中もふくむ）
 create or replace function public.my_corps() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me();
+declare u uuid := _me_g();
 begin
   return jsonb_build_object('corps', (select coalesce(jsonb_agg(jsonb_build_object(
       'cid', c.cid, 'cid_full', _cfull(c), 'name', c.name, 'form', c.form, 'kind', c.kind, 'description', c.description, 'status', c.status, 'reason', c.reason,
@@ -3326,7 +3400,7 @@ end $$;
 -- 求人の一覧（だれでも）
 create or replace function public.job_list(p_q text) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); q text := btrim(coalesce(p_q, ''));
+declare u uuid := _me_g(); q text := btrim(coalesce(p_q, ''));
 begin
   return (select coalesce(jsonb_agg(z order by z.id desc), '[]'::jsonb) from (
     select j.id, j.title, j.description, j.wage, j.contact, c.name company, c.cid, c.kind, c.form,
@@ -3423,7 +3497,7 @@ end $$;
 -- 自分の勤め先
 create or replace function public.my_jobs() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me();
+declare u uuid := _me_g();
 begin
   return jsonb_build_object(
     'members', (select coalesce(jsonb_agg(jsonb_build_object('company', c.name, 'cid', c.cid, 'role', m.role, 'salary', m.salary,
@@ -3585,7 +3659,7 @@ $$;
 -- 届いた請求（自分あて＋自分の会社あて）と、出した請求（自分から＋自分の会社から）
 create or replace function public.invoice_list() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me();
+declare u uuid := _me_g();
 begin
   return jsonb_build_object(
     'incoming', (select coalesce(jsonb_agg(_inv_json(i) order by (i.status = 'open') desc, i.id desc), '[]'::jsonb) from (
@@ -3790,7 +3864,7 @@ end $$;
 -- 自分の持ち株
 create or replace function public.my_stocks() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me();
+declare u uuid := _me_g();
 begin
   return jsonb_build_object('stocks', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'form', c.form, 'status', c.status,
            'shares', coalesce(h.shares, 0), 'total', c.shares, 'pct', round((coalesce(h.shares, 0) + h.on_sale) * 100.0 / greatest(c.shares, 1), 2),
@@ -3889,7 +3963,7 @@ $$;
 
 create or replace function public.friend_list() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me();
+declare u uuid := _me_g();
 begin
   return jsonb_build_object(
     'friends', (select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id), 'since', _dlabel(f.created_at)) order by p.nickname), '[]'::jsonb)
@@ -3956,7 +4030,7 @@ end $$;
 -- TL：p_scope = 'friends'（自分とフレンド）か 'all'（みんな）。p_before より前の投稿を30件
 create or replace function public.tl_list(p_scope text, p_before bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me();
+declare u uuid := _me_g();
 begin
   return (select coalesce(jsonb_agg(jsonb_build_object('id', z.id, 'body', z.body, 'at', _dlabel(z.created_at),
             'ts', floor(extract(epoch from z.created_at) * 1000), 'nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id),
@@ -4166,7 +4240,7 @@ drop function if exists public.market_info();
 create or replace function public.market_info() returns jsonb
 language plpgsql security definer set search_path = public as $$
 begin
-  perform _me();
+  perform _me_g();
   return jsonb_build_object('exchanges', _fx_exchanges(),
     'fx', (select _fx_market(c.id) from _fx_pick(null) c where c.id is not null), 'stocks', _stock_list());
 end $$;
@@ -4175,7 +4249,7 @@ end $$;
 drop function if exists public.fx_state();
 create or replace function public.fx_state(p_exch text default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); xc companies := _fx_pick(p_exch);
+declare u uuid := _me_g(); xc companies := _fx_pick(p_exch);
 begin
   return jsonb_build_object('exchanges', _fx_exchanges(), 'exch', case when xc.id is null then null else xc.cid end,
     'market', case when xc.id is null then null else _fx_market(xc.id) end,
@@ -4762,7 +4836,7 @@ $$;
 -- 自分の訴え（訴えたもの・訴えられたもの）
 create or replace function public.court_list() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me();
+declare u uuid := _me_g();
 begin
   return jsonb_build_object(
     'mine', (select coalesce(jsonb_agg(_case_json(cc, u) order by cc.id desc), '[]'::jsonb) from (
@@ -5158,7 +5232,7 @@ end $$;
 -- 自分の借入（全部の銀行）
 create or replace function public.my_loans() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); r record;
+declare u uuid := _me_g(); r record;
 begin
   for r in select id from loans where user_id = u and status = 'active' and due_at < _now() loop perform _loan_accrue(r.id); end loop;
   return (select coalesce(jsonb_agg(_loan_json(l) order by (l.status in ('pending', 'active')) desc, l.id desc), '[]'::jsonb) from (
@@ -7611,7 +7685,7 @@ end $$;
 -- 部屋の一覧（えらんだゲーム。待っている部屋・対局中・自分の部屋）
 create or replace function public.room_list(p_game text) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); r record;
+declare u uuid := _me_g(); r record;
 begin
   -- 1日たっても始まらない部屋は片づける（賭け金は返す）
   for r in select id from game_rooms where status = 'waiting' and created_at < _now() - interval '1 day' order by id for update skip locked loop
@@ -7646,7 +7720,7 @@ create or replace function public.room_create(p_game text, p_title text, p_time_
                                               p_seats int default null, p_stake bigint default 0, p_mode text default 'all', p_opts jsonb default '{}')
 returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); inv uuid; invs uuid[] := '{}'; rid bigint; n int := 2; x text; o jsonb := '{}'; r game_rooms;
+declare u uuid := _me_g(); inv uuid; invs uuid[] := '{}'; rid bigint; n int := 2; x text; o jsonb := '{}'; r game_rooms;
 begin
   if p_game not in ('reversi', 'chess', 'shogi', 'onecard', 'mahjong') then raise exception 'そのゲームはまだ遊べません'; end if;
   if p_time_min is null or p_time_min < 1 or p_time_min > 180 then raise exception '持ち時間は1〜180分（3時間）です'; end if;
@@ -7699,7 +7773,7 @@ end $$;
 -- 部屋に入る（ふたりのゲームは、そろったら始まる。4人までのゲームは、席がうまったら始まる）
 create or replace function public.room_join(p_room bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); r game_rooms; s uuid[];
+declare u uuid := _me_g(); r game_rooms; s uuid[];
 begin
   select * into r from game_rooms where id = p_room for update;
   if not found or r.status <> 'waiting' then raise exception 'この部屋にはもう入れません'; end if;
@@ -7731,7 +7805,7 @@ end $$;
 -- 主催が始める（p_cpu：空いている席にコンピューターを入れる。false なら、いまいる人だけ＝ワンカードだけ）
 create or replace function public.room_start(p_room bigint, p_cpu boolean) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); r game_rooms;
+declare u uuid := _me_g(); r game_rooms;
 begin
   select * into r from game_rooms where id = p_room for update;
   if not found or r.status <> 'waiting' or not _is_multi(r.game) then raise exception '始められる部屋が見つかりません'; end if;
@@ -7748,7 +7822,7 @@ end $$;
 -- 部屋を出る（始まる前だけ。主催が出ると部屋はなくなる。賭けは返す）
 create or replace function public.room_leave(p_room bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); r game_rooms; amt bigint;
+declare u uuid := _me_g(); r game_rooms; amt bigint;
 begin
   select * into r from game_rooms where id = p_room and status = 'waiting' and u = any(seats) for update;
   if not found then raise exception '出られる部屋が見つかりません（始まったあとは「投了」か「抜ける」）'; end if;
@@ -7768,7 +7842,7 @@ end $$;
 -- 対局中に抜ける（そのあとはコンピューターが代わりに打つ。賭け金はそのまま）
 create or replace function public.room_quit(p_room bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); r game_rooms; me int;
+declare u uuid := _me_g(); r game_rooms; me int;
 begin
   perform _room_tick(p_room);
   select * into r from game_rooms where id = p_room for update;
@@ -7786,7 +7860,7 @@ end $$;
 -- 部屋のようす（観戦もこれ）
 create or replace function public.room_state(p_room bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); r game_rooms;
+declare u uuid := _me_g(); r game_rooms;
 begin
   perform _room_tick(p_room);
   select * into r from game_rooms where id = p_room;
@@ -7810,7 +7884,7 @@ end $$;
 -- 手を指す・カードを出す・牌を打つ
 create or replace function public.room_move(p_room bigint, p_move jsonb) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); r game_rooms; me int; used int; ns jsonb; left_ms int;
+declare u uuid := _me_g(); r game_rooms; me int; used int; ns jsonb; left_ms int;
 begin
   if exists (select 1 from game_rooms where id = p_room and _is_multi(game)) then
     perform _mroom_move(p_room, u, p_move);
@@ -7836,7 +7910,7 @@ end $$;
 -- 投了
 create or replace function public.room_resign(p_room bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); r game_rooms; me int;
+declare u uuid := _me_g(); r game_rooms; me int;
 begin
   select * into r from game_rooms where id = p_room for update;
   if not found or r.status <> 'playing' then raise exception 'この対局はもう終わっています'; end if;
@@ -7850,7 +7924,7 @@ end $$;
 -- 引き分けの申し出（offer）・受ける（accept）・断る／取り消す（decline）
 create or replace function public.room_draw(p_room bigint, p_action text) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); r game_rooms; me int;
+declare u uuid := _me_g(); r game_rooms; me int;
 begin
   select * into r from game_rooms where id = p_room for update;
   if not found or r.status <> 'playing' then raise exception 'この対局はもう終わっています'; end if;
@@ -7872,7 +7946,7 @@ end $$;
 -- 観戦して賭ける（勝つと思う席に。登録から7日たってから）
 create or replace function public.room_bet(p_room bigint, p_seat int, p_amount bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); r game_rooms; made timestamptz;
+declare u uuid := _me_g(); r game_rooms; made timestamptz;
 begin
   select * into r from game_rooms where id = p_room for update;
   if not found or r.status not in ('waiting', 'playing') then raise exception 'この対局にはもう賭けられません'; end if;
@@ -7894,7 +7968,7 @@ end $$;
 -- チャット（10秒に1回・100文字まで）
 create or replace function public.room_chat(p_room bigint, p_body text) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); b text := btrim(coalesce(p_body, ''));
+declare u uuid := _me_g(); b text := btrim(coalesce(p_body, ''));
 begin
   if not exists (select 1 from game_rooms where id = p_room) then raise exception '部屋が見つかりません'; end if;
   if char_length(b) < 1 then raise exception '何か書いてください'; end if;
@@ -7977,7 +8051,7 @@ $$;
 -- 一覧（新聞・本）
 create or replace function public.pub_list(p_kind text, p_q text) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); q text := btrim(coalesce(p_q, ''));
+declare u uuid := _me_g(); q text := btrim(coalesce(p_q, ''));
 begin
   return (select coalesce(jsonb_agg(_pub_json(p, u) order by p.updated_at desc), '[]'::jsonb) from (
     select * from pubs p where p.kind = p_kind and (p.status = 'active' or (p.status <> 'deleted' and _pub_mine(p, u)))
@@ -7989,7 +8063,7 @@ end $$;
 -- ニュース（新聞の無料の記事）
 create or replace function public.news_list() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me();
+declare u uuid := _me_g();
 begin
   return (select coalesce(jsonb_agg(jsonb_build_object('id', z.id, 'title', z.title, 'pub_id', z.pub_id, 'paper', z.paper,
             'by', z.cname, 'official', z.official, 'ai', z.ai,
@@ -8008,7 +8082,7 @@ end $$;
 -- 新聞・本のページ（記事・章の一覧）
 create or replace function public.pub_page(p_id bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); p pubs; rd boolean;
+declare u uuid := _me_g(); p pubs; rd boolean;
 begin
   select * into p from pubs where id = p_id;
   if not found or (p.status <> 'active' and not (_pub_mine(p, u) and p.status <> 'deleted') and not _is_staff(u)
@@ -8026,7 +8100,7 @@ end $$;
 -- 読む
 create or replace function public.pub_read(p_item bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); i pub_items; p pubs;
+declare u uuid := _me_g(); i pub_items; p pubs;
 begin
   select * into i from pub_items where id = p_item;
   if not found then raise exception '見つかりません'; end if;
@@ -8154,7 +8228,7 @@ end $$;
 -- 自分の本棚（買った本・購読中の新聞）と、書いているもの
 create or replace function public.my_pubs() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me();
+declare u uuid := _me_g();
 begin
   return jsonb_build_object(
     'library', (select coalesce(jsonb_agg(_pub_json(p, u) order by p.updated_at desc), '[]'::jsonb)
@@ -8194,7 +8268,7 @@ language sql set search_path = public as $$
 -- 通知の一覧（p_before より前を30件）。p_read = true なら、出したものを既読にする
 create or replace function public.notice_list(p_before bigint, p_read boolean) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); res jsonb; ids bigint[]; cut bigint;
+declare u uuid := _me_g(); res jsonb; ids bigint[]; cut bigint;
 begin
   select coalesce(jsonb_agg(jsonb_build_object('id', z.id, 'body', z.body, 'new', not z.seen, 'at', _dlabel(z.created_at),
            'time', to_char(z.created_at at time zone 'Asia/Tokyo', 'HH24:MI'), 'link', z.link,
@@ -8211,7 +8285,7 @@ end $$;
 -- 未読の数と、いちばん新しい通知（ベルの数字・この端末への通知に使う）
 create or replace function public.notice_count() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); n record;
+declare u uuid := _me_g(); n record;
 begin
   select id, body into n from notices where user_id = u order by id desc limit 1;
   return jsonb_build_object('unread', (select count(*) from notices where user_id = u and not seen), 'latest', n.id, 'latest_body', n.body,
@@ -8222,7 +8296,7 @@ end $$;
 
 create or replace function public.notice_read_all() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me();
+declare u uuid := _me_g();
 begin
   update notices set seen = true where user_id = u and not seen;
   return jsonb_build_object('unread', 0);
@@ -8264,7 +8338,7 @@ language sql stable set search_path = public as $$
 
 create or replace function public.people_search(p_q text) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); q text := btrim(coalesce(p_q, '')); lk text;
+declare u uuid := _me_g(); q text := btrim(coalesce(p_q, '')); lk text;
 begin
   if q = '' then   -- 何も入れないとき：フレンド
     return (select coalesce(jsonb_agg(_person_card(p, u) order by p.nickname), '[]'::jsonb) from (
@@ -8273,13 +8347,13 @@ begin
   q := ltrim(q, '@');
   lk := '%' || replace(replace(replace(q, '\', '\\'), '%', '\%'), '_', '\_') || '%';
   return (select coalesce(jsonb_agg(_person_card(p, u) order by (p.account_no = q) desc, _is_friend(u, p.id) desc, p.nickname), '[]'::jsonb) from (
-            select * from profiles p where (p.account_no = q or p.nickname ilike lk) and p.ai is null
+            select * from profiles p where (p.account_no = q or p.nickname ilike lk) and p.ai is null and not _is_guest(p.id)
              order by (p.account_no = q) desc, p.nickname limit 30) p);
 end $$;
 
 create or replace function public.person_page(p_uid text) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); p profiles;
+declare u uuid := _me_g(); p profiles;
 begin
   select * into p from profiles where account_no = ltrim(btrim(coalesce(p_uid, '')), '@');
   if not found then raise exception 'その人は見つかりません'; end if;
@@ -8357,7 +8431,7 @@ language sql stable set search_path = public as $$
 
 create or replace function public.review_state() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); wk date := _week_start(_now()); made timestamptz;
+declare u uuid := _me_g(); wk date := _week_start(_now()); made timestamptz;
 begin
   select coalesce(ok7_at - interval '7 days', created_at) into made from profiles where id = u;
   return jsonb_build_object('week', to_char(wk, 'FMMM"月"FMDD"日"') || '〜' || to_char(wk + 6, 'FMMM"月"FMDD"日"'),
@@ -8731,7 +8805,7 @@ $$;
 -- メッセージの一覧（相手ごと）と、送れる相手（フレンド）
 create or replace function public.dm_list() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me();
+declare u uuid := _me_g();
 begin
   return jsonb_build_object(
     'threads', (select coalesce(jsonb_agg(z.j order by z.last_at desc), '[]'::jsonb) from (
@@ -8751,7 +8825,7 @@ end $$;
 -- 相手とのやりとり（新しい200通。開くと既読）
 create or replace function public.dm_thread(p_uid text) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); pr profiles; t dm_threads; mx bigint;
+declare u uuid := _me_g(); pr profiles; t dm_threads; mx bigint;
 begin
   select * into pr from profiles where account_no = btrim(coalesce(p_uid, '')) and ai is null;
   if not found or pr.id = u then raise exception '相手が見つかりません'; end if;
@@ -8810,7 +8884,7 @@ $$;
 -- 問い合わせの一覧（自分のもの。管理者には、みんなからの問い合わせも）
 create or replace function public.support_list() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); adm boolean := _is_admin(u);
+declare u uuid := _me_g(); adm boolean := _is_admin(u);
 begin
   return jsonb_build_object('admin', adm,
     'threads', (select coalesce(jsonb_agg(_sp_json(t, 'user') order by (t.status = 'open') desc, t.last_at desc), '[]'::jsonb)
@@ -8822,7 +8896,7 @@ end $$;
 -- 問い合わせのやりとり（開くと既読）
 create or replace function public.support_thread(p_id bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); t support_threads; side text; mx bigint;
+declare u uuid := _me_g(); t support_threads; side text; mx bigint;
 begin
   select * into t from support_threads where id = p_id;
   if not found then raise exception '問い合わせが見つかりません'; end if;
@@ -9103,7 +9177,7 @@ end $$;
 -- 相談の一覧（p_cid が空なら自分が出した相談、会社のIDなら会社の窓口）
 create or replace function public.desk_list(p_cid text) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); c companies;
+declare u uuid := _me_g(); c companies;
 begin
   if btrim(coalesce(p_cid, '')) = '' then
     return jsonb_build_object('side', 'user',
@@ -9166,7 +9240,8 @@ language sql stable set search_path = public as $$
     'banned_until', case when p.banned_until > _now() then to_char(p.banned_until at time zone 'Asia/Tokyo', 'YYYY/MM/DD HH24:MI') end,
     'debt', case when adm then _debt(p.id) > 0 end,
     'new', _now() < p.created_at + interval '7 days',
-    'corps', (select count(*) from companies c where c.owner = p.id and c.status in ('pending', 'active', 'suspended')))
+    'corps', (select count(*) from companies c where c.owner = p.id and c.status in ('pending', 'active', 'suspended')),
+    'guest', (select to_char(_guest_until(g.id) at time zone 'Asia/Tokyo', 'YYYY/MM/DD HH24:MI') from guests g where g.id = p.id))
 $$;
 
 create or replace function public.admin_users(p_q text, p_filter text, p_offset int) returns jsonb
@@ -9185,6 +9260,7 @@ begin
                   when 'banned' then coalesce(p.banned_until > _now(), false)
                   when 'debt' then _debt(p.id) > 0
                   when 'staff' then _role(p.id) is not null
+                  when 'guest' then exists (select 1 from guests g where g.id = p.id)
                   else true end) z;
   return jsonb_build_object('total', n, 'more', ofs + 50 < n,
     'items', (select coalesce(jsonb_agg(_user_row(p, adm) order by array_position(ids, p.id)), '[]'::jsonb)
@@ -9192,7 +9268,8 @@ begin
     'all', (select count(*) from profiles where ai is null),
     'today', (select count(*) from profiles where ai is null and created_at >= (date_trunc('day', _now() at time zone 'Asia/Tokyo') at time zone 'Asia/Tokyo')),
     'week', (select count(*) from profiles where ai is null and created_at > _now() - interval '7 days'),
-    'active7', (select count(*) from profiles where ai is null and last_seen_at > _now() - interval '7 days'));
+    'active7', (select count(*) from profiles where ai is null and last_seen_at > _now() - interval '7 days'),
+    'guests', (select count(*) from guests));
 end $$;
 
 create or replace function public.admin_user(p_uid text) returns jsonb
@@ -9361,7 +9438,7 @@ create or replace function public.stock_chart(p_cid text, p_span text) returns j
 language plpgsql security definer set search_path = public as $$
 declare c companies; t1 timestamptz := _now(); t0 timestamptz; bk double precision; pts jsonb;
 begin
-  perform _me();
+  perform _me_g();
   select * into c from companies where cid = _cid_norm(p_cid);
   if not found then raise exception '会社が見つかりません'; end if;
   if coalesce(p_span, '') not in ('recent', '1d', '1w', '1m', 'all') then raise exception '期間が正しくありません'; end if;
@@ -9386,7 +9463,7 @@ end $$;
 -- メインのメニューのウィジェット：新着ニュース（無料の新聞記事の新しい5本）・株価の一覧・会社ごとの株価（1日の動き）
 create or replace function public.home_widgets(p_news boolean, p_stocks boolean, p_cids text[]) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me();
+declare u uuid := _me_g();
 begin
   return jsonb_build_object(
     'news', case when coalesce(p_news, false) then (select coalesce(jsonb_agg(jsonb_build_object('id', z.id, 'title', z.title, 'paper', z.paper, 'ai', z.ai,
@@ -9421,7 +9498,7 @@ create or replace function public.stock_list() returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare ex companies := _stock_exch();
 begin
-  perform _me();
+  perform _me_g();
   return jsonb_build_object('stocks', _stock_list(), 'exch', case when ex.id is null then null
            else jsonb_build_object('cid', ex.cid, 'name', ex.name, 'open', ex.status = 'active', 'fee_pct', ex.fx_fee) end);
 end $$;
@@ -9429,7 +9506,7 @@ end $$;
 -- 1つの株の画面（相場＋自分の持ち株・注文）
 create or replace function public.stock_state(p_cid text) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); c companies; ex companies := _stock_exch(); me profiles;
+declare u uuid := _me_g(); c companies; ex companies := _stock_exch(); me profiles;
 begin
   select * into c from companies where cid = _cid_norm(p_cid);
   if not found or c.status not in ('active', 'suspended') or not (c.listed or exists (select 1 from stock_trades where company_id = c.id)) then
@@ -9722,7 +9799,7 @@ create index if not exists pub_items_time_idx on public.pub_items(created_at);
 
 create or replace function public.info_today(p_day date default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); today date := _kb_jday(_now()); d date := coalesce(p_day, _kb_jday(_now()));
+declare u uuid := _me_g(); today date := _kb_jday(_now()); d date := coalesce(p_day, _kb_jday(_now()));
   t0 timestamptz; t1 timestamptz; fx companies; ex companies := _stock_exch(); fxj jsonb;
 begin
   if d > today or d < today - 30 then raise exception '見られるのは、きょうから30日前までです'; end if;
@@ -11014,6 +11091,222 @@ begin
            'before', iv.before_p, 'after', iv.after_p, 'kind', iv.kind, 'side', iv.side));
 end $$;
 
+
+-- =====================================================================
+-- ゲスト（メールアドレス＋数字4けたのパスワードで、メールの確認なしで始める）
+--   ・はじめるとき：guest_signup（ログインなしで呼べる）でアカウントをつくり、画面がそのメールと数字4けたでログインする
+--     作りすぎ防止：同じ回線から1日5人まで・サイト全体で1時間60人まで
+--   ・31日で消える。5日間ログインしない（サイトを開かない・遊ばない）と、その前に消える（10分ごとに _guest_purge）
+--     消えると、所持金・記録もなくなる（対戦の部屋にいるあいだは、終わるまで待つ）
+--   ・本登録：メールのリンクでログインする（＝メールを確認できた）と、所持金・記録のまま、ふつうの登録になる
+--     数字4けたのパスワードは使えなくなる（6文字以上のパスワードを決めてもらう）
+--   ・ゲストのあいだ：所持金は40,000 Xまで（こえた分は受け取れない）・賭け金は1回100 Xまで・送金は5日間で2,000 Xまで
+--     はじめてから7日は送金できない（app_settings の guest_wait7 を 0 にすると、すぐ送れる）・送金は受け取れない
+--     税金・給付金の対象外・競馬億万長者や人数・人さがしには出ない
+--   ・消えたゲストの所持金と、上限をこえて受け取れなかった分は、運営（ID 76705）へ
+-- =====================================================================
+-- いまの回線（作りすぎ防止に使う。わからなければ null）
+create or replace function public._req_ip() returns text
+language plpgsql stable set search_path = public as $$
+declare h jsonb;
+begin
+  begin
+    h := nullif(current_setting('request.headers', true), '')::jsonb;
+  exception when others then return null;
+  end;
+  if h is null then return null; end if;
+  return left(coalesce(nullif(btrim(h->>'cf-connecting-ip'), ''), nullif(btrim(split_part(h->>'x-forwarded-for', ',', 1)), ''),
+                       nullif(btrim(h->>'x-real-ip'), '')), 64);
+end $$;
+
+-- ゲストの状態（画面用）。ゲストでなければ null
+create or replace function public._guest_json(u uuid) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare g guests; s bigint; w timestamptz; t timestamptz;
+begin
+  select * into g from guests where id = u;
+  if not found then return null; end if;
+  s := _guest_sent5(u);
+  t := _guest_until(u);
+  w := case when coalesce((select value from app_settings where key = 'guest_wait7'), '1') = '1' and _now() < g.created_at + interval '7 days'
+            then g.created_at + interval '7 days' end;
+  return jsonb_build_object(
+    'email', (select email from auth.users where id = u),
+    'end', g.created_at + interval '31 days', 'end_l', to_char((g.created_at + interval '31 days') at time zone 'Asia/Tokyo', 'FMMM"月"FMDD"日" HH24:MI'),
+    'until', t, 'until_l', to_char(t at time zone 'Asia/Tokyo', 'FMMM"月"FMDD"日" HH24:MI'),
+    'cap', 40000, 'bet_cap', 100, 'send_cap', 2000, 'sent5', s, 'send_left', greatest(2000 - s, 0),
+    'send_from', w, 'send_from_l', case when w is not null then to_char(w at time zone 'Asia/Tokyo', 'FMMM"月"FMDD"日" HH24:MI') end);
+end $$;
+
+-- ゲストの送金の制限（ゲストでなければ何もしない）
+create or replace function public._guest_send_check(u uuid, amt bigint) returns void
+language plpgsql stable set search_path = public as $$
+declare g guests; s bigint;
+begin
+  select * into g from guests where id = u;
+  if not found then return; end if;
+  if coalesce((select value from app_settings where key = 'guest_wait7'), '1') = '1' and _now() < g.created_at + interval '7 days' then
+    raise exception 'ゲストは、はじめてから7日たつまで送金できません（%から送れます）',
+      to_char((g.created_at + interval '7 days') at time zone 'Asia/Tokyo', 'FMMM"月"FMDD"日" HH24:MI');
+  end if;
+  s := _guest_sent5(u);
+  if s + coalesce(amt, 0) > 2000 then
+    raise exception 'ゲストの送金は5日間で2,000 Xまでです（いま送れるのは % Xまで）', _fmt(greatest(2000 - s, 0));
+  end if;
+end $$;
+
+-- ゲストをはじめる（ログインなしで呼ぶ）。メールの確認はしない（メールも送らない）
+create or replace function public.guest_signup(p_email text, p_pin text) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare e text := lower(btrim(coalesce(p_email, ''))); pin text := btrim(coalesce(p_pin, '')); v_ip text := _req_ip(); u uuid := gen_random_uuid();
+begin
+  if char_length(e) > 200 or e !~ '^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$' then
+    raise exception 'メールアドレスが正しくありません';
+  end if;
+  if pin !~ '^[0-9]{4}$' then raise exception 'パスワードは数字4けたにしてください'; end if;
+  perform pg_advisory_xact_lock(7600);
+  if exists (select 1 from auth.users where lower(email) = e) then
+    raise exception 'このメールアドレスは、もう使われています。上の「ログイン」から入ってください';
+  end if;
+  if v_ip is not null and (select count(*) from guest_signups where ip = v_ip and at > _now() - interval '1 day') >= 5 then
+    raise exception 'この回線からは、きょうはもうゲストを作れません（1日5人まで）。あしたまた試してください';
+  end if;
+  if (select count(*) from guest_signups where at > _now() - interval '1 hour') >= 60 then
+    raise exception 'いまゲストの登録が混みあっています。しばらくしてから試してください';
+  end if;
+  insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
+                          created_at, updated_at, confirmation_token, recovery_token, email_change_token_new, email_change,
+                          email_change_token_current, phone_change, phone_change_token, reauthentication_token)
+  values ('00000000-0000-0000-0000-000000000000', u, 'authenticated', 'authenticated', e, crypt(pin, gen_salt('bf', 10)), now(),
+          '{"provider": "email", "providers": ["email"]}'::jsonb,
+          jsonb_build_object('sub', u::text, 'email', e, 'email_verified', false, 'phone_verified', false),
+          now(), now(), '', '', '', '', '', '', '', '');
+  insert into auth.identities (provider_id, user_id, identity_data, provider, last_sign_in_at, created_at, updated_at)
+  values (u::text, u, jsonb_build_object('sub', u::text, 'email', e, 'email_verified', false, 'phone_verified', false), 'email', now(), now(), now());
+  insert into guests(id, created_at, ip) values (u, _now(), v_ip);
+  insert into guest_signups(ip, at) values (v_ip, _now());
+  return jsonb_build_object('ok', true, 'email', e);
+exception when unique_violation then
+  raise exception 'このメールアドレスは、もう使われています。上の「ログイン」から入ってください';
+end $$;
+
+-- ゲストのメールアドレスを直す（まちがえて入れたとき。本登録の前だけ）
+create or replace function public.guest_set_email(p_email text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); e text := lower(btrim(coalesce(p_email, '')));
+begin
+  if not exists (select 1 from guests where id = u) then raise exception 'ゲストのときだけ直せます'; end if;
+  if char_length(e) > 200 or e !~ '^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$' then
+    raise exception 'メールアドレスが正しくありません';
+  end if;
+  if exists (select 1 from auth.users where lower(email) = e and id <> u) then raise exception 'このメールアドレスは、もう使われています'; end if;
+  update auth.users set email = e, updated_at = now(),
+         raw_user_meta_data = coalesce(raw_user_meta_data, '{}'::jsonb) || jsonb_build_object('email', e) where id = u;
+  update auth.identities set identity_data = identity_data || jsonb_build_object('email', e), updated_at = now()
+   where user_id = u and provider = 'email';
+  return jsonb_build_object('email', e, 'guest', _guest_json(u));
+exception when unique_violation then
+  raise exception 'このメールアドレスは、もう使われています';
+end $$;
+
+-- 本登録：ゲストがメールのリンクで入った（_mail_seen が記録した）なら、ふつうの登録にする。したら true
+create or replace function public._guest_verify(u uuid) returns boolean
+language plpgsql security definer set search_path = public, extensions as $$
+declare g guests; mv timestamptz;
+begin
+  select * into g from guests where id = u for update;
+  if not found then return false; end if;
+  select mail_verified_at into mv from profiles where id = u;
+  if mv is null or mv < g.created_at - interval '1 minute' then return false; end if;
+  delete from guests where id = u;
+  update profiles set nickname = 'プレイヤー' || substr(nickname, 4) where id = u and nickname ~ '^ゲスト[0-9]{4}$';
+  -- 数字4けたのパスワードは使えなくする（6文字以上を決めてもらう）
+  update auth.users set encrypted_password = crypt(gen_random_uuid()::text, gen_salt('bf', 10)), updated_at = now(),
+         raw_user_meta_data = coalesce(raw_user_meta_data, '{}'::jsonb) || '{"email_verified": true}'::jsonb
+   where id = u;
+  update auth.identities set identity_data = identity_data || '{"email_verified": true}'::jsonb, updated_at = now()
+   where user_id = u and provider = 'email';
+  perform _notice(u, '【本登録】メールを確認できたので、本登録になりました（所持金と記録はそのままです）。数字4けたのパスワードは使えなくなりました。設定 → プロフィール で、新しいパスワード（6文字以上）を決めてください。');
+  return true;
+end $$;
+
+-- ゲストの所持金は40,000 Xまで：こえた分は受け取れない（どこから入ってきても、ここで止める）
+create or replace function public._guest_cap_trg() returns trigger
+language plpgsql set search_path = public as $$
+declare x bigint;
+begin
+  if not exists (select 1 from guests where id = new.id) then return new; end if;
+  x := new.balance - greatest(old.balance, 40000);
+  if x > 0 then
+    new.balance := new.balance - x;
+    insert into guest_overflow(user_id, amount, kind) values (new.id, x, 'cap');
+    if not exists (select 1 from notices where user_id = new.id and body like '【ゲスト】所持金は40,000 Xまで%' and created_at > _now() - interval '1 hour') then
+      insert into notices(user_id, body)
+      values (new.id, format('【ゲスト】所持金は40,000 Xまでです。こえた %s X は受け取れませんでした。本登録すると上限はなくなります（設定 → プロフィール）。', _fmt(x)));
+    end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists profiles_guest_cap on public.profiles;
+create trigger profiles_guest_cap before update of balance on public.profiles
+  for each row when (new.balance > 40000 and new.balance > old.balance) execute function public._guest_cap_trg();
+
+-- 運営（ID 76705。いなければ最初の管理者）
+create or replace function public._sink_user() returns uuid
+language sql stable set search_path = public as $$
+  select coalesce((select id from profiles where account_no = '76705' and ai is null),
+                  (select p.id from profiles p where p.id in (select * from _admin_ids()) order by p.created_at limit 1))
+$$;
+
+-- 上限をこえた分・消えたゲストの残りを、運営へ
+create or replace function public._guest_flush() returns bigint
+language plpgsql set search_path = public as $$
+declare s uuid := _sink_user(); t bigint; n int;
+begin
+  if s is null then return 0; end if;
+  with d as (delete from guest_overflow returning amount) select coalesce(sum(amount), 0)::bigint, count(*) into t, n from d;
+  if t > 0 then
+    perform _give(s, t);
+    perform _log(s, 'guest_rest', 0, t, jsonb_build_object('n', n));
+  end if;
+  return t;
+end $$;
+
+-- 期限の切れたゲストを消す（10分ごと）。消した数を返す
+create or replace function public._guest_purge() returns int
+language plpgsql security definer set search_path = public as $$
+declare g record; n int := 0; b bigint;
+begin
+  if not pg_try_advisory_xact_lock(7601) then return -1; end if;
+  for g in select x.id from guests x
+            where x.created_at <= _now() - interval '31 days' or _guest_last(x.id) <= _now() - interval '5 days'
+            order by x.created_at limit 200 loop
+    -- 対戦の部屋（はじまる前・対戦中）にいる・賭けているあいだは、終わるまで待つ
+    if exists (select 1 from game_rooms r where r.status in ('waiting', 'playing') and (r.host = g.id or g.id = any(r.seats)))
+       or exists (select 1 from game_bets b2 join game_rooms r on r.id = b2.room_id where b2.user_id = g.id and r.status in ('waiting', 'playing')) then
+      continue;
+    end if;
+    begin
+      select balance into b from profiles where id = g.id for update;
+      if coalesce(b, 0) > 0 then insert into guest_overflow(user_id, amount, kind) values (g.id, b, 'left'); end if;
+      delete from auth.users where id = g.id;      -- プロフィール・記録なども、いっしょに消える
+      n := n + 1;
+    exception when others then
+      raise warning 'guest purge failed (%): %', g.id, sqlerrm;
+    end;
+  end loop;
+  perform _guest_flush();
+  delete from guest_signups where at < _now() - interval '3 days';
+  return n;
+end $$;
+
+do $$
+begin
+  if exists (select 1 from pg_namespace where nspname = 'cron') then
+    perform cron.schedule('ailinax-guest', '*/10 * * * *', 'select public._guest_purge()');
+  end if;
+end $$;
+
 -- ---------------------------------------------------------------------
 -- 実行権限：内部用（_ではじまる）は画面から呼べないようにする
 -- ---------------------------------------------------------------------
@@ -11078,7 +11371,9 @@ begin
             '_ai_setup','_ai_add_investors','_ai_tick','_fx_exec','_stock_width_x','_ai_buzz_target','_ai_fair_p','_ai_found','_ok7_ins','_stock_last','_stock_cancel_all','stock_split','admin_stock_reprice','admin_gov_share_give','admin_ai_news','_gov_uid','_gov_sweep','_fx_last','admin_iv_state','admin_intervene','_ai_err','admin_ai','admin_ai_set','admin_ai_fund',
             'stock_order','stock_cancel','stock_list_apply','stock_list_withdraw','admin_stock_decide','admin_stock_delist','_unlock_orders',
             '_kb_wx','admin_kb_extras','admin_kb_extra','admin_kb_extra_cancel','banner_list','admin_banners','admin_banner_save','admin_banner_end',
-            'prefs_save','_admin_ids','_msg_unread','dm_list','dm_thread','dm_send','_sp_json','support_list','support_thread','support_open','support_send','support_close',
+            'prefs_save','_admin_ids','_msg_unread','_is_guest','_me_g',
+            '_guest_last','_guest_until','_guest_sent5','_guest_json','_guest_send_check','_guest_verify','_guest_cap_trg','_sink_user','_guest_flush',
+            '_guest_purge','_req_ip','guest_signup','guest_set_email','dm_list','dm_thread','dm_send','_sp_json','support_list','support_thread','support_open','support_send','support_close',
             'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
@@ -11100,3 +11395,5 @@ begin
     if left(f.proname, 1) = '_' then execute format('revoke all on function %s from authenticated', f.sig); end if;
   end loop;
 end $$;
+-- ゲストをはじめるのは、ログインの前（だれでも）
+grant execute on function public.guest_signup(text, text) to anon, authenticated;

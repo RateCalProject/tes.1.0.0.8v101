@@ -43,6 +43,9 @@ input{font:inherit;color:inherit}
 header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
 header .wrap{display:flex;align-items:center;gap:12px;height:52px}
 .bnbar{border-bottom:1px solid var(--line)}
+.guestbar{background:var(--soft);border-bottom:1px solid var(--line);font-size:12.5px}
+.guestbar .wrap{display:flex;align-items:center;gap:10px;padding-top:7px;padding-bottom:7px}
+.guestbar span{flex:1;min-width:0}
 .bn-item{display:flex;align-items:flex-start;gap:8px;padding:8px 16px;font-size:13px;line-height:1.5}
 .bn-item+.bn-item{border-top:1px solid var(--line)}
 .bn-row.info{background:color-mix(in srgb,var(--accent) 13%,var(--panel))}
@@ -235,6 +238,10 @@ h3{font-size:15px;margin:16px 0 8px}
 .game-row .nm small{display:block;color:var(--muted);margin-top:2px}
 .game-row .go{color:var(--muted);font-size:20px}
 .game-row.soon{opacity:.55;cursor:default}
+.game-sec{display:flex;align-items:baseline;gap:8px;padding:16px 0 4px;border-top:1px solid var(--line)}
+.game-sec:first-child{border-top:0;padding-top:8px}
+.game-sec b{font-size:15px}.game-sec small{color:var(--muted);font-size:12px}
+.game-sec + .game-row{border-top:0}
 .chb{display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);width:min(100%,420px);aspect-ratio:1;border:3px solid #6B4A2B;border-radius:6px;overflow:hidden;margin:0 auto}
 .chb .c{min-height:0;min-width:0;overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative;font-size:min(9.4vw,42px);line-height:1;user-select:none}
 .chb .c.l{background:#EED9B6}.chb .c.d{background:#B58863}
@@ -614,7 +621,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：English をえらんだ端末では、英語の辞書（i18n/en.js）を先に読みこむ */
-  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=910d0a86"><\/script>'); } } catch (e) {}
+  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=e210ecd5"><\/script>'); } } catch (e) {}
 })();
 </script>
 </head>
@@ -625,6 +632,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   <div class="bal hidden" id="bal"><b class="num" id="balNum">0</b><span>X</span></div>
 </div></header>
 <div class="bnbar hidden" id="bnBar"></div>
+<div class="guestbar hidden" id="guestBar"><div class="wrap"><span id="guestBarTx">ゲストで遊んでいます。</span><button class="btn s main" id="guestReg" type="button">本登録する</button></div></div>
 
 <main class="wrap">
 <div class="tabs-s subnav hidden" id="subNav"></div>
@@ -812,10 +820,21 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   <div class="seg" id="lgMode"><button type="button" data-k="pw" class="on">パスワード</button><button type="button" data-k="link">メールのリンク</button></div>
   <form id="mailForm" class="mailform">
     <input type="email" id="mail" required autocomplete="email" placeholder="メールアドレス">
-    <input type="password" id="pass" autocomplete="current-password" placeholder="パスワード（6文字以上）">
+    <input type="password" id="pass" autocomplete="current-password" placeholder="パスワード（ゲストは数字4けた）">
     <button class="btn main big" id="mailBtn" type="submit">ログイン</button>
     <button class="btn" id="signupBtn" type="button">はじめての人：このメールとパスワードで登録する</button>
   </form>
+  <div class="mailform" id="guestBox">
+    <div class="oauth-or">または</div>
+    <button class="btn big" id="guestBtn" type="button">ゲストではじめる（メールの確認なし）</button>
+    <form id="guestForm" class="mailform hidden">
+      <input type="email" id="gMail" autocomplete="email" placeholder="メールアドレス（確認なし）">
+      <input type="password" id="gPin" inputmode="numeric" maxlength="4" autocomplete="new-password" placeholder="パスワード（数字4けた）">
+      <button class="btn main big" id="gStart" type="submit">ゲストではじめる</button>
+    </form>
+    <p class="muted small" style="margin:0">メールアドレスと数字4けたのパスワードを決めるだけで、すぐ遊べます（1,000 X つき）。次からは、上の「ログイン」にそのメールと数字4けたを入れて入れます。</p>
+    <p class="muted small" style="margin:0">ゲストは31日で消えます（5日間ログインしないと、その前に消えます）。消える前に本登録（メールの確認）をすると、そのまま続けられます。ゲストのあいだは、所持金は40,000 Xまで・賭け金は1回100 Xまで・送金は5日間で2,000 Xまでです（はじめて7日は送金できません）。</p>
+  </div>
   <p class="notice small hidden" id="mailSent"></p>
   <p class="notice small"><b>AiliNaX は現金・物・電子マネーなどと交換できません。</b>現金での売買や、その持ちかけも禁止です。ゲーム内アイテム（マイクラのブロックなど）との取引はOKです。</p>
   <p class="links small"><a href="battle/">付属ゲーム：市区町村バトル（ログインなしで遊べます）</a></p>
@@ -1062,12 +1081,22 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <div class="seg sm" id="numF"><button data-k="comma">1,234,567</button><button data-k="jp">123万4567</button><button data-k="four">123&#8239;4567</button></div>
     <p class="muted small" id="numFEx" style="margin:6px 0 0"></p>
   </div>
+  <div class="card hidden" data-sub="prof" id="guestCard">
+    <h3 style="margin-top:0">本登録する（メールの確認）</h3>
+    <p class="small" style="margin:0 0 8px" id="guestLeft"></p>
+    <p class="small" style="margin:0 0 8px">本登録すると、<b>いまの所持金と記録のまま</b>続けられ、株・会社・TLなども使えるようになります。所持金・賭け金・送金の上限もなくなります。</p>
+    <div class="row"><span class="grow small" style="min-width:0;word-break:break-all">メール： <b id="guestMailNow" translate="no"></b></span><button class="btn main" id="guestVerify" type="button">確認メールを送る</button></div>
+    <p class="muted small" id="guestMailMsg" style="margin:6px 0 0">届いたメールのリンクを押すと本登録になります（英語のメールです。届かないときは迷惑メールフォルダも見てください）。</p>
+    <details style="margin-top:8px"><summary class="small">メールアドレスをまちがえたとき</summary>
+      <div class="row" style="margin-top:6px"><input id="guestMail" type="email" autocomplete="email" placeholder="正しいメールアドレス" class="grow" style="padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg)"><button class="btn" id="guestMailFix" type="button">直す</button></div>
+    </details>
+  </div>
   <div class="card" data-sub="prof">
     <h3 style="margin-top:0">ニックネーム</h3>
     <div class="row"><input id="nick" maxlength="12" class="grow" style="padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg)"><button class="btn main" id="nickSave">変える</button></div>
     <p class="muted small" style="margin:6px 0 0">TLや競馬億万長者などで、みんなに見えます（所持金は自分にしか見えません）。本名やメールアドレスは入れないでください。</p>
   </div>
-  <div class="card" data-sub="prof">
+  <div class="card" data-sub="prof" id="chkCard">
     <h3 style="margin-top:0">オレンジのチェック <span class="chk">✓</span></h3>
     <div id="chkBox"></div>
     <button class="btn wide" id="mailVerify" style="margin-top:8px">メールで認証する（リンクが届きます）</button>
@@ -1109,7 +1138,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <h3 style="margin-top:0">登録した人</h3>
     <p class="small" id="auSum" style="margin:0 0 6px"></p>
     <input class="inp" id="auQ" placeholder="ID・ニックネームで検索">
-    <div class="seg sm" id="auF" style="margin:4px 0 6px"><button data-k="" class="on">全員</button><button data-k="new">新しい人</button><button data-k="banned">利用停止</button><button data-k="debt">滞納</button><button data-k="staff">管理</button></div>
+    <div class="seg sm" id="auF" style="margin:4px 0 6px"><button data-k="" class="on">全員</button><button data-k="new">新しい人</button><button data-k="banned">利用停止</button><button data-k="debt">滞納</button><button data-k="staff">管理</button><button data-k="guest">ゲスト</button></div>
     <div id="auList"></div>
     <button class="btn wide hidden" id="auMore" style="margin-top:8px">もっと見る</button>
     <p class="muted small" style="margin:8px 0 0">所持金は出しません。メールアドレスと税の滞納は管理者だけに見えます。「新しい人」は登録から7日以内です。</p>
@@ -1242,6 +1271,7 @@ function betBox(el, def) {
   el.querySelectorAll('.chips button').forEach(b => b.onclick = () => {
     const a = b.dataset.a, v = Math.floor(Number(inp.value) || 0);
     inp.value = a === 'x' ? 0 : a === 'all' ? balance : a === 'half' ? Math.max(1, Math.floor(v / 2)) : v + Number(a);
+    if (ME.guest && Number(inp.value) > 100) inp.value = 100;   // ゲストは1回100 Xまで
   });
   return () => Math.floor(Number(inp.value) || 0);
 }
@@ -1273,6 +1303,7 @@ async function boot() {
         ? 'メールの確認がまだです。登録のときに届いたメールのリンクを押してください（届いていなければ迷惑メールフォルダも見てください）。'
         : /invalid/i.test(error.message)
         ? 'メールアドレスかパスワードがちがいます。<br>前に「メールのリンク」で入った人は、まだパスワードがありません。一度「メールのリンク」で入って、設定 → プロフィールでパスワードを決めてください。'
+          + (/^\d{4}$/.test(password) ? '<br>本登録したゲストは、数字4けたのパスワードは使えません。「メールのリンク」で入ってください。ゲストは、5日間ログインしないか、はじめてから31日たつと消えます。' : '')
         : 'エラー：' + esc(error.message));
       return;
     }
@@ -1281,6 +1312,23 @@ async function boot() {
     lgMsg(error
       ? (/rate|limit|seconds/i.test(error.message) ? 'メールを送りすぎています（サイト全体で1時間に2通まで）。少し時間をおくか、パスワードでログインしてください。' : 'エラー：' + esc(error.message))
       : `<b>${esc(email)}</b> にメールを送りました。<br>メールの中の「ログインする」を押すと、この画面にもどってきます。<br>（届かないときは迷惑メールフォルダも見てください）`);
+  };
+  // ゲストではじめる：メールアドレス（確認なし）＋数字4けた → そのままログイン
+  $('#guestBtn').onclick = () => {
+    const f = $('#guestForm'); f.classList.toggle('hidden');
+    if (!f.classList.contains('hidden')) { if (!$('#gMail').value) $('#gMail').value = $('#mail').value.trim(); $('#gMail').focus(); }
+  };
+  $('#guestForm').onsubmit = async ev => {
+    ev.preventDefault();
+    const email = $('#gMail').value.trim(), pin = $('#gPin').value.trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return lgMsg('メールアドレスを入れてください。');
+    if (!/^\d{4}$/.test(pin)) return lgMsg('パスワードは数字4けたにしてください。');
+    $('#gStart').disabled = true;
+    const r = await sb.rpc('guest_signup', { p_email: email, p_pin: pin });
+    if (r.error) { $('#gStart').disabled = false; return lgMsg(esc(r.error.message)); }
+    const { error } = await sb.auth.signInWithPassword({ email, password: pin });
+    $('#gStart').disabled = false;
+    if (error) lgMsg('ゲストはできましたが、ログインできませんでした。上の「ログイン」に、メールアドレスと数字4けたを入れてください。');
   };
   $('#signupBtn').onclick = async () => {
     const email = $('#mail').value.trim(), password = $('#pass').value;
@@ -1308,10 +1356,47 @@ async function boot() {
   });
   const { data } = await sb.auth.getSession();
   if (data.session) enter(); else show('vLogin');
+  if (!data.session && sessionStorageGet('gone')) { try { sessionStorage.removeItem('gone'); } catch (e) {} lgMsg('ゲストの期限が切れたので、消えました（5日間ログインしないか、はじめてから31日たつと消えます）。'); }
   if (oauthErr) { if (data.session) setTimeout(() => toast(oauthErr), 1200); else lgMsg(esc(oauthErr)); }
   sb.auth.onAuthStateChange((ev, s) => { if (ev === 'SIGNED_IN' && !entered) enter(); if (ev === 'SIGNED_OUT') location.reload(); });
 }
 let entered = false, ME = {};
+/* ---------- ゲスト（ログインしないで遊ぶ） ---------- */
+function guestUI() {
+  const g = !!ME.guest, gi = ME.guest_info || {};
+  document.body.classList.toggle('is-guest', g);
+  $('#guestBar').classList.toggle('hidden', !g);
+  $('#guestCard').classList.toggle('hidden', !g);
+  $('#pwCard').classList.toggle('hidden', g);
+  $('#chkCard').classList.toggle('hidden', g);
+  if (g) $('#idCard').classList.add('hidden');
+  if (!g) return;
+  $('#guestBarTx').textContent = gi.end_l ? `ゲストで遊んでいます（${gi.end_l}に消えます。5日間ログインしないと、その前に消えます）` : 'ゲストで遊んでいます。';
+  $('#guestLeft').innerHTML = `このゲストは <b>${esc(gi.end_l || '')}</b> に消えます（はじめてから31日）。5日間ログインしないと、その前に消えます。消えると、所持金と記録もなくなります。`;
+  $('#guestMailNow').textContent = gi.email || '';
+}
+$('#guestReg').onclick = () => { go('vMore', 'prof'); setTimeout(() => $('#guestCard').scrollIntoView({ block: 'center', behavior: 'smooth' }), 150); };
+// 本登録：ゲストのメールにログイン用のリンクを送る（リンクで入る＝メールを確認できた → 本登録）
+$('#guestVerify').onclick = async () => {
+  const email = (ME.guest_info || {}).email, msg = $('#guestMailMsg');
+  if (!email) return toast('メールアドレスがわかりません');
+  if (!sb) return toast('この画面では使えません');
+  $('#guestVerify').disabled = true;
+  const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false, emailRedirectTo: location.origin + location.pathname } });
+  $('#guestVerify').disabled = false;
+  msg.innerHTML = error
+    ? (/rate|limit|seconds/i.test(error.message) ? 'メールを送りすぎています（サイト全体で1時間に2通まで）。少し時間をおいて、もう一度押してください。' : 'エラー：' + esc(error.message))
+    : `<b>${esc(email)}</b> にメールを送りました（英語のメールです）。メールの中のリンクを押すと本登録になり、この画面にもどってきます。届かないときは迷惑メールフォルダも見てください。`;
+};
+$('#guestMailFix').onclick = async () => {
+  const email = $('#guestMail').value.trim();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast('メールアドレスを入れてください');
+  try {
+    const r = await call('guest_set_email', { p_email: email });
+    ME.guest_info = r.guest; guestUI(); $('#guestMail').value = '';
+    toast('メールアドレスを直しました。次からは新しいメールアドレスでログインしてください');
+  } catch (e) { toast(e.message); }
+};
 /* ---------- Google・Discord でログイン ---------- */
 const OAUTH = [['google', 'Google'], ['discord', 'Discord']];
 let AUTHSET = null;
@@ -1359,16 +1444,24 @@ async function idLoad() {
 }
 async function enter() {
   entered = true;
+  let up = false;
   try {
-    const p = await call('ensure_profile');
-    ME = p; ME.prefs = p.prefs || {}; lookFromServer(); setBal(p.balance); $('#nick').value = p.nickname; setTaxDot(p.tax);
+    const p = await call('ensure_profile'); up = !!p.upgraded;
+    ME = p; ME.prefs = p.prefs || {}; guestUI(); lookFromServer(); setBal(p.balance); $('#nick').value = p.nickname; setTaxDot(p.tax);
     if (p.role && !MENU_OF.vMore[3].some(x => x[0] === 'admin')) MENU_OF.vMore[3].push(['admin', '管理']);
     if (p.role === 'admin' && !MENU_OF.vMore[3].some(x => x[0] === 'users')) MENU_OF.vMore[3].push(['users', '登録者']);   // 登録者の情報は管理者だけ
     if (p.role === 'admin') $('#auQ').placeholder = 'ID・ニックネーム・メールで検索'; else { const db = $('#auF [data-k="debt"]'); if (db) db.remove(); }
-  } catch (e) { toast(e.message); show('vLogin'); entered = false; return; }
+  } catch (e) {
+    if (/もうありません/.test(e.message) && sb) { try { sessionStorage.setItem('gone', '1'); } catch (x) {} await sb.auth.signOut({ scope: 'local' }); location.reload(); return; }
+    toast(e.message); show('vLogin'); entered = false; return;
+  }
   if (location.hash.includes('access_token')) history.replaceState(null, '', location.pathname);
   $('#bal').classList.remove('hidden'); $('#tabs').classList.remove('hidden'); $('#bell').classList.remove('hidden'); bellPoll();
   go(sessionStorageGet('view') || 'vHome');
+  if (up) {   // ゲストがメールのリンクで入った → 本登録になった
+    go('vMore', 'prof'); toast('本登録になりました！新しいパスワード（6文字以上）を決めてください');
+    setTimeout(() => $('#pwCard').scrollIntoView({ block: 'center', behavior: 'smooth' }), 300);
+  }
 }
 function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
 const GAMES = ['vGameList', 'vRace', 'vSlot', 'vBj', 'vRou', 'vHilo', 'vLobby', 'vRoom'];
@@ -1463,9 +1556,19 @@ function subStep(d) {
     if (Math.abs(acc) > 150) { subStep(acc > 0 ? 1 : -1); acc = 0; lock = now + 800; }
   }, { passive: true });
 })();
-// 遊戯の一覧
+// 遊戯の一覧（公営競技・ミニゲーム・風の芽製作所・メダカ研究所）
+const GAME_GROUPS = [
+  ['公営競技', '', ['vRace', 'keirin', 'kyotei']],
+  ['ミニゲーム', 'その他', ['vSlot', 'vBj', 'vRou', 'vHilo', 'reversi', 'chess', 'shogi', 'onecard', 'mahjong']],
+  ['風の芽製作所', 'オリジナル', ['battle']],
+  ['メダカ研究所', '', ['medaka']],
+];
 const GAME_LIST = [
   ['vRace', '🏇', '競馬', '毎日 12:30〜13:30（昼競馬）と 16:30〜22:30（20:30はメインレース、そのあと深夜競馬）。みんなで同じレースに賭ける、いちばんの目玉'],
+  ['keirin', '🚲', '競輪', '準備中'],
+  ['kyotei', '🚤', '競艇', '準備中'],
+  ['battle', '⚔', '市区町村バトル', '日本全国の市区町村の地図で遊ぶ陣取り将棋（最大16人）。いまは賭けなしで遊べます（賭けられる対戦は準備中）'],
+  ['medaka', '🐟', 'メダカ研究所', '準備中'],
   ['vSlot', '7', 'スロット', '絵柄を3つそろえて当たり'],
   ['vBj', '♠', 'ブラックジャック', 'カードの合計を21に近づけて、ディーラーと勝負'],
   ['vRou', '◎', 'ルーレット', '数字や色に賭けて、玉の止まる場所を当てる'],
@@ -1478,12 +1581,16 @@ const GAME_LIST = [
 ];
 const BOARD_GAMES = { reversi: 'オセロ', chess: 'チェス', shogi: '将棋', onecard: 'ワンカード', mahjong: '麻雀' };
 const MULTI_GAMES = { onecard: true, mahjong: true };
-$('#gameList').innerHTML = GAME_LIST.filter(g => g[0] !== 'vRace' || RACE_ON).map(g => {
+const gameRow = g => {
   const soon = g[3] === '準備中' || g[3].startsWith('準備中（');
   return `<div class="game-row ${soon ? 'soon' : ''}" data-g="${g[0]}">
-  <span class="ic">${g[1]}</span><span class="nm"><b>${g[2]}</b><small>${g[3]}</small></span><span class="go">${soon ? '' : '›'}</span></div>`; }).join('');
+  <span class="ic">${g[1]}</span><span class="nm"><b>${g[2]}</b><small>${g[3]}</small></span><span class="go">${soon ? '' : '›'}</span></div>`; };
+$('#gameList').innerHTML = GAME_GROUPS.map(([t, sub, ks]) => `<div class="game-sec"><b>${t}</b>${sub ? `<small>${sub}</small>` : ''}</div>` +
+  ks.map(k => GAME_LIST.find(g => g[0] === k)).filter(g => g && (g[0] !== 'vRace' || RACE_ON)).map(gameRow).join('')).join('');
 $$('#gameList [data-g]').forEach(r => r.onclick = () => {
   const g = r.dataset.g;
+  if (r.classList.contains('soon')) return;
+  if (g === 'battle') { location.href = 'battle/'; return; }
   if (g.startsWith('v')) return go(g);
   if (!BOARD_GAMES[g]) return toast('準備中です。もうしばらくお待ちください');
   LB.game = g; go('vLobby');
@@ -1495,7 +1602,10 @@ $('#passSave').onclick = async () => {
   if (error) return toast('エラー：' + error.message);
   $('#newPass').value = ''; toast('パスワードを決めました。次からはパスワードでログインできます');
 };
-$('#logout').onclick = async () => { if (sb) await sb.auth.signOut(); location.reload(); };
+$('#logout').onclick = async () => {
+  if (ME.guest && !confirm('ログアウトしますか？\nゲストは、メールアドレスと数字4けたで、またログインできます（5日間ログインしないと消えます）。')) return;
+  if (sb) await sb.auth.signOut(); location.reload();
+};
 
 /* =================================================================
    競馬
@@ -2280,6 +2390,12 @@ async function taxLoad() {
 function taxRender() {
   const T = TX, F = T.filing;
   setBal(T.balance);
+  if (ME.guest) {   // ゲストは税金・給付金の対象外
+    $('#txFiling').innerHTML = '<h3 style="margin-top:0">税金</h3><p class="small" style="margin:0">ゲストは、税金（申告・納税）と給付金の対象外です。本登録した月から対象になります。</p>';
+    $('#txNow').classList.add('hidden'); $('#txDebt').classList.add('hidden'); $('#txNotices').innerHTML = '';
+    return;
+  }
+  $('#txNow').classList.remove('hidden');
   setTaxDot({ notices: 0, filing_open: !!F, filed: !!(F && F.filed), debt: T.debt });
 
   $('#txNotices').innerHTML = '';   // お知らせは右上のベル（通知）へ
@@ -2579,8 +2695,10 @@ async function xferLoad() {
   try {
     const me = await call('my_profile');
     $('#myAcct').textContent = me.account_no || '-------';
-    $('#xferNote').textContent = `手数料は送る額の1%（最低1 X）で、国庫に入ります。` +
-      (me.send_ok ? '' : `${me.send_from}から送金・受け取りができます。`);
+    const g = me.guest;
+    $('#xferNote').innerHTML = esc(`手数料は送る額の1%（最低1 X）で、国庫に入ります。` + (me.send_ok ? '' : `${me.send_from}から送金・受け取りができます。`))
+      + (g ? '<br>' + esc(g.send_from_l ? `ゲストは ${g.send_from_l} から送金できます（5日間で2,000 Xまで）。ゲストは送金を受け取れません。`
+                                         : `ゲストの送金は5日間で2,000 Xまでです（いま送れるのは ${fmt(g.send_left)} Xまで）。ゲストは送金を受け取れません。`) : '');
   } catch (e) {}
 }
 $('#acctCopy').onclick = async () => {
@@ -5016,14 +5134,14 @@ function deskShow(t) {
 const AU = { q: '', f: '', off: 0, items: [], t: null };
 const auRow = x => `<div class="co-row" data-au="${x.uid}"><span class="nm"><b>${nameB(x.nickname, x.badge)}</b>
   <small>ID ${x.uid}・登録 ${x.joined.slice(0, 10)}・最後に来た ${x.seen ? x.seen.slice(5, 16) : '—'}</small>${x.email ? `<small>${esc(x.email)}</small>` : ''}
-  ${x.new || x.banned_until || x.debt || x.corps ? `<small>${x.new ? '<span class="au-tag">新しい人</span>' : ''}${x.banned_until ? `<span class="au-tag bad">利用停止 ${x.banned_until.slice(5, 10)}まで</span>` : ''}${x.debt ? '<span class="au-tag bad">税の滞納</span>' : ''}${x.corps ? `<span class="au-tag">会社 ${x.corps}</span>` : ''}</small>` : ''}</span>
+  ${x.guest || x.new || x.banned_until || x.debt || x.corps ? `<small>${x.guest ? `<span class="au-tag">ゲスト ${x.guest.slice(5, 16)}に消える</span>` : ''}${x.new ? '<span class="au-tag">新しい人</span>' : ''}${x.banned_until ? `<span class="au-tag bad">利用停止 ${x.banned_until.slice(5, 10)}まで</span>` : ''}${x.debt ? '<span class="au-tag bad">税の滞納</span>' : ''}${x.corps ? `<span class="au-tag">会社 ${x.corps}</span>` : ''}</small>` : ''}</span>
   <span style="color:var(--muted);font-size:20px">›</span></div>`;
 async function auLoad(reset) {
   if (reset) { AU.off = 0; AU.items = []; }
   try {
     const d = await call('admin_users', { p_q: AU.q, p_filter: AU.f, p_offset: AU.off });
     AU.items = AU.items.concat(d.items); AU.off = AU.items.length;
-    $('#auSum').innerHTML = `全員 <b>${fmt(d.all)}</b>人・今日 +${d.today}・7日以内 +${d.week}・7日以内に来た人 ${d.active7}${AU.q || AU.f ? `<br>見つかった人 <b>${fmt(d.total)}</b>人` : ''}`;
+    $('#auSum').innerHTML = `全員 <b>${fmt(d.all)}</b>人・今日 +${d.today}・7日以内 +${d.week}・7日以内に来た人 ${d.active7}・ゲスト ${d.guests}${AU.q || AU.f ? `<br>見つかった人 <b>${fmt(d.total)}</b>人` : ''}`;
     $('#auList').innerHTML = AU.items.map(auRow).join('') || '<p class="muted small" style="margin:0">見つかりません</p>';
     $('#auMore').classList.toggle('hidden', !d.more);
   } catch (e) { toast(e.message); }
@@ -5041,6 +5159,7 @@ async function auOpen(uid) {
     <div class="kv" style="margin-top:10px">
       <span>ID</span><b style="user-select:all">${d.uid}</b>
       <span>役割</span><b>${d.role === 'admin' ? '管理者' : d.role === 'sub' ? '副管理者' : 'ふつう'}</b>
+      ${d.guest ? `<span>ゲスト</span><b>${d.guest}に消える</b>` : ''}
       <span>登録</span><b>${d.joined}</b>
       <span>最後にサイトを開いた</span><b>${d.seen || '—'}</b>
       ${adm ? `<span>メール</span><b style="user-select:all;word-break:break-all">${esc(d.email || '—')}</b><span>最後のログイン</span><b>${d.last_sign_in || '—'}</b>
@@ -5289,7 +5408,7 @@ $('#rvSend').onclick = async () => {
 };
 
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て' };
+const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て', guest_rest: 'ゲストの残り（上限をこえた分・消えたゲスト）' };
 async function moreLoad() {
   idLoad();
   try {
