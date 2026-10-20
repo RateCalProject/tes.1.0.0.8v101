@@ -236,8 +236,9 @@
     if (r == null) r = horse(n);
     if (r == null) {
       var dn = dates(n);
-      if (dn !== n) {
-        if (!JP.test(dn) || ((ZH || LANG === 'ko-Hani') && !/[\u3040-\u30ff]/.test(dn) && /^[\d\s年月日（）()週周一二三四五六:,.、・·～〜\-–]+$/.test(dn))) r = punc(dn);
+      var han = (ZH || LANG === 'ko-Hani') && !/[\u3040-\u30ff]/.test(dn) && /^[\d\s年月日（）()週周一二三四五六:,.、・·～〜\-–]+$/.test(dn);   // 漢字の日付（10月14日 など）はそのまま
+      if (dn !== n || han) {
+        if (!JP.test(dn) || han) r = punc(dn);
         else { dn = norm(dn); r = D.has(dn) ? D.get(dn) : matchTpl(dn, depth); }
       }
     }
@@ -329,10 +330,13 @@
     if (out !== s) node.data = out;
   }
   var ATTRS = ['placeholder', 'title', 'aria-label', 'alt'];
+  var LASTA = new WeakMap();   // 属性：訳したあとの値（中国語・漢字の訳を、もう一度訳そうとしない）
   function trAttr(el, a) {
-    var v = el.getAttribute(a);
-    if (!v || (!JP.test(v) && !FW.test(v)) || skip(el)) return;
+    var v = el.getAttribute(a), m = LASTA.get(el);
+    if (!v || (m && m[a] === v) || (!JP.test(v) && !FW.test(v)) || skip(el)) return;
     var r = tr(v);
+    if (!m) { m = {}; LASTA.set(el, m); }
+    m[a] = r != null ? r : v;
     if (r != null && r !== v) el.setAttribute(a, r);
   }
   function trTree(root) {
