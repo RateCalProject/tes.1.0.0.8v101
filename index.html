@@ -244,6 +244,40 @@ h3{font-size:15px;margin:16px 0 8px}
 .game-sec b{font-size:15px}.game-sec small{color:var(--muted);font-size:12px}
 .game-sec + .game-row{border-top:0}
 .gc-back{font:inherit;font-size:14px;font-weight:700;color:var(--accent);background:none;border:0;padding:4px 8px 4px 0;cursor:pointer}
+/* 風の芽ジャンボ */
+.lot-hero{text-align:center;padding:4px 0 2px}
+.lot-name{font-weight:900;font-size:22px;letter-spacing:.06em;margin-top:6px}
+.lot-no{display:inline-block;font-size:12px;font-weight:800;border:1px solid var(--line);border-radius:999px;padding:1px 10px;margin-top:4px;color:var(--muted)}
+.lot-jp-l{margin-top:12px;font-size:12px;font-weight:700;color:var(--muted)}
+.lot-jp{font-size:34px;font-weight:900;font-variant-numeric:tabular-nums;color:var(--accent);line-height:1.15;word-break:break-all}
+.lot-when{font-size:14px;font-weight:700;margin-top:8px}
+.lot-cd{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;min-height:18px}
+.lot-win{display:flex;justify-content:center;align-items:center;gap:4px;margin:6px 0 8px}
+.lot-win span{width:36px;height:48px;border:2px solid var(--line);border-radius:8px;background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:900;font-variant-numeric:tabular-nums}
+.lot-win span.sep{width:auto;border:0;background:none;font-size:15px;font-weight:800;padding:0 4px}
+.lot-win span.spin{animation:blur .12s linear infinite;color:var(--muted)}
+.lot-res{font-weight:800;text-align:center;margin:2px 0 8px;min-height:22px}
+.lot-res.win{color:var(--win)}
+.lot-mw{font-size:13px;margin:4px 0;line-height:1.7}
+.lot-mw b{margin-right:6px}
+.lot-tbl{display:grid;grid-template-columns:auto 1fr auto;gap:6px 10px;font-size:13px;font-variant-numeric:tabular-nums;align-items:baseline;border-top:1px solid var(--line);padding-top:8px}
+.lot-tbl .k{font-weight:800;white-space:nowrap}
+.lot-tbl .v{text-align:right;white-space:nowrap}
+.lot-tbl .v small{display:block;color:var(--muted);font-size:11px}
+.lot-qty b{min-width:2.4em;text-align:center;font-size:18px;font-variant-numeric:tabular-nums}
+.lot-tk{display:inline-flex;font-variant-numeric:tabular-nums;font-weight:800;font-size:13px;padding:3px 8px;border:1px dashed var(--line);border-radius:6px;background:var(--bg);white-space:nowrap}
+.lot-tk.win{border-style:solid;border-color:var(--win);color:var(--win)}
+.lot-pack{padding:8px 0;border-top:1px solid var(--line)}
+.lot-pack:first-child{border-top:0;padding-top:0}
+.lot-pack .hd{font-size:12px;color:var(--muted);font-weight:700;margin-bottom:5px}
+.lot-tks{display:flex;flex-wrap:wrap;gap:5px}
+.lot-pay{display:grid;grid-template-columns:auto 1fr auto;gap:7px 10px;font-size:13px;align-items:baseline}
+.lot-pay .k{font-weight:800;white-space:nowrap}
+.lot-pay small{display:block;color:var(--muted);font-size:11px}
+.lot-pay .v{text-align:right;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
+.lot-h{display:flex;gap:8px;align-items:baseline;padding:7px 0;border-top:1px solid var(--line);font-size:14px}
+.lot-h:first-child{border-top:0}
+.lot-h small{color:var(--muted);font-size:12px;margin-left:6px}
 .chb{display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);width:min(100%,420px);aspect-ratio:1;border:3px solid #6B4A2B;border-radius:6px;overflow:hidden;margin:0 auto}
 .chb .c{min-height:0;min-width:0;overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative;font-size:min(9.4vw,42px);line-height:1;user-select:none}
 .chb .c.l{background:#EED9B6}.chb .c.d{background:#B58863}
@@ -623,7 +657,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：English をえらんだ端末では、英語の辞書（i18n/en.js）を先に読みこむ */
-  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=160e396a"><\/script>'); } } catch (e) {}
+  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=4f3b94c0"><\/script>'); } } catch (e) {}
 })();
 </script>
 </head>
@@ -845,7 +879,50 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 <!-- 遊戯：ゲームの一覧 -->
 <section id="vGameList" class="view hidden">
   <div class="card" style="padding:6px 16px"><div id="gameList"></div></div>
-  <p class="muted small" style="margin:8px 4px">勝ち負けはすべてサーバーで決まります。もうけ（払い戻し − 賭け金）は所得になり、税金の対象です。</p>
+  <p class="muted small" style="margin:8px 4px">勝ち負けはすべてサーバーで決まります。もうけ（払い戻し − 賭け金）は所得になり、税金の対象です（風の芽ジャンボの当せん金はのぞく）。</p>
+</section>
+
+<!-- 風の芽ジャンボ（週1回の宝くじ） -->
+<section id="vLot" class="view hidden">
+  <div class="card lot-top">
+    <button class="btn s" id="ltBack">‹ 風の芽製作所</button>
+    <div class="lot-hero">
+      <div class="lot-name">🎫 風の芽ジャンボ</div>
+      <div class="lot-no" id="ltNo"></div>
+      <div class="lot-jp-l">1等 ジャックポット</div>
+      <div class="lot-jp" id="ltJp">–</div>
+      <div class="lot-when" id="ltWhen"></div>
+      <div class="lot-cd" id="ltCd"></div>
+    </div>
+  </div>
+  <div class="card hidden" id="ltLastCard">
+    <h3 style="margin-top:0" id="ltLastT">前の回の当せん番号</h3>
+    <div class="lot-win" id="ltWin"></div>
+    <div class="lot-res" id="ltRes"></div>
+    <div id="ltMyWins"></div>
+    <div class="lot-tbl" id="ltLastTbl"></div>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">くじを買う</h3>
+    <div class="seg" id="ltKind"><button data-k="one" class="on">1枚ずつ</button><button data-k="bara">バラ10枚</button><button data-k="renban">連番10枚</button></div>
+    <p class="muted small" id="ltKindEx" style="margin:6px 0 8px"></p>
+    <div class="row lot-qty"><span class="small" id="ltUnit">枚数</span><button class="btn s" data-q="-1">−</button><b id="ltQ">1</b><button class="btn s" data-q="1">＋</button><button class="btn s" data-q="10">＋10</button><span class="grow"></span><span class="small" id="ltSum"></span></div>
+    <button class="btn main big wide" id="ltBuy" style="margin-top:10px">買う</button>
+    <p class="muted small" id="ltCap" style="margin:6px 0 0"></p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">あなたのくじ <small class="muted" id="ltMineN"></small></h3>
+    <div id="ltMine"></div>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">当せん金</h3>
+    <div class="lot-pay" id="ltPay"></div>
+    <p class="muted small" style="margin:8px 0 0">1等が出なかったときは、次の回に持ちこし（売上の10%も1等に積み立てます）。1等が出たら、次の回は1,000,000 Xから。1枚が当たるのは、いちばん上の等級の1つだけです。2等〜4等の番号は、1等とは別にえらびます。当せん金は抽せんのすぐあとに自動で入ります（所得にはなりません＝非課税）。</p>
+  </div>
+  <div class="card hidden" id="ltHistCard">
+    <h3 style="margin-top:0">これまでの結果</h3>
+    <div id="ltHist"></div>
+  </div>
 </section>
 
 <!-- 対戦ゲーム：ロビー -->
@@ -1466,8 +1543,8 @@ async function enter() {
   }
 }
 function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
-const GAMES = ['vGameList', 'vRace', 'vSlot', 'vBj', 'vRou', 'vHilo', 'vLobby', 'vRoom'];
-const HIDDEN_SUBS = ['vLobby', 'vRoom'];
+const GAMES = ['vGameList', 'vRace', 'vSlot', 'vBj', 'vRou', 'vHilo', 'vLobby', 'vRoom', 'vLot'];
+const HIDDEN_SUBS = ['vLobby', 'vRoom', 'vLot'];
 // メインメニュー（左から）とサブメニュー
 const MENU = [
   ['vInfo', '情報', 'i', [['today', '今日'], ['cur', '通貨'], ['pub', '広報・書籍'], ['mkt', '相場'], ['tl', 'TL'], ['people', '人をさがす'], ['jack', '競馬億万長者']]],
@@ -1505,6 +1582,7 @@ function go(v, sub) {
   if (sec === 'vLobby') lobbyLoad();
   if (sec === 'vGameList') renderGameList();
   if (sec === 'vRoom') roomStart();
+  if (sec === 'vLot') lotLoad();
   if (sec === 'vBj') bjLoad();
   if (sec === 'vHilo') hiloLoad();
   if (sec === 'vMore') moreLoad();
@@ -1563,7 +1641,7 @@ function subStep(d) {
 const GAME_GROUPS = [
   ['公営競技', '', ['vRace', 'keirin', 'kyotei'], '🏇'],
   ['ミニゲーム', 'その他', ['vSlot', 'vBj', 'vRou', 'vHilo', 'reversi', 'chess', 'shogi', 'onecard', 'mahjong'], '🎲'],
-  ['風の芽製作所', 'オリジナル', ['battle'], '🌱'],
+  ['風の芽製作所', 'オリジナル', ['battle', 'vLot'], '🌱'],
   ['メダカ研究所', '', ['medaka'], '🐟'],
 ];
 const GAME_LIST = [
@@ -1571,6 +1649,7 @@ const GAME_LIST = [
   ['keirin', '🚲', '競輪', '準備中'],
   ['kyotei', '🚤', '競艇', '準備中'],
   ['battle', '⚔', '市区町村バトル', '日本全国の市区町村の地図で遊ぶ陣取り将棋（最大16人）。賭けありの部屋では、所持金を賭けて対戦できます（観戦して賭けることも）'],
+  ['vLot', '🎫', '風の芽ジャンボ', '週に1回の宝くじ（1枚100 X）。毎週日曜21:30に抽せん。1等はジャックポットで、当たりが出なければ次の回に持ちこし'],
   ['medaka', '🐟', 'メダカ研究所', '準備中'],
   ['vSlot', '7', 'スロット', '絵柄を3つそろえて当たり'],
   ['vBj', '♠', 'ブラックジャック', 'カードの合計を21に近づけて、ディーラーと勝負'],
@@ -1631,6 +1710,126 @@ $('#passSave').onclick = async () => {
 $('#logout').onclick = async () => {
   if (ME.guest && !confirm('ログアウトしますか？\nゲストは、メールアドレスと数字4けたで、またログインできます（5日間ログインしないと消えます）。')) return;
   if (sb) await sb.auth.signOut(); location.reload();
+};
+
+/* =================================================================
+   風の芽ジャンボ（週1回の宝くじ。毎週日曜 21:30 に抽せん）
+   ================================================================= */
+const LT = { d: null, kind: 'one', q: 1, t: null, off: 0, busy: false, wait: 0, anim: 0 };
+const LT_NAME = { 1: '1等', 11: '1等の前後賞', 12: '1等の組違い賞', 2: '2等', 3: '3等', 4: '4等' };
+const LT_ORDER = [1, 11, 12, 2, 3, 4];
+const ltG = g => String(g).padStart(2, '0') + '組';
+const ltN = n => String(n).padStart(4, '0');
+const ltTk = (g, n, win) => `<span class="lot-tk ${win ? 'win' : ''}">${ltG(g)} ${ltN(n)}</span>`;
+function ltWhen(ms) { const d = new Date(ms + 9 * 3600e3); return `${d.getUTCMonth() + 1}月${d.getUTCDate()}日（${'日月火水木金土'[d.getUTCDay()]}） ${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2, '0')}`; }
+const ltLocal = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } };
+async function lotLoad() {
+  let d; try { d = await call('lot_state'); } catch (e) { return toast(e.message); }
+  lotSet(d);
+  if (!LT.t) LT.t = setInterval(lotTick, 1000);
+}
+function lotSet(d) { LT.d = d; LT.off = d.now - Date.now(); setBal(d.balance); lotRender(); lotTick(); }
+// 毎秒：しめきりまでの時間。時刻をすぎたら、抽せんを待って読みなおす
+function lotTick() {
+  if (view !== 'vLot') { clearInterval(LT.t); LT.t = null; return; }
+  const w = LT.d && LT.d.draw; if (!w) return;
+  const left = w.at_ms - (Date.now() + LT.off), el = $('#ltCd');
+  if (left <= 0) {
+    el.textContent = '抽せん中…'; $('#ltBuy').disabled = true;
+    if (Date.now() - LT.wait > 8000) { LT.wait = Date.now(); setTimeout(() => { if (view === 'vLot') lotLoad(); }, 1500); }
+    return;
+  }
+  $('#ltBuy').disabled = LT.busy || !LT.q;
+  const s = Math.floor(left / 1000), dd = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), sc = s % 60;
+  el.textContent = dd ? `しめきりまで ${dd}日 ${h}時間 ${m}分` : h ? `しめきりまで ${h}時間 ${m}分 ${sc}秒` : `しめきりまで ${m}分 ${sc}秒`;
+}
+// 買える数（1回の抽せんで1人1,000枚まで。ゲストは1回に1枚）
+function ltMaxQ() {
+  const w = LT.d && LT.d.draw, left = 1000 - (w ? w.mine : 0);
+  if (ME.guest) return LT.kind === 'one' ? Math.min(1, left) : 0;
+  return Math.max(0, Math.min(100, Math.floor(left / (LT.kind === 'one' ? 1 : 10))));
+}
+function ltQty() {
+  const mx = ltMaxQ(); LT.q = Math.max(mx ? 1 : 0, Math.min(LT.q, mx));
+  const cnt = LT.kind === 'one' ? LT.q : LT.q * 10;
+  $('#ltQ').textContent = LT.q;
+  $('#ltUnit').textContent = LT.kind === 'one' ? '枚数' : '組数（10枚で1組）';
+  $('#ltSum').textContent = `${fmt(cnt)}枚・${fmt(cnt * 100)} X`;
+  $('#ltBuy').textContent = cnt ? `${fmt(cnt)}枚 買う（${fmt(cnt * 100)} X）` : '買えません';
+  $('#ltKindEx').textContent = { one: '番号はおまかせ。組も番号もばらばらの1枚ずつです', bara: '10枚で1組。下1けたが0〜9に1枚ずつなので、4等（100 X）以上が必ず1本は当たります', renban: '10枚で1組。同じ組で番号が続く10枚です。下1けたも0〜9がそろうので、4等以上が必ず1本は当たります。前後賞もねらえます' }[LT.kind];
+  const w = LT.d && LT.d.draw;
+  $('#ltCap').textContent = (ME.guest ? 'ゲストは1回に1枚ずつ買えます（本登録すると、まとめて買えます）。' : '') + `1回の抽せんで1人1,000枚まで（いま ${fmt(w ? w.mine : 0)}枚）。番号はえらべません。`;
+}
+function lotPackH(p) {
+  const t = p.t;
+  if (p.kind === 'renban') return `<div class="lot-pack"><div class="hd">連番10枚</div><div class="lot-tks"><span class="lot-tk">${ltG(t[0][0])} ${ltN(t[0][1])}〜${ltN(t[t.length - 1][1])}</span></div></div>`;
+  return `<div class="lot-pack"><div class="hd">${p.kind === 'bara' ? 'バラ10枚' : `1枚ずつ（${t.length}枚）`}</div><div class="lot-tks">${t.map(x => ltTk(x[0], x[1])).join('')}</div></div>`;
+}
+function lotRender() {
+  const d = LT.d, w = d.draw;
+  $('#ltNo').textContent = w ? `第${w.id}回` : '';
+  $('#ltJp').textContent = w ? `${fmt(w.jackpot)} X` : '–';
+  $('#ltWhen').textContent = w ? `${ltWhen(w.at_ms)} 抽せん` : '';
+  $$('#ltKind button').forEach(b => b.classList.toggle('on', b.dataset.k === LT.kind));
+  ltQty();
+  const shown = w ? w.packs.reduce((a, p) => a + p.t.length, 0) : 0;
+  $('#ltMineN').textContent = w && w.mine ? `第${w.id}回・${fmt(w.mine)}枚` : '';
+  $('#ltMine').innerHTML = w && w.packs.length ? w.packs.map(lotPackH).join('') + (w.mine > shown ? `<p class="muted small" style="margin:6px 0 0">ほか ${fmt(w.mine - shown)}枚（新しい30束だけ出しています）</p>` : '')
+    : '<p class="muted small" style="margin:0">この回のくじは、まだ買っていません</p>';
+  const P = d.prizes;
+  $('#ltPay').innerHTML = [
+    [1, '組と番号が全部一致', w ? `${fmt(w.jackpot)} X` : '1等', '10万枚に1枚'],
+    [11, '1等と同じ組で、番号が1つちがい', `${fmt(P[11])} X`, '10万枚に2枚'],
+    [12, '番号は1等と同じで、組がちがう', `${fmt(P[12])} X`, '10万枚に9枚'],
+    [2, '下3けたが一致', `${fmt(P[2])} X`, 'およそ1,000枚に1枚'],
+    [3, '下2けたが一致', `${fmt(P[3])} X`, 'およそ100枚に1枚'],
+    [4, '下1けたが一致', `${fmt(P[4])} X`, 'およそ10枚に1枚']].map(([t, how, amt, odds]) =>
+    `<span class="k">${LT_NAME[t]}</span><span>${how}<small>${odds}</small></span><span class="v">${amt}</span>`).join('');
+  $('#ltHistCard').classList.toggle('hidden', !d.history.length);
+  $('#ltHist').innerHTML = d.history.map(h => `<div class="lot-h"><span class="grow">第${h.id}回<small>くじ ${fmt(h.count)}枚</small></span>
+    <b style="color:${h.pay > 0 ? 'var(--win)' : 'var(--muted)'}">${h.pay > 0 ? '+' + fmt(h.pay) + ' X' : 'はずれ'}</b></div>`).join('');
+  lotLast();
+}
+// 前の回の当せん番号と、自分の結果（はじめて見るときは、番号がまわって止まる）
+function lotLast() {
+  const l = LT.d.last;
+  $('#ltLastCard').classList.toggle('hidden', !l); if (!l) return;
+  const W = l.win, P = LT.d.prizes;
+  $('#ltLastT').textContent = `第${l.id}回（${l.at}）の当せん番号`;
+  const dg = (String(W.g).padStart(2, '0') + ltN(W.n)).split('');
+  const anim = l.mine > 0 && l.id > Number(ltLocal('lotSeen') || 0) && LT.anim !== l.id;
+  $('#ltWin').innerHTML = dg.slice(0, 2).map(c => `<span>${c}</span>`).join('') + '<span class="sep">組</span>' + dg.slice(2).map(c => `<span>${c}</span>`).join('');
+  $('#ltLastTbl').innerHTML = [
+    [1, `${ltG(W.g)} ${ltN(W.n)}`, l.jackpot], [11, `${ltG(W.g)} ${ltN((W.n + 9999) % 10000)}・${ltN((W.n + 1) % 10000)}`, P[11]],
+    [12, `ほかの組の ${ltN(W.n)}`, P[12]], [2, `下3けた ${String(W.d3).padStart(3, '0')}`, P[2]],
+    [3, `下2けた ${String(W.d2).padStart(2, '0')}`, P[3]], [4, `下1けた ${W.d1}`, P[4]]].map(([t, num, amt]) =>
+    `<span class="k">${LT_NAME[t]}</span><span>${num}</span><span class="v">${fmt(amt)} X<small>当せん ${fmt((l.winners || {})[t] || 0)}本</small></span>`).join('');
+  const T = l.mytiers || {}, nwin = Object.values(T).reduce((a, b) => a + Number(b), 0);
+  const res = $('#ltRes'), mw = $('#ltMyWins');
+  const show = () => {
+    res.className = 'lot-res' + (l.mypay > 0 ? ' win' : '');
+    res.textContent = !l.mine ? 'この回のくじは買っていませんでした' : l.mypay > 0 ? `あなたのくじ ${fmt(l.mine)}枚のうち ${fmt(nwin)}枚が当たり！ +${fmt(l.mypay)} X` : `あなたのくじ ${fmt(l.mine)}枚は、はずれでした`;
+    mw.innerHTML = LT_ORDER.filter(t => T[t]).map(t => `<div class="lot-mw"><b>${LT_NAME[t]}</b>×${fmt(T[t])}${t <= 3 || t >= 11 ? ' ' + (l.mywins || []).filter(x => x.tier === t).slice(0, 10).map(x => ltTk(x.g, x.n, true)).join(' ') : ''}</div>`).join('');
+  };
+  if (!anim) return show();
+  // 番号がまわって、左から止まる
+  LT.anim = l.id; ltLocal('lotSeen', String(l.id));
+  res.textContent = ''; mw.innerHTML = '';
+  const el = [...$('#ltWin').querySelectorAll('span:not(.sep)')];
+  el.forEach(e => e.classList.add('spin'));
+  const iv = setInterval(() => el.forEach(e => { if (e.classList.contains('spin')) e.textContent = Math.floor(Math.random() * 10); }), 70);
+  el.forEach((e, i) => setTimeout(() => { e.classList.remove('spin'); e.textContent = dg[i]; if (i === el.length - 1) { clearInterval(iv); show(); if (l.mypay > 0) setBal(LT.d.balance, true); } }, 500 + i * 380));
+}
+$$('#ltKind button').forEach(b => b.onclick = () => { LT.kind = b.dataset.k; LT.q = 1; $$('#ltKind button').forEach(x => x.classList.toggle('on', x === b)); ltQty(); lotTick(); });
+$$('.lot-qty [data-q]').forEach(b => b.onclick = () => { LT.q = Math.max(1, LT.q + Number(b.dataset.q)); ltQty(); lotTick(); });
+$('#ltBack').onclick = () => { setGcat(GAME_GROUPS.findIndex(g => g[2].includes('vLot'))); go('vGameList'); };
+$('#ltBuy').onclick = async () => {
+  if (LT.busy || !LT.q) return;
+  const cnt = LT.kind === 'one' ? LT.q : LT.q * 10;
+  if (cnt >= 100 && !confirm(`${fmt(cnt)}枚（${fmt(cnt * 100)} X）買いますか？`)) return;
+  LT.busy = true; $('#ltBuy').disabled = true;
+  try { const d = await call('lot_buy', { p_kind: LT.kind, p_sets: LT.q }); LT.busy = false; lotSet(d); toast(`${fmt(cnt)}枚 買いました。抽せんは${ltWhen(d.draw.at_ms)}です`); }
+  catch (e) { LT.busy = false; toast(e.message); lotTick(); }
 };
 
 /* =================================================================
@@ -3831,6 +4030,7 @@ function hmCatalog() {
     L.push({ k: m[0] + ':' + x[0], label, ic, group: m[1] });
   }
   for (const g of GAME_LIST) if (!g[0].startsWith('v') && BOARD_GAMES[g[0]]) L.push({ k: 'g:' + g[0], label: g[2], ic: g[1], group: '遊戯' });
+  L.push({ k: 'vGame:vLot', label: '風の芽ジャンボ', ic: '🎫', group: '遊戯' });
   L.push({ k: 'w:news', label: '新着ニュース', ic: '🗞️', group: 'ウィジェット（大きく出る）', wide: true });
   L.push({ k: 'w:stocks', label: '株価の一覧', ic: '📈', group: 'ウィジェット（大きく出る）', wide: true });
   for (const x of (HM.listed || [])) L.push({ k: 'st:' + x.cid, label: x.name, ic: '💹', group: '株価（会社ごと・大きく出る）', wide: true });
@@ -5294,7 +5494,7 @@ const NT_GO = { フレンド: ['vHome', 'friend'], メッセージ: ['vHome', 'm
   没収: ['vTax', 'tax'], 企業申請: ['vWork', 'corp'], 社長交代: ['vWork', 'corp'], 命令: ['vWork', 'corp'], 応募: ['vWork', 'corp'], 口座の申込: ['vWork', 'corp'],
   借入の申込: ['vWork', 'corp'], 返済: ['vWork', 'corp'], 採用: ['vWork', 'mywork'], 株: ['vCorp', 'stock'], 株の譲渡: ['vCorp', 'stock'], 配当: ['vCorp', 'stock'],
   口座: ['vCorp', 'bank'], 借入: ['vCorp', 'bank'], 交換: ['vCorp', 'invest'], 本: ['vInfo', 'pub'], '広報・書籍': ['vInfo', 'pub'], 対戦: ['vGame', 'vGameList'],
-  倒産: ['vMore', 'hist'], 廃業: ['vMore', 'hist'], お金: ['vMore', 'hist'], 認証: ['vWork', 'corp'], 窓口: ['vCorp', 'desk'], サーバー: ['vWork', 'corp'], 上場: ['vWork', 'corp'] };
+  倒産: ['vMore', 'hist'], 風の芽ジャンボ: ['vGame', 'vLot'], 廃業: ['vMore', 'hist'], お金: ['vMore', 'hist'], 認証: ['vWork', 'corp'], 窓口: ['vCorp', 'desk'], サーバー: ['vWork', 'corp'], 上場: ['vWork', 'corp'] };
 function noticeGo(n) {
   const L = n.link || {}, b = n.body || '', tag = noticeTag(b);
   $$('.modal').forEach(m => m.remove());
@@ -5305,6 +5505,7 @@ function noticeGo(n) {
   if (L.go === 'sp' && L.t) return spOpen(Number(L.t));
   if (L.go === 'stock' && L.cid) return stkOpen(L.cid);
   if (L.go === 'mywork') return go('vWork', 'mywork');
+  if (L.go === 'lot') return go('vLot');
   if (L.go === 'tl') { tlScope = 'mention'; $$('#tlScope button').forEach(x => x.classList.toggle('on', x.dataset.k === 'mention')); return go('vInfo', 'tl'); }
   if (tag === '注文') return go(/渡してください/.test(b) ? 'vWork' : 'vCorp', /渡してください/.test(b) ? 'corp' : 'order');
   const g = NT_GO[tag] || (/税|給付金|滞納|差し押さえ/.test(b) ? ['vTax', 'tax'] : null);
@@ -5450,7 +5651,7 @@ $('#rvSend').onclick = async () => {
 };
 
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て', guest_rest: 'ゲストの残り（上限をこえた分・消えたゲスト）' };
+const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て', guest_rest: 'ゲストの残り（上限をこえた分・消えたゲスト）', lottery: '風の芽ジャンボ' };
 async function moreLoad() {
   idLoad();
   try {

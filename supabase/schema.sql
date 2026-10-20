@@ -606,7 +606,7 @@ begin
   if a is not null then return; end if;      -- AIのアカウントは記録しない
   insert into tx_log(user_id, game, bet, payout, balance_after, detail)
   values (u, g, bet, pay, b, d);
-  if g in ('slot','roulette','hilo','blackjack','race') then
+  if g in ('slot','roulette','hilo','blackjack','race','lottery') then
     update treasury set balance = balance + (bet - pay), casino_total = casino_total + (bet - pay) where id = 1;
   end if;
 end $$;
@@ -11701,6 +11701,229 @@ begin
   end if;
 end $$;
 
+-- =====================================================================
+-- 風の芽ジャンボ（週1回の宝くじ）
+--   くじは「組」（01〜10）と「番号」（0000〜9999）。1枚 100 X。1回の抽せんで1人1,000枚まで（ゲストは1枚ずつ）
+--   買い方：1枚（番号はおまかせ）・バラ10枚（下1けたが0〜9に1枚ずつ）・連番10枚（同じ組で番号が続く）
+--   抽せん：毎週日曜 21:30（日本時間）。そこで締め切り、すぐ次の回の発売がはじまる
+--   当せん（1枚は上の等級だけ）：
+--     1等：組と番号が全部一致 → ジャックポット（だれも当たらなければ次の回に持ちこし。売上の10%を積み立て。当たったら次の回は100万 X から）
+--     1等の前後賞：1等と同じ組で、番号が1つちがい → 100万 X
+--     1等の組違い賞：番号が1等と同じで、組がちがう → 10万 X
+--     2等：下3けたが一致 → 1万 X ／ 3等：下2けたが一致 → 1,000 X ／ 4等：下1けたが一致 → 100 X
+--   当せん金は自動で入る（非課税）。売上と払いもどしは国庫（カジノのもうけと同じ）
+-- =====================================================================
+create table if not exists public.lot_draws (
+  id        serial primary key,
+  draw_at   timestamptz not null,
+  status    text not null default 'open',          -- open / drawn
+  jackpot   bigint not null default 0,             -- この回の1等の額（持ちこし＋積み立て）
+  sales     int not null default 0,                -- 売れた枚数
+  win       jsonb,                                 -- 当せん番号 {g, n, d3, d2, d1}
+  winners   jsonb,                                 -- 等級ごとの本数
+  hit       boolean,                               -- 1等が出たか
+  drawn_at  timestamptz
+);
+create table if not exists public.lot_tickets (
+  id       bigserial primary key,
+  draw_id  int not null references public.lot_draws(id) on delete cascade,
+  user_id  uuid not null references public.profiles(id) on delete cascade,
+  grp      int not null,                           -- 組 1〜10
+  num      int not null,                           -- 番号 0〜9999
+  kind     text not null,                          -- one / bara / renban
+  pack     bigint not null,                        -- いっしょに買った束
+  tier     int,                                    -- 0 はずれ・1 1等・11 前後賞・12 組違い賞・2・3・4
+  payout   bigint,
+  at       timestamptz not null default now(),
+  unique (draw_id, grp, num)
+);
+create index if not exists lot_tickets_user_idx on public.lot_tickets(draw_id, user_id);
+create sequence if not exists public.lot_pack_seq;
+alter table public.lot_draws enable row level security;
+alter table public.lot_tickets enable row level security;
+revoke all on public.lot_draws, public.lot_tickets from anon, authenticated;
+
+create or replace function public._lot_seed() returns bigint language sql immutable as $$ select 1000000::bigint $$;
+-- 等級ごとの当せん金（1等はジャックポット）
+create or replace function public._lot_prize(t int) returns bigint language sql immutable as $$
+  select case t when 11 then 1000000 when 12 then 100000 when 2 then 10000 when 3 then 1000 when 4 then 100 else 0 end::bigint $$;
+create or replace function public._lot_tier_name(t int) returns text language sql immutable as $$
+  select case t when 1 then '1等' when 11 then '1等の前後賞' when 12 then '1等の組違い賞' when 2 then '2等' when 3 then '3等' when 4 then '4等' else 'はずれ' end $$;
+-- 0〜n-1 の乱数（gen_random_uuid の乱数を使う）
+create or replace function public._rnd(n int) returns int language sql volatile as $$
+  select (('x' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 8))::bit(32)::bigint % n)::int $$;
+-- after のあとの、日曜 21:30（日本時間）
+create or replace function public._lot_next_at(after timestamptz) returns timestamptz language sql stable as $$
+  select case when x > after then x else x + interval '7 days' end
+    from (select ((date_trunc('week', after at time zone 'Asia/Tokyo') + interval '6 days 21 hours 30 minutes') at time zone 'Asia/Tokyo') x) z $$;
+
+-- 毎分：抽せんの時刻をすぎた回を抽せんして、次の回をはじめる（まだ1回もなければ第1回をつくる）
+create or replace function public._lot_tick() returns text
+language plpgsql security definer set search_path = public as $$
+declare d lot_draws;
+begin
+  if not pg_try_advisory_xact_lock(7700) then return 'busy'; end if;
+  select * into d from lot_draws where status = 'open' order by id desc limit 1;
+  if not found then
+    insert into lot_draws(draw_at, jackpot) values (_lot_next_at(_now()), _lot_seed());
+    return 'first';
+  end if;
+  if d.draw_at > _now() then return 'wait'; end if;
+  perform _lot_draw(d.id);
+  return 'drawn';
+end $$;
+
+-- 抽せん
+create or replace function public._lot_draw(did int) returns void
+language plpgsql set search_path = public as $$
+declare d lot_draws; g int := 1 + _rnd(10); n int := _rnd(10000); d3 int := _rnd(1000); d2 int := _rnd(100); d1 int := _rnd(10);
+        r record; v_hit boolean; w jsonb; lines text;
+begin
+  select * into d from lot_draws where id = did for update;
+  if not found or d.status <> 'open' then return; end if;
+  update lot_tickets t set tier = case
+      when t.grp = g and t.num = n then 1
+      when t.grp = g and (t.num = (n + 1) % 10000 or t.num = (n + 9999) % 10000) then 11
+      when t.num = n then 12
+      when t.num % 1000 = d3 then 2
+      when t.num % 100 = d2 then 3
+      when t.num % 10 = d1 then 4
+      else 0 end
+   where t.draw_id = did;
+  update lot_tickets set payout = case when tier = 1 then d.jackpot else _lot_prize(tier) end where draw_id = did;
+  v_hit := exists (select 1 from lot_tickets where draw_id = did and tier = 1);
+  w := (select jsonb_object_agg(tier, c) from (select tier, count(*) c from lot_tickets where draw_id = did and tier > 0 group by tier) x);
+  update lot_draws set status = 'drawn', drawn_at = _now(), hit = v_hit, winners = coalesce(w, '{}'::jsonb),
+         win = jsonb_build_object('g', g, 'n', n, 'd3', d3, 'd2', d2, 'd1', d1) where id = did;
+  -- 当せん金を入れて（人ごとにまとめて）、買った人みんなに知らせる
+  for r in select user_id, count(*) cnt, sum(payout)::bigint s, count(*) filter (where tier > 0) k
+             from lot_tickets where draw_id = did group by user_id loop
+    if r.s > 0 then
+      perform _give(r.user_id, r.s);
+      perform _log(r.user_id, 'lottery', 0, r.s, jsonb_build_object('draw', did, 'wins', r.k));
+      select string_agg(format('%s %s本', _lot_tier_name(tier), c), '・' order by case tier when 1 then 0 when 11 then 1 when 12 then 2 else tier + 1 end) into lines
+        from (select tier, count(*) c from lot_tickets where draw_id = did and user_id = r.user_id and tier > 0 group by tier) z;
+      perform _notice_l(r.user_id, format('【風の芽ジャンボ】第%s回の抽せん：当せんしました！ 合計 %s X（%s）。当せん金はもう入っています。', did, _fmt(r.s), lines),
+                        '{"go":"lot"}'::jsonb, null);
+    else
+      perform _notice_l(r.user_id, format('【風の芽ジャンボ】第%s回の抽せん：あなたのくじ %s枚は、残念ながらはずれでした。当せん番号は「風の芽ジャンボ」の画面で見られます。', did, r.cnt),
+                        '{"go":"lot"}'::jsonb, null);
+    end if;
+  end loop;
+  -- 次の回（1等が出たら100万 X から。出なければ持ちこし）
+  insert into lot_draws(draw_at, jackpot) values (_lot_next_at(greatest(_now(), d.draw_at)), case when v_hit then _lot_seed() else d.jackpot end);
+  -- 新聞に当せん番号をのせる（名前は出さない）
+  begin
+    perform _ai_article(format('【くじ】風の芽ジャンボ 第%s回の当せん番号', did),
+      format('風の芽ジャンボの第%s回の抽せんが、%sにおこなわれた。', did, to_char(d.draw_at at time zone 'Asia/Tokyo', 'FMMM"月"FMDD"日" HH24:MI')) || E'\n\n'
+      || format('1等（%s X）　%s組 %s番', _fmt(d.jackpot), lpad(g::text, 2, '0'), lpad(n::text, 4, '0')) || E'\n'
+      || format('1等の前後賞（%s X）　%s組 %s番・%s番', _fmt(_lot_prize(11)), lpad(g::text, 2, '0'), lpad(((n + 9999) % 10000)::text, 4, '0'), lpad(((n + 1) % 10000)::text, 4, '0')) || E'\n'
+      || format('1等の組違い賞（%s X）　ほかの組の %s番', _fmt(_lot_prize(12)), lpad(n::text, 4, '0')) || E'\n'
+      || format('2等（%s X）　下3けた %s', _fmt(_lot_prize(2)), lpad(d3::text, 3, '0')) || E'\n'
+      || format('3等（%s X）　下2けた %s', _fmt(_lot_prize(3)), lpad(d2::text, 2, '0')) || E'\n'
+      || format('4等（%s X）　下1けた %s', _fmt(_lot_prize(4)), d1) || E'\n\n'
+      || case when v_hit then format('今回は1等が出た。次の回のジャックポットは %s X から積み立てがはじまる。', _fmt(_lot_seed()))
+              else format('今回は1等が出なかったため、%s X は次の回に持ちこされる。', _fmt(d.jackpot)) end
+      || E'\n\n' || 'くじは遊戯 → 風の芽製作所 → 風の芽ジャンボ で買える（1枚 100 X。毎週日曜 21:30 に抽せん）。', '生活部');
+  exception when others then null;
+  end;
+end $$;
+
+-- 買う（p_kind：one 1枚 / bara バラ10枚 / renban 連番10枚。p_sets：何回分（1〜100））
+create or replace function public.lot_buy(p_kind text, p_sets int) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); d lot_draws; k int := greatest(coalesce(p_sets, 1), 1); cnt int; mine int; cost bigint; pk bigint;
+        s int; i int; g int; n int; base int; tries int;
+begin
+  if p_kind not in ('one', 'bara', 'renban') then raise exception '買い方をえらんでください'; end if;
+  if k > 100 then raise exception '一度に買えるのは100回分までです'; end if;
+  perform _lot_tick();
+  select * into d from lot_draws where status = 'open' order by id desc limit 1 for update;
+  if not found or d.draw_at <= _now() then raise exception 'いま抽せん中です。少ししてから買ってください'; end if;
+  cnt := case when p_kind = 'one' then k else k * 10 end;
+  select count(*) into mine from lot_tickets where draw_id = d.id and user_id = u;
+  if mine + cnt > 1000 then raise exception '1回の抽せんで買えるのは1人1,000枚までです（あと %枚）', greatest(1000 - mine, 0); end if;
+  cost := cnt * 100;
+  perform _take(u, cost);
+  if p_kind = 'one' then                -- 1枚ずつ：まとめて1つの束
+    pk := nextval('lot_pack_seq');
+    for s in 1..k loop
+      tries := 0;
+      loop
+        tries := tries + 1; g := 1 + _rnd(10); n := _rnd(10000);
+        exit when not exists (select 1 from lot_tickets where draw_id = d.id and grp = g and num = n);
+        if tries > 60 then raise exception 'くじが売り切れに近いので、買えません'; end if;
+      end loop;
+      insert into lot_tickets(draw_id, user_id, grp, num, kind, pack, at) values (d.id, u, g, n, 'one', pk, _now());
+    end loop;
+  else                                   -- バラ・連番：10枚ごとに1つの束
+    for s in 1..k loop
+      pk := nextval('lot_pack_seq');
+      tries := 0;
+      if p_kind = 'renban' then
+        loop
+          tries := tries + 1; g := 1 + _rnd(10); base := _rnd(1000) * 10;
+          exit when not exists (select 1 from lot_tickets where draw_id = d.id and grp = g and num between base and base + 9);
+          if tries > 60 then raise exception 'くじが売り切れに近いので、連番では買えません'; end if;
+        end loop;
+        insert into lot_tickets(draw_id, user_id, grp, num, kind, pack, at) select d.id, u, g, base + j, 'renban', pk, _now() from generate_series(0, 9) j;
+      else
+        for i in 0..9 loop
+          tries := 0;
+          loop
+            tries := tries + 1; g := 1 + _rnd(10); n := _rnd(1000) * 10 + i;
+            exit when not exists (select 1 from lot_tickets where draw_id = d.id and grp = g and num = n);
+            if tries > 60 then raise exception 'くじが売り切れに近いので、買えません'; end if;
+          end loop;
+          insert into lot_tickets(draw_id, user_id, grp, num, kind, pack, at) values (d.id, u, g, n, 'bara', pk, _now());
+        end loop;
+      end if;
+    end loop;
+  end if;
+  update lot_draws set sales = sales + cnt, jackpot = jackpot + cnt * 10 where id = d.id;
+  perform _log(u, 'lottery', cost, 0, jsonb_build_object('draw', d.id, 'count', cnt, 'kind', p_kind));
+  return lot_state();
+end $$;
+
+-- 画面：いまの回・自分のくじ・前の回の当せん番号・自分の結果
+create or replace function public.lot_state() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); d lot_draws; l lot_draws;
+begin
+  begin perform _lot_tick(); exception when others then null; end;
+  select * into d from lot_draws where status = 'open' order by id desc limit 1;
+  select * into l from lot_draws where status = 'drawn' order by id desc limit 1;
+  return jsonb_build_object(
+    'draw', case when d.id is null then null else jsonb_build_object('id', d.id, 'at', to_char(d.draw_at at time zone 'Asia/Tokyo', 'FMMM"月"FMDD"日" HH24:MI'),
+              'at_ms', floor(extract(epoch from d.draw_at) * 1000)::bigint, 'jackpot', d.jackpot, 'sales', d.sales,
+              'mine', (select count(*) from lot_tickets where draw_id = d.id and user_id = u),
+              'packs', (select coalesce(jsonb_agg(p order by (p->>'pack')::bigint desc), '[]'::jsonb) from (
+                         select jsonb_build_object('pack', pack, 'kind', min(kind), 't', jsonb_agg(jsonb_build_array(grp, num) order by grp, num)) p
+                           from lot_tickets where draw_id = d.id and user_id = u group by pack order by pack desc limit 30) z)) end,
+    'last', case when l.id is null then null else jsonb_build_object('id', l.id, 'at', to_char(l.draw_at at time zone 'Asia/Tokyo', 'FMMM"月"FMDD"日" HH24:MI'),
+              'win', l.win, 'winners', l.winners, 'hit', l.hit, 'jackpot', l.jackpot, 'sales', l.sales,
+              'mine', (select count(*) from lot_tickets where draw_id = l.id and user_id = u),
+              'mywins', (select coalesce(jsonb_agg(jsonb_build_object('tier', tier, 'g', grp, 'n', num, 'pay', payout) order by case tier when 1 then 0 when 11 then 1 when 12 then 2 else tier + 1 end, grp, num), '[]'::jsonb)
+                           from (select * from lot_tickets where draw_id = l.id and user_id = u and tier > 0 order by case tier when 1 then 0 when 11 then 1 when 12 then 2 else tier + 1 end limit 50) w),
+              'mypay', (select coalesce(sum(payout), 0)::bigint from lot_tickets where draw_id = l.id and user_id = u),
+              'mytiers', (select coalesce(jsonb_object_agg(tier, c), '{}'::jsonb) from (select tier, count(*) c from lot_tickets
+                            where draw_id = l.id and user_id = u and tier > 0 group by tier) z)) end,
+    'history', (select coalesce(jsonb_agg(h order by (h->>'id')::int desc), '[]'::jsonb) from (
+                 select jsonb_build_object('id', t.draw_id, 'count', count(*), 'pay', coalesce(sum(t.payout), 0)) h
+                   from lot_tickets t join lot_draws x on x.id = t.draw_id and x.status = 'drawn'
+                  where t.user_id = u group by t.draw_id order by t.draw_id desc limit 8) z),
+    'prizes', jsonb_build_object('11', _lot_prize(11), '12', _lot_prize(12), '2', _lot_prize(2), '3', _lot_prize(3), '4', _lot_prize(4)),
+    'now', floor(extract(epoch from _now()) * 1000)::bigint,
+    'balance', _bal(u));
+end $$;
+
+do $$
+begin
+  if exists (select 1 from pg_namespace where nspname = 'cron') then
+    perform cron.schedule('ailinax-lottery', '* * * * *', 'select public._lot_tick()');
+  end if;
+end $$;
+
 -- ---------------------------------------------------------------------
 -- 実行権限：内部用（_ではじまる）は画面から呼べないようにする
 -- ---------------------------------------------------------------------
@@ -11769,7 +11992,8 @@ begin
             '_guest_last','_guest_until','_guest_sent5','_guest_json','_guest_send_check','_guest_verify','_guest_cap_trg','_sink_user','_guest_flush',
             '_guest_purge','_req_ip','guest_signup','guest_set_email',
             '_bt_tok','_bt_auth','_bt_row','_bt_create','_bt_start','_bt_settle','_bt_cron','bt_ticket','bt_list','bt_state','bt_join','bt_leave',
-            'bt_lobby_set','bt_bet','bt_react','dm_list','dm_thread','dm_send','_sp_json','support_list','support_thread','support_open','support_send','support_close',
+            'bt_lobby_set','bt_bet','bt_react',
+            '_lot_seed','_lot_prize','_lot_tier_name','_rnd','_lot_next_at','_lot_tick','_lot_draw','lot_buy','lot_state','dm_list','dm_thread','dm_send','_sp_json','support_list','support_thread','support_open','support_send','support_close',
             'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
