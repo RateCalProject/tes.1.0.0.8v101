@@ -1784,12 +1784,13 @@ const MENU = [
   ['vMore', '設定', '⚙', [['prof', 'プロフィール'], ['style', 'スタイル'], ['hist', '記録'], ['rule', '規約']]],
 ];
 const MENU_OF = Object.fromEntries(MENU.map(m => [m[0], m]));
-// 競艇・競輪：まだ公開しない（管理者だけ見られる。サーバーも管理者だけ）
-const PR_IDS = ['vBoat', 'vBike'], PR_ON = () => ME.role === 'admin';
+// まだ公開していないゲーム（サーバーの ME.beta にあるもの）は、一覧では準備中・タブにも出さない（ログインの前は全部かくす）
+const BETA = { vBoat: 'boat', vBike: 'bike', auction: 'auction', koikoi: 'koikoi', vFish: 'fishing' };
+const betaHidden = id => !!BETA[id] && (!ME.beta || ME.beta.includes(BETA[id]));
 $('#tabs .wrap').innerHTML = MENU.map(m => `<button data-v="${m[0]}" class="${m[0] === 'vHome' ? 'tb-mid' : ''}"><b>${m[2]}</b>${m[1]}${m[0] === 'vHome' ? '<i class="tb-n hidden" id="msgN"></i>' : ''}</button>`).join('');
 function go(v, sub) {
   const main = GAMES.includes(v) ? 'vGame' : (MENU_OF[v] ? v : 'vInfo');
-  const subs = MENU_OF[main][3].filter(x => (x[0] !== 'vRace' || RACE_ON) && (!PR_IDS.includes(x[0]) || PR_ON()));
+  const subs = MENU_OF[main][3].filter(x => (x[0] !== 'vRace' || RACE_ON) && !betaHidden(x[0]));
   if (main === 'vGame' && GAMES.includes(v)) sub = v;
   sub = sub || sessionStorageGet('sub:' + main);
   if (!subs.some(x => x[0] === sub) && !HIDDEN_SUBS.includes(sub)) sub = subs[0][0];
@@ -1903,7 +1904,7 @@ const gameRow = g => {
   <span class="ic">${g[1]}</span><span class="nm"><b>${g[2]}</b><small>${g[3]}</small></span><span class="go">${soon ? '' : '›'}</span></div>`; };
 let GCAT = (() => { const v = sessionStorageGet('gcat'); return v != null && GAME_GROUPS[+v] ? +v : null; })();   // 開いている分類（null＝分類の一覧）
 const groupGames = ks => ks.map(k => GAME_LIST.find(g => g[0] === k)).filter(g => g && (g[0] !== 'vRace' || RACE_ON))
-  .map(g => PR_IDS.includes(g[0]) && !PR_ON() ? [g[0], g[1], g[2], '準備中'] : g);
+  .map(g => betaHidden(g[0]) ? [g[0], g[1], g[2], '準備中'] : g);
 const isSoon = g => g[3] === '準備中' || g[3].startsWith('準備中（');
 function setGcat(i) { GCAT = i; try { if (i == null) sessionStorage.removeItem('gcat'); else sessionStorage.setItem('gcat', i); } catch (e) {} }
 function renderGameList() {

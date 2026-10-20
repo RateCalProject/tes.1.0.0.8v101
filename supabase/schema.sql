@@ -647,7 +647,7 @@ begin
   end;
   return (select jsonb_build_object('nickname', nickname, 'balance', balance, 'tax', case when _is_guest(u) then null else _tax_badge(u) end,
             'account_no', account_no, 'is_admin', _is_admin(u), 'role', _role(u), 'event', _is_event(u), 'badge', _badge(u), 'prefs', prefs, 'guest', _is_guest(u),
-            'guest_info', _guest_json(u), 'upgraded', up)
+            'guest_info', _guest_json(u), 'upgraded', up, 'beta', _beta_list(u))
             from profiles where id = u);
 end $$;
 
@@ -2915,6 +2915,19 @@ create or replace function public._is_admin(u uuid) returns boolean
 language sql stable set search_path = public as $$
   select exists (select 1 from app_settings where key = 'admins' and u::text = any(string_to_array(value, ',')))
 $$;
+
+-- まだ公開していないゲーム（app_settings 'beta_games'：カンマ区切り。ないときは boat・bike・auction・koikoi・fishing）。それまでは管理者だけ遊べる
+--   公開するときは、そのゲームを一覧から消す（例：update app_settings set value = 'fishing' where key = 'beta_games'）
+create or replace function public._beta_games() returns text[]
+language sql stable set search_path = public as $$
+  select array(select x from unnest(string_to_array(replace(coalesce((select value from app_settings where key = 'beta_games'),
+                                                                     'boat,bike,auction,koikoi,fishing'), ' ', ''), ',')) x where x <> '')
+$$;
+create or replace function public._beta_ok(u uuid, g text) returns boolean
+language sql stable set search_path = public as $$ select _is_admin(u) or not (g = any(_beta_games())) $$;
+-- 画面に出さないゲーム（管理者には何もかくさない）
+create or replace function public._beta_list(u uuid) returns jsonb
+language sql stable set search_path = public as $$ select case when _is_admin(u) then '[]'::jsonb else to_jsonb(_beta_games()) end $$;
 
 create or replace function public._my_corp(u uuid, p_cid text) returns companies
 language plpgsql stable set search_path = public as $$
@@ -8490,6 +8503,7 @@ create or replace function public.room_list(p_game text) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me_g(); r record;
 begin
+  if not _beta_ok(u, p_game) then raise exception '準備中です。もうしばらくお待ちください'; end if;
   -- 1日たっても始まらない部屋は片づける（賭け金は返す）
   for r in select id from game_rooms where status = 'waiting' and created_at < _now() - interval '1 day' order by id for update skip locked loop
     perform _room_cancel(r.id, true);
@@ -8526,6 +8540,7 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me_g(); inv uuid; invs uuid[] := '{}'; rid bigint; n int := 2; x text; o jsonb := '{}'; r game_rooms;
 begin
   if p_game not in ('reversi', 'chess', 'shogi', 'onecard', 'mahjong', 'auction', 'koikoi') then raise exception 'そのゲームはまだ遊べません'; end if;
+  if not _beta_ok(u, p_game) then raise exception '準備中です。もうしばらくお待ちください'; end if;
   if p_game = 'auction' and _is_guest(u) then raise exception '競り市はゲストでは遊べません（本登録すると遊べます）'; end if;
   if p_time_min is null or p_time_min < 1 or p_time_min > 180 then raise exception '持ち時間は1〜180分（3時間）です'; end if;
   if (select count(*) from game_rooms where host = u and status = 'waiting') >= 3 then raise exception '待っている部屋は3つまでです'; end if;
@@ -8590,6 +8605,7 @@ declare u uuid := _me_g(); r game_rooms; s uuid[];
 begin
   select * into r from game_rooms where id = p_room for update;
   if not found or r.status <> 'waiting' then raise exception 'この部屋にはもう入れません'; end if;
+  if not _beta_ok(u, r.game) then raise exception '準備中です。もうしばらくお待ちください'; end if;
   if u = any(r.seats) then raise exception 'もう入っています'; end if;
   if _is_multi(r.game) then
     if cardinality(r.invites) > 0 and not (u = any(r.invites)) then raise exception 'この部屋は招待された人だけです'; end if;
@@ -13387,11 +13403,9 @@ begin
   end if;
 end $$;
 
--- 公開しているか（app_settings 'pr_open' = 1 で公開。それまでは管理者だけ）
+-- 公開しているか（app_settings 'beta_games' に boat があるあいだは管理者だけ）
 create or replace function public._pr_open(u uuid) returns boolean
-language sql stable set search_path = public as $$
-  select _is_admin(u) or coalesce((select value from app_settings where key = 'pr_open'), '') = '1'
-$$;
+language sql stable set search_path = public as $$ select _beta_ok(u, 'boat') $$;
 
 -- きょうの番組（p_sport：boat 競艇・bike 競輪）
 create or replace function public.pr_day(p_sport text) returns jsonb
