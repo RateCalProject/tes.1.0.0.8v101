@@ -242,6 +242,7 @@ h3{font-size:15px;margin:16px 0 8px}
 .game-sec:first-child{border-top:0;padding-top:8px}
 .game-sec b{font-size:15px}.game-sec small{color:var(--muted);font-size:12px}
 .game-sec + .game-row{border-top:0}
+.gc-back{font:inherit;font-size:14px;font-weight:700;color:var(--accent);background:none;border:0;padding:4px 8px 4px 0;cursor:pointer}
 .chb{display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);width:min(100%,420px);aspect-ratio:1;border:3px solid #6B4A2B;border-radius:6px;overflow:hidden;margin:0 auto}
 .chb .c{min-height:0;min-width:0;overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative;font-size:min(9.4vw,42px);line-height:1;user-select:none}
 .chb .c.l{background:#EED9B6}.chb .c.d{background:#B58863}
@@ -621,7 +622,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：English をえらんだ端末では、英語の辞書（i18n/en.js）を先に読みこむ */
-  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=902f106b"><\/script>'); } } catch (e) {}
+  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=6b197e6e"><\/script>'); } } catch (e) {}
 })();
 </script>
 </head>
@@ -1493,7 +1494,7 @@ function go(v, sub) {
   $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === main));
   $('#subNav').classList.remove('hidden');
   $('#subNav').innerHTML = subs.map(x => `<button data-s="${x[0]}" class="${x[0] === sub ? 'on' : ''}">${x[1]}${main === 'vHome' && x[0] === 'msg' && MSGN ? `<span class="dm-n">${MSGN}</span>` : ''}</button>`).join('');
-  $$('#subNav button').forEach(b => b.onclick = () => go(main, b.dataset.s));
+  $$('#subNav button').forEach(b => b.onclick = () => { if (b.dataset.s === 'vGameList') setGcat(null); go(main, b.dataset.s); });
   { const sn = $('#subNav'), on = sn.querySelector('button.on'); if (on) sn.scrollLeft = on.offsetLeft - (sn.clientWidth - on.offsetWidth) / 2; }
   window.scrollTo(0, 0);
   if (sec === 'vInfo') { if (sub === 'today') todayLoad(); if (sub === 'cur' || sub === 'jack') infoLoad(); if (sub === 'tl') tlLoad(true); if (sub === 'mkt') mktLoad(); if (sub === 'pub') pubLoad(); if (sub === 'people') peopleLoad(); }
@@ -1501,6 +1502,7 @@ function go(v, sub) {
   if (sec === 'vWork') workLoad();
   if (sec === 'vRace') kbLoad();
   if (sec === 'vLobby') lobbyLoad();
+  if (sec === 'vGameList') renderGameList();
   if (sec === 'vRoom') roomStart();
   if (sec === 'vBj') bjLoad();
   if (sec === 'vHilo') hiloLoad();
@@ -1513,7 +1515,7 @@ function go(v, sub) {
   if (sec === 'vMore' && sub === 'admin') adminLoad();
   if (sec === 'vMore' && sub === 'users') auLoad(true);
 }
-$$('#tabs button').forEach(b => b.onclick = () => go(b.dataset.v, b.dataset.v === 'vGame' ? 'vGameList' : undefined));
+$$('#tabs button').forEach(b => b.onclick = () => { if (b.dataset.v === 'vGame') setGcat(null); go(b.dataset.v, b.dataset.v === 'vGame' ? 'vGameList' : undefined); });
 // 横にスライドすると、上のタブ（サブメニュー）のとなりへ（指でも、Mac のトラックパッドの横スクロールでも）
 function subStep(d) {
   const main = sessionStorageGet('view'); if (!main || !MENU_OF[main] || HIDDEN_SUBS.includes(view) || $('.modal')) return;
@@ -1556,12 +1558,12 @@ function subStep(d) {
     if (Math.abs(acc) > 150) { subStep(acc > 0 ? 1 : -1); acc = 0; lock = now + 800; }
   }, { passive: true });
 })();
-// 遊戯の一覧（公営競技・ミニゲーム・風の芽製作所・メダカ研究所）
+// 遊戯の一覧：まず分類（公営競技・ミニゲーム・風の芽製作所・メダカ研究所）。分類を押すと、そこのゲームの一覧
 const GAME_GROUPS = [
-  ['公営競技', '', ['vRace', 'keirin', 'kyotei']],
-  ['ミニゲーム', 'その他', ['vSlot', 'vBj', 'vRou', 'vHilo', 'reversi', 'chess', 'shogi', 'onecard', 'mahjong']],
-  ['風の芽製作所', 'オリジナル', ['battle']],
-  ['メダカ研究所', '', ['medaka']],
+  ['公営競技', '', ['vRace', 'keirin', 'kyotei'], '🏇'],
+  ['ミニゲーム', 'その他', ['vSlot', 'vBj', 'vRou', 'vHilo', 'reversi', 'chess', 'shogi', 'onecard', 'mahjong'], '🎲'],
+  ['風の芽製作所', 'オリジナル', ['battle'], '🌱'],
+  ['メダカ研究所', '', ['medaka'], '🐟'],
 ];
 const GAME_LIST = [
   ['vRace', '🏇', '競馬', '毎日 12:30〜13:30（昼競馬）と 16:30〜22:30（20:30はメインレース、そのあと深夜競馬）。みんなで同じレースに賭ける、いちばんの目玉'],
@@ -1585,16 +1587,39 @@ const gameRow = g => {
   const soon = g[3] === '準備中' || g[3].startsWith('準備中（');
   return `<div class="game-row ${soon ? 'soon' : ''}" data-g="${g[0]}">
   <span class="ic">${g[1]}</span><span class="nm"><b>${g[2]}</b><small>${g[3]}</small></span><span class="go">${soon ? '' : '›'}</span></div>`; };
-$('#gameList').innerHTML = GAME_GROUPS.map(([t, sub, ks]) => `<div class="game-sec"><b>${t}</b>${sub ? `<small>${sub}</small>` : ''}</div>` +
-  ks.map(k => GAME_LIST.find(g => g[0] === k)).filter(g => g && (g[0] !== 'vRace' || RACE_ON)).map(gameRow).join('')).join('');
-$$('#gameList [data-g]').forEach(r => r.onclick = () => {
+let GCAT = (() => { const v = sessionStorageGet('gcat'); return v != null && GAME_GROUPS[+v] ? +v : null; })();   // 開いている分類（null＝分類の一覧）
+const groupGames = ks => ks.map(k => GAME_LIST.find(g => g[0] === k)).filter(g => g && (g[0] !== 'vRace' || RACE_ON));
+const isSoon = g => g[3] === '準備中' || g[3].startsWith('準備中（');
+function setGcat(i) { GCAT = i; try { if (i == null) sessionStorage.removeItem('gcat'); else sessionStorage.setItem('gcat', i); } catch (e) {} }
+function renderGameList() {
+  const box = $('#gameList');
+  if (GCAT == null) {
+    box.innerHTML = GAME_GROUPS.map(([t, sub, ks, ic], i) => {
+      const gs = groupGames(ks), soon = gs.every(isSoon);
+      return `<div class="game-row ${soon ? 'soon' : ''}" data-cat="${i}"><span class="ic">${ic}</span>
+        <span class="nm"><b>${t}</b>${sub ? `<span class="muted small"> ${sub}</span>` : ''}<small>${soon ? '準備中' : gs.map(g => `<span>${g[2]}</span>`).join(LANG === 'en' ? ', ' : '・')}</small></span><span class="go">${soon ? '' : '›'}</span></div>`;
+    }).join('');
+  } else {
+    const [t, sub, ks] = GAME_GROUPS[GCAT];
+    box.innerHTML = `<div class="game-sec"><button type="button" class="gc-back" data-gback>‹ 分類</button><b>${t}</b>${sub ? `<small>${sub}</small>` : ''}</div>` + groupGames(ks).map(gameRow).join('');
+  }
+}
+$('#gameList').onclick = ev => {
+  if (ev.target.closest('[data-gback]')) { setGcat(null); renderGameList(); window.scrollTo(0, 0); return; }
+  const c = ev.target.closest('[data-cat]');
+  if (c) {
+    if (c.classList.contains('soon')) return toast('準備中です。もうしばらくお待ちください');
+    setGcat(+c.dataset.cat); renderGameList(); window.scrollTo(0, 0); return;
+  }
+  const r = ev.target.closest('[data-g]'); if (!r) return;
   const g = r.dataset.g;
   if (r.classList.contains('soon')) return;
   if (g === 'battle') { location.href = 'battle/?bet=1'; return; }
   if (g.startsWith('v')) return go(g);
   if (!BOARD_GAMES[g]) return toast('準備中です。もうしばらくお待ちください');
   LB.game = g; go('vLobby');
-});
+};
+renderGameList();
 $('#passSave').onclick = async () => {
   const pw = $('#newPass').value; if (pw.length < 6) return toast('6文字以上にしてください');
   if (!sb) return toast('この画面ではパスワードを変えられません');
