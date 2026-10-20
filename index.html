@@ -360,6 +360,33 @@ h3{font-size:15px;margin:16px 0 8px}
 .mj-row .sc{margin-left:auto;font-variant-numeric:tabular-nums}.mj-row .ck{font-variant-numeric:tabular-nums;font-weight:800}.mj-row .ck.low{color:var(--lose)}
 .mj-river{display:flex;flex-wrap:wrap;gap:2px;margin-top:4px;min-height:25px;align-items:center}
 .mj-melds{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}.mj-meld{display:inline-flex;gap:1px;align-items:center}
+/* 競り市 */
+.au-pl{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:6px}
+.au-pl .p{border:1px solid var(--line);border-radius:10px;padding:5px 8px;font-size:12px;background:var(--bg);min-width:0}
+.au-pl .p.hi{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.au-pl .p.me{background:var(--soft)}
+.au-pl .p .nm{font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.au-pl .p .pn{font-variant-numeric:tabular-nums;color:var(--muted)}
+.au{text-align:center;padding:4px 0}
+.au-hd{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);font-weight:700}
+.au-item{display:flex;align-items:center;gap:12px;justify-content:center;margin:8px 0 4px}
+.au-em{font-size:52px;line-height:1}
+.au-nm{text-align:left}
+.au-nm b{font-size:20px;display:block}
+.au-nm small{display:block;color:var(--muted);font-size:12px}
+.au-me{font-size:13px;margin:6px auto;padding:6px 12px;border-radius:8px;background:var(--soft);display:inline-block;line-height:1.6}
+.au-price{margin:10px 0 2px}
+.au-price small{display:block;font-size:12px;color:var(--muted);font-weight:700;min-height:16px}
+.au-price b{font-size:34px;font-weight:900;font-variant-numeric:tabular-nums;color:var(--accent)}
+.au-price span{display:block;font-size:13px;font-weight:700}
+.au-cd{font-size:14px;font-weight:800;min-height:20px;font-variant-numeric:tabular-nums;margin-top:4px}
+.au-cd.hot{color:var(--lose)}
+.au-bids{display:flex;flex-direction:column-reverse;gap:2px;font-size:12px;color:var(--muted);margin:8px auto 0;max-width:320px}
+.au-sold{margin:10px auto 0;padding:10px;border-radius:10px;border:2px solid var(--accent);font-weight:800;line-height:1.7}
+.au-sold.win{border-color:var(--win)}
+.au-sold.lose{border-color:var(--lose)}
+.au-res{display:grid;grid-template-columns:auto auto auto auto;gap:4px 10px;font-size:12px;text-align:left;font-variant-numeric:tabular-nums;align-items:baseline}
+.au-res .mine{font-weight:800;color:var(--win)}
 .mj-res{border:2px solid var(--accent);border-radius:12px;padding:10px;margin:8px 0;background:var(--soft);font-size:14px}
 .mj-res .mj-hand{flex-wrap:wrap;justify-content:flex-start;margin:6px 0;padding-top:0}
 .wind{display:inline-flex;width:20px;height:20px;border-radius:5px;background:var(--black);color:#fff;font-size:12px;font-weight:800;align-items:center;justify-content:center;flex:none}
@@ -769,7 +796,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：English をえらんだ端末では、英語の辞書（i18n/en.js）を先に読みこむ */
-  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=cbf4d4cf"><\/script>'); } } catch (e) {}
+  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=01db32f7"><\/script>'); } } catch (e) {}
 })();
 </script>
 </head>
@@ -1044,15 +1071,17 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   <div class="card">
     <h3 style="margin-top:0">部屋を作る</h3>
     <input class="inp" id="lbName" maxlength="30" placeholder="部屋の名前（なくてもOK）">
-    <div class="row"><span class="small" style="width:5.5em">持ち時間</span>
+    <div class="row" id="lbTimeRow"><span class="small" style="width:5.5em">持ち時間</span>
       <select class="inp grow" id="lbTime" style="margin:0"><option value="5">1人 5分</option><option value="10" selected>1人 10分</option><option value="30">1人 30分</option><option value="60">1人 1時間</option><option value="180">1人 3時間</option></select></div>
     <div class="row lb-m" id="lbSeatsRow"><span class="small" style="width:5.5em">人数</span>
       <select class="inp grow" id="lbSeats" style="margin:0"><option value="2">2人</option><option value="3">3人</option><option value="4" selected>4人</option></select></div>
+    <div class="row lb-m" id="lbMarketRow"><span class="small" style="width:5.5em">市場</span>
+      <select class="inp grow" id="lbMarket" style="margin:0"><option value="fish">🐟 魚市場</option><option value="antique">🏺 骨董市</option><option value="mix">おまかせ（まぜる）</option></select></div>
     <div class="row lb-m" id="lbLenRow"><span class="small" style="width:5.5em">長さ</span>
       <select class="inp grow" id="lbLen" style="margin:0"><option value="east" selected>東風戦（東場だけ。短め）</option><option value="south">半荘戦（東場と南場）</option></select></div>
-    <div class="row lb-m"><span class="small" style="width:5.5em">賭け金</span>
+    <div class="row lb-m" id="lbStakeRow"><span class="small" style="width:5.5em">賭け金</span>
       <input class="inp grow" id="lbStake" type="number" min="0" step="1" value="0" style="margin:0"><span class="small">X（1人あたり。0は賭けなし）</span></div>
-    <div class="row lb-m"><span class="small" style="width:5.5em">分け方</span>
+    <div class="row lb-m" id="lbModeRow"><span class="small" style="width:5.5em">分け方</span>
       <select class="inp grow" id="lbMode" style="margin:0"><option value="all">1位の総取り</option><option value="points">点数で分ける</option></select></div>
     <input class="inp" id="lbInvite" maxlength="40" placeholder="招待する人のID（なければ、だれでも入れる）">
     <label class="small" style="display:block;margin:4px 0" id="lbBetsRow"><input type="checkbox" id="lbBets" checked> 観戦している人が、どちらが勝つかに賭けられるようにする</label>
@@ -1759,7 +1788,7 @@ function subStep(d) {
 const GAME_GROUPS = [
   ['公営競技', '', ['vRace', 'keirin', 'kyotei'], '🏇'],
   ['ミニゲーム', 'その他', ['vSlot', 'vBj', 'vRou', 'vHilo', 'reversi', 'chess', 'shogi', 'onecard', 'mahjong'], '🎲'],
-  ['風の芽製作所', 'オリジナル', ['battle', 'vLot'], '🌱'],
+  ['風の芽製作所', 'オリジナル', ['battle', 'vLot', 'auction'], '🌱'],
   ['メダカ研究所', '', ['medaka'], '🐟'],
 ];
 const GAME_LIST = [
@@ -1767,6 +1796,7 @@ const GAME_LIST = [
   ['keirin', '🚲', '競輪', '準備中'],
   ['kyotei', '🚤', '競艇', '準備中'],
   ['battle', '⚔', '市区町村バトル', '日本全国の市区町村の地図で遊ぶ陣取り将棋（最大16人）。賭けありの部屋では、所持金を賭けて対戦できます（観戦して賭けることも）'],
+  ['auction', '🔨', '競り市', '魚市場や骨董市の競り（2〜6人）。自分だけの目利きで値打ちを見きわめて値をつけ、落札した品の値打ちをそのまま受け取る'],
   ['vLot', '🎫', '風の芽ジャンボ', '週に1回の宝くじ（1枚100 X）。毎週日曜21:30に抽せん。1等はジャックポットで、当たりが出なければ次の回に持ちこし'],
   ['medaka', '🐟', 'メダカ研究所', '準備中'],
   ['vSlot', '7', 'スロット', '絵柄を3つそろえて当たり'],
@@ -1779,8 +1809,8 @@ const GAME_LIST = [
   ['onecard', '🃏', 'ワンカード', '2〜4人。色か数字を合わせてカードを出し、先に出しきった人の勝ち。コンピューターも入れられる'],
   ['mahjong', '🀄', '麻雀', '4人で打つリーチ麻雀。人が足りないときはコンピューターが入る（東風戦・半荘戦）'],
 ];
-const BOARD_GAMES = { reversi: 'オセロ', chess: 'チェス', shogi: '将棋', onecard: 'ワンカード', mahjong: '麻雀' };
-const MULTI_GAMES = { onecard: true, mahjong: true };
+const BOARD_GAMES = { reversi: 'オセロ', chess: 'チェス', shogi: '将棋', onecard: 'ワンカード', mahjong: '麻雀', auction: '競り市' };
+const MULTI_GAMES = { onecard: true, mahjong: true, auction: true };
 const gameRow = g => {
   const soon = g[3] === '準備中' || g[3].startsWith('準備中（');
   return `<div class="game-row ${soon ? 'soon' : ''}" data-g="${g[0]}">
@@ -4710,6 +4740,14 @@ async function stockLoad() {
    ================================================================= */
 const LB = { game: 'reversi' }, RM = { id: null, timer: null, data: null, sending: false, lastMoves: 0 };
 const HOWTO = {
+  auction: `<ol>
+    <li><b>競り上げ</b>：1回の競り市で5品を順に競ります。品を3秒ほど見せたあと、だれでも値をつけられます。だれかが値をつけたあと、7秒だれも上の値をつけなければ、いちばん高い値の人が落札です（はじめの12秒、だれもつけなければ「流れ」）。</li>
+    <li><b>値のつけ方</b>：いまの値より1段以上高く。ボタンで1段・3段・10段上げられます（1段はいまの値の4%くらい）。いちばん高い値をつけているあいだは、つけられません。</li>
+    <li><b>目利き</b>：品の本当の値打ちは、落札のあとでわかります。それぞれ自分だけに「目利き」（値打ちの見立て）が見えます。骨董は偽物のこともあり、「本物っぽい／あやしい」の見立ても出ます（当たるとはかぎりません）。</li>
+    <li><b>お金</b>：値をつけると、その額をあずかります（上の値をつけられたら返します）。落札したら、あずけた額をはらって、品の値打ちをそのまま受け取ります（安く落とせばもうけ、高すぎれば損）。もうけは所得になります。</li>
+    <li><b>競る相手</b>：2〜6人。空いた席にはコンピューターの仲卸が入ります。ほかに、市場の仲買人（コンピューター）が2人、いつも競りに入ります。</li>
+    <li><b>抜ける</b>：とちゅうで抜けると、そのあとは値をつけません（あずけている額は、落札か返金まで、そのまま）。ゲストは遊べません。</li>
+  </ol>`,
   reversi: `<ol>
     <li>黒と白にわかれて、<b>交互に石を置きます</b>（黒が先）。</li>
     <li>相手の石を、自分の石で<b>はさむように</b>置きます。たて・よこ・ななめ、どの向きでもOK。</li>
@@ -4785,13 +4823,19 @@ const clockTxt = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); const h = 
 async function lobbyLoad() {
   const multi = !!MULTI_GAMES[LB.game];
   $('#lbTitle').textContent = BOARD_GAMES[LB.game] || '';
-  $('#lbHow').innerHTML = (HOWTO[LB.game] || '') + (multi ? ROOM_RULES_M : ROOM_RULES);
+  $('#lbHow').innerHTML = (HOWTO[LB.game] || '') + (LB.game === 'auction' ? '' : multi ? ROOM_RULES_M : ROOM_RULES);
   $$('#vLobby .lb-m').forEach(e => e.classList.toggle('hidden', !multi));
-  $('#lbSeatsRow').classList.toggle('hidden', LB.game !== 'onecard');
+  const au = LB.game === 'auction';
+  $('#lbSeatsRow').classList.toggle('hidden', !['onecard', 'auction'].includes(LB.game));
+  { const mx = au ? 6 : 4, cur = Number($('#lbSeats').value) || 4;
+    $('#lbSeats').innerHTML = Array.from({ length: mx - 1 }, (_, i) => `<option value="${i + 2}" ${i + 2 === Math.min(cur, mx) ? 'selected' : ''}>${i + 2}人</option>`).join(''); }
   $('#lbLenRow').classList.toggle('hidden', LB.game !== 'mahjong');
+  $('#lbMarketRow').classList.toggle('hidden', !au);
+  ['#lbStakeRow', '#lbModeRow', '#lbTimeRow'].forEach(x => $(x).classList.toggle('hidden', au || (x === '#lbTimeRow' ? false : !multi)));
   $('#lbBetsRow').classList.toggle('hidden', multi);
   $('#lbInvite').placeholder = multi ? '招待する人のID（何人でも「,」で区切る。なければ、だれでも入れる）' : '招待する人のID（なければ、だれでも入れる）';
   $('#lbNote').textContent = !multi ? '対局する本人どうしは賭けません（無料）。ふたりそろうと始まり、先手・後手はランダムです。'
+    : au ? '席がうまるか、主催が「コンピューターを入れて始める」と始まります。値をつけた額はあずかり、落札したら品の値打ちを受け取ります（そのまま損得）。'
     : LB.game === 'mahjong' ? '4人そろうと始まります。主催は、空いている席にコンピューターを入れて始めることもできます。'
     : '席がうまると始まります。主催は、コンピューターを入れたり、いまの人数で始めたりもできます。';
   try {
@@ -4799,11 +4843,11 @@ async function lobbyLoad() {
     const pl = r => r.multi ? r.players.map(p => p.cpu ? 'コンピューター' : nameB(p.nickname, p.badge)).join('・') : r.players.map(p => nameB(p.nickname, p.badge)).join(' 対 ');
     if (multi) {
       $('#lbWait').innerHTML = d.waiting.map(r => `<div class="line"><span class="grow">#${r.id} ${esc(r.title || '（名前なし）')}
-          <small>主催 ${nameB(r.host, r.host_badge)}・${r.players.length}/${r.max_seats}人・1人 ${Math.round(r.time_ms / 60000)}分・${stakeTxt(r)}${r.game === 'mahjong' ? '・' + (r.opts.len === 'south' ? '半荘戦' : '東風戦') : ''}${r.invites.length ? '・招待あり' : ''}</small></span>
+          <small>主催 ${nameB(r.host, r.host_badge)}・${r.players.length}/${r.max_seats}人・${r.game === 'auction' ? AU_MK[r.opts.market] || '' : `1人 ${Math.round(r.time_ms / 60000)}分・${stakeTxt(r)}`}${r.game === 'mahjong' ? '・' + (r.opts.len === 'south' ? '半荘戦' : '東風戦') : ''}${r.invites.length ? '・招待あり' : ''}</small></span>
           ${r.me != null ? `<button class="btn s" data-lbopen="${r.id}">見る</button><button class="btn s" data-lbleave="${r.id}">${r.mine_host ? 'やめる' : '出る'}</button>`
             : `<button class="btn main s" data-lbjoin="${r.id}" data-stake="${r.stake}">入る</button>`}</div>`).join('')
         || '<p class="muted small" style="margin:0">いまはありません。部屋を作って待ちましょう</p>';
-      $('#lbPlay').innerHTML = d.playing.map(r => `<div class="line"><span class="grow">#${r.id} ${pl(r)}<small>${stakeTxt(r)}</small></span>
+      $('#lbPlay').innerHTML = d.playing.map(r => `<div class="line"><span class="grow">#${r.id} ${pl(r)}<small>${r.game === 'auction' ? AU_MK[r.opts.market] || '' : stakeTxt(r)}</small></span>
           <button class="btn ${r.me != null ? 'main' : ''} s" data-lbopen="${r.id}">${r.me != null ? '対局へ' : '観戦'}</button></div>`).join('')
         || '<p class="muted small" style="margin:0">いまはありません</p>';
       $('#lbDone').innerHTML = d.finished.map(r => { const f = r.state && r.state.final, rk = f ? f.rank.indexOf(r.me) + 1 : 0;
@@ -4827,12 +4871,13 @@ async function lobbyLoad() {
 $('#lbBack').onclick = () => go('vGameList');
 $('#lbCreate').onclick = async () => {
   try {
-    const multi = !!MULTI_GAMES[LB.game], stake = multi ? Math.max(0, Math.floor(Number($('#lbStake').value) || 0)) : 0;
+    const multi = !!MULTI_GAMES[LB.game], stake = multi && LB.game !== 'auction' ? Math.max(0, Math.floor(Number($('#lbStake').value) || 0)) : 0;
     if (stake > 0 && !confirm(`賭け金 ${fmt(stake)} X をはらって部屋を作りますか？（始まる前にやめれば返ります）`)) return;
-    const r = await call('room_create', { p_game: LB.game, p_title: $('#lbName').value, p_time_min: Number($('#lbTime').value),
+    const au = LB.game === 'auction';
+    const r = await call('room_create', { p_game: LB.game, p_title: $('#lbName').value, p_time_min: au ? 10 : Number($('#lbTime').value),
       p_invite: $('#lbInvite').value.trim() || null, p_bets: multi ? false : $('#lbBets').checked,
-      p_seats: LB.game === 'onecard' ? Number($('#lbSeats').value) : null, p_stake: stake, p_mode: $('#lbMode').value,
-      p_opts: LB.game === 'mahjong' ? { len: $('#lbLen').value } : {} });
+      p_seats: LB.game === 'onecard' || au ? Number($('#lbSeats').value) : null, p_stake: au ? 0 : stake, p_mode: $('#lbMode').value,
+      p_opts: LB.game === 'mahjong' ? { len: $('#lbLen').value } : au ? { market: $('#lbMarket').value } : {} });
     if (stake > 0) setBal(r.balance);
     $('#lbName').value = ''; $('#lbInvite').value = ''; RM.id = r.id; toast('部屋を作りました。相手を待ちましょう'); go('vRoom');
   } catch (e) { toast(e.message); }
@@ -4866,6 +4911,7 @@ function roomClock() {
     if (ms == null || ms < 0) { c.textContent = ''; return; }
     if (d.status === 'playing' && (d.running || [d.turn]).includes(seat)) ms -= el; c.textContent = clockTxt(ms); c.classList.toggle('low', ms < 60000); });
   const tm = $('#mjTimer'); if (tm && d.state && d.state.timer_at) tm.textContent = Math.max(0, Math.ceil((d.state.timer_at - (d.now_ms + el)) / 1000));
+  const ac = $('#auCd'); if (ac && d.state) auCount(ac, d, el);
 }
 setInterval(() => { if (view === 'vRoom') roomClock(); }, 250);
 function roomRender() {
@@ -5119,6 +5165,83 @@ function mjResult(d) {
   if (!st.over) h += `<div class="small muted" style="margin-top:4px"><span id="mjTimer"></span>秒で次の局へ（人が全員「次の局へ」を押すとすぐ）</div>`;
   return h + '</div>';
 }
+/* ---------- 競り市 ---------- */
+const AU_MK = { fish: '🐟 魚市場', antique: '🏺 骨董市', mix: '🐟🏺 まぜた市' };
+const AU_SHOP = { fish: ['丸八', '山長', '大和', '海幸', '魚辰', '浜勝'], antique: ['古美堂', '文華堂', '山水堂', '雅楽堂', '光琳堂', '蔵六堂'] };
+const auPn = v => (v > 0 ? '+' : '') + fmt(v) + ' X';
+function auName(d, b) {
+  const n = d.state.n;
+  if (b >= n) return '市場の仲買人' + 'AB'[b - n];
+  const p = d.players[b] || {};
+  return p.cpu ? '🤖' + (AU_SHOP[d.state.market === 'antique' ? 'antique' : 'fish'][b] || 'コンピューター') : p.nickname || '';
+}
+function auPlayers(d) {
+  const st = d.state || {}, me = d.me;
+  if (!st.n) return '';
+  return `<div class="au-pl">${Array.from({ length: st.nb }, (_, b) => {
+    const p = b < st.n ? d.players[b] || {} : { cpu: true };
+    return `<div class="p ${st.high === b && st.phase === 'bid' ? 'hi' : ''} ${b === me ? 'me' : ''}"><div class="nm">${b < st.n && !p.cpu ? nameB(p.nickname, p.badge) : esc(auName(d, b))}${b === me ? '<span class="tg">あなた</span>' : ''}${p.auto ? '<span class="tg warn">抜けた</span>' : ''}</div>
+      <div class="pn small">${b < st.n ? `${auPn(st.pnl[b])}・${st.won[b]}品` : '市場の買い手'}</div></div>`; }).join('')}</div>`;
+}
+function auCount(el, d, ela) {
+  const st = d.state, now = d.now_ms + ela;
+  if (st.phase === 'bid') {
+    const left = Math.max(0, (st.t_close - now) / 1000);
+    el.textContent = st.high < 0 ? `だれも値をつけなければ流れ（あと ${Math.ceil(left)}秒）` : `ハンマーまで ${left.toFixed(1)}秒`;
+    el.classList.toggle('hot', st.high >= 0 && left < 3);
+  } else if (st.phase === 'show') { el.textContent = `競りが始まるまで ${Math.max(0, Math.ceil((st.t_next - now) / 1000))}秒`; el.classList.remove('hot'); }
+  else { el.textContent = ''; el.classList.remove('hot'); }
+}
+function auBoard(d) {
+  const st = d.state, me = d.me;
+  if (!st || !st.n) { $('#rmBoard').innerHTML = ''; return; }
+  if (st.phase === 'end' || st.over) { $('#rmBoard').innerHTML = auFinal(d); return; }
+  const lot = st.lot, my = st.my, sold = st.phase === 'sold' ? st.done[st.done.length - 1] : null;
+  let h = `<div class="au"><div class="au-hd"><span>${AU_MK[lot.mk] || ''}</span><span>${st.k + 1}/${st.lots_n}品目</span></div>
+    <div class="au-item"><span class="au-em">${lot.em}</span><span class="au-nm"><b>${esc(lot.nm)}</b><small>${esc(lot.info)}</small><small>せり始め ${fmt(lot.start)} X</small></span></div>
+    ${my ? `<div class="au-me">あなたの目利き：<b>およそ ${fmt(Math.round(my.est * 0.9 / 10) * 10)}〜${fmt(Math.round(my.est * 1.1 / 10) * 10)} X</b>${my.hint ? `<br>真贋の見立て：<b>${my.hint === 'sus' ? 'あやしい（偽物かも）' : '本物っぽい'}</b>` : ''}</div>` : ''}`;
+  if (sold) {
+    const w = sold.res.w, mine = w === me && me != null, pn = w >= 0 ? sold.v - sold.res.p : 0;
+    h += w < 0 ? `<div class="au-sold">流れ（だれも値をつけませんでした）<br><span class="small">本当の値打ち ${fmt(sold.v)} X${sold.fake ? '（偽物）' : ''}</span></div>`
+      : `<div class="au-sold ${mine ? (pn >= 0 ? 'win' : 'lose') : ''}">🔨 ${mine ? 'あなたが落札！' : esc(auName(d, w)) + 'が落札'}　${fmt(sold.res.p)} X<br>
+         <span class="small">本当の値打ち ${fmt(sold.v)} X${sold.fake ? '（偽物でした）' : ''}</span>${mine ? ` <b>${auPn(pn)}</b>` : ''}</div>`;
+  } else {
+    h += `<div class="au-price"><small>${st.high >= 0 ? 'いまの値' : st.phase === 'bid' ? 'せり始め' : ''}</small><b>${st.phase === 'bid' ? fmt(st.high >= 0 ? st.price : st.min) + ' X' : '—'}</b>
+      <span>${st.high >= 0 ? (st.high === me ? 'あなた（あずかり中）' : esc(auName(d, st.high))) : st.phase === 'bid' ? 'だれでも、この値から' : '品を見せています'}</span></div>`;
+  }
+  h += `<div class="au-cd" id="auCd"></div>`;
+  if (st.bids && st.bids.length && !sold) h += `<div class="au-bids">${st.bids.map(x => `<span><b>${esc(auName(d, x.b))}</b> ${fmt(x.p)} X</span>`).join('')}</div>`;
+  $('#rmBoard').innerHTML = h + '</div>';
+}
+function auButtons(d) {
+  const st = d.state;
+  if (!st || st.phase !== 'bid') return '';
+  if (st.high === d.me) return '<span class="small" style="color:var(--win);font-weight:700">いちばん高い値をつけています</span>';
+  const mn = st.min, sp = st.step;
+  return `<button class="btn main s" data-au="${mn}">${fmt(mn)} X</button><button class="btn s" data-au="${mn + 2 * sp}">3段上 ${fmt(mn + 2 * sp)} X</button>`
+    + `<button class="btn s" data-au="${mn + 9 * sp}">10段上 ${fmt(mn + 9 * sp)} X</button>`;
+}
+function auMsg(d) {
+  const st = d.state || {}, me = d.me;
+  if (me != null && d.players[me] && d.players[me].auto) return '抜けたので、もう値はつけられません（落札した品の損得はそのまま）';
+  if (st.phase === 'show') return '次の品を見せています…';
+  if (st.phase === 'sold') return '落札が決まりました。次の品へ…';
+  if (me == null) return '観戦中';
+  return st.high === me ? '<b>いちばん高い値です</b>。7秒だれもつけなければ、あなたが落札' : '<b>値をつけるなら、いま！</b>';
+}
+function auFinal(d) {
+  const st = d.state, f = st.final; if (!f) return '';
+  return `<div class="mj-res"><b>結果</b><span>（${esc(d.reason || '')}）</span>${f.rank.map((b, i) => `<div class="line"><span class="grow"><b>${i + 1}位</b> <span>${esc(auName(d, b))}</span>${b === d.me ? '<span>（あなた）</span>' : ''}<small>${st.won[b]}品を落札</small></span>
+      <b style="color:${st.pnl[b] > 0 ? 'var(--win)' : st.pnl[b] < 0 ? 'var(--lose)' : 'inherit'}">${auPn(st.pnl[b])}</b></div>`).join('')}</div>`;
+}
+function auResults(d) {
+  const st = d.state || {}, me = d.me;
+  const L = (st.done || []).filter(l => l.res);
+  $('#rmBetCard').innerHTML = `<h3 style="margin-top:0">これまでの品</h3>${L.length ? `<div class="au-res"><span class="muted">品</span><span class="muted">落札</span><span class="muted">値段</span><span class="muted">値打ち</span>
+      ${L.map(l => { const w = l.res.w, mine = w === me && me != null; return `<span class="${mine ? 'mine' : ''}">${l.em} ${esc(l.nm)}</span><span class="${mine ? 'mine' : ''}">${w < 0 ? '流れ' : esc(auName(d, w))}</span>
+        <span>${w < 0 ? '—' : fmt(l.res.p) + ' X'}</span><span>${fmt(l.v)} X${l.fake ? '（偽物）' : ''}</span>`; }).join('')}</div>` : '<p class="muted small" style="margin:0">まだありません</p>'}
+    <p class="muted small" style="margin:8px 0 0">値をつけた額はあずかり、上の値をつけられたら返します。落札したら、あずけた額をはらって品の値打ちを受け取ります（そのまま損得。もうけは所得）。</p>`;
+}
 function mFinal(d) {
   const st = d.state, f = st && st.final; if (!f) return '';
   const pay = s2 => (d.stakes.find(k => k.seat === s2) || {}).payout;
@@ -5186,7 +5309,10 @@ function mroomRender(d) {
     $('#rmPlayers').innerHTML = `<p class="small" style="margin:0">主催 ${nameB(d.host, d.host_badge)}。${d.max_seats}人そろうと始まります${d.invites.length ? `（招待：ID ${d.invites.join('・')}）` : ''}</p>
       <div class="pl4" style="margin-top:6px">${Array.from({ length: d.max_seats }, (_, i) => { const p = d.players[i];
         return `<div class="pl"><div class="nm">${p ? nameB(p.nickname, p.badge) + (p.seat === me ? '<span class="tg">あなた</span>' : '') : '<span class="muted">あき</span>'}</div></div>`; }).join('')}</div>`;
-    $('#rmBoard').innerHTML = `<p class="small muted" style="text-align:center;margin:8px 0">${d.game === 'mahjong' ? (d.opts.len === 'south' ? '半荘戦' : '東風戦') + '・' : ''}1人 ${Math.round(d.time_ms / 60000)}分</p>`;
+    $('#rmBoard').innerHTML = `<p class="small muted" style="text-align:center;margin:8px 0">${d.game === 'auction' ? (AU_MK[d.opts.market] || '') + '・5品' : `${d.game === 'mahjong' ? (d.opts.len === 'south' ? '半荘戦' : '東風戦') + '・' : ''}1人 ${Math.round(d.time_ms / 60000)}分`}</p>`;
+  } else if (d.game === 'auction') {
+    $('#rmPlayers').innerHTML = auPlayers(d);
+    auBoard(d);
   } else if (d.game === 'onecard') {
     $('#rmPlayers').innerHTML = `<div class="${d.players.length > 2 ? 'pl4' : 'pl-bar'}">${d.players.map(p => { const s2 = p.seat, turn = d.status === 'playing' && st.turn === s2, cnt = st.counts ? st.counts[s2] : 0;
       return `<div class="pl ${turn ? 'turn' : ''}"><div class="nm">${p.cpu ? `コンピューター${s2 + 1}` : nameB(p.nickname, p.badge)}${s2 === me ? '<span class="tg">あなた</span>' : ''}${p.auto ? '<span class="tg warn">おまかせ</span>' : ''}</div>
@@ -5203,7 +5329,8 @@ function mroomRender(d) {
   const auto = mp && mp.auto;
   if (d.status === 'waiting') msg = d.mine_host ? 'みんなが入るのを待っています。「コンピューターを入れて始める」こともできます。' : me != null ? '始まるのを待っています…' : '';
   else if (d.status === 'playing') {
-    if (auto) msg = '時間切れ（または抜けた）なので、コンピューターが代わりに打っています';
+    if (d.game === 'auction') msg = auMsg(d);
+    else if (auto) msg = '時間切れ（または抜けた）なので、コンピューターが代わりに打っています';
     else if (d.game === 'onecard') {
       msg = me == null ? `観戦中・${esc(mName(d, st.turn))}の番` : st.turn === me ? `<b>あなたの番です</b>${st.drew ? '（引いたカードを出すか、パス）' : st.legal.length ? '' : '（出せるカードがないので「引く」）'}` : `${esc(mName(d, st.turn))}の番…`;
       if (st.uno != null) msg += st.uno === me ? '<br><b style="color:var(--lose)">「ワンカード！」を言っていません（指摘される前に押す）</b>' : `<br>${esc(mName(d, st.uno))}が「ワンカード」を言っていません`;
@@ -5215,7 +5342,8 @@ function mroomRender(d) {
     }
   } else if (d.status === 'finished') {
     const f = st.final; const rk = f && me != null ? f.rank.indexOf(me) + 1 : 0;
-    msg = `<b>終わり</b>（${esc(d.reason || '')}）${rk ? `　あなたは <b>${rk}位</b>` : ''}`;
+    msg = d.game === 'auction' ? `<b>終わり</b>${rk ? `<span>　あなたの順位：</span><b>${rk}位</b>` : ''}${me != null ? `<span>・もうけ</span> <b>${auPn(st.pnl[me])}</b>` : ''}`
+      : `<b>終わり</b>（${esc(d.reason || '')}）${rk ? `　あなたは <b>${rk}位</b>` : ''}`;
   } else if (d.status === 'canceled') msg = 'この部屋はなくなりました';
   $('#rmMsg').innerHTML = msg;
   // ボタン
@@ -5224,6 +5352,8 @@ function mroomRender(d) {
     if (d.mine_host) b = `<button class="btn main s" data-start="1">コンピューターを入れて始める</button>${d.game === 'onecard' && d.players.length >= 2 ? '<button class="btn s" data-start="0">いまの人数で始める</button>' : ''}<button class="btn s" id="rmLeave">部屋をやめる</button>`;
     else if (me != null) b = '<button class="btn s" id="rmLeave">部屋を出る</button>';
     else b = `<button class="btn main s" id="rmJoin">この部屋に入る${d.stake > 0 ? `（賭け金 ${fmt(d.stake)} X）` : ''}</button>`;
+  } else if (d.status === 'playing' && me != null && !auto && d.game === 'auction') {
+    b += auButtons(d) + '<button class="btn s" id="rmQuit">抜ける</button>';
   } else if (d.status === 'playing' && me != null && !auto) {
     if (d.game === 'onecard') {
       const my = st.turn === me;
@@ -5238,6 +5368,7 @@ function mroomRender(d) {
   $('#rmBtns').innerHTML = b;
   $$('#rmBtns [data-oc]').forEach(x => x.onclick = () => sendMove(d, JSON.parse(x.dataset.oc)));
   $$('#rmBtns [data-mj]').forEach(x => x.onclick = () => sendMove(d, JSON.parse(x.dataset.mj)));
+  $$('#rmBtns [data-au]').forEach(x => x.onclick = () => sendMove(d, { a: 'bid', x: Number(x.dataset.au) }));
   const rr = $('#rmBtns [data-mjr]'); if (rr) rr.onclick = () => { RM.riichi = !RM.riichi; RM.mjSel = null; roomRender(); };
   $$('#rmBtns [data-start]').forEach(x => x.onclick = async () => {
     try { RM.data = await call('room_start', { p_room: d.id, p_cpu: x.dataset.start === '1' }); RM.data.got = Date.now(); setBal(RM.data.balance); roomRender(); } catch (e) { toast(e.message); }
@@ -5251,9 +5382,11 @@ function mroomRender(d) {
     try { RM.data = await call('room_join', { p_room: d.id }); RM.data.got = Date.now(); setBal(RM.data.balance); roomRender(); } catch (e) { toast(e.message); }
   };
   const qt = $('#rmQuit'); if (qt) qt.onclick = async () => {
-    if (!confirm('抜けますか？　このあとはコンピューターが代わりに打ちます（もどれません。賭けはそのまま）')) return;
+    if (!confirm(d.game === 'auction' ? '抜けますか？　このあとは値をつけられません（もどれません。あずけている額は、落札か返金まで、そのまま）'
+      : '抜けますか？　このあとはコンピューターが代わりに打ちます（もどれません。賭けはそのまま）')) return;
     try { RM.data = await call('room_quit', { p_room: d.id }); RM.data.got = Date.now(); roomRender(); } catch (e) { toast(e.message); }
   };
+  if (d.game === 'auction') { auResults(d); if (d.balance != null && RM.auBal !== d.balance) { RM.auBal = d.balance; setBal(d.balance); } return; }
   // 賭け金
   const done = d.stakes.some(k => k.payout != null);
   $('#rmBetCard').innerHTML = `<h3 style="margin-top:0">賭け金</h3><p class="small" style="margin:0">${d.stake > 0 ? `1人 ${fmt(d.stake)} X・${d.stake_mode === 'points' ? '点数で分ける' : '1位の総取り'}（国庫がもうけの5%。コンピューターは賭けません）` : 'この部屋は賭けなしです'}</p>
@@ -5821,7 +5954,7 @@ $('#rvSend').onclick = async () => {
 };
 
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て', guest_rest: 'ゲストの残り（上限をこえた分・消えたゲスト）', lottery: '風の芽ジャンボ' };
+const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て', guest_rest: 'ゲストの残り（上限をこえた分・消えたゲスト）', lottery: '風の芽ジャンボ', auction: '競り市' };
 async function moreLoad() {
   idLoad();
   try {

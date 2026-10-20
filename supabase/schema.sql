@@ -606,7 +606,7 @@ begin
   if a is not null then return; end if;      -- AIのアカウントは記録しない
   insert into tx_log(user_id, game, bet, payout, balance_after, detail)
   values (u, g, bet, pay, b, d);
-  if g in ('slot','roulette','hilo','blackjack','race','lottery') then
+  if g in ('slot','roulette','hilo','blackjack','race','lottery','auction') then
     update treasury set balance = balance + (bet - pay), casino_total = casino_total + (bet - pay) where id = 1;
   end if;
 end $$;
@@ -1034,7 +1034,7 @@ end $$;
 create or replace function public._income(u uuid, m int) returns bigint
 language sql stable set search_path = public as $$
   select greatest(coalesce(sum(payout - bet), 0), 0)::bigint from tx_log
-   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend','liquidation','game_bet','game_stake','pub_sale','review')
+   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend','liquidation','game_bet','game_stake','pub_sale','review','auction')
      and created_at >= _month_start(m) and created_at < _month_start(_next_month(m))
 $$;
 
@@ -7362,17 +7362,326 @@ end $$;
 create or replace function public._game_name(g text) returns text
 language sql immutable as $$
   select case g when 'reversi' then 'オセロ' when 'chess' then 'チェス' when 'shogi' then '将棋'
-                when 'onecard' then 'ワンカード' when 'mahjong' then '麻雀' else g end $$;
+                when 'onecard' then 'ワンカード' when 'mahjong' then '麻雀' when 'auction' then '競り市' else g end $$;
 
--- 4人までのゲーム（ワンカード・麻雀）
+-- =====================================================================
+-- 競り市（みんなで遊ぶ。競り上げ）：魚市場・骨董市
+--   1回の競りで5品。品ごとに、見せる（3.5秒）→ 競り（値をつける）→ 落札（5秒） の順
+--   競り：はじめは「せり始めの値」。だれかが値をつけると、7秒だれもつけなければ落札（はじめの12秒だれもつけなければ流れ）
+--   値をつけると、その額をあずかる（ほかの人が上の値をつけたら返す）。落札したら、あずけた額をはらって、品の本当の値打ちを受け取る（そのまま損得）
+--   それぞれ自分だけの「目利き」（値打ちの見立て。骨董は本物か偽物かの見立ても）が見える。市場の仲買人（コンピューター）2人もいつも競る
+-- =====================================================================
+create or replace function public._au_step(p bigint) returns bigint
+language sql immutable as $$
+  select coalesce((select min(v) from (select (m * (10::numeric ^ e))::bigint v from unnest(array[1, 2, 5]) m, generate_series(1, 9) e) z
+                    where v >= greatest(p, 1) * 0.04), 10)
+$$;
+-- 次につけられるいちばん低い値
+create or replace function public._au_min(st jsonb) returns bigint
+language sql immutable as $$
+  select case when coalesce((st->>'high')::int, -1) < 0 then (st->'lots'->((st->>'k')::int)->>'start')::bigint
+              else (st->>'price')::bigint + _au_step((st->>'price')::bigint) end
+$$;
+-- 品をひとつつくる（nb：競る人の数＝席＋仲買人2人）
+create or replace function public._au_lot(mk text, nb int) returns jsonb
+language plpgsql volatile as $$
+declare it record; w int; v numeric; vg numeric; e0 numeric; fake boolean := false; est jsonb := '[]'; hint jsonb := '[]'; rs jsonb := '[]';
+        i int; e numeric; info text; st0 bigint; step bigint; h text; ex numeric;
+begin
+  if mk = 'fish' then
+    select * into it from (values
+      ('本マグロ', '🐟', 'kg', 90, 260, 180, 700, ''), ('ミナミマグロ', '🐟', 'kg', 50, 120, 120, 380, ''), ('メバチマグロ', '🐟', 'kg', 30, 80, 80, 260, ''),
+      ('タラバガニ', '🦀', 'box', 5, 0, 12000, 45000, '杯'), ('毛ガニ', '🦀', 'box', 10, 0, 8000, 30000, '杯'), ('ズワイガニ', '🦀', 'box', 8, 0, 10000, 40000, '杯'),
+      ('ウニ', '🍣', 'box', 10, 0, 6000, 40000, '箱'), ('イセエビ', '🦞', 'box', 10, 0, 10000, 35000, '尾'), ('アワビ', '🐚', 'box', 20, 0, 8000, 30000, '個'),
+      ('クエ', '🐟', 'kg', 15, 40, 300, 900, ''), ('ノドグロ', '🐟', 'box', 15, 0, 8000, 28000, '尾'), ('関サバ', '🐟', 'box', 12, 0, 4000, 15000, '尾'),
+      ('トラフグ', '🐡', 'kg', 10, 30, 400, 1200, ''), ('寒ブリ', '🐟', 'box', 5, 0, 6000, 20000, '本'), ('金目鯛', '🐟', 'box', 10, 0, 7000, 24000, '尾')
+    ) x(nm, em, kind, a, b, lo, hi, cnt) order by random() limit 1;
+    info := (array['大間', '銚子', '焼津', '境港', '釧路', '稚内', '羅臼', '枕崎', '下関', '氷見', '気仙沼', '長崎', '函館', '三崎'])[1 + floor(random() * 14)::int];
+    if it.kind = 'kg' then
+      w := it.a + floor(random() * (it.b - it.a + 1))::int;
+      v := w * exp(ln(it.lo) + random() * (ln(it.hi) - ln(it.lo))) * exp(_randn() * 0.15);
+      e0 := w * sqrt(it.lo::numeric * it.hi);
+      info := info || '・' || w || 'kg';
+    else
+      v := exp(ln(it.lo) + random() * (ln(it.hi) - ln(it.lo))) * exp(_randn() * 0.15);
+      e0 := sqrt(it.lo::numeric * it.hi);
+      info := info || '・' || it.a || it.cnt || '入り';
+    end if;
+    vg := v;
+  else
+    select * into it from (values
+      ('古伊万里の壺', '🏺', 20000, 120000), ('備前焼の壺', '🏺', 10000, 60000), ('山水画の掛け軸', '📜', 30000, 250000), ('浮世絵の版画', '🖼', 15000, 150000),
+      ('楽焼の茶碗', '🍵', 20000, 180000), ('日本刀', '⚔', 40000, 300000), ('古銭の束', '🪙', 3000, 25000), ('金屏風', '🖼', 50000, 200000),
+      ('懐中時計', '🕰', 8000, 60000), ('蒔絵の文箱', '📦', 10000, 80000), ('南部鉄瓶', '🫖', 5000, 40000), ('螺鈿の手鏡', '🪞', 6000, 50000)
+    ) x(nm, em, lo, hi) order by random() limit 1;
+    vg := exp(ln(it.lo) + random() * (ln(it.hi) - ln(it.lo)));
+    fake := random() < 0.25;
+    v := case when fake then vg * (0.03 + random() * 0.05) else vg end;
+    e0 := sqrt(it.lo::numeric * it.hi) * 0.764;
+    info := (array['室町', '桃山', '江戸前期', '江戸中期', '江戸後期', '明治', '大正'])[1 + floor(random() * 7)::int] || '・'
+         || (array['共箱あり', '箱なし', 'ほぼ無傷', '少しきず', '鑑定書つき', '旧家の蔵から'])[1 + floor(random() * 6)::int];
+  end if;
+  v := greatest(round(v / 10) * 10, 10);
+  for i in 1..nb loop
+    e := round(vg * exp(_randn() * 0.16) / 10) * 10;
+    est := est || to_jsonb(e);
+    if mk = 'fish' then
+      h := null; ex := e;
+    else
+      h := case when (fake and random() < 0.75) or (not fake and random() < 0.25) then 'sus' else 'ok' end;
+      ex := e * case when h = 'sus' then 0.525 else 0.905 end;     -- 見立てから考えた値打ち
+    end if;
+    hint := hint || to_jsonb(h);
+    rs := rs || to_jsonb(round(ex * (0.88 + random() * 0.14)));  -- コンピューターなら、ここまでは値をつける
+  end loop;
+  step := _au_step((e0 * 0.45)::bigint);
+  st0 := greatest(round(e0 * 0.45 / step) * step, step);
+  return jsonb_build_object('nm', it.nm, 'em', it.em, 'info', info, 'mk', mk, 'v', v::bigint, 'fake', fake,
+                            'start', st0, 'est', est, 'hint', hint, 'rs', rs);
+end $$;
+
+create or replace function public._au_init(n int, opts jsonb) returns jsonb
+language plpgsql volatile as $$
+declare mk text := coalesce(opts->>'market', 'fish'); lots jsonb := '[]'; i int; t bigint := _kb_ms(_now());
+begin
+  if mk not in ('fish', 'antique', 'mix') then mk := 'fish'; end if;
+  for i in 1..5 loop
+    lots := lots || _au_lot(case when mk = 'mix' then (case when random() < 0.5 then 'fish' else 'antique' end) else mk end, n + 2);
+  end loop;
+  return jsonb_build_object('g', 'auction', 'market', mk, 'n', n, 'nb', n + 2, 'lots', lots, 'k', 0, 'phase', 'show',
+    'price', null, 'high', -1, 't_next', t + 3500, 't_close', null, 'plan', (select jsonb_agg(null::int) from generate_series(1, n + 2)),
+    'bids', '[]'::jsonb, 'pnl', (select jsonb_agg(0) from generate_series(1, n)), 'won', (select jsonb_agg(0) from generate_series(1, n)),
+    'timer_at', t + 3500, 'over', false);
+end $$;
+
+-- コンピューター（席のコンピューターと市場の仲買人2人）の次に値をつける時刻を決めなおす
+create or replace function public._au_plan(st jsonb, t bigint) returns jsonb
+language plpgsql volatile as $$
+declare nb int := (st->>'nb')::int; n int := (st->>'n')::int; k int := (st->>'k')::int; b int; mn bigint := _au_min(st); pl jsonb := '[]';
+        cp int[] := array(select jsonb_array_elements_text(coalesce(st->'act', '[]'))::int); hi int := coalesce((st->>'high')::int, -1);
+begin
+  for b in 0..nb - 1 loop
+    if b = any(cp) and b <> hi and (st->'lots'->k->'rs'->>b)::bigint >= mn then
+      pl := pl || to_jsonb(t + 900 + floor(random() * 2100)::bigint);
+    else
+      pl := pl || 'null'::jsonb;
+    end if;
+  end loop;
+  return jsonb_set(st, '{plan}', pl);
+end $$;
+
+-- 次のできごとの時刻
+create or replace function public._au_next(st jsonb) returns jsonb
+language plpgsql immutable as $$
+declare t bigint; x jsonb;
+begin
+  if coalesce((st->>'over')::boolean, false) then return st - 'timer_at'; end if;
+  if st->>'phase' = 'bid' then
+    t := (st->>'t_close')::bigint;
+    for x in select * from jsonb_array_elements(st->'plan') loop
+      if jsonb_typeof(x) = 'number' and (x #>> '{}')::bigint < t then t := (x #>> '{}')::bigint; end if;
+    end loop;
+  else
+    t := (st->>'t_next')::bigint;
+  end if;
+  return jsonb_set(st, '{timer_at}', to_jsonb(t));
+end $$;
+
+-- 値をつける（b：競る人。席か仲買人）
+create or replace function public._au_bid(st jsonb, b int, x bigint, t bigint) returns jsonb
+language plpgsql volatile as $$
+declare bids jsonb := coalesce(st->'bids', '[]');
+begin
+  bids := bids || jsonb_build_object('b', b, 'p', x, 't', t);
+  if jsonb_array_length(bids) > 8 then bids := bids - 0; end if;
+  st := st || jsonb_build_object('price', x, 'high', b, 't_close', t + 7000, 'bids', bids);
+  return _au_plan(st, t);
+end $$;
+
+-- 落札（または流れ）
+create or replace function public._au_close(st jsonb, t bigint) returns jsonb
+language plpgsql volatile as $$
+declare k int := (st->>'k')::int; n int := (st->>'n')::int; hi int := coalesce((st->>'high')::int, -1); p bigint := (st->>'price')::bigint;
+        v bigint := (st->'lots'->k->>'v')::bigint;
+begin
+  st := jsonb_set(st, array['lots', k::text, 'res'], jsonb_build_object('w', hi, 'p', case when hi >= 0 then p end));
+  if hi >= 0 and hi < n then
+    st := jsonb_set(st, array['pnl', hi::text], to_jsonb((st->'pnl'->>hi)::bigint + v - p));
+    st := jsonb_set(st, array['won', hi::text], to_jsonb((st->'won'->>hi)::int + 1));
+  end if;
+  return st || jsonb_build_object('phase', 'sold', 't_next', t + 5000, 'plan', (select jsonb_agg(null::int) from generate_series(1, (st->>'nb')::int)));
+end $$;
+
+create or replace function public._au_act(st jsonb, s int, mv jsonb) returns jsonb
+language plpgsql volatile as $$
+declare t bigint := coalesce((st->>'now')::bigint, _kb_ms(_now())); k int := (st->>'k')::int; n int := (st->>'n')::int; x bigint; mn bigint;
+        b int; bt bigint; pb jsonb; i int; best int; bestt bigint;
+begin
+  if coalesce((st->>'over')::boolean, false) then raise exception 'この競りはもう終わりました'; end if;
+  if s >= 0 then   -- 人が値をつける
+    if mv->>'a' <> 'bid' then raise exception 'できない操作です'; end if;
+    if st->>'phase' = 'show' then raise exception 'まだ競りが始まっていません'; end if;
+    if st->>'phase' <> 'bid' then raise exception 'この品の競りは終わりました'; end if;
+    if t >= (st->>'t_close')::bigint then raise exception 'この品の競りは終わりました'; end if;
+    if coalesce((st->>'high')::int, -1) = s then raise exception 'いちばん高い値をつけているのは、あなたです'; end if;
+    x := (mv->>'x')::bigint; mn := _au_min(st);
+    if x is null or x < mn then raise exception '% X以上をつけてください', _fmt(mn); end if;
+    if x > mn + 50 * _au_step(mn) then raise exception '一度に上げられるのは % Xまでです', _fmt(mn + 50 * _au_step(mn)); end if;
+    return _au_next(_au_bid(st, s, x, t));
+  end if;
+  -- 時間のできごと
+  if st->>'phase' = 'show' then
+    -- この品で競るコンピューター（席のコンピューターと市場の仲買人から、3人まで）
+    st := st || jsonb_build_object('phase', 'bid', 'price', null, 'high', -1, 't_close', t + 12000, 'bids', '[]'::jsonb,
+      'act', (select coalesce(jsonb_agg(z.q), '[]'::jsonb) from (select g.q from generate_series(0, (st->>'nb')::int - 1) g(q)
+               where g.q >= n or g.q in (select jsonb_array_elements_text(coalesce(st->'cpus', '[]'))::int) order by random() limit 3) z));
+    return _au_next(_au_plan(st, t));
+  end if;
+  if st->>'phase' = 'bid' then
+    -- いちばん早いコンピューター（時刻が来ていれば、落札より先）
+    best := null; bestt := null; i := 0;
+    for pb in select * from jsonb_array_elements(st->'plan') loop
+      if jsonb_typeof(pb) = 'number' and (pb #>> '{}')::bigint <= t and (bestt is null or (pb #>> '{}')::bigint < bestt) then best := i; bestt := (pb #>> '{}')::bigint; end if;
+      i := i + 1;
+    end loop;
+    if best is not null and bestt <= (st->>'t_close')::bigint then
+      mn := _au_min(st);
+      if (st->'lots'->k->'rs'->>best)::bigint >= mn and coalesce((st->>'high')::int, -1) <> best then
+        bt := (st->'lots'->k->'rs'->>best)::bigint;
+        x := mn;
+        if mn < bt * 0.6 then          -- まだずっと安いときは、一気に上げる（見立ての5〜7割まで）
+          x := greatest(mn, (round(bt * (0.5 + random() * 0.2) / _au_step(mn)) * _au_step(mn))::bigint);
+        elsif random() < 0.15 and bt >= mn + _au_step(mn) then   -- ときどき2段上げ
+          x := mn + _au_step(mn);
+        end if;
+        return _au_next(_au_bid(st, best, least(x, greatest(bt, mn)), t));
+      end if;
+      return _au_next(jsonb_set(st, array['plan', best::text], 'null'::jsonb));
+    end if;
+    if t >= (st->>'t_close')::bigint then return _au_next(_au_close(st, t)); end if;
+    return _au_next(st);
+  end if;
+  if st->>'phase' = 'sold' then
+    if k + 1 >= jsonb_array_length(st->'lots') then
+      st := st || jsonb_build_object('phase', 'end', 'over', true, 'why', '5品の競りが終わりました');
+      return _au_next(st || jsonb_build_object('final', _au_final(st)));
+    end if;
+    return _au_next(st || jsonb_build_object('k', k + 1, 'phase', 'show', 't_next', t + 3500, 'price', null, 'high', -1, 'bids', '[]'::jsonb));
+  end if;
+  return st;
+end $$;
+
+-- 順位（もうけの多い順）
+create or replace function public._au_final(st jsonb) returns jsonb
+language sql immutable as $$
+  select jsonb_build_object('rank', (select jsonb_agg(i order by (st->'pnl'->>i)::bigint desc, i) from generate_series(0, (st->>'n')::int - 1) i),
+                            'v', st->'pnl', 'scale', 1, 'ref', 'best')
+$$;
+
+-- 見せる形（値打ちは落札のあとだけ。目利きは自分の分だけ）
+create or replace function public._au_view(st jsonb, me int) returns jsonb
+language plpgsql immutable as $$
+declare k int := (st->>'k')::int; lot jsonb := st->'lots'->k; done jsonb := '[]'; i int; l jsonb; open boolean;
+begin
+  for i in 0..jsonb_array_length(st->'lots') - 1 loop
+    l := st->'lots'->i;
+    open := l ? 'res';
+    if i < k or (i = k and open) then
+      done := done || jsonb_build_object('nm', l->'nm', 'em', l->'em', 'info', l->'info', 'mk', l->'mk', 'start', l->'start', 'res', l->'res', 'v', l->'v', 'fake', l->'fake');
+    end if;
+  end loop;
+  return jsonb_build_object('g', 'auction', 'market', st->'market', 'n', st->'n', 'nb', st->'nb', 'k', k, 'lots_n', jsonb_array_length(st->'lots'),
+    'phase', st->'phase', 'price', st->'price', 'high', st->'high', 'min', case when st->>'phase' = 'bid' then _au_min(st) end,
+    'step', case when st->>'phase' = 'bid' then _au_step(_au_min(st)) end,
+    't_close', st->'t_close', 't_next', st->'t_next', 'timer_at', st->'timer_at', 'bids', st->'bids', 'pnl', st->'pnl', 'won', st->'won',
+    'cpus', coalesce(st->'cpus', '[]'), 'over', coalesce(st->'over', 'false'), 'final', st->'final', 'why', st->'why',
+    'lot', case when st->>'phase' in ('show', 'bid', 'sold') then jsonb_build_object('nm', lot->'nm', 'em', lot->'em', 'info', lot->'info', 'mk', lot->'mk', 'start', lot->'start') end,
+    'my', case when me is not null and me >= 0 and st->>'phase' in ('show', 'bid', 'sold') then
+            jsonb_build_object('est', lot->'est'->me, 'hint', lot->'hint'->me) end,
+    'done', done);
+end $$;
+
+-- 値をつける前に、その額をあずかる（ゲストは遊べない）
+create or replace function public._au_hold(u uuid, mv jsonb) returns void
+language plpgsql set search_path = public as $$
+declare x bigint;
+begin
+  if coalesce(mv->>'a', '') <> 'bid' then return; end if;
+  if _is_guest(u) then raise exception '競り市はゲストでは遊べません（本登録すると遊べます）'; end if;
+  x := (mv->>'x')::bigint;
+  if x is null or x < 1 then raise exception '値を入れてください'; end if;
+  perform _take(u, x);
+end $$;
+
+-- お金：値を上書きされた人に返す・落札した人は値打ちを受け取る（a：前、b：あと）
+create or replace function public._au_money(rid bigint, seats uuid[], a jsonb, b jsonb) returns void
+language plpgsql set search_path = public as $$
+declare n int := (b->>'n')::int; ak int := (a->>'k')::int; ah int := coalesce((a->>'high')::int, -1); bh int := coalesce((b->>'high')::int, -1);
+        lot jsonb; w int; p bigint; v bigint; uid uuid;
+begin
+  if a->>'phase' <> 'bid' then return; end if;
+  -- 上書きされた（同じ品のうちに、いちばん高い人が変わった）
+  if b->>'phase' = 'bid' and (b->>'k')::int = ak and bh <> ah and ah >= 0 and ah < n and seats[ah + 1] is not null then
+    update profiles set balance = balance + (a->>'price')::bigint where id = seats[ah + 1];
+  end if;
+  -- 落札が決まった
+  if b->>'phase' <> 'bid' and (b->'lots'->ak) ? 'res' then
+    lot := b->'lots'->ak; w := coalesce((lot->'res'->>'w')::int, -1); p := (lot->'res'->>'p')::bigint;
+    if w >= 0 and w < n and seats[w + 1] is not null then
+      uid := seats[w + 1]; v := (lot->>'v')::bigint;
+      perform _give(uid, v);
+      perform _log(uid, 'auction', p, v, jsonb_build_object('room', rid, 'lot', lot->>'nm', 'fake', coalesce((lot->>'fake')::boolean, false)));
+    end if;
+  end if;
+end $$;
+
+-- やめるとき（長すぎる競り）：あずかっているお金を返す
+create or replace function public._au_abort(rid bigint) returns void
+language plpgsql set search_path = public as $$
+declare r game_rooms; h int;
+begin
+  select * into r from game_rooms where id = rid for update;
+  if not found or r.status <> 'playing' then return; end if;
+  h := coalesce((r.state->>'high')::int, -1);
+  if r.state->>'phase' = 'bid' and h >= 0 and h < (r.state->>'n')::int and r.seats[h + 1] is not null then
+    update profiles set balance = balance + (r.state->>'price')::bigint where id = r.seats[h + 1];
+  end if;
+  update game_rooms set status = 'finished', finished_at = _now(), reason = '時間がかかりすぎたので終わり（あずかっていた額は返しました）',
+         state = state || jsonb_build_object('over', true, 'phase', 'end') where id = rid;
+end $$;
+
+-- 毎分：人が見ていなくても競りを進める（2時間たったら終わり）
+create or replace function public._au_cron() returns int
+language plpgsql security definer set search_path = public as $$
+declare r record; n int := 0;
+begin
+  for r in select id from game_rooms where game = 'auction' and status = 'waiting' and created_at < _now() - interval '1 day' for update skip locked loop
+    perform _room_cancel(r.id, true);
+  end loop;
+  for r in select id, started_at from game_rooms where game = 'auction' and status = 'playing' for update skip locked loop
+    if r.started_at < _now() - interval '2 hours' then perform _au_abort(r.id);
+    else perform _room_tick(r.id, 150); end if;
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+do $$
+begin
+  if exists (select 1 from pg_namespace where nspname = 'cron') then
+    perform cron.schedule('ailinax-auction', '* * * * *', 'select public._au_cron()');
+  end if;
+end $$;
+
+-- みんなで遊ぶゲーム（ワンカード・麻雀・競り市）
 create or replace function public._is_multi(g text) returns boolean
-language sql immutable as $$ select g in ('onecard', 'mahjong') $$;
+language sql immutable as $$ select g in ('onecard', 'mahjong', 'auction') $$;
 
 create or replace function public._mg_init(g text, n int, opts jsonb) returns jsonb
 language plpgsql volatile as $$
 begin
   if g = 'onecard' then return _oc_init(n); end if;
   if g = 'mahjong' then return _mj_init(opts); end if;
+  if g = 'auction' then return _au_init(n, opts); end if;
   raise exception 'そのゲームはまだ遊べません';
 end $$;
 
@@ -7390,6 +7699,7 @@ language plpgsql volatile as $$
 begin
   if g = 'onecard' then return _oc_act(st, s, mv); end if;
   if g = 'mahjong' then return _mj_act(st, s, mv); end if;
+  if g = 'auction' then return _au_act(st, s, mv); end if;
   raise exception 'そのゲームはまだ遊べません';
 end $$;
 
@@ -7406,6 +7716,7 @@ language plpgsql immutable as $$
 begin
   if g = 'onecard' then return _oc_view(st, me); end if;
   if g = 'mahjong' then return _mj_view(st, me); end if;
+  if g = 'auction' then return _au_view(st, me); end if;
   return '{}';
 end $$;
 
@@ -7423,6 +7734,7 @@ language plpgsql immutable as $$
 begin
   if g = 'onecard' then return _oc_final(st); end if;
   if g = 'mahjong' then return _mj_final(st); end if;
+  if g = 'auction' then return _au_final(st); end if;
   return '{}';
 end $$;
 
@@ -7532,7 +7844,7 @@ begin
   end if;
   st := _mg_init(r.game, n, r.opts);
   r.seats := s; r.auto := '{}';
-  st := st || jsonb_build_object('hum', _mroom_hum(r));
+  st := st || jsonb_build_object('hum', _mroom_hum(r), 'cpus', to_jsonb(cs));
   update game_rooms set seats = s, cpu = cs, auto = '{}', status = 'playing', started_at = _now(), act_at = _now(), turn_at = _now(),
          wait_at = array_fill(_now(), array[n]), clock_ms = array_fill(r.time_ms, array[n]), move_no = 0, state = st,
          turn = coalesce((_mg_pending(r.game, st))[1], 0)
@@ -7619,7 +7931,7 @@ drop function if exists public._mroom_tick(bigint);
 create or replace function public._mroom_tick(rid bigint, budget int default 150) returns void
 language plpgsql set search_path = public as $$
 declare r game_rooms; st jsonb; pend int[]; s int; ev timestamptz; best timestamptz; who int; kind text;
-        n int := 0; nowt timestamptz := _now(); w0 text; p int; mv jsonb; fast boolean; lim int;
+        n int := 0; nowt timestamptz := _now(); w0 text; p int; mv jsonb; fast boolean; lim int; st0 jsonb;
 begin
   select * into r from game_rooms where id = rid for update;
   if not found or r.status <> 'playing' or not _is_multi(r.game) then return; end if;
@@ -7643,8 +7955,10 @@ begin
     if best < r.act_at then best := r.act_at; end if;
     w0 := st->>'win';
     st := jsonb_set(st, '{now}', to_jsonb(_kb_ms(best)));
+    st0 := st;
     if kind = 'timer' then
       st := _mg_act(r.game, st, -1, '{"a":"timer"}');
+      if r.game = 'auction' then perform _au_money(rid, r.seats, st0, st); end if;
     elsif kind = 'timeout' then
       r.auto := r.auto || who; r.clock_ms[who + 1] := 0;
       st := st || jsonb_build_object('hum', _mroom_hum(r));
@@ -7679,7 +7993,9 @@ begin
   if me = any(r.auto) then raise exception '時間切れ（または抜けた）なので、コンピューターが代わりに打っています'; end if;
   pend := _mg_pending(r.game, r.state);
   w0 := r.state->>'win';
+  if r.game = 'auction' then perform _au_hold(u, mv); end if;
   st := _mg_act(r.game, jsonb_set(r.state, '{now}', to_jsonb(_kb_ms(nowt))), me, mv);
+  if r.game = 'auction' then perform _au_money(rid, r.seats, r.state, st); end if;
   if me = any(pend) then
     r.clock_ms[me + 1] := greatest(r.clock_ms[me + 1] - floor(extract(epoch from (nowt - r.wait_at[me + 1])) * 1000)::int, 0);
     r.wait_at[me + 1] := nowt;
@@ -7803,16 +8119,23 @@ returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me_g(); inv uuid; invs uuid[] := '{}'; rid bigint; n int := 2; x text; o jsonb := '{}'; r game_rooms;
 begin
-  if p_game not in ('reversi', 'chess', 'shogi', 'onecard', 'mahjong') then raise exception 'そのゲームはまだ遊べません'; end if;
+  if p_game not in ('reversi', 'chess', 'shogi', 'onecard', 'mahjong', 'auction') then raise exception 'そのゲームはまだ遊べません'; end if;
+  if p_game = 'auction' and _is_guest(u) then raise exception '競り市はゲストでは遊べません（本登録すると遊べます）'; end if;
   if p_time_min is null or p_time_min < 1 or p_time_min > 180 then raise exception '持ち時間は1〜180分（3時間）です'; end if;
   if (select count(*) from game_rooms where host = u and status = 'waiting') >= 3 then raise exception '待っている部屋は3つまでです'; end if;
   if _is_multi(p_game) then
     n := case when p_game = 'mahjong' then 4 else coalesce(p_seats, 4) end;
-    if n not between 2 and 4 then raise exception '人数は2〜4人です'; end if;
+    if p_game = 'auction' then
+      if n not between 2 and 6 then raise exception '人数は2〜6人です'; end if;
+    elsif n not between 2 and 4 then raise exception '人数は2〜4人です'; end if;
     if coalesce(p_stake, 0) < 0 or coalesce(p_stake, 0) > 10000000 then raise exception '賭け金は0〜1,000万 Xです'; end if;
     if coalesce(p_mode, 'all') not in ('all', 'points') then raise exception '分け方は「1位の総取り」か「点数で分ける」です'; end if;
     if p_game = 'mahjong' then
       o := jsonb_build_object('len', case when coalesce(p_opts->>'len', 'east') = 'south' then 'south' else 'east' end);
+    end if;
+    if p_game = 'auction' then   -- 競り市：賭け金はなし（落札した品でそのまま損得）
+      o := jsonb_build_object('market', case when p_opts->>'market' in ('fish', 'antique', 'mix') then p_opts->>'market' else 'fish' end);
+      p_stake := 0;
     end if;
     foreach x in array coalesce(regexp_split_to_array(btrim(coalesce(p_invite, '')), '[\s,、，]+'), '{}') loop
       continue when x = '';
@@ -7823,7 +8146,7 @@ begin
     end loop;
     if cardinality(invs) > n - 1 then raise exception '招待できるのは%人までです', n - 1; end if;
     if (select count(*) from game_rooms where u = any(seats) and status in ('waiting', 'playing') and _is_multi(game)) >= 3 then
-      raise exception 'ワンカード・麻雀で参加中の部屋は3つまでです（終わってから作ってください）';
+      raise exception 'ワンカード・麻雀・競り市で参加中の部屋は3つまでです（終わってから作ってください）';
     end if;
     insert into game_rooms(game, title, host, invites, seats, time_ms, bets_on, max_seats, stake, stake_mode, opts, created_at)
     values (p_game, left(btrim(coalesce(p_title, '')), 30), u, invs, array[u], p_time_min * 60000, false, n, coalesce(p_stake, 0), coalesce(p_mode, 'all'), o, _now())
@@ -7862,8 +8185,9 @@ begin
   if _is_multi(r.game) then
     if cardinality(r.invites) > 0 and not (u = any(r.invites)) then raise exception 'この部屋は招待された人だけです'; end if;
     if cardinality(r.seats) >= r.max_seats then raise exception '席がいっぱいです'; end if;
+    if r.game = 'auction' and _is_guest(u) then raise exception '競り市はゲストでは遊べません（本登録すると遊べます）'; end if;
     if (select count(*) from game_rooms where u = any(seats) and status in ('waiting', 'playing') and _is_multi(game)) >= 3 then
-      raise exception 'ワンカード・麻雀で参加中の部屋は3つまでです';
+      raise exception 'ワンカード・麻雀・競り市で参加中の部屋は3つまでです';
     end if;
     perform _room_stake(r, u);
     update game_rooms set seats = seats || u where id = r.id;
@@ -12035,6 +12359,7 @@ begin
             '_mj_variants','_mj_ctx','_mj_try','_mj_furiten','_mj_actopts','_mj_draw','_mj_deal','_mj_init','_mj_final','_mj_end','_mj_abort',
             '_mj_ryukyoku','_mj_win','_mj_over','_mj_next_hand','_mj_after','_mj_call','_mj_resolve','_mj_discard','_mj_selfkan',
             '_mj_pending','_mj_delay','_mj_act','_mj_view','_mj_tval','_mj_safe','_mj_seen','_mj_sh_after','_mj_cpu',
+            '_au_step','_au_min','_au_lot','_au_init','_au_plan','_au_next','_au_bid','_au_close','_au_act','_au_final','_au_view','_au_hold','_au_money','_au_abort','_au_cron',
             '_is_multi','_mg_init','_mg_pending','_mg_act','_mg_cpu','_mg_view','_mg_delay','_mg_final','_room_cancel','_room_refund','_room_stake',
             '_mroom_hum','_mroom_start','_mroom_settle','_mroom_tick','_mroom_move','room_start','room_quit',
             '_notice_l','notice_list','notice_count','notice_read_all','_mention_ids','_mention_names','_mention_notify',
