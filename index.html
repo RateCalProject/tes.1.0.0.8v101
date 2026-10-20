@@ -621,7 +621,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：English をえらんだ端末では、英語の辞書（i18n/en.js）を先に読みこむ */
-  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=e210ecd5"><\/script>'); } } catch (e) {}
+  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=902f106b"><\/script>'); } } catch (e) {}
 })();
 </script>
 </head>
@@ -1567,7 +1567,7 @@ const GAME_LIST = [
   ['vRace', '🏇', '競馬', '毎日 12:30〜13:30（昼競馬）と 16:30〜22:30（20:30はメインレース、そのあと深夜競馬）。みんなで同じレースに賭ける、いちばんの目玉'],
   ['keirin', '🚲', '競輪', '準備中'],
   ['kyotei', '🚤', '競艇', '準備中'],
-  ['battle', '⚔', '市区町村バトル', '日本全国の市区町村の地図で遊ぶ陣取り将棋（最大16人）。いまは賭けなしで遊べます（賭けられる対戦は準備中）'],
+  ['battle', '⚔', '市区町村バトル', '日本全国の市区町村の地図で遊ぶ陣取り将棋（最大16人）。賭けありの部屋では、所持金を賭けて対戦できます（観戦して賭けることも）'],
   ['medaka', '🐟', 'メダカ研究所', '準備中'],
   ['vSlot', '7', 'スロット', '絵柄を3つそろえて当たり'],
   ['vBj', '♠', 'ブラックジャック', 'カードの合計を21に近づけて、ディーラーと勝負'],
@@ -1590,7 +1590,7 @@ $('#gameList').innerHTML = GAME_GROUPS.map(([t, sub, ks]) => `<div class="game-s
 $$('#gameList [data-g]').forEach(r => r.onclick = () => {
   const g = r.dataset.g;
   if (r.classList.contains('soon')) return;
-  if (g === 'battle') { location.href = 'battle/'; return; }
+  if (g === 'battle') { location.href = 'battle/?bet=1'; return; }
   if (g.startsWith('v')) return go(g);
   if (!BOARD_GAMES[g]) return toast('準備中です。もうしばらくお待ちください');
   LB.game = g; go('vLobby');
