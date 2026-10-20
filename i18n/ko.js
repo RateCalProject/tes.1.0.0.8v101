@@ -94,6 +94,7 @@
         pend = [];
       }
       pos = idx + L.length;
+      while (s.charAt(pos) === ' ' && i < last && it[i + 1].s) pos++;   // 文字のあとの空白（キーでは文字の側にある）はとばす
     }
     if (pend.length) { if (!give(s.slice(pos), pend, caps, depth)) return null; }
     else if (s.slice(pos).trim()) return null;
@@ -198,8 +199,10 @@
       .replace(/(\d{1,2})時(\d{2})分/g, '$1:$2');
   }
   // 馬の名前（カタカナ2つ＋α）を英語の読みに
+  var HN = new Set();   // 馬主がつけた名前など（くみあわせでない名前）：読みで出す
+  function addHorse(n) { n = String(n || ''); if (/^[ァ-ヴー]{2,12}$/.test(n) && !HN.has(n)) { HN.add(n); CACHE.clear(); } }
   function horse(s) {
-    if (!HA || !/^[ァ-ー]{3,12}\d{0,3}$/.test(s)) return null;
+    if (!HA || !/^[ァ-ー]{2,12}\d{0,3}$/.test(s)) return null;
     var dg = (s.match(/\d+$/) || [''])[0], body = dg ? s.slice(0, -dg.length) : s;
     for (var a in HA) {
       if (body.indexOf(a) !== 0) continue;
@@ -211,6 +214,11 @@
         if (KO) return kana2hangul(body) + dg;
         return [HA[a], HB[b], c ? HC[c] : '', dg].filter(Boolean).join(' ');
       }
+    }
+    if (HN.has(body)) {
+      if (KO) return kana2hangul(body) + dg;
+      var ro = kana2roma(body);
+      return ro.charAt(0).toUpperCase() + ro.slice(1) + (dg ? ' ' + dg : '');
     }
     return null;
   }
@@ -427,7 +435,8 @@
    'パ:pa ピ:pi プ:pu ペ:pe ポ:po マ:ma ミ:mi ム:mu メ:me モ:mo ヤ:ya ユ:yu ヨ:yo ラ:ra リ:ri ル:ru レ:re ロ:ro ワ:wa ヲ:o ヴ:bu')
     .split(' ').forEach(function (x) { var p = x.split(':'); KR[p[0]] = p[1]; });
   var KY = { 'ャ': 'a', 'ュ': 'u', 'ョ': 'o' }, KS = { 'ァ': 'a', 'ィ': 'i', 'ゥ': 'u', 'ェ': 'e', 'ォ': 'o' };
-  function kana2hangul(s) {
+  function kana2hangul(s) { return romaHangul(kana2roma(s)); }
+  function kana2roma(s) {
     var r = '';
     for (var i = 0; i < s.length; i++) {
       var c = s[i], nx = s[i + 1], k = KR[c];
@@ -438,11 +447,11 @@
       if (k && nx && KS[nx]) { r += k.replace(/[aiueo]$/, '') + KS[nx]; i++; continue; }
       r += k != null ? k : c;
     }
-    return romaHangul(r);
+    return r;
   }
 
   window.I18N = { lang: 'en', t: t, tr: tr, load: load, start: start, misses: MISS, setLang: function (l) { setLang(l); this.lang = l; cvdCss(); },
-    hangul: romaHangul, kana: kana2hangul, x: function () { return X; }, debug: function (s) { DBG = []; CACHE.clear(); var r = tr(s); var d = DBG; DBG = null; return [r, d]; }, retranslate: function () { CACHE.clear(); if (document.body) trTree(document.body); } };
+    hangul: romaHangul, kana: kana2hangul, roma: kana2roma, addHorse: addHorse, x: function () { return X; }, debug: function (s) { DBG = []; CACHE.clear(); var r = tr(s); var d = DBG; DBG = null; return [r, d]; }, retranslate: function () { CACHE.clear(); if (document.body) trTree(document.body); } };
 })();
 
 I18N.setLang("ko");

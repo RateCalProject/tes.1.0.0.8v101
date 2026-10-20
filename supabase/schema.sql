@@ -188,6 +188,100 @@ create index if not exists keiba_tickets_race_idx on public.keiba_tickets(race_i
 alter table public.keiba_tickets add column if not exists refund boolean not null default false;   -- 競走除外で返した馬券
 create index if not exists keiba_tickets_user_idx on public.keiba_tickets(user_id, race_id desc);
 
+-- =====================================================================
+-- 馬主（競走馬のせり）
+--   毎週土曜21:00から24時間、2歳馬のせり（8頭）。いちばん高い値をつけた人が馬主（つけた値はあずかり、ほかの人が上回ったら返す）
+--   売れ残りは定価で、次のせりまで買える。そのあとは、ふつうの馬としてデビューする
+--   馬主は：名前をつける（デビュー前に1回）・勝負服（色と模様）・出るレースを登録（あしたの番組から。登録しなければ自動で出る）
+--           ・引退・ほかの人に売る（売り値の5%が手数料）
+--   5着までに入ると賞金（1着は 新馬・未勝利 550 X 〜 G1 15,000 X。2〜5着は 40・25・15・10%）。毎日6時に預託料（1頭20 X。払えないと手放す）
+--   持てるのは10頭まで（引退した馬はのぞく。せりで値をつけている馬もふくむ）
+-- =====================================================================
+alter table public.keiba_horses add column if not exists owner uuid references public.profiles(id) on delete set null;
+alter table public.keiba_horses add column if not exists owned_at timestamptz;
+alter table public.keiba_horses add column if not exists barn boolean not null default false;   -- せり・定価で売り出し中（レースには出ない）
+alter table public.keiba_horses add column if not exists named boolean not null default false;  -- 馬主が名前をつけた
+alter table public.keiba_horses add column if not exists earned bigint not null default 0;      -- 馬主が受け取った賞金（X）
+create index if not exists keiba_horses_owner_idx on public.keiba_horses(owner) where owner is not null;
+
+-- 馬主（勝負服）
+create table if not exists public.kb_owners (
+  user_id  uuid primary key references public.profiles(id) on delete cascade,
+  silk1    text not null,
+  silk2    text not null,
+  silk_pat int not null,
+  since    timestamptz not null default now()
+);
+-- 売り出し：せり（auction）・定価（fixed：せりの売れ残り）・馬主が売りに出した馬（resale）
+create table if not exists public.kb_sales (
+  id          bigserial primary key,
+  horse_id    int not null references public.keiba_horses(id) on delete cascade,
+  kind        text not null check (kind in ('auction', 'fixed', 'resale')),
+  seller      uuid references public.profiles(id) on delete set null,
+  week        date,                                   -- せりの日（土曜）
+  opens_at    timestamptz not null,
+  ends_at     timestamptz not null,
+  start_price bigint not null,
+  price       bigint,                                 -- せり：いまの値（top があずけている額）／定価・resale：売り値
+  top         uuid references public.profiles(id) on delete set null,
+  nbids       int not null default 0,
+  status      text not null default 'open' check (status in ('open', 'sold', 'unsold', 'cancel', 'expired')),
+  buyer       uuid references public.profiles(id) on delete set null,
+  sold_price  bigint,
+  sold_at     timestamptz,
+  info        jsonb not null default '{}'             -- 下見の見立て（評価・距離・芝ダート）
+);
+create index if not exists kb_sales_open_idx on public.kb_sales(status, ends_at);
+create index if not exists kb_sales_horse_idx on public.kb_sales(horse_id, id desc);
+create table if not exists public.kb_bids (
+  id      bigserial primary key,
+  sale_id bigint not null references public.kb_sales(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  amount  bigint not null,
+  at      timestamptz not null default now()
+);
+create index if not exists kb_bids_sale_idx on public.kb_bids(sale_id, id desc);
+-- あしたの番組（芝ダート・距離を前の日に決めておく。出走登録のため）
+create table if not exists public.kb_program (
+  day      date not null,
+  no       int not null,
+  post     timestamptz not null,
+  venue    int not null,
+  rnum     int not null,
+  name     text not null,
+  grade    text,
+  cls      int,
+  cond     text not null,
+  surface  text not null,
+  dist     int not null,
+  tier     text not null default 'normal',
+  handicap boolean not null default false,
+  nmin     int not null,
+  nmax     int not null,
+  primary key (day, no)
+);
+-- 出走登録（1頭につき1つ。あしたのレース）
+create table if not exists public.kb_regs (
+  horse_id int primary key references public.keiba_horses(id) on delete cascade,
+  day      date not null,
+  no       int not null,
+  user_id  uuid not null references public.profiles(id) on delete cascade,
+  at       timestamptz not null default now()
+);
+create index if not exists kb_regs_day_idx on public.kb_regs(day, no);
+-- 預託料をとった日（1日1回）
+create table if not exists public.kb_upkeep (
+  day date primary key,
+  at  timestamptz not null default now()
+);
+alter table public.kb_owners  enable row level security;
+alter table public.kb_sales   enable row level security;
+alter table public.kb_bids    enable row level security;
+alter table public.kb_program enable row level security;
+alter table public.kb_regs    enable row level security;
+alter table public.kb_upkeep  enable row level security;
+revoke all on public.kb_owners, public.kb_sales, public.kb_bids, public.kb_program, public.kb_regs, public.kb_upkeep from anon, authenticated;
+
 -- 税と給付金 ----------------------------------------------------------
 -- 設定（テスト用の時計 fake_now など。ふだんは空のまま）
 create table if not exists public.app_settings (
@@ -606,7 +700,7 @@ begin
   if a is not null then return; end if;      -- AIのアカウントは記録しない
   insert into tx_log(user_id, game, bet, payout, balance_after, detail)
   values (u, g, bet, pay, b, d);
-  if g in ('slot','roulette','hilo','blackjack','race','lottery','auction','boat','keirin','fishing') then
+  if g in ('slot','roulette','hilo','blackjack','race','lottery','auction','boat','keirin','fishing','owner') then
     update treasury set balance = balance + (bet - pay), casino_total = casino_total + (bet - pay) where id = 1;
   end if;
 end $$;
@@ -1034,7 +1128,7 @@ end $$;
 create or replace function public._income(u uuid, m int) returns bigint
 language sql stable set search_path = public as $$
   select greatest(coalesce(sum(payout - bet), 0), 0)::bigint from tx_log
-   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend','liquidation','game_bet','game_stake','pub_sale','review','auction','boat','keirin','fishing')
+   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend','liquidation','game_bet','game_stake','pub_sale','review','auction','boat','keirin','fishing','owner')
      and created_at >= _month_start(m) and created_at < _month_start(_next_month(m))
 $$;
 
@@ -1584,32 +1678,40 @@ declare
   i int; k int; c int; need int; base int; extra int; age int; n0 int; n1 int; nige int;
   p numeric; beta numeric; t0 numeric; spd numeric; tw numeric; rmax numeric; med numeric; cnd numeric; pe numeric;
   js numeric; sz int; order_ix int[]; tms numeric[]; prev numeric; dt numeric; spl numeric; lens numeric; a numeric;
-  x0 numeric; lbl text; inc text; iu int; m int; k0 int; vv int; xr numeric; force text; er record;
+  x0 numeric; lbl text; inc text; iu int; m int; k0 int; vv int; xr numeric; force text; er record; regd int[]; rl text;
 begin
   if exists (select 1 from keiba_races where id = rid) then return; end if;
   select * into v from keiba_venues where id = vid;
+  rl := to_char(posttime at time zone 'Asia/Tokyo', 'HH24:MI');
 
-  -- 出走する馬をえらぶ
+  -- 馬主が出走登録した馬（賞金の多い順に定員まで）を先に入れる
+  regd := _kb_take_regs(d, _kb_make_race.no, cls, cond, nmax, rl, v.name, rnum, nm);
+  if coalesce(array_length(regd, 1), 0) > n then n := least(nmax, array_length(regd, 1)); end if;
+
+  -- 出走する馬をえらぶ（せり・定価で売り出し中の馬と、前後の日に出走登録のある馬はのぞく）
   if cls is not null then
     select array_agg(id) into ids from (
       select hh.id from keiba_horses hh
-       where not hh.retired and hh.class = cls
+       where not hh.retired and not hh.barn and hh.class = cls and not (hh.id = any(regd))
          and (hh.last_day is null or hh.last_day < d - 1)
+         and not exists (select 1 from kb_regs g where g.horse_id = hh.id and g.day between d - 1 and d + 1)
          and case cond when '2yo_new' then cur - hh.born = 2 and hh.starts = 0
                        when '2yo'     then cur - hh.born = 2 and hh.starts > 0
                        when '3yo'     then cur - hh.born = 3
                        else cur - hh.born >= 3 end
        order by -ln(1 - random()) / exp(_kb_fit(hh, surface, dist) / 3)
-       limit n) z;
+       limit greatest(n - coalesce(array_length(regd, 1), 0), 0)) z;
   else
     select array_agg(id) into ids from (
       select hh.id from keiba_horses hh
-       where not hh.retired
+       where not hh.retired and not hh.barn and not (hh.id = any(regd))
          and (hh.last_day is null or hh.last_day < d - 1)
+         and not exists (select 1 from kb_regs g where g.horse_id = hh.id and g.day between d - 1 and d + 1)
          and case cond when '3yo' then cur - hh.born = 3 and hh.class >= 2 else hh.class = 4 and cur - hh.born >= 3 end
        order by hh.ability * _kb_agef(cur - hh.born) + _kb_fit(hh, surface, dist) + hh.prize / 3000.0 + _kb_norm() * 3 desc
-       limit n) z;
+       limit greatest(n - coalesce(array_length(regd, 1), 0), 0)) z;
   end if;
+  ids := regd || coalesce(ids, '{}'::int[]);
   need := n - coalesce(array_length(ids, 1), 0);
   for i in 1..need loop
     k := _kb_new_horse(coalesce(cls, case when cond = '3yo' then 3 else 4 end),
@@ -1784,6 +1886,11 @@ begin
      set pace = case when p > 0.6 then 'ハイ' when p < -0.6 then 'スロー' else '平均' end,
          finish_ms = (select max(time_ms) from keiba_entries where race_id = rid and pos is not null)
    where id = rid;
+  -- 馬主に知らせる
+  for er in select e.uma, h2.owner, h2.name from keiba_entries e join keiba_horses h2 on h2.id = e.horse_id
+             where e.race_id = rid and h2.owner is not null loop
+    perform _notice(er.owner, format('【馬主】「%s」が %s %s %sR「%s」に出ます（%s番）。', er.name, rl, v.name, rnum, nm, er.uma));
+  end loop;
 end $$;
 
 -- 天気と馬場：その日、同じ名前の競馬場のレースがもうあれば、それに合わせる（なければくじで）。w0 をわたすと天気はそれ
@@ -1825,7 +1932,7 @@ declare
   dow int := extract(isodow from d)::int;
   wk int := (extract(day from d)::int - 1) / 7;
   s int; k int; vid int; posttime timestamptz; v keiba_venues; sf text; ds int; cls int; cond text; nm text;
-  wth text[]; gt text[]; gd text[]; x numeric; nr keiba_names; knd text; found_nr boolean; wx text[];
+  wth text[]; gt text[]; gd text[]; x numeric; nr keiba_names; knd text; found_nr boolean; wx text[]; pg kb_program;
 begin
   perform pg_advisory_xact_lock(4242);
   if exists (select 1 from keiba_races where day = d and no <= 29) then return; end if;   -- 臨時のレース（60〜）は数えない
@@ -1840,9 +1947,13 @@ begin
     for k in 1..7 loop
       posttime := make_timestamptz(extract(year from d)::int, extract(month from d)::int, extract(day from d)::int,
                                    16 + s, 30, 0, 'Asia/Tokyo') + (k - 1) * interval '8 minutes';
-      sf := case when random() < 0.55 then '芝' else 'ダ' end;
-      ds := case when sf = '芝' then v.turf_d[1 + floor(random() * array_length(v.turf_d, 1))::int]
-                 else v.dirt_d[1 + floor(random() * array_length(v.dirt_d, 1))::int] end;
+      select * into pg from kb_program p where p.day = d and p.no = s * 7 + k;   -- 前もって決めた番組（出走登録のため）
+      if found then sf := pg.surface; ds := pg.dist;
+      else
+        sf := case when random() < 0.55 then '芝' else 'ダ' end;
+        ds := case when sf = '芝' then v.turf_d[1 + floor(random() * array_length(v.turf_d, 1))::int]
+                   else v.dirt_d[1 + floor(random() * array_length(v.dirt_d, 1))::int] end;
+      end if;
       case k
         when 1 then cls := 0; cond := case when s % 2 = 0 then '2yo_new' else '2yo' end;
         when 2 then cls := 0; cond := '3yo';
@@ -1879,7 +1990,7 @@ declare
   dow int := extract(isodow from d)::int;
   fin text[] := array['月見草特別', '夜霧特別', '銀河特別', '星明かり特別', '真夜中特別', '夜想曲特別', '月光特別'];
   s int; k int; vid int; v keiba_venues; posttime timestamptz; sf text; ds int; cls int; cond text; nm text;
-  wth text; gt text; gd text; x numeric;
+  wth text; gt text; gd text; x numeric; pg kb_program;
 begin
   perform pg_advisory_xact_lock(4242);
   if exists (select 1 from keiba_races where day = d and no between 30 and 43) then return; end if;
@@ -1899,9 +2010,13 @@ begin
       posttime := make_timestamptz(extract(year from d)::int, extract(month from d)::int, extract(day from d)::int,
                                    20 + s, 42, 0, 'Asia/Tokyo') + (k - 1) * interval '8 minutes';
       continue when posttime < _now() + interval '2 minutes';   -- もう締め切ったレースはつくらない
-      sf := case when random() < 0.55 then '芝' else 'ダ' end;
-      ds := case when sf = '芝' then v.turf_d[1 + floor(random() * array_length(v.turf_d, 1))::int]
-                 else v.dirt_d[1 + floor(random() * array_length(v.dirt_d, 1))::int] end;
+      select * into pg from kb_program p where p.day = d and p.no = 30 + s * 7 + (k - 1);   -- 前もって決めた番組（出走登録のため）
+      if found then sf := pg.surface; ds := pg.dist;
+      else
+        sf := case when random() < 0.55 then '芝' else 'ダ' end;
+        ds := case when sf = '芝' then v.turf_d[1 + floor(random() * array_length(v.turf_d, 1))::int]
+                   else v.dirt_d[1 + floor(random() * array_length(v.dirt_d, 1))::int] end;
+      end if;
       case k
         when 1 then cls := 0; cond := case when s = 0 then '2yo_new' else '2yo' end;
         when 2 then cls := 0; cond := '3yo';
@@ -1926,7 +2041,7 @@ declare
   dow int := extract(isodow from d)::int;
   fin text[] := array['青空特別', '日だまり特別', '若葉特別', 'ひまわり特別', '昼下がり特別', '陽光特別', '白雲特別'];
   k int; vid int := 3; v keiba_venues; posttime timestamptz; sf text; ds int; cls int; cond text; nm text;
-  wth text; gt text; gd text; x numeric;
+  wth text; gt text; gd text; x numeric; pg kb_program;
 begin
   perform pg_advisory_xact_lock(4242);
   if exists (select 1 from keiba_races where day = d and no between 44 and 59) then return; end if;
@@ -1944,9 +2059,13 @@ begin
     posttime := make_timestamptz(extract(year from d)::int, extract(month from d)::int, extract(day from d)::int,
                                  12, 30, 0, 'Asia/Tokyo') + (k - 1) * interval '10 minutes';
     continue when posttime < _now() + interval '2 minutes';   -- もう締め切ったレースはつくらない
-    sf := case when random() < 0.55 then '芝' else 'ダ' end;
-    ds := case when sf = '芝' then v.turf_d[1 + floor(random() * array_length(v.turf_d, 1))::int]
-               else v.dirt_d[1 + floor(random() * array_length(v.dirt_d, 1))::int] end;
+    select * into pg from kb_program p where p.day = d and p.no = 43 + k;   -- 前もって決めた番組（出走登録のため）
+    if found then sf := pg.surface; ds := pg.dist;
+    else
+      sf := case when random() < 0.55 then '芝' else 'ダ' end;
+      ds := case when sf = '芝' then v.turf_d[1 + floor(random() * array_length(v.turf_d, 1))::int]
+                 else v.dirt_d[1 + floor(random() * array_length(v.dirt_d, 1))::int] end;
+    end if;
     case k
       when 1 then cls := 0; cond := '2yo_new';
       when 2 then cls := 0; cond := '3yo';
@@ -2118,7 +2237,7 @@ create or replace function public._kb_settle(rid bigint) returns void
 language plpgsql volatile set search_path = public as $$
 declare
   r keiba_races; e record; t keiba_tickets; res int[]; wk int[]; hit boolean; pay bigint; prize1 numeric;
-  sh numeric[] := array[1, 0.4, 0.25, 0.15, 0.1]; scr int[]; rf boolean;
+  sh numeric[] := array[1, 0.4, 0.25, 0.15, 0.1]; scr int[]; rf boolean; oe record; pz bigint; rl2 text;
 begin
   select * into r from keiba_races where id = rid for update;
   if not found or r.settled then return; end if;
@@ -2140,6 +2259,18 @@ begin
            body   = e.body
      where id = e.horse_id;
   end loop;
+  -- 馬主に賞金（5着まで。1万円 = 1 X）
+  rl2 := (select name from keiba_venues where id = r.venue);
+  for oe in select en.pos, en.horse_id, hh.owner, hh.name from keiba_entries en join keiba_horses hh on hh.id = en.horse_id
+             where en.race_id = rid and en.pos between 1 and 5 and en.incident is distinct from 'jogai' and hh.owner is not null loop
+    pz := floor(prize1 * sh[oe.pos])::bigint;
+    continue when pz <= 0;
+    perform _give(oe.owner, pz);
+    perform _log(oe.owner, 'owner', 0, pz, jsonb_build_object('race', rid, 'horse', oe.horse_id, 'pos', oe.pos, 'title', format('「%s」%s着', oe.name, oe.pos)));
+    update keiba_horses set earned = earned + pz where id = oe.horse_id;
+    perform _notice(oe.owner, format('【馬主】「%s」が %s %s %s %sR「%s」で %s着に入りました。賞金 %s X を受け取りました。', oe.name,
+                    to_char(r.post at time zone 'Asia/Tokyo', 'FMMM"月"FMDD"日"'), to_char(r.post at time zone 'Asia/Tokyo', 'HH24:MI'), rl2, r.rnum, r.name, oe.pos, _fmt(pz)));
+  end loop;
   for t in select * from keiba_tickets where race_id = rid and payout is null order by id for update loop
     -- 競走除外の馬をふくむ馬券は返す（枠連は、その枠に走る馬がいなくなったときだけ）
     rf := case when t.kind = 'waku' then exists (select 1 from unnest(t.sel) w0
@@ -2158,8 +2289,13 @@ end $$;
 -- 月が変わったら：8歳と、4歳になっても勝てなかった馬は引退。2歳の新馬が入ってくる
 create or replace function public._kb_month(cur int) returns void
 language plpgsql volatile set search_path = public as $$
-declare i int;
+declare i int; g record;
 begin
+  for g in select h.name, h.owner, cur - h.born age, h.class from keiba_horses h
+            where not h.retired and h.owner is not null and (cur - h.born >= 8 or (h.class = 0 and cur - h.born >= 4)) loop
+    perform _notice(g.owner, format('【馬主】「%s」は%s歳になったので引退しました%s。', g.name, g.age,
+                                    case when g.class = 0 and g.age < 8 then '（4歳までに勝てなかった馬は引退）' else '' end));
+  end loop;
   update keiba_horses set retired = true
    where not retired and (cur - born >= 8 or (class = 0 and cur - born >= 4));
   for i in 1..150 loop perform _kb_new_horse(0, 2); end loop;
@@ -2217,6 +2353,7 @@ begin
         and not exists (select 1 from keiba_races where day = today and no between 44 and 59) then perform _kb_make_noon(today);
   elsif _now() < make_timestamptz(extract(year from today)::int, extract(month from today)::int, extract(day from today)::int, 22, 30, 0, 'Asia/Tokyo')
         and not exists (select 1 from keiba_races where day = today and no between 30 and 43) then perform _kb_make_night(today);
+  elsif not exists (select 1 from kb_program p where p.day = today + 1) then perform _kb_prog_day(today + 1);   -- あしたの番組（出走登録のため）
   end if;
 end $$;
 
@@ -2261,7 +2398,7 @@ create or replace function public.keiba_race(p_race bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   u uuid := _me_g(); r keiba_races; v keiba_venues; st text; started boolean; ent jsonb; pays jsonb := '[]'::jsonb;
-  mine jsonb; res int[]; wk int[]; n int; s int[]; kou boolean;
+  mine jsonb; res int[]; wk int[]; n int; s int[]; kou boolean; own_ok boolean := _beta_ok(u, 'owner');
 begin
   perform _kb_tick();
   select * into r from keiba_races where id = p_race;
@@ -2278,6 +2415,8 @@ begin
       'odds_win', e.odds_win, 'odds_place', e.odds_place, 'ninki', e.ninki,
       'scratched', e.scratch_at is not null and e.scratch_at <= _now(),
       'record', format('%s戦%s勝', h.starts, h.wins), 'graded', h.graded,
+      'owner', case when own_ok and h.owner is not null then (select p.nickname from profiles p where p.id = h.owner) end,
+      'mine', own_ok and h.owner = u,
       'last5', (select coalesce(jsonb_agg(jsonb_build_object('pos', x.pos, 'n', x.n, 'grade', x.grade, 'inc', x.incident,
                          'dist', x.dist, 'surface', x.surface, 'venue', x.venue) order by x.race_id desc), '[]'::jsonb)
                   from (select e2.race_id, e2.pos, e2.incident, r2.grade, r2.dist, r2.surface, v2.name venue,
@@ -2386,6 +2525,8 @@ begin
     'name', h.name, 'sex', h.sex, 'age', _kb_midx(_now()) - h.born, 'coat', h.coat, 'style', h.style,
     'silk1', h.silk1, 'silk2', h.silk2, 'silk_pat', h.silk_pat, 'body', h.body,
     'class', h.class, 'starts', h.starts, 'wins', h.wins, 'prize', h.prize, 'graded', h.graded, 'retired', h.retired,
+    'owner', case when h.owner is not null and _beta_ok(u, 'owner') then (select p.nickname from profiles p where p.id = h.owner) end,
+    'mine', h.owner = u and _beta_ok(u, 'owner'), 'earned', case when h.owner = u then h.earned end,
     'runs', (select coalesce(jsonb_agg(jsonb_build_object(
                  'day', r.day, 'venue', v.name, 'name', r.name, 'grade', r.grade, 'surface', r.surface, 'dist', r.dist,
                  'going', r.going, 'n', (select count(*) from keiba_entries e3 where e3.race_id = r.id and e3.incident is distinct from 'jogai'),
@@ -2921,7 +3062,7 @@ $$;
 create or replace function public._beta_games() returns text[]
 language sql stable set search_path = public as $$
   select array(select x from unnest(string_to_array(replace(coalesce((select value from app_settings where key = 'beta_games'),
-                                                                     'boat,bike,auction,koikoi,fishing'), ' ', ''), ',')) x where x <> '')
+                                                                     'boat,bike,auction,koikoi,fishing,owner'), ' ', ''), ',')) x where x <> '')
 $$;
 create or replace function public._beta_ok(u uuid, g text) returns boolean
 language sql stable set search_path = public as $$ select _is_admin(u) or not (g = any(_beta_games())) $$;
@@ -14244,6 +14385,537 @@ begin
   return jsonb_build_object('items', items, 'more', jsonb_array_length(items) >= lim);
 end $$;
 
+-- 決まりの数字（画面にも出す）
+create or replace function public._kb_own_c() returns jsonb
+language sql immutable as $$
+  select jsonb_build_object('start', 300, 'fixed', 800, 'upkeep', 20, 'fee', 5, 'max', 10, 'nsale', 8, 'step', 50,
+                            'sale_dow', 6, 'sale_hour', 21, 'sale_hours', 24, 'snipe_min', 5, 'resale_days', 7)
+$$;
+-- 勝負服の色（_kb_new_horse と同じ）
+create or replace function public._kb_colors() returns text[]
+language sql immutable as $$
+  select array['#C0283C','#1F4E9C','#1D7A4C','#E0A020','#6A2C91','#E86A17','#111111','#FFFFFF',
+               '#E85D9A','#2BA6C9','#8B5A2B','#7A8B99','#F2D16B','#0F5E5A']
+$$;
+-- せりの時刻（その日の21:00）
+create or replace function public._kb_sale_at(d date) returns timestamptz
+language sql stable as $$
+  select make_timestamptz(extract(year from d)::int, extract(month from d)::int, extract(day from d)::int, 21, 0, 0, 'Asia/Tokyo')
+$$;
+-- いまの「せりの日」（土曜）。土曜21:00より前なら先週の土曜
+create or replace function public._kb_sale_day(ts timestamptz) returns date
+language sql stable as $$
+  select case when z.s = z.d and ts < _kb_sale_at(z.s) then z.s - 7 else z.s end
+    from (select _kb_jday(ts) d, _kb_jday(ts) - ((extract(isodow from _kb_jday(ts))::int + 1) % 7) s) z
+$$;
+-- 持っている馬（引退した馬はのぞく）
+create or replace function public._kb_owned_n(u uuid) returns int
+language sql stable set search_path = public as $$
+  select count(*)::int from keiba_horses where owner = u and not retired
+$$;
+-- せりで次につけられる値（はじめは開始の値。そのあとは5%か50 Xの大きいほう、10 X単位）
+create or replace function public._kb_bid_min(s public.kb_sales) returns bigint
+language sql immutable as $$
+  select case when s.price is null then s.start_price
+              else s.price + greatest(50, (ceil(s.price * 0.05 / 10.0) * 10)::bigint) end
+$$;
+-- 下見の見立て（本当の力・距離・芝ダートに、ゆらぎをつけて）
+create or replace function public._kb_hint(hid int) returns jsonb
+language plpgsql volatile set search_path = public as $$
+declare h keiba_horses; s numeric; bd numeric; t numeric;
+begin
+  select * into h from keiba_horses where id = hid;
+  s := h.ability + _kb_norm() * 4;
+  bd := h.best_dist + _kb_norm() * 200;
+  t := h.turf + _kb_norm() * 0.12;
+  return jsonb_build_object(
+    'eval', case when s >= 51 then 'A' when s >= 45 then 'B' when s >= 39 then 'C' else 'D' end,
+    'dist', case when bd < 1500 then 'short' when bd < 1900 then 'mile' when bd < 2300 then 'mid' else 'long' end,
+    'turf', case when t >= 0.62 then 'turf' when t <= 0.38 then 'dirt' else 'both' end);
+end $$;
+-- 馬主の勝負服（はじめて馬を持つときに、くじで決める）
+create or replace function public._kb_owner_row(u uuid) returns public.kb_owners
+language plpgsql volatile set search_path = public as $$
+declare o kb_owners; c text[] := _kb_colors(); a text; b text;
+begin
+  select * into o from kb_owners where user_id = u;
+  if found then return o; end if;
+  a := c[1 + floor(random() * array_length(c, 1))::int];
+  loop b := c[1 + floor(random() * array_length(c, 1))::int]; exit when b <> a; end loop;
+  insert into kb_owners(user_id, silk1, silk2, silk_pat, since) values (u, a, b, floor(random() * 7)::int, _now())
+  on conflict (user_id) do nothing;
+  select * into o from kb_owners where user_id = u;
+  return o;
+end $$;
+-- 馬を馬主のものにする（勝負服をその人のものに。登録・売り出しは消す）
+create or replace function public._kb_give_horse(hid int, u uuid) returns void
+language plpgsql volatile set search_path = public as $$
+declare o kb_owners := _kb_owner_row(u);
+begin
+  update keiba_horses set owner = u, owned_at = _now(), barn = false, silk1 = o.silk1, silk2 = o.silk2, silk_pat = o.silk_pat where id = hid;
+  delete from kb_regs where horse_id = hid;
+  update kb_sales set status = 'cancel' where horse_id = hid and kind = 'resale' and status = 'open';
+end $$;
+-- 馬を手放す（ふつうの馬にもどる）
+create or replace function public._kb_release(hid int) returns void
+language plpgsql volatile set search_path = public as $$
+begin
+  update keiba_horses set owner = null, owned_at = null where id = hid;
+  delete from kb_regs where horse_id = hid;
+  update kb_sales set status = 'cancel' where horse_id = hid and kind = 'resale' and status = 'open';
+end $$;
+-- その日のレースに出られるか（クラス・年齢・前のレースから中1日）。年齢はその日の月で数える
+create or replace function public._kb_can_run(h public.keiba_horses, p_cls int, p_cond text, d date) returns boolean
+language sql stable as $$
+  select not h.retired and not h.barn and (h.last_day is null or h.last_day < d - 1)
+     and case when p_cls is not null then
+               h.class = p_cls and case p_cond
+                 when '2yo_new' then (extract(year from d)::int * 12 + extract(month from d)::int) - h.born = 2 and h.starts = 0
+                 when '2yo'     then (extract(year from d)::int * 12 + extract(month from d)::int) - h.born = 2 and h.starts > 0
+                 when '3yo'     then (extract(year from d)::int * 12 + extract(month from d)::int) - h.born = 3
+                 else (extract(year from d)::int * 12 + extract(month from d)::int) - h.born >= 3 end
+              else case p_cond
+                 when '3yo' then (extract(year from d)::int * 12 + extract(month from d)::int) - h.born = 3 and h.class >= 2
+                 else h.class = 4 and (extract(year from d)::int * 12 + extract(month from d)::int) - h.born >= 3 end
+         end
+$$;
+
+-- 番組（その日のレースの時刻・条件・芝ダート・距離）を前もってつくる。_kb_make_day・_kb_make_noon・_kb_make_night と同じ並び
+create or replace function public._kb_prog_day(d date) returns void
+language plpgsql volatile set search_path = public as $$
+declare
+  dow int := extract(isodow from d)::int;
+  wk int := (extract(day from d)::int - 1) / 7;
+  finn text[] := array['月見草特別', '夜霧特別', '銀河特別', '星明かり特別', '真夜中特別', '夜想曲特別', '月光特別'];
+  fins text[] := array['青空特別', '日だまり特別', '若葉特別', 'ひまわり特別', '昼下がり特別', '陽光特別', '白雲特別'];
+  s int; k int; vid int; v keiba_venues; pt timestamptz; sf text; ds int; c int; cn text; nm text; nr keiba_names; knd text;
+begin
+  perform pg_advisory_xact_lock(4244);
+  if exists (select 1 from kb_program p where p.day = d) then return; end if;
+  -- ふだんのレース（16:30・17:30・18:30・19:30 から7Rずつ）
+  for s in 0..3 loop
+    vid := s + 1;
+    select * into v from keiba_venues where id = vid;
+    for k in 1..7 loop
+      pt := make_timestamptz(extract(year from d)::int, extract(month from d)::int, extract(day from d)::int, 16 + s, 30, 0, 'Asia/Tokyo') + (k - 1) * interval '8 minutes';
+      sf := case when random() < 0.55 then '芝' else 'ダ' end;
+      ds := case when sf = '芝' then v.turf_d[1 + floor(random() * array_length(v.turf_d, 1))::int]
+                 else v.dirt_d[1 + floor(random() * array_length(v.dirt_d, 1))::int] end;
+      case k
+        when 1 then c := 0; cn := case when s % 2 = 0 then '2yo_new' else '2yo' end;
+        when 2 then c := 0; cn := '3yo';
+        when 3, 4 then c := 1; cn := '3up';
+        when 5, 6 then c := 2; cn := '3up';
+        else c := 3; cn := '3up';
+      end case;
+      nm := case cn when '2yo_new' then '2歳新馬' when '2yo' then '2歳未勝利' when '3yo' then '3歳未勝利' else '3歳以上' || c || '勝クラス' end;
+      insert into kb_program(day, no, post, venue, rnum, name, grade, cls, cond, surface, dist, tier, handicap, nmin, nmax)
+      values (d, s * 7 + k, pt, vid, k, nm, null, c, cn, sf, ds, 'normal', false, 8, 12);
+    end loop;
+  end loop;
+  -- メインレース（20:30）
+  knd := case dow when 7 then 'g1' when 6 then 'sat' else 'wd' end;
+  select * into nr from keiba_names where kind = knd and idx = case when knd = 'wd' then dow else wk end;
+  if not found then
+    nr.name := 'オープン特別'; nr.grade := 'OP'; nr.surface := '芝'; nr.dist := 1800; nr.cond := '3up'; nr.handicap := false; nr.venue := 5;
+  end if;
+  insert into kb_program(day, no, post, venue, rnum, name, grade, cls, cond, surface, dist, tier, handicap, nmin, nmax)
+  values (d, 29, make_timestamptz(extract(year from d)::int, extract(month from d)::int, extract(day from d)::int, 20, 30, 0, 'Asia/Tokyo'),
+          coalesce(nr.venue, 5), 11, nr.name, nr.grade, null, nr.cond, nr.surface, nr.dist,
+          case when nr.grade = 'G1' then 'g1' else 'graded' end, coalesce(nr.handicap, false),
+          case nr.grade when 'G1' then 16 when 'G2' then 12 when 'G3' then 12 else 10 end,
+          case nr.grade when 'G1' then 18 when 'G2' then 16 when 'G3' then 16 else 14 end);
+  -- 深夜競馬（20:42 中京・21:42 京都）
+  for s in 0..1 loop
+    vid := case s when 0 then 1 else 2 end;
+    select * into v from keiba_venues where id = vid;
+    for k in 1..7 loop
+      pt := make_timestamptz(extract(year from d)::int, extract(month from d)::int, extract(day from d)::int, 20 + s, 42, 0, 'Asia/Tokyo') + (k - 1) * interval '8 minutes';
+      sf := case when random() < 0.55 then '芝' else 'ダ' end;
+      ds := case when sf = '芝' then v.turf_d[1 + floor(random() * array_length(v.turf_d, 1))::int]
+                 else v.dirt_d[1 + floor(random() * array_length(v.dirt_d, 1))::int] end;
+      case k
+        when 1 then c := 0; cn := case when s = 0 then '2yo_new' else '2yo' end;
+        when 2 then c := 0; cn := '3yo';
+        when 3, 4 then c := 1; cn := '3up';
+        when 5, 6 then c := 2; cn := '3up';
+        else c := 3; cn := '3up';
+      end case;
+      nm := case when s = 1 and k = 7 then finn[dow]
+                 else case cn when '2yo_new' then '2歳新馬' when '2yo' then '2歳未勝利' when '3yo' then '3歳未勝利' else '3歳以上' || c || '勝クラス' end end;
+      insert into kb_program(day, no, post, venue, rnum, name, grade, cls, cond, surface, dist, tier, handicap, nmin, nmax)
+      values (d, 30 + s * 7 + (k - 1), pt, vid, k, nm, null, c, cn, sf, ds, 'normal', false, 8, 12);
+    end loop;
+  end loop;
+  -- 昼競馬（12:30〜 府中）
+  vid := 3;
+  select * into v from keiba_venues where id = vid;
+  for k in 1..7 loop
+    pt := make_timestamptz(extract(year from d)::int, extract(month from d)::int, extract(day from d)::int, 12, 30, 0, 'Asia/Tokyo') + (k - 1) * interval '10 minutes';
+    sf := case when random() < 0.55 then '芝' else 'ダ' end;
+    ds := case when sf = '芝' then v.turf_d[1 + floor(random() * array_length(v.turf_d, 1))::int]
+               else v.dirt_d[1 + floor(random() * array_length(v.dirt_d, 1))::int] end;
+    case k
+      when 1 then c := 0; cn := '2yo_new';
+      when 2 then c := 0; cn := '3yo';
+      when 3, 4 then c := 1; cn := '3up';
+      when 5, 6 then c := 2; cn := '3up';
+      else c := 3; cn := '3up';
+    end case;
+    nm := case when k = 7 then fins[dow] else case cn when '2yo_new' then '2歳新馬' when '3yo' then '3歳未勝利' else '3歳以上' || c || '勝クラス' end end;
+    insert into kb_program(day, no, post, venue, rnum, name, grade, cls, cond, surface, dist, tier, handicap, nmin, nmax)
+    values (d, 43 + k, pt, vid, k, nm, null, c, cn, sf, ds, 'normal', false, 8, 12);
+  end loop;
+end $$;
+
+-- 登録のあった馬を、そのレースに入れる（_kb_make_race から）。入れる馬（賞金の多い順・定員まで）を返す。入れなかった馬の馬主には知らせる
+create or replace function public._kb_take_regs(d date, p_no int, p_cls int, p_cond text, nmax int, ptm text, vnm text, rn int, rname text) returns int[]
+language plpgsql volatile set search_path = public as $$
+declare g record; ids int[] := '{}';
+begin
+  for g in select r.horse_id, r.user_id, h.name, h.owner,
+                  _kb_can_run(h, p_cls, p_cond, d) ok
+             from kb_regs r join keiba_horses h on h.id = r.horse_id
+            where r.day = d and r.no = p_no
+            order by h.prize desc, h.wins desc, random() loop
+    if not g.ok or g.owner is distinct from g.user_id then
+      perform _notice(g.user_id, format('【馬主】「%s」は、%s %s %sR「%s」に出られなくなりました（条件が合わない・中1日あいていないなど）。登録は取り消しました。', g.name, ptm, vnm, rn, rname));
+    elsif coalesce(array_length(ids, 1), 0) >= nmax then
+      perform _notice(g.user_id, format('【馬主】「%s」は、%s %s %sR「%s」の登録が定員（%s頭）をこえたので出られませんでした（賞金の多い馬から出られます）。', g.name, ptm, vnm, rn, rname, nmax));
+    else
+      ids := ids || g.horse_id;
+    end if;
+  end loop;
+  delete from kb_regs r where r.day = d and r.no = p_no;
+  return ids;
+end $$;
+
+-- 馬主の時計（毎分）：競馬の時計・せり（はじめる・しめる）・定価と売り出しの期限・預託料・古い登録
+create or replace function public._kb_own_tick() returns void
+language plpgsql volatile set search_path = public as $$
+begin
+  begin perform _kb_tick(); exception when others then null; end;
+  perform _kb_sales_tick();
+  perform _kb_upkeep_tick();
+end $$;
+
+-- せり：土曜21:00にはじめる・終わった馬をしめる・定価と売り出しの期限
+create or replace function public._kb_sales_tick() returns void
+language plpgsql volatile set search_path = public as $$
+declare
+  c jsonb := _kb_own_c(); sd date := _kb_sale_day(_now()); i int; hid int; s kb_sales; h keiba_horses; today date := _kb_jday(_now());
+  g record;
+begin
+  perform pg_advisory_xact_lock(4245);
+  -- 終わったせり
+  for s in select * from kb_sales where kind = 'auction' and status = 'open' and ends_at <= _now() order by id for update loop
+    select * into h from keiba_horses where id = s.horse_id;
+    if s.top is not null then
+      update kb_sales set status = 'sold', buyer = s.top, sold_price = s.price, sold_at = _now() where id = s.id;
+      perform _log(s.top, 'owner', s.price, 0, jsonb_build_object('buy', s.horse_id, 'sale', s.id, 'kind', 'auction', 'title', format('「%s」を落札', h.name)));
+      perform _kb_give_horse(s.horse_id, s.top);
+      perform _notice(s.top, format('【せり】「%s」を %s X で落札しました。あなたの馬です（遊戯 → 馬主）。', h.name, _fmt(s.price)));
+    else
+      update kb_sales set status = 'unsold' where id = s.id;
+      insert into kb_sales(horse_id, kind, week, opens_at, ends_at, start_price, price, info)
+      values (s.horse_id, 'fixed', s.week, _now(), _kb_sale_at(s.week + 7), (c->>'fixed')::bigint, (c->>'fixed')::bigint, s.info);
+    end if;
+  end loop;
+  -- 定価の期限（次のせりがはじまったら、ふつうの馬に）
+  for s in select * from kb_sales where kind = 'fixed' and status = 'open' and ends_at <= _now() for update loop
+    update kb_sales set status = 'expired' where id = s.id;
+    update keiba_horses set barn = false where id = s.horse_id and owner is null;
+  end loop;
+  -- 馬主が売りに出した馬の期限
+  for s in select * from kb_sales where kind = 'resale' and status = 'open' and ends_at <= _now() for update loop
+    update kb_sales set status = 'expired' where id = s.id;
+    select * into h from keiba_horses where id = s.horse_id;
+    if s.seller is not null then
+      perform _notice(s.seller, format('【馬主】売りに出していた「%s」は、%s日たっても買う人がいなかったので、売り出しをやめました。', h.name, c->>'resale_days'));
+    end if;
+  end loop;
+  -- 今週のせり（土曜21:00〜24時間。時間をすぎてしまった週はとばす）
+  if _now() >= _kb_sale_at(sd) and _now() < _kb_sale_at(sd) + make_interval(hours => (c->>'sale_hours')::int)
+     and not exists (select 1 from kb_sales where kind = 'auction' and week = sd) then
+    for i in 1..(c->>'nsale')::int loop
+      hid := _kb_new_horse(0, 2);
+      update keiba_horses set barn = true, ability = round(ability + 1.5, 1) where id = hid;   -- せりに出る馬は、ほんの少しだけよい
+      insert into kb_sales(horse_id, kind, week, opens_at, ends_at, start_price, info)
+      values (hid, 'auction', sd, _kb_sale_at(sd), _kb_sale_at(sd) + make_interval(hours => (c->>'sale_hours')::int), (c->>'start')::bigint, _kb_hint(hid));
+    end loop;
+  end if;
+  -- 古い出走登録（レースが行われなかった）
+  for g in select r.horse_id, r.user_id, hh.name from kb_regs r join keiba_horses hh on hh.id = r.horse_id where r.day < today loop
+    perform _notice(g.user_id, format('【馬主】「%s」の出走登録は、レースが行われなかったので取り消しました。', g.name));
+    delete from kb_regs where horse_id = g.horse_id;
+  end loop;
+  delete from kb_program p where p.day < today - 1;
+end $$;
+
+-- 預託料（毎日6時。1頭20 X。その日の6時より前から持っている馬だけ。足りないときは、払える頭数だけ残して、新しく持った馬から手放す）
+create or replace function public._kb_upkeep_tick() returns void
+language plpgsql volatile set search_path = public as $$
+declare
+  c jsonb := _kb_own_c(); fee bigint := (c->>'upkeep')::bigint; today date := _kb_jday(_now()); o record; b bigint; k int; i int; nm text;
+  t6 timestamptz := make_timestamptz(extract(year from today)::int, extract(month from today)::int, extract(day from today)::int, 6, 0, 0, 'Asia/Tokyo');
+begin
+  if _now() < t6 then return; end if;
+  insert into kb_upkeep(day, at) values (today, _now()) on conflict (day) do nothing;
+  if not found then return; end if;
+  for o in select h.owner, array_agg(h.id order by h.owned_at, h.id) ids from keiba_horses h
+            where h.owner is not null and not h.retired and h.owned_at < t6 group by h.owner loop
+    b := coalesce(_bal(o.owner), 0);
+    k := least(array_length(o.ids, 1), (b / fee)::int);
+    if k > 0 then
+      perform _take(o.owner, fee * k);
+      perform _log(o.owner, 'owner', fee * k, 0, jsonb_build_object('upkeep', k, 'day', today, 'title', format('預託料 %s頭', k)));
+    end if;
+    for i in (k + 1)..array_length(o.ids, 1) loop
+      select name into nm from keiba_horses where id = o.ids[i];
+      perform _kb_release(o.ids[i]);
+      perform _notice(o.owner, format('【馬主】預託料（1日 %s X）が払えなかったので、「%s」を手放しました。', fee, nm));
+    end loop;
+  end loop;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- 画面から
+-- ---------------------------------------------------------------------
+create or replace function public._kb_own_open(u uuid) returns void
+language plpgsql stable set search_path = public as $$
+begin
+  if not _beta_ok(u, 'owner') then raise exception '準備中です。もうしばらくお待ちください'; end if;
+end $$;
+-- 馬の見せかた（馬主の画面）
+create or replace function public._kb_hjson(h public.keiba_horses) returns jsonb
+language sql stable set search_path = public as $$
+  select jsonb_build_object('id', h.id, 'name', h.name, 'sex', h.sex, 'age', _kb_midx(_now()) - h.born, 'coat', h.coat, 'style', h.style,
+                            'body', h.body, 'silk1', h.silk1, 'silk2', h.silk2, 'silk_pat', h.silk_pat, 'class', h.class,
+                            'starts', h.starts, 'wins', h.wins, 'graded', h.graded, 'prize', h.prize, 'earned', h.earned, 'retired', h.retired)
+$$;
+create or replace function public.owner_state() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  u uuid := _me_g(); c jsonb := _kb_own_c(); sd date; nx date; o kb_owners; tm date; sale jsonb; mine jsonb; prog jsonb;
+begin
+  perform _kb_own_open(u);
+  perform _kb_sales_tick();
+  sd := _kb_sale_day(_now()); tm := _kb_jday(_now()) + 1;
+  nx := case when _now() < _kb_sale_at(sd) + make_interval(hours => (c->>'sale_hours')::int) and exists (select 1 from kb_sales where kind = 'auction' and week = sd) then sd else sd + 7 end;
+  select * into o from kb_owners where user_id = u;
+  -- せり（今週。終わったあとも次のせりまで結果を見せる）
+  select jsonb_build_object('week', sd, 'opens_ms', _kb_ms(_kb_sale_at(sd)),
+      'lots', coalesce(jsonb_agg(jsonb_build_object('id', s.id, 'horse', _kb_hjson(h), 'info', s.info, 'start', s.start_price,
+                     'price', s.price, 'min', _kb_bid_min(s), 'nbids', s.nbids, 'top_me', s.top = u, 'has_top', s.top is not null,
+                     'ends_ms', _kb_ms(s.ends_at), 'status', s.status, 'won', s.buyer = u, 'sold_price', s.sold_price) order by s.id), '[]'::jsonb))
+    into sale
+    from kb_sales s join keiba_horses h on h.id = s.horse_id where s.kind = 'auction' and s.week = sd;
+  -- 自分の馬
+  select coalesce(jsonb_agg(_kb_hjson(h) || jsonb_build_object(
+      'named', h.named, 'can_name', not h.named and h.starts = 0 and not h.retired,
+      'reg', (select jsonb_build_object('day', r.day, 'no', r.no, 'name', p.name, 'post_ms', _kb_ms(p.post), 'venue', v.name, 'rnum', p.rnum)
+                from kb_regs r join kb_program p on p.day = r.day and p.no = r.no join keiba_venues v on v.id = p.venue where r.horse_id = h.id),
+      'entry', (select jsonb_build_object('race', k.id, 'name', k.name, 'post_ms', _kb_ms(k.post), 'venue', v.name, 'rnum', k.rnum, 'uma', e.uma)
+                  from keiba_entries e join keiba_races k on k.id = e.race_id join keiba_venues v on v.id = k.venue
+                 where e.horse_id = h.id and not k.settled order by k.post limit 1),
+      'listing', (select jsonb_build_object('sale', s.id, 'price', s.price, 'ends_ms', _kb_ms(s.ends_at)) from kb_sales s
+                   where s.horse_id = h.id and s.kind = 'resale' and s.status = 'open' limit 1),
+      'can', (select coalesce(jsonb_agg(p.no order by p.post), '[]'::jsonb) from kb_program p where p.day = tm and _kb_can_run(h, p.cls, p.cond, tm)),
+      'last5', (select coalesce(jsonb_agg(jsonb_build_object('pos', x.pos, 'inc', x.incident) order by x.race_id desc), '[]'::jsonb)
+                  from (select e2.race_id, e2.pos, e2.incident from keiba_entries e2 join keiba_races r2 on r2.id = e2.race_id
+                         where e2.horse_id = h.id and r2.settled order by e2.race_id desc limit 5) x)
+    ) order by h.retired, h.owned_at desc nulls last, h.id), '[]'::jsonb) into mine
+    from keiba_horses h where h.owner = u;
+  -- あしたの番組
+  select coalesce(jsonb_agg(jsonb_build_object('no', p.no, 'post_ms', _kb_ms(p.post), 'venue', v.name, 'rnum', p.rnum, 'name', p.name,
+                  'grade', p.grade, 'cls', p.cls, 'cond', p.cond, 'surface', p.surface, 'dist', p.dist, 'nmax', p.nmax,
+                  'nreg', (select count(*) from kb_regs r where r.day = p.day and r.no = p.no)) order by p.post), '[]'::jsonb) into prog
+    from kb_program p join keiba_venues v on v.id = p.venue where p.day = tm;
+  return jsonb_build_object(
+    'now_ms', _kb_ms(_now()), 'balance', _bal(u), 'c', c, 'guest', _is_guest(u),
+    'silks', case when o.user_id is not null then jsonb_build_object('silk1', o.silk1, 'silk2', o.silk2, 'silk_pat', o.silk_pat) end,
+    'colors', to_jsonb(_kb_colors()),
+    'sale', sale, 'next_ms', _kb_ms(_kb_sale_at(nx)), 'next_day', nx,
+    'fixed', (select coalesce(jsonb_agg(jsonb_build_object('id', s.id, 'horse', _kb_hjson(h), 'info', s.info, 'price', s.price,
+                       'ends_ms', _kb_ms(s.ends_at)) order by s.id), '[]'::jsonb)
+                from kb_sales s join keiba_horses h on h.id = s.horse_id where s.kind = 'fixed' and s.status = 'open'),
+    'resale', (select coalesce(jsonb_agg(jsonb_build_object('id', s.id, 'horse', _kb_hjson(h), 'price', s.price, 'ends_ms', _kb_ms(s.ends_at),
+                        'seller', p.nickname, 'mine', s.seller = u) order by s.id desc), '[]'::jsonb)
+                 from kb_sales s join keiba_horses h on h.id = s.horse_id left join profiles p on p.id = s.seller
+                where s.kind = 'resale' and s.status = 'open'),
+    'horses', mine, 'owned', _kb_owned_n(u),
+    'holding', (select count(*) from kb_sales where kind = 'auction' and status = 'open' and top = u),
+    'tomorrow', tm, 'program', prog,
+    'month', (select jsonb_build_object('prize', coalesce(sum(payout), 0), 'cost', coalesce(sum(bet), 0)) from tx_log
+               where user_id = u and game = 'owner' and created_at >= _month_start(_month_of(_now()))));
+end $$;
+
+-- せりで値をつける（つけた値はあずかる。ほかの人に上回られたら返す。終わる5分前からは、値がつくたびに5分のびる）
+create or replace function public.owner_bid(p_sale bigint, p_amount bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); s kb_sales; mn bigint; nm text; c jsonb := _kb_own_c();
+begin
+  perform _kb_own_open(u);
+  perform _kb_sales_tick();
+  select * into s from kb_sales where id = p_sale for update;
+  if not found or s.kind <> 'auction' then raise exception 'せりの馬が見つかりません'; end if;
+  if s.status <> 'open' or _now() >= s.ends_at then raise exception 'この馬のせりは終わりました'; end if;
+  if _now() < s.opens_at then raise exception 'せりは % からです', to_char(s.opens_at at time zone 'Asia/Tokyo', 'FMMM"月"FMDD"日" HH24:MI'); end if;
+  if s.top = u then raise exception 'いちばん高い値をつけているのは、あなたです'; end if;
+  mn := _kb_bid_min(s);
+  if p_amount is null or p_amount < mn then raise exception '% X 以上の値をつけてください', _fmt(mn); end if;
+  if p_amount > 100000000 then raise exception '値が大きすぎます'; end if;
+  if _kb_owned_n(u) + (select count(*) from kb_sales where kind = 'auction' and status = 'open' and top = u) >= (c->>'max')::int then
+    raise exception '持てる馬は%頭までです（せりでいちばん高い値をつけている馬もふくむ）', c->>'max';
+  end if;
+  select name into nm from keiba_horses where id = s.horse_id;
+  perform _take(u, p_amount);
+  perform _log(u, 'owner_hold', p_amount, 0, jsonb_build_object('sale', s.id, 'horse', s.horse_id, 'title', format('「%s」に値をつけた', nm)));
+  if s.top is not null then
+    perform _give(s.top, s.price);
+    perform _log(s.top, 'owner_back', 0, s.price, jsonb_build_object('sale', s.id, 'horse', s.horse_id, 'title', format('「%s」で上回られた', nm)));
+    perform _notice(s.top, format('【せり】「%s」に、ほかの人がもっと高い値（%s X）をつけました。あずけていた %s X は返しました。', nm, _fmt(p_amount), _fmt(s.price)));
+  end if;
+  update kb_sales set price = p_amount, top = u, nbids = nbids + 1,
+         ends_at = greatest(ends_at, _now() + make_interval(mins => (c->>'snipe_min')::int)) where id = s.id;
+  insert into kb_bids(sale_id, user_id, amount, at) values (s.id, u, p_amount, _now());
+  return owner_state();
+end $$;
+
+-- 定価の馬・馬主が売りに出した馬を買う
+create or replace function public.owner_buy(p_sale bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); s kb_sales; h keiba_horses; c jsonb := _kb_own_c(); fee bigint;
+begin
+  perform _kb_own_open(u);
+  perform _kb_sales_tick();
+  select * into s from kb_sales where id = p_sale for update;
+  if not found or s.kind not in ('fixed', 'resale') then raise exception '売り出し中の馬が見つかりません'; end if;
+  if s.status <> 'open' or _now() >= s.ends_at then raise exception 'この馬はもう売れたか、売り出しが終わりました'; end if;
+  if s.seller = u then raise exception '自分が売りに出した馬は買えません（やめるときは「売り出しをやめる」）'; end if;
+  if _kb_owned_n(u) + (select count(*) from kb_sales where kind = 'auction' and status = 'open' and top = u) >= (c->>'max')::int then
+    raise exception '持てる馬は%頭までです（せりでいちばん高い値をつけている馬もふくむ）', c->>'max';
+  end if;
+  select * into h from keiba_horses where id = s.horse_id for update;
+  if s.kind = 'resale' and (h.owner is distinct from s.seller or h.retired) then raise exception 'この馬はもう売り出されていません'; end if;
+  perform _take(u, s.price);
+  perform _log(u, 'owner', s.price, 0, jsonb_build_object('buy', h.id, 'sale', s.id, 'kind', s.kind, 'title', format('「%s」を買った', h.name)));
+  update kb_sales set status = 'sold', buyer = u, sold_price = s.price, sold_at = _now() where id = s.id;
+  if s.kind = 'resale' and s.seller is not null then
+    fee := floor(s.price * (c->>'fee')::numeric / 100);
+    perform _give(s.seller, s.price - fee);
+    perform _log(s.seller, 'owner', 0, s.price - fee, jsonb_build_object('sell', h.id, 'sale', s.id, 'price', s.price, 'fee', fee, 'title', format('「%s」を売った', h.name)));
+    perform _notice(s.seller, format('【馬主】「%s」が %s X で売れました（手数料 %s X をのぞいて %s X）。', h.name, _fmt(s.price), _fmt(fee), _fmt(s.price - fee)));
+  end if;
+  perform _kb_give_horse(h.id, u);
+  return owner_state();
+end $$;
+
+-- 勝負服（色2つと模様。持っている馬みんなに）
+create or replace function public.owner_silks(p_silk1 text, p_silk2 text, p_pat int) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); o kb_owners;
+begin
+  perform _kb_own_open(u);
+  if not (p_silk1 = any(_kb_colors())) or not (p_silk2 = any(_kb_colors())) then raise exception '色をえらんでください'; end if;
+  if p_silk1 = p_silk2 then raise exception '2つの色は、ちがう色にしてください'; end if;
+  if p_pat is null or p_pat not between 0 and 6 then raise exception '模様をえらんでください'; end if;
+  o := _kb_owner_row(u);
+  update kb_owners set silk1 = p_silk1, silk2 = p_silk2, silk_pat = p_pat where user_id = u;
+  update keiba_horses set silk1 = p_silk1, silk2 = p_silk2, silk_pat = p_pat where owner = u and not retired;
+  return owner_state();
+end $$;
+
+-- 名前をつける（デビュー前に1回。カタカナ2〜9文字）
+create or replace function public.owner_name(p_horse int, p_name text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); h keiba_horses; n text := btrim(coalesce(p_name, ''));
+begin
+  perform _kb_own_open(u);
+  select * into h from keiba_horses where id = p_horse for update;
+  if not found or h.owner is distinct from u then raise exception 'あなたの馬ではありません'; end if;
+  if h.retired then raise exception '引退した馬です'; end if;
+  if h.named then raise exception '名前は1回だけつけられます'; end if;
+  if h.starts > 0 then raise exception '名前はデビュー前（まだレースに出ていない馬）だけつけられます'; end if;
+  if exists (select 1 from keiba_entries e join keiba_races k on k.id = e.race_id where e.horse_id = h.id and not k.settled) then
+    raise exception 'デビューのレースが決まったので、もう名前はかえられません';
+  end if;
+  n := translate(n, 'ｰ', 'ー');
+  if n !~ '^[ァ-ヴー]{2,9}$' then raise exception '名前はカタカナ2〜9文字にしてください'; end if;
+  if n ~ '^ー' or n ~ 'ーー' then raise exception '名前のはじめや、つづけて「ー」は使えません'; end if;
+  if n ~ '(シネ|コロス|ウンコ|チンコ|マンコ|セックス|キチガイ|ガイジ|ホモ|レイプ|ファック)' then raise exception 'その名前は使えません'; end if;
+  if exists (select 1 from keiba_horses where name = n and id <> h.id) then raise exception 'その名前の馬はもういます'; end if;
+  update keiba_horses set name = n, named = true where id = h.id;
+  return owner_state();
+end $$;
+
+-- 出走登録（あしたのレース。1頭1つ。p_no が null なら登録をやめる）
+create or replace function public.owner_reg(p_horse int, p_no int) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); h keiba_horses; p kb_program; tm date := _kb_jday(_now()) + 1;
+begin
+  perform _kb_own_open(u);
+  select * into h from keiba_horses where id = p_horse;
+  if not found or h.owner is distinct from u then raise exception 'あなたの馬ではありません'; end if;
+  if p_no is null then delete from kb_regs where horse_id = h.id; return owner_state(); end if;
+  if h.retired then raise exception '引退した馬です'; end if;
+  select * into p from kb_program pp where pp.day = tm and pp.no = p_no;
+  if not found then raise exception 'あしたのレースが見つかりません（番組は毎日0時ごろに出ます）'; end if;
+  if exists (select 1 from keiba_races k where k.day = tm and k.no = p_no) then raise exception 'このレースの登録は締め切りました'; end if;
+  if not _kb_can_run(h, p.cls, p.cond, tm) then
+    raise exception 'この馬は、このレースには出られません（クラス・年齢・前のレースから中1日など）';
+  end if;
+  insert into kb_regs(horse_id, day, no, user_id, at) values (h.id, tm, p_no, u, _now())
+  on conflict (horse_id) do update set day = excluded.day, no = excluded.no, user_id = excluded.user_id, at = excluded.at;
+  return owner_state();
+end $$;
+
+-- 売りに出す（p_price が null なら売り出しをやめる）
+create or replace function public.owner_sell(p_horse int, p_price bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); h keiba_horses; c jsonb := _kb_own_c();
+begin
+  perform _kb_own_open(u);
+  select * into h from keiba_horses where id = p_horse for update;
+  if not found or h.owner is distinct from u then raise exception 'あなたの馬ではありません'; end if;
+  if p_price is null then
+    update kb_sales set status = 'cancel' where horse_id = h.id and kind = 'resale' and status = 'open';
+    return owner_state();
+  end if;
+  if h.retired then raise exception '引退した馬は売れません'; end if;
+  if p_price < 100 or p_price > 100000000 then raise exception '売り値は 100 X から 100,000,000 X までです'; end if;
+  if exists (select 1 from kb_sales where horse_id = h.id and kind = 'resale' and status = 'open') then raise exception 'もう売りに出しています'; end if;
+  insert into kb_sales(horse_id, kind, seller, opens_at, ends_at, start_price, price)
+  values (h.id, 'resale', u, _now(), _now() + make_interval(days => (c->>'resale_days')::int), p_price, p_price);
+  return owner_state();
+end $$;
+
+-- 引退（出走が決まっているレースがあるあいだは、できない）
+create or replace function public.owner_retire(p_horse int) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); h keiba_horses;
+begin
+  perform _kb_own_open(u);
+  select * into h from keiba_horses where id = p_horse for update;
+  if not found or h.owner is distinct from u then raise exception 'あなたの馬ではありません'; end if;
+  if h.retired then raise exception 'もう引退しています'; end if;
+  if exists (select 1 from keiba_entries e join keiba_races k on k.id = e.race_id where e.horse_id = h.id and not k.settled) then
+    raise exception '出走が決まっているレースが終わってから引退させてください';
+  end if;
+  update keiba_horses set retired = true where id = h.id;
+  delete from kb_regs where horse_id = h.id;
+  update kb_sales set status = 'cancel' where horse_id = h.id and kind = 'resale' and status = 'open';
+  return owner_state();
+end $$;
+
+-- 毎分：馬主の時計（pg_cron があるとき）
+do $$
+begin
+  if exists (select 1 from pg_namespace where nspname = 'cron') then
+    perform cron.schedule('ailinax-owner', '* * * * *', 'select public._kb_own_tick()');
+  end if;
+end $$;
+
 -- ---------------------------------------------------------------------
 -- 実行権限：内部用（_ではじまる）は画面から呼べないようにする
 -- ---------------------------------------------------------------------
@@ -14318,7 +14990,8 @@ begin
             'bt_lobby_set','bt_bet','bt_react',
             '_lot_seed','_lot_prize','_lot_tier_name','_rnd','_lot_next_at','_lot_tick','_lot_draw','lot_buy','lot_state','dm_list','dm_thread','dm_send','_sp_json','support_list','support_thread','support_open','support_send','support_close',
             'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse',
-            'money_history','corp_ledger_page','fi_cast','fi_consign','fi_hook','fi_join','fi_land','fi_state',
+            'money_history','corp_ledger_page','_kb_bid_min','_kb_can_run','_kb_colors','_kb_give_horse','_kb_hint','_kb_hjson','_kb_own_c','_kb_own_open','_kb_own_tick','_kb_owned_n','_kb_owner_row','_kb_prog_day','_kb_release','_kb_sale_at','_kb_sale_day','_kb_sales_tick','_kb_take_regs','_kb_upkeep_tick','owner_bid','owner_buy','owner_name','owner_reg','owner_retire','owner_sell','owner_silks','owner_state',
+            'fi_cast','fi_consign','fi_hook','fi_join','fi_land','fi_state',
             '_pr_bonus','_pr_check_sel','_pr_hit','_pr_make_day','_pr_make_race','_pr_margin','_pr_month','_pr_name','_pr_new_racer','_pr_odds','_pr_open','_pr_prob','_pr_rate','_pr_seed','_pr_settle','_pr_status','_pr_tick','_pr_wx','pr_bet','pr_day','pr_odds','pr_race','pr_racer') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
