@@ -115,6 +115,7 @@
     }
     HA = data.horse && data.horse.a; HB = data.horse && data.horse.b; HC = data.horse && data.horse.c;
     TPL.forEach(function (t, i) { t.i = i; });
+    if (HANOUT()) D.forEach(function (v) { if (typeof v === 'string' && !/\{\d/.test(v)) done(v); });   // 訳したあとの文（漢字の文）は、もう訳さない
     if (data.x) X = data.x;
   }
   var X = {};
@@ -214,11 +215,16 @@
     return null;
   }
   // 1つの文を訳す（null = 訳がない）
+  // 中国語・漢字まじりの韓国語：訳したあとの文にも漢字があるので、訳した文をおぼえておいて、もう一度は訳さない
+  var DONE = new Set();
+  function HANOUT() { return ZH || LANG === 'ko-Hani'; }
+  function done(v) { var x = norm(String(v)); if (x && !D.has(x) && JP.test(x)) DONE.add(x); }
   function tr(s, depth, inner) {
     depth = depth || 0;
     var n = norm(s);
     if (!n) return s;
     if (!JP.test(n)) return FW.test(n) ? punc(n) : n;
+    if (DONE.size && DONE.has(n)) return n;
     var key = n;
     if (CACHE.has(key)) return CACHE.get(key);
     var r = whole(n, depth);
@@ -227,6 +233,7 @@
     if (r == null && n.length < 120 && depth < 2) r = parens(n, depth);
     if (r == null && !inner && MISS.size < 5000) MISS.add(n);
     CACHE.set(key, r);
+    if (r != null && HANOUT()) done(r);
     return r;
   }
   // まるごと：辞書 → テンプレート → 馬の名前 → 日付
