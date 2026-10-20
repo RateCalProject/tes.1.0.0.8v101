@@ -858,6 +858,15 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 :root[data-cvd="safe"] .oc-pick button[data-ocol="2"]{background:#009E73!important}
 :root[data-cvd="safe"] .oc-pick button[data-ocol="3"]{background:#0072B2!important}
 :root[data-cvd="safe"] .board .r,:root[data-cvd="safe"] .wheelnum.red,:root[data-cvd="safe"] #ruLast .red{background:#D55E00!important}
+/* ことば（設定・ログイン） */
+.langs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;max-width:420px}
+.langs button{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;padding:8px 6px;font-weight:700;font-size:13px;font-family:inherit}
+.langs button.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.logo .logo-rm{font-size:10px;font-weight:600;color:var(--muted);margin-left:6px;letter-spacing:.01em;white-space:nowrap}
+/* 中国語・韓国語の字体（日本語の字体で中国語・韓国語を出さない） */
+:root:lang(zh-Hant){--font:-apple-system,BlinkMacSystemFont,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif}
+:root:lang(zh-Hans){--font:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif}
+:root:lang(ko){--font:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}
 </style>
 <script>
 /* テーマと色覚サポートを、画面が出る前にあてる（この端末に保存したもの） */
@@ -870,14 +879,15 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
       chalk: 'Klee+One:wght@400;600', paper: 'Zen+Old+Mincho:wght@400;700;900', citypop: 'Zen+Maru+Gothic:wght@400;700;900' };
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
-  /* 言語：English をえらんだ端末では、英語の辞書（i18n/en.js）を先に読みこむ */
-  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=f695e6e5"><\/script>'); } } catch (e) {}
+  /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
+  window.AX_LANGS = {"en":"en.js?v=291a5210"};
+  try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
 </head>
 <body>
 <header><div class="wrap">
-  <div class="logo">風の芽<small>経済組</small></div>
+  <div class="logo" translate="no">風の芽<small>経済組</small><small class="logo-rm hidden">Kazenome-EconomicGroup</small></div>
   <button class="bell hidden" id="bell" aria-label="通知"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="bn hidden" id="bellN">0</span></button>
   <div class="bal hidden" id="bal"><b class="num" id="balNum">0</b><span>X</span></div>
 </div></header>
@@ -1063,8 +1073,8 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 
 <!-- ログイン -->
 <section id="vLogin" class="center hidden">
-  <div class="seg sm lg-lang" id="lgLang" translate="no"><button type="button" data-k="ja">日本語</button><button type="button" data-k="en">English</button></div>
-  <h1>風の芽経済組</h1>
+  <div class="langs lg-lang" id="lgLang" translate="no"></div>
+  <h1 translate="no">風の芽経済組<small class="logo-rm hidden" style="display:block;font-size:13px;font-weight:700;color:var(--muted);margin-top:2px">Kazenome-EconomicGroup</small></h1>
   <p class="notice">架空通貨 <b>AiliNaX</b>（単位 X）で、働く・会社をつくる・競馬やカジノで遊ぶ経済ゲームです。<br>はじめてログインした人に 1,000 X を配ります（1回だけ）。</p>
   <div class="mailform hidden" id="oauthBox"></div>
   <div class="seg" id="lgMode"><button type="button" data-k="pw" class="on">パスワード</button><button type="button" data-k="link">メールのリンク</button></div>
@@ -1374,8 +1384,8 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   </div>
   <div class="card" data-sub="style">
     <h3 style="margin-top:0">言語 / Language</h3>
-    <div class="seg sm" id="langSeg" translate="no"><button data-k="ja">日本語</button><button data-k="en">English</button></div>
-    <p class="muted small" style="margin:6px 0 0">画面の言葉を英語にできます。みんなの投稿・名前・ニュースなどは、書かれたままです。この端末と、ログインしているアカウントに保存します。</p>
+    <div class="langs" id="langSeg" translate="no"></div>
+    <p class="muted small" style="margin:6px 0 0">画面の言葉を、英語・中国語・韓国語にできます。みんなの投稿・名前・ニュースなどは、書かれたままです。この端末と、ログインしているアカウントに保存します。</p>
   </div>
   <div class="card" data-sub="style" id="numFCard">
     <h3 style="margin-top:0">数字の表示</h3>
@@ -1460,8 +1470,10 @@ const CFG = window.AILINAX_CONFIG || {};
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 // 数字の表示（設定 → プロフィール でえらぶ。この端末に保存）：comma 1,234,567／jp 123万4567（日本式）／four 123 4567（4けたごとに細い空白）
-// 言語（ja／en）。英語の画面では、文字は i18n/en.js が英語にする。キャンバスなど画面の外の文字は tr() を通す
-const LANG = window.I18N ? 'en' : 'ja';
+// 言語（ja・en・zh-TW・zh-CN・ko・ko-Hani）。日本語のほかは、文字は i18n/<lang>.js がそのことばにする。キャンバスなど画面の外の文字は tr() を通す
+const LANG = window.I18N ? I18N.lang : 'ja';
+const LX = window.I18N && I18N.x ? I18N.x() : {};   // ことばごとの追加のデータ（決まり手など）
+const LANG_LIST = [['ja', '日本語'], ['en', 'English'], ['zh-TW', '繁體中文'], ['zh-CN', '简体中文'], ['ko', '한국어'], ['ko-Hani', '韓國語']];
 const tr = s => window.I18N ? I18N.t(s) : s;
 async function setLang(l) {
   if (l === LANG) return;
@@ -1469,7 +1481,7 @@ async function setLang(l) {
   if (entered) { try { await call('prefs_save', { p_prefs: { lang: l } }); } catch (e) {} }
   location.reload();
 }
-const NUMF = LANG === 'en' ? 'comma' : (() => { try { const v = localStorage.getItem('numfmt'); return ['comma', 'jp', 'four'].includes(v) ? v : 'comma'; } catch (e) { return 'comma'; } })();
+const NUMF = LANG !== 'ja' ? 'comma' : (() => { try { const v = localStorage.getItem('numfmt'); return ['comma', 'jp', 'four'].includes(v) ? v : 'comma'; } catch (e) { return 'comma'; } })();
 function numStr(n, fd) {
   const x = Number(n || 0);
   if (NUMF === 'comma' || !isFinite(x)) return x.toLocaleString('ja-JP', { maximumFractionDigits: fd });
@@ -1562,8 +1574,10 @@ function styleLoad() {
 }
 
 /* ---------------- 言語・数字の表示（設定） ---------------- */
-$$('#langSeg button, #lgLang button').forEach(b => { b.classList.toggle('on', b.dataset.k === LANG); b.onclick = () => setLang(b.dataset.k); });
-if (LANG === 'en') $('#numFCard').classList.add('hidden');
+$$('#langSeg, #lgLang').forEach(el => { el.innerHTML = LANG_LIST.filter(x => x[0] === 'ja' || (window.AX_LANGS || {})[x[0]])
+  .map(x => `<button type="button" data-k="${x[0]}" class="${x[0] === LANG ? 'on' : ''}">${x[1]}</button>`).join(''); });
+$$('#langSeg button, #lgLang button').forEach(b => { b.onclick = () => setLang(b.dataset.k); });
+if (LANG !== 'ja') { $('#numFCard').classList.add('hidden'); $$('.logo-rm').forEach(e => e.classList.remove('hidden')); }
 $$('#numF button').forEach(b => {
   b.classList.toggle('on', b.dataset.k === NUMF);
   b.onclick = () => { if (b.dataset.k === NUMF) return; try { localStorage.setItem('numfmt', b.dataset.k); } catch (e) { return toast('この端末では保存できませんでした'); } location.reload(); };
@@ -1779,8 +1793,8 @@ const MENU = [
   ['vWork', '仕事', '✎', [['jobs', '仕事をえらぶ'], ['stat', '給料'], ['corp', '企業ページ'], ['mywork', '勤め先']]],
   ['vGame', '遊戯', '♠', [['vGameList', '≡ 一覧'], ['vRace', '🏇 競馬'], ['vBoat', '🚤 競艇'], ['vBike', '🚲 競輪'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
   ['vHome', 'メイン', '◉', [['menu', 'メニュー'], ['friend', 'フレンド'], ['msg', '連絡']]],
-  ['vCorp', '企業', LANG === 'en' ? '🏢' : '社', [['search', '会社検索'], ['review', '評価（500 X）'], ['pin', 'ピン留め'], ['desk', '相談'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所']]],
-  ['vTax', '役所', LANG === 'en' ? '🏛' : '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['court', '訴え'], ['kokko', '国庫・番付']]],
+  ['vCorp', '企業', LANG !== 'ja' ? '🏢' : '社', [['search', '会社検索'], ['review', '評価（500 X）'], ['pin', 'ピン留め'], ['desk', '相談'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所']]],
+  ['vTax', '役所', LANG !== 'ja' ? '🏛' : '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['court', '訴え'], ['kokko', '国庫・番付']]],
   ['vMore', '設定', '⚙', [['prof', 'プロフィール'], ['style', 'スタイル'], ['hist', '記録'], ['rule', '規約']]],
 ];
 const MENU_OF = Object.fromEntries(MENU.map(m => [m[0], m]));
@@ -1913,7 +1927,7 @@ function renderGameList() {
     box.innerHTML = GAME_GROUPS.map(([t, sub, ks, ic], i) => {
       const gs = groupGames(ks), soon = gs.every(isSoon);
       return `<div class="game-row ${soon ? 'soon' : ''}" data-cat="${i}"><span class="ic">${ic}</span>
-        <span class="nm"><b>${t}</b>${sub ? `<span class="muted small"> ${sub}</span>` : ''}<small>${soon ? '準備中' : gs.map(g => `<span>${g[2]}</span>`).join(LANG === 'en' ? ', ' : '・')}</small></span><span class="go">${soon ? '' : '›'}</span></div>`;
+        <span class="nm"><b>${t}</b>${sub ? `<span class="muted small"> ${sub}</span>` : ''}<small>${soon ? '準備中' : gs.map(g => `<span>${g[2]}</span>`).join(LANG === 'ja' ? '・' : LANG === 'en' ? ', ' : (LX.sep || ', '))}</small></span><span class="go">${soon ? '' : '›'}</span></div>`;
     }).join('');
   } else {
     const [t, sub, ks] = GAME_GROUPS[GCAT];
@@ -2706,9 +2720,9 @@ const PR_SP = {
 // 決まり手（英語の画面では英語で出す）
 const PR_KIM = { boat: { '逃げ': 'Escape', '差し': 'Cut-in', 'まくり': 'Sweep', 'まくり差し': 'Sweep & cut-in', '抜き': 'Overtake', '恵まれ': 'Lucky win' },
                  bike: { '逃げ': 'Escape', '捲り': 'Sweep', '差し': 'Late charge' } };
-const prKim = (sp, k) => LANG === 'en' && k && PR_KIM[sp][k] ? PR_KIM[sp][k] : (k || '');
+const prKim = (sp, k) => !k ? '' : LANG === 'ja' ? k : LANG === 'en' ? (PR_KIM[sp][k] || k) : ((LX.kim && LX.kim[sp] && LX.kim[sp][k]) || k);
 const prK = (sp, kind) => { const k = PR_KINDS[sp].find(x => x[0] === kind) || PR_KINDS.boat.find(x => x[0] === kind); return { label: k[1], need: k[2], ordered: k[3] }; };
-const prNm = x => LANG === 'en' && x.name_en ? x.name_en : x.name;
+const prNm = x => LANG === 'en' && x.name_en ? x.name_en : LANG === 'ko' && x.name_en ? I18N.hangul(x.name_en.split(' ').reverse().join(' ')) : x.name;
 const prSel = (sp, kind, sel) => sel.join(prK(sp, kind).ordered ? '→' : '-');
 const prST = v => v == null ? '—' : Number(v) < 0 ? 'F' + Math.abs(Number(v)).toFixed(2).slice(1) : Number(v).toFixed(2).slice(1);
 const prTime = ms => { const s = ms / 1000; return `${Math.floor(s / 60)}'${(s % 60).toFixed(1).padStart(4, '0').replace('.', '"')}`; };
@@ -2880,7 +2894,7 @@ function prRenderPicks(sp) {
   sl.querySelectorAll('div').forEach(d => d.onclick = () => { sel.splice(Number(d.dataset.i), 1); S.odds = null; prRenderPicks(sp); prFetchOdds(sp); });
   const items = wk ? [1, 2, 3, 4, 5, 6].map(w => ({ v: w, c: PR_COL.boat[w - 1] })) : S.R.entries.map(x => ({ v: x.num, c: PR_COL[sp][x.num - 1] }));
   const pk = prQ(sp, '.pr-picks');
-  pk.innerHTML = items.map(it => `<button data-v="${it.v}" class="${sel.includes(it.v) ? 'on' : ''}" style="background:${it.c};color:${PR_INK(it.c)}">${it.v}${wk ? `<small style="display:block;font-size:9px;font-weight:700">${LANG === 'en' ? 'Br.' : '枠'}</small>` : ''}</button>`).join('');
+  pk.innerHTML = items.map(it => `<button data-v="${it.v}" class="${sel.includes(it.v) ? 'on' : ''}" style="background:${it.c};color:${PR_INK(it.c)}">${it.v}${wk ? `<small style="display:block;font-size:9px;font-weight:700">${LANG === 'en' ? 'Br.' : LANG === 'ja' ? '枠' : (LX.br || '枠')}</small>` : ''}</button>`).join('');
   pk.querySelectorAll('button').forEach(b => b.onclick = () => prTap(sp, Number(b.dataset.v)));
   prOddsLine(sp);
 }
@@ -2959,7 +2973,7 @@ function prRenderResult(sp) {
   const fl = out.filter(x => x.run.inc === 'F'), fa = out.filter(x => x.run.inc === 'fall');
   if (fl.length) h += `<p class="kb-note" style="margin:0 0 6px">⚠ ${fl.map(x => `${x.num}号艇`).join('・')}はフライング（F）で返還欠場。この艇をふくむ券は返します</p>`;
   if (fa.length) h += `<p class="kb-note" style="margin:0 0 6px">⚠ ${fa.map(x => `${x.num}番`).join('・')}は落車しました</p>`;
-  if (R.kimarite) h += `<p class="small" style="margin:0 0 6px"><span>決まり手：</span>${LANG === 'en' ? ' ' : ''}<b>${esc(prKim(sp, R.kimarite))}</b></p>`;
+  if (R.kimarite) h += `<p class="small" style="margin:0 0 6px"><span>決まり手：</span>${LANG === 'en' ? ' ' : (LX.sp || '')}<b>${esc(prKim(sp, R.kimarite))}</b></p>`;
   if (sp === 'boat') {
     h += `<div class="scrollx"><table class="kb-table"><tr><th>着</th><th>艇</th><th>選手</th><th class="num">タイム</th><th class="num">ST</th><th class="num">人気</th></tr>` +
       rows.map(x => `<tr><td><b>${x.run.pos}</b></td><td>${prChip(sp, x.num)}</td><td><span translate="no">${esc(prNm(x))}</span></td>
@@ -3199,7 +3213,8 @@ function prDraw(sp) {
   const capEl = prQ(sp, '.pr-cap'), ct = tr(cap);
   if (capEl.textContent !== ct) capEl.textContent = ct;
 }
-const prWho = (sp, x) => LANG === 'en' ? `${sp === 'boat' ? 'Boat ' : '#'}${x.num} ${x.name_en}` : `${x.num}${sp === 'boat' ? '号艇' : '番'}${x.name}`;
+const prWho = (sp, x) => LANG === 'en' ? `${sp === 'boat' ? 'Boat ' : '#'}${x.num} ${x.name_en}`
+  : LANG !== 'ja' && LX.who ? LX.who[sp].replace('{n}', x.num).replace('{name}', prNm(x)) : `${x.num}${sp === 'boat' ? '号艇' : '番'}${x.name}`;
 function prBoatCap(S, t, B, order) {
   const R = S.R.race, run = R.finish_ms != null && S.R.entries.every(x => x.run);
   if (t < -60) return `発走まで ${mmss(-t)}`;
@@ -5901,7 +5916,7 @@ const KK_L = [0, 8, 28, 40, 44], KK_T = [4, 12, 16, 20, 24, 29, 32, 36, 41], KK_
 const kkKind = c => KK_L.includes(c) ? 'L' : KK_T.includes(c) ? 'T' : KK_R.includes(c) ? 'R' : 'K';
 function kkCard(c, cls = '') {
   if (c == null) return '';
-  const m = c >> 2, k = kkKind(c), en = LANG === 'en';
+  const m = c >> 2, k = kkKind(c), en = LANG === 'en' || LANG === 'ko';
   const mid = k === 'L' || k === 'T' ? KK_MOT[c] : c === 9 ? 'みよしの' : c === 1 || c === 5 ? 'あかよろし' : '';
   return `<span class="hf m${m} ${k}${KK_AO.includes(c) ? ' ao' : ''}${en ? ' en' : ''} ${cls}" data-c="${c}" translate="no">${en ? '' : `<s>${m + 1}</s>`}<i>${en ? m + 1 : KK_F[m]}</i><b>${mid}</b></span>`;
 }

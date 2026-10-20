@@ -677,7 +677,7 @@ begin
     cur := cur || jsonb_build_object('cvd', p->>'cvd');
   end if;
   if p ? 'lang' then
-    if coalesce(p->>'lang', '') not in ('ja', 'en') then raise exception '言語が正しくありません'; end if;
+    if coalesce(p->>'lang', '') not in ('ja', 'en', 'zh-TW', 'zh-CN', 'ko', 'ko-Hani') then raise exception '言語が正しくありません'; end if;
     cur := cur || jsonb_build_object('lang', p->>'lang');
   end if;
   update profiles set prefs = cur where id = u;
