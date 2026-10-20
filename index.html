@@ -174,6 +174,15 @@ h3{font-size:15px;margin:16px 0 8px}
 .modal .sheet{background:var(--panel);width:100%;max-width:760px;max-height:86vh;overflow:auto;border-radius:16px 16px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom))}
 .silk{display:inline-block;width:16px;height:16px;border-radius:4px;vertical-align:-3px;margin-right:5px;border:1px solid rgba(0,0,0,.25)}
 .scrollx{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* 競艇・競輪 */
+.pr-gr{display:inline-block;font-size:10px;font-weight:900;border-radius:4px;padding:1px 4px;margin-left:5px;vertical-align:2px;line-height:1.3;background:var(--soft);color:var(--accent)}
+.pr-gr.gA1,.pr-gr.gS1{background:#C0283C;color:#fff}.pr-gr.gA2,.pr-gr.gS2{background:#1F4E9C;color:#fff}
+.pr-ln{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;margin:0 0 8px}
+.pr-ln .g{display:inline-flex;flex-direction:column;align-items:center;gap:2px;padding:4px 6px;border:1px solid var(--line);border-radius:8px}
+.pr-ln .g .c{display:inline-flex;gap:2px}.pr-ln .g small{font-size:10px;color:var(--muted)}
+.waku.pr-wk{min-width:16px;height:16px;font-size:10px;margin-right:3px;opacity:.9}
+.pr-stage{background:#1F5F8B}
+.pr-stage canvas{height:280px}
 
 /* スロット */
 .reels{display:flex;gap:10px;justify-content:center;margin:8px 0 4px}
@@ -862,7 +871,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：English をえらんだ端末では、英語の辞書（i18n/en.js）を先に読みこむ */
-  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=adec693b"><\/script>'); } } catch (e) {}
+  try { if (localStorage.getItem('lang') === 'en') { document.documentElement.lang = 'en'; document.write('<script src="i18n/en.js?v=f695e6e5"><\/script>'); } } catch (e) {}
 })();
 </script>
 </head>
@@ -1210,6 +1219,10 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <div class="card" id="kbMine"></div>
   </div>
 </section>
+
+<!-- 競艇・競輪（中身はスクリプトでつくる） -->
+<section id="vBoat" class="view hidden"></section>
+<section id="vBike" class="view hidden"></section>
 
 <!-- スロット -->
 <section id="vSlot" class="view hidden">
@@ -1758,13 +1771,13 @@ async function enter() {
   }
 }
 function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
-const GAMES = ['vGameList', 'vRace', 'vSlot', 'vBj', 'vRou', 'vHilo', 'vLobby', 'vRoom', 'vLot'];
+const GAMES = ['vGameList', 'vRace', 'vBoat', 'vBike', 'vSlot', 'vBj', 'vRou', 'vHilo', 'vLobby', 'vRoom', 'vLot'];
 const HIDDEN_SUBS = ['vLobby', 'vRoom', 'vLot'];
 // メインメニュー（左から）とサブメニュー
 const MENU = [
   ['vInfo', '情報', 'i', [['today', '今日'], ['cur', '通貨'], ['pub', '広報・書籍'], ['mkt', '相場'], ['tl', 'TL'], ['people', '人をさがす'], ['jack', '競馬億万長者']]],
   ['vWork', '仕事', '✎', [['jobs', '仕事をえらぶ'], ['stat', '給料'], ['corp', '企業ページ'], ['mywork', '勤め先']]],
-  ['vGame', '遊戯', '♠', [['vGameList', '≡ 一覧'], ['vRace', '🏇 競馬'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
+  ['vGame', '遊戯', '♠', [['vGameList', '≡ 一覧'], ['vRace', '🏇 競馬'], ['vBoat', '🚤 競艇'], ['vBike', '🚲 競輪'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
   ['vHome', 'メイン', '◉', [['menu', 'メニュー'], ['friend', 'フレンド'], ['msg', '連絡']]],
   ['vCorp', '企業', LANG === 'en' ? '🏢' : '社', [['search', '会社検索'], ['review', '評価（500 X）'], ['pin', 'ピン留め'], ['desk', '相談'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所']]],
   ['vTax', '役所', LANG === 'en' ? '🏛' : '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['court', '訴え'], ['kokko', '国庫・番付']]],
@@ -1794,6 +1807,8 @@ function go(v, sub) {
   if (sec === 'vHome') homeLoad(sub);
   if (sec === 'vWork') workLoad();
   if (sec === 'vRace') kbLoad();
+  if (sec === 'vBoat') prLoad('boat');
+  if (sec === 'vBike') prLoad('bike');
   if (sec === 'vLobby') lobbyLoad();
   if (sec === 'vGameList') renderGameList();
   if (sec === 'vRoom') roomStart();
@@ -1854,15 +1869,15 @@ function subStep(d) {
 })();
 // 遊戯の一覧：まず分類（公営競技・ミニゲーム・風の芽製作所・メダカ研究所）。分類を押すと、そこのゲームの一覧
 const GAME_GROUPS = [
-  ['公営競技', '', ['vRace', 'keirin', 'kyotei'], '🏇'],
+  ['公営競技', '', ['vRace', 'vBike', 'vBoat'], '🏇'],
   ['ミニゲーム', 'その他', ['vSlot', 'vBj', 'vRou', 'vHilo', 'reversi', 'chess', 'shogi', 'onecard', 'mahjong'], '🎲'],
   ['風の芽製作所', 'オリジナル', ['battle', 'vLot', 'auction', 'koikoi'], '🌱'],
   ['メダカ研究所', '', ['medaka'], '🐟'],
 ];
 const GAME_LIST = [
   ['vRace', '🏇', '競馬', '毎日 12:30〜13:30（昼競馬）と 16:30〜22:30（20:30はメインレース、そのあと深夜競馬）。みんなで同じレースに賭ける、いちばんの目玉'],
-  ['keirin', '🚲', '競輪', '準備中'],
-  ['kyotei', '🚤', '競艇', '準備中'],
+  ['vBike', '🚲', '競輪', '毎日 13:50〜15:40（12R）。同じ地区の選手がラインを組んで走る。2車単・3連単・2枠複など7種類の車券'],
+  ['vBoat', '🚤', '競艇', '毎日 朝 9:30〜11:20（12R）と ミッドナイト 22:40〜23:50（8R）。6艇で3周。単勝から3連単まで7種類の舟券'],
   ['battle', '⚔', '市区町村バトル', '日本全国の市区町村の地図で遊ぶ陣取り将棋（最大16人）。賭けありの部屋では、所持金を賭けて対戦できます（観戦して賭けることも）'],
   ['auction', '🔨', '競り市', '魚市場や骨董市の競り（2〜6人）。自分だけの目利きで値打ちを見きわめて値をつけ、落札した品の値打ちをそのまま受け取る'],
   ['koikoi', '🎴', '花札こいこい', 'ふたりで遊ぶ花札。同じ月の札を合わせてとり、役をそろえる。「こいこい」でつづけるか「勝負」で上がるか（3・6・12か月。コンピューターとも）'],
@@ -2658,6 +2673,567 @@ function kbHorseDraw(g, x, y, s, dir, ph, moving, e, ff, rider = true) {
   g.restore();
   g.fillStyle = '#111'; g.font = `800 ${Math.round(8 * s)}px ${ff}`; g.textAlign = 'center'; g.textBaseline = 'middle';
   g.fillText(String(e.uma), x - 2 * s * dir, y + bob - 2.5 * s);
+}
+
+/* =================================================================
+   競艇・競輪（公営競技）
+   ================================================================= */
+const PR_COL = {
+  boat: ['#FFFFFF', '#1C1C1A', '#D93A2F', '#2F5FC4', '#F2C53D', '#2E8B57'],
+  bike: ['#FFFFFF', '#1C1C1A', '#D93A2F', '#2F5FC4', '#F2C53D', '#2E8B57', '#EE8A2E', '#EF8FB4', '#7B4FB0'],
+};
+const PR_INK = c => ['#FFFFFF', '#F2C53D', '#EF8FB4'].includes(c) ? '#1C1C1A' : '#FFFFFF';
+const prChip = (sp, n) => { const c = PR_COL[sp][n - 1]; return `<span class="waku" style="background:${c};color:${PR_INK(c)}">${n}</span>`; };
+const prWk = w => { const c = PR_COL.boat[w - 1]; return `<span class="waku pr-wk" style="background:${c};color:${PR_INK(c)}">${w}</span>`; };
+const PR_KINDS = {
+  boat: [['tan', '単勝', 1, false], ['fuku', '複勝', 1, false], ['ex2', '2連単', 2, true], ['qn2', '2連複', 2, false], ['wide', '拡連複', 2, false], ['ex3', '3連単', 3, true], ['tr3', '3連複', 3, false]],
+  bike: [['ex2', '2車単', 2, true], ['qn2', '2車複', 2, false], ['wide', 'ワイド', 2, false], ['ex3', '3連単', 3, true], ['tr3', '3連複', 3, false], ['wex', '2枠単', 2, true], ['wqn', '2枠複', 2, false]],
+};
+const PR_HELP = {
+  boat: { tan: '1着の艇をあてる', fuku: '2着までに入る艇をあてる', ex2: '1着→2着を順番どおりにあてる', qn2: '1着と2着の艇の組み合わせ（順番は関係なし）',
+          wide: '3着までに入る2艇の組み合わせ', ex3: '1着→2着→3着を順番どおりにあてる', tr3: '1〜3着の3艇の組み合わせ（順番は関係なし）' },
+  bike: { ex2: '1着→2着を順番どおりにあてる', qn2: '1着と2着の車の組み合わせ（順番は関係なし）', wide: '3着までに入る2車の組み合わせ',
+          ex3: '1着→2着→3着を順番どおりにあてる', tr3: '1〜3着の3車の組み合わせ（順番は関係なし）', wex: '1着の枠→2着の枠を順番どおりにあてる', wqn: '1着と2着の枠の組み合わせ（順番は関係なし）' },
+};
+const PR_SP = {
+  boat: { view: 'vBoat', label: '競艇', icon: '🚤', unit: '艇', sched: '毎日 朝 9:30〜11:20（12R）・ミッドナイト 22:40〜23:50（8R）。6艇で3周（1800m）', next: 'あしたは9:30から' },
+  bike: { view: 'vBike', label: '競輪', icon: '🚲', unit: '車', sched: '毎日 13:50〜15:40（12R）。A級は7車、S級は9車で2025m（5周）。同じ地区の選手がラインを組んで走ります', next: 'あしたは13:50から' },
+};
+// 決まり手（英語の画面では英語で出す）
+const PR_KIM = { boat: { '逃げ': 'Escape', '差し': 'Cut-in', 'まくり': 'Sweep', 'まくり差し': 'Sweep & cut-in', '抜き': 'Overtake', '恵まれ': 'Lucky win' },
+                 bike: { '逃げ': 'Escape', '捲り': 'Sweep', '差し': 'Late charge' } };
+const prKim = (sp, k) => LANG === 'en' && k && PR_KIM[sp][k] ? PR_KIM[sp][k] : (k || '');
+const prK = (sp, kind) => { const k = PR_KINDS[sp].find(x => x[0] === kind) || PR_KINDS.boat.find(x => x[0] === kind); return { label: k[1], need: k[2], ordered: k[3] }; };
+const prNm = x => LANG === 'en' && x.name_en ? x.name_en : x.name;
+const prSel = (sp, kind, sel) => sel.join(prK(sp, kind).ordered ? '→' : '-');
+const prST = v => v == null ? '—' : Number(v) < 0 ? 'F' + Math.abs(Number(v)).toFixed(2).slice(1) : Number(v).toFixed(2).slice(1);
+const prTime = ms => { const s = ms / 1000; return `${Math.floor(s / 60)}'${(s % 60).toFixed(1).padStart(4, '0').replace('.', '"')}`; };
+const PRS = {};
+let prLoop = false, prSec = 0, prLastDraw = 0;
+const prQ = (sp, s) => $('#' + PR_SP[sp].view).querySelector(s);
+for (const sp of ['boat', 'bike']) {
+  PRS[sp] = { D: null, R: null, view: null, pick: { kind: PR_KINDS[sp][0][0], sel: [] }, odds: null, oddsReq: 0, lastDay: 0, lastRace: 0, busy: false, seen: null, replay: null, lanes: {}, amt: null };
+  const el = $('#' + PR_SP[sp].view);
+  el.innerHTML = `<div class="pr-list"></div>
+    <div class="pr-race hidden">
+      <button class="btn pr-back" style="margin-top:12px">← 開催一覧</button>
+      <div class="card">
+        <div class="pr-head"></div>
+        <div class="kb-stage pr-stage"><canvas class="pr-canvas" height="280"></canvas></div>
+        <div class="kb-cap pr-cap"></div>
+        <button class="btn wide hidden pr-replay" style="margin-top:8px">リプレイ</button>
+      </div>
+      <div class="card hidden pr-result"></div>
+      <div class="card"><h3 style="margin-top:0">出走表</h3>
+        <p class="muted small" style="margin:-4px 0 6px">${sp === 'boat' ? '名前の下は 登録番号・支部・年齢。近5走は左が前走。名前をタップすると成績が見られます。勝率は着順の点（1着10点〜6着1点）の平均です。'
+          : '名前の下は 府県・年齢・期・脚質（逃＝先行・両＝自在・追＝追込）。近5走は左が前走。名前をタップすると成績が見られます。'}</p>
+        <div class="pr-lines"></div><div class="pr-card"></div></div>
+      <div class="card pr-bet">
+        <h3 style="margin-top:0">投票 <span class="muted small pr-close"></span></h3>
+        <div class="pr-bet-body">
+          <div class="tabs-s pr-kinds"></div>
+          <p class="muted small pr-help" style="margin:8px 0 0"></p>
+          <div class="slots pr-slots"></div>
+          <div class="picks pr-picks"></div>
+          <p class="pr-odds" style="margin:6px 0 10px"></p>
+          <div class="pr-amt"></div>
+          <button class="btn main big wide pr-buy" style="margin-top:10px">買う</button>
+          <p class="muted small" style="margin:8px 0 0">オッズは買った時点で決まります。人気は「みんなの見立て」で、その日の調子${sp === 'boat' ? '・スタート' : '・展開'}までは入っていません。</p>
+        </div>
+        <p class="muted hidden pr-bet-closed" style="margin:0"></p>
+      </div>
+      <div class="card pr-mine"></div>
+    </div>`;
+  PRS[sp].amt = betBox(el.querySelector('.pr-amt'), 100);
+  el.querySelector('.pr-amt input').addEventListener('input', () => prOddsLine(sp));
+  el.querySelectorAll('.pr-amt .chips button').forEach(b => b.addEventListener('click', () => setTimeout(() => prOddsLine(sp))));
+  el.querySelector('.pr-back').onclick = () => { const S = PRS[sp]; S.view = null; S.R = null; prShowList(sp); prLoad(sp); window.scrollTo(0, 0); };
+  el.querySelector('.pr-replay').onclick = () => { PRS[sp].replay = Date.now(); PRS[sp].lanes = {}; };
+  el.querySelector('.pr-buy').onclick = () => prBuy(sp);
+}
+function prShowList(sp) { prQ(sp, '.pr-race').classList.add('hidden'); prQ(sp, '.pr-list').classList.remove('hidden'); }
+
+/* ---------- 開催一覧 ---------- */
+async function prLoad(sp) {
+  prStartLoop();
+  const S = PRS[sp];
+  if (S.view) return prOpen(sp, S.view, true);
+  prShowList(sp);
+  try { S.D = await kbCall('pr_day', { p_sport: sp }); S.lastDay = Date.now(); setBal(S.D.balance); prRenderList(sp); }
+  catch (e) { toast(e.message); }
+}
+function prRenderList(sp) {
+  const S = PRS[sp], D = S.D, C = PR_SP[sp]; if (!D) return;
+  const rs = D.races;
+  const focus = rs.find(r => ['closed', 'running', 'judging'].includes(kbStatus(r))) || rs.find(r => kbStatus(r) === 'sale');
+  const dd = new Date(D.day + 'T12:00:00+09:00');
+  let h = `<h2 style="margin-bottom:2px">${C.icon} ${dd.getMonth() + 1}月${dd.getDate()}日（${'日月火水木金土'[dd.getDay()]}）の${C.label}</h2>
+    <p class="muted small" style="margin:0 0 6px">${C.sched}</p>`;
+  if (focus) {
+    const s = kbStatus(focus), left = (focus.post_ms - kbNow()) / 1000;
+    h += `<div class="card kb-focus" data-id="${focus.id}">
+      <div class="row"><span class="chip ${s === 'sale' ? 'sale' : 'run'}">${s === 'sale' ? '次のレース' : KB_STATUS[s]}</span>
+        <span class="muted small">${esc(focus.venue)} ${focus.rnum}R・発走 ${hhmm(focus.post_ms)}</span>
+        <span class="clock">${s === 'sale' || s === 'closed' ? mmss(left) : ''}</span></div>
+      <b style="font-size:18px">${esc(focus.name)}</b>
+      <div class="muted small">${esc(focus.title)}・${focus.n}${C.unit}・${esc(focus.weather)}</div>
+      <button class="btn main wide" style="margin-top:10px">${s === 'sale' ? '出走表を見て券を買う' : 'レースを見る'}</button></div>`;
+  } else {
+    h += `<div class="card"><b>きょうのレースは終わりました</b><p class="muted small" style="margin:4px 0 0">${C.next}。結果は下から見られます。</p></div>`;
+  }
+  let last = null;
+  for (const r of rs) {
+    if (r.sess !== last) {
+      last = r.sess;
+      h += `<div class="kb-sess">${hhmm(r.post_ms)}〜 ${esc(r.title)}${r.sess === 'midnight' ? '<span class="night">🌙 ミッドナイト</span>' : r.sess === 'morning' ? '<span class="noon">☀ モーニング</span>' : ''}</div>`;
+    }
+    const s = kbStatus(r);
+    const chip = s === 'final' && r.winner
+      ? `<span class="chip">1着 ${r.winner.num}${sp === 'boat' ? '号艇' : '番'} <span translate="no">${esc(prNm(r.winner))}</span></span>`
+      : `<span class="chip ${s === 'sale' ? 'sale' : s === 'running' ? 'run' : ''}">${KB_STATUS[s]}</span>`;
+    h += `<div class="kb-row ${s === 'final' ? 'past' : ''}" data-id="${r.id}">
+      <span class="t">${hhmm(r.post_ms)}</span><span class="r">${r.rnum}R</span>
+      <span class="nm"><b>${esc(r.name)}</b><small>${r.n}${C.unit}${r.mine ? `・<span style="color:var(--accent);font-weight:800">券${r.mine}枚</span>` : ''}</small></span>${chip}</div>`;
+  }
+  prQ(sp, '.pr-list').innerHTML = h;
+  prQ(sp, '.pr-list').querySelectorAll('[data-id]').forEach(el => el.onclick = () => prOpen(sp, Number(el.dataset.id)));
+}
+
+/* ---------- 1レース ---------- */
+async function prOpen(sp, id, quiet) {
+  const S = PRS[sp]; S.view = id;
+  prQ(sp, '.pr-list').classList.add('hidden'); prQ(sp, '.pr-race').classList.remove('hidden');
+  if (!quiet || !S.R || S.R.race.id !== id) {
+    S.pick = { kind: PR_KINDS[sp][0][0], sel: [] }; S.odds = null; S.replay = null; S.seen = null; S.R = null; S.lanes = {}; window.scrollTo(0, 0);
+  }
+  await prRefresh(sp);
+}
+async function prRefresh(sp) {
+  const S = PRS[sp]; if (S.busy || !S.view) return;
+  S.busy = true;
+  try { const d = await kbCall('pr_race', { p_race: S.view }); if (d.race.id === S.view) { S.R = d; setBal(d.balance); prRenderRace(sp); } }
+  catch (e) { toast(e.message); }
+  S.lastRace = Date.now(); S.busy = false;
+}
+function prRenderRace(sp) { prRenderHead(sp); prRenderCard(sp); prRenderBet(sp); prRenderMine(sp); prRenderResult(sp); }
+function prRenderHead(sp) {
+  const S = PRS[sp], R = S.R.race, s = kbStatus(R), left = (R.post_ms - kbNow()) / 1000, V = R.venue;
+  prQ(sp, '.pr-head').innerHTML = `<div class="kb-head"><b>${esc(V.name)} ${R.rnum}R</b><span class="muted small">発走 ${hhmm(R.post_ms)}</span>
+      <span class="chip ${s === 'sale' ? 'sale' : s === 'running' ? 'run' : ''}">${KB_STATUS[s]}${s === 'sale' || s === 'closed' ? ' ' + mmss(left) : ''}</span>
+      <h2>${esc(R.name)}</h2></div>
+    <p class="kb-cond">${esc(R.title)}・${sp === 'boat' ? `${R.n}艇・3周1800m・${esc(V.water)}・${esc(R.weather)}・風 ${R.wind}m・波 ${R.wave}cm・払戻率 単勝80%・3連単75%`
+      : `${R.n}車・2025m・${V.bank}バンク（みなし直線 ${Number(V.straight).toFixed(1)}m）・${esc(R.weather)}・払戻率75%`}</p>`;
+  prQ(sp, '.pr-replay').classList.toggle('hidden', !(s === 'judging' || s === 'final'));
+}
+const prForm = x => `<span class="form">${[0, 1, 2, 3, 4].map(i => { const f = x.last5[i];
+  return !f ? '<i>・</i>' : f.pos == null ? `<i>${f.inc === 'F' ? 'F' : '落'}</i>` : `<i class="p${f.pos <= 3 ? f.pos : 0}">${f.pos}</i>`; }).join('')}</span>`;
+function prRenderCard(sp) {
+  const S = PRS[sp], E = S.R.entries, R = S.R.race;
+  const fav = Math.min(...E.map(x => x.ninki));
+  const nm = x => `<span class="hn" data-rc="${x.id}" translate="no">${esc(prNm(x))}</span><span class="pr-gr g${x.grade}">${x.grade}</span>`;
+  if (sp === 'boat') {
+    prQ(sp, '.pr-lines').innerHTML = '';
+    prQ(sp, '.pr-card').innerHTML = `<div class="scrollx"><table class="kb-table"><tr><th>艇</th><th>選手</th><th>近5走</th><th class="num">勝率</th><th class="num">モーター</th><th class="num">単勝</th></tr>` +
+      E.map(x => `<tr><td>${prChip(sp, x.num)}</td><td class="nmcol">${nm(x)}<small>${x.regno}・${esc(x.pref)}・${x.age}歳</small></td>
+        <td>${prForm(x)}<small>平均ST ${prST(x.st_avg)}${x.f ? `・F${x.f}` : ''}</small></td>
+        <td class="num"><b>${Number(x.rate).toFixed(2)}</b><small>2連 ${Math.round(x.r2)}%</small></td>
+        <td class="num"><b>${x.motor}</b><small>2連 ${Math.round(x.motor_r2)}%</small></td>
+        <td class="num"><b style="${x.ninki === fav ? 'color:var(--lose)' : ''}">${Number(x.odds_win).toFixed(1)}</b><small>${x.ninki}人気</small></td></tr>`).join('') + `</table></div>`;
+  } else {
+    const lines = R.lines || [];
+    prQ(sp, '.pr-lines').innerHTML = `<div class="pr-ln"><span class="muted small">並び予想</span>${lines.map(l => { const a = E.find(x => x.num === l[0]);
+      return `<span class="g"><span class="c">${l.map(n => prChip(sp, n)).join('')}</span><small>${esc(a ? a.area : '')}${l.length === 1 ? '（単騎）' : ''}</small></span>`; }).join('')}</div>`;
+    prQ(sp, '.pr-card').innerHTML = `<div class="scrollx"><table class="kb-table"><tr><th>${R.n >= 9 ? '枠・' : ''}車</th><th>選手</th><th>近5走</th><th class="num">得点</th><th class="num">人気</th></tr>` +
+      E.map(x => `<tr><td style="white-space:nowrap">${R.n >= 9 ? prWk(x.waku) : ''}${prChip(sp, x.num)}</td><td class="nmcol">${nm(x)}<small>${esc(x.pref)}・${x.age}歳・${x.term}期・<b>${esc(x.style)}</b></small></td>
+        <td>${prForm(x)}<small>2連 ${Math.round(x.r2)}%・3連 ${Math.round(x.r3)}%</small></td>
+        <td class="num"><b>${Number(x.rate).toFixed(2)}</b></td>
+        <td class="num"><b style="${x.ninki === fav ? 'color:var(--lose)' : ''}">${x.ninki}</b><small>人気</small></td></tr>`).join('') + `</table></div>`;
+  }
+  prQ(sp, '.pr-card').querySelectorAll('[data-rc]').forEach(el => el.onclick = () => prRacer(sp, Number(el.dataset.rc)));
+}
+
+/* ---------- 投票 ---------- */
+function prRenderBet(sp) {
+  const S = PRS[sp], R = S.R.race, s = kbStatus(R), open = s === 'sale';
+  prQ(sp, '.pr-bet-body').classList.toggle('hidden', !open);
+  prQ(sp, '.pr-bet-closed').classList.toggle('hidden', open);
+  prQ(sp, '.pr-bet-closed').textContent = s === 'final' ? 'このレースは確定しました' : 'このレースの発売は締め切りました';
+  prQ(sp, '.pr-close').textContent = open ? `締切 ${hhmm(R.post_ms - 60000)}` : '';
+  if (!open) return;
+  const ks = PR_KINDS[sp].filter(k => !(['wex', 'wqn'].includes(k[0]) && R.n < 9));
+  if (!ks.some(k => k[0] === S.pick.kind)) S.pick = { kind: ks[0][0], sel: [] };
+  prQ(sp, '.pr-kinds').innerHTML = ks.map(k => `<button data-k="${k[0]}" class="${k[0] === S.pick.kind ? 'on' : ''}">${k[1]}</button>`).join('');
+  prQ(sp, '.pr-kinds').querySelectorAll('button').forEach(b => b.onclick = () => { S.pick = { kind: b.dataset.k, sel: [] }; S.odds = null; prRenderBet(sp); });
+  prRenderPicks(sp);
+}
+const prWakuN = (sp, w) => PRS[sp].R.entries.filter(x => x.waku === w).length;
+function prRenderPicks(sp) {
+  const S = PRS[sp], K = prK(sp, S.pick.kind), sel = S.pick.sel, wk = ['wex', 'wqn'].includes(S.pick.kind);
+  prQ(sp, '.pr-help').textContent = `${K.label}：${PR_HELP[sp][S.pick.kind]}`;
+  const sl = prQ(sp, '.pr-slots');
+  sl.innerHTML = K.ordered ? Array.from({ length: K.need }, (_, i) => `<div data-i="${i}">${i + 1}着<b>${sel[i] ?? '–'}</b></div>`).join('') : '';
+  sl.classList.toggle('hidden', !K.ordered);
+  sl.querySelectorAll('div').forEach(d => d.onclick = () => { sel.splice(Number(d.dataset.i), 1); S.odds = null; prRenderPicks(sp); prFetchOdds(sp); });
+  const items = wk ? [1, 2, 3, 4, 5, 6].map(w => ({ v: w, c: PR_COL.boat[w - 1] })) : S.R.entries.map(x => ({ v: x.num, c: PR_COL[sp][x.num - 1] }));
+  const pk = prQ(sp, '.pr-picks');
+  pk.innerHTML = items.map(it => `<button data-v="${it.v}" class="${sel.includes(it.v) ? 'on' : ''}" style="background:${it.c};color:${PR_INK(it.c)}">${it.v}${wk ? `<small style="display:block;font-size:9px;font-weight:700">${LANG === 'en' ? 'Br.' : '枠'}</small>` : ''}</button>`).join('');
+  pk.querySelectorAll('button').forEach(b => b.onclick = () => prTap(sp, Number(b.dataset.v)));
+  prOddsLine(sp);
+}
+function prTap(sp, v) {
+  const S = PRS[sp], K = prK(sp, S.pick.kind), sel = S.pick.sel;
+  if (['wex', 'wqn'].includes(S.pick.kind)) {
+    const two = prWakuN(sp, v) >= 2;
+    if (sel.length >= 2) S.pick.sel = [v];
+    else if (sel.length === 1 && sel[0] === v && !two) S.pick.sel = [];
+    else sel.push(v);
+  } else {
+    const i = sel.indexOf(v);
+    if (i >= 0) sel.splice(i, 1);
+    else if (sel.length < K.need) sel.push(v);
+    else if (K.ordered) sel[K.need - 1] = v;
+    else { sel.shift(); sel.push(v); }
+  }
+  S.odds = null; prRenderPicks(sp); prFetchOdds(sp);
+}
+async function prFetchOdds(sp) {
+  const S = PRS[sp], K = prK(sp, S.pick.kind);
+  if (S.pick.sel.length !== K.need) return;
+  const req = ++S.oddsReq, kind = S.pick.kind, sel = [...S.pick.sel];
+  try {
+    const d = await call('pr_odds', { p_race: S.R.race.id, p_kind: kind, p_sel: sel });
+    if (req === S.oddsReq) { S.odds = { kind, sel: d.sel, odds: Number(d.odds) }; prOddsLine(sp); }
+  } catch (e) { if (req === S.oddsReq) { S.odds = { err: e.message }; prOddsLine(sp); } }
+}
+function prOddsLine(sp) {
+  const S = PRS[sp], el = prQ(sp, '.pr-odds'), btn = prQ(sp, '.pr-buy'); if (!S.R) return;
+  const K = prK(sp, S.pick.kind), left = K.need - S.pick.sel.length;
+  btn.textContent = '買う';
+  if (left > 0) { el.innerHTML = `<span class="muted">あと${left}つえらんでください</span>`; btn.disabled = true; return; }
+  if (!S.odds) { el.innerHTML = '<span class="muted">オッズを計算中…</span>'; btn.disabled = true; return; }
+  if (S.odds.err) { el.innerHTML = `<span style="color:var(--lose)">${esc(S.odds.err)}</span>`; btn.disabled = true; return; }
+  const a = S.amt();
+  el.innerHTML = `${K.label} ${prSel(sp, S.pick.kind, S.odds.sel)}　<b style="font-size:18px">${S.odds.odds.toFixed(1)}倍</b>
+    <span class="muted small">（当たれば ${fmt(Math.floor(a * S.odds.odds))}）</span>`;
+  btn.disabled = false; btn.textContent = `${fmt(a)} 買う`;
+}
+async function prBuy(sp) {
+  const S = PRS[sp], K = prK(sp, S.pick.kind), a = S.amt(), btn = prQ(sp, '.pr-buy');
+  if (S.pick.sel.length !== K.need || !S.odds || S.odds.err) return;
+  if (a < 1) return toast('金額を入れてください');
+  btn.disabled = true;
+  try {
+    const d = await kbCall('pr_bet', { p_race: S.R.race.id, p_kind: S.pick.kind, p_sel: S.pick.sel, p_amount: a });
+    S.R.mine = d.mine; setBal(d.balance);
+    toast(`${K.label} ${prSel(sp, S.pick.kind, d.sel)} を ${fmt(a)} 買いました（${Number(d.odds).toFixed(1)}倍）`);
+    prRenderMine(sp);
+  } catch (e) { toast(e.message); }
+  btn.disabled = false;
+}
+function prRenderMine(sp) {
+  const S = PRS[sp], M = S.R.mine, fin = S.R.race.status === 'final';
+  const sum = M.reduce((s, t) => s + Number(t.amount), 0), pay = M.reduce((s, t) => s + Number(t.payout || 0), 0);
+  const F = S.R.entries.filter(x => x.run && x.run.inc === 'F').map(x => x.num);
+  prQ(sp, '.pr-mine').innerHTML = `<h3 style="margin-top:0">あなたの券</h3>` + (M.length
+    ? `<ul class="tickets">${M.map(t => `<li><b>${prK(sp, t.kind).label}</b><span class="grow">${prSel(sp, t.kind, t.sel)}</span>
+        <span class="num">${fmt(t.amount)}</span><span class="muted small">${Number(t.odds).toFixed(1)}倍</span>
+        ${t.payout == null ? (t.sel.some(n => F.includes(n)) && !['wex', 'wqn'].includes(t.kind) ? '<span class="muted small">返還予定</span>' : '')
+          : t.refund ? `<span class="muted small">返還</span> <b>+${fmt(t.payout)}</b>` : t.payout > 0 ? `<b style="color:var(--win)">+${fmt(t.payout)}</b>` : '<span class="muted small">はずれ</span>'}</li>`).join('')}</ul>
+       <p class="small" style="margin:8px 0 0">合計 ${fmt(sum)}${fin ? `　払戻 <b style="color:${pay > 0 ? 'var(--win)' : 'inherit'}">${fmt(pay)}</b>` : ''}</p>`
+    : '<p class="muted small" style="margin:0">まだ買っていません</p>');
+}
+
+/* ---------- 結果 ---------- */
+function prRenderResult(sp) {
+  const S = PRS[sp], R = S.R.race, el = prQ(sp, '.pr-result');
+  const done = R.finish_ms != null && kbNow() >= R.post_ms + R.finish_ms + 600;
+  el.classList.toggle('hidden', !done);
+  if (!done) return;
+  const fin = R.status === 'final', E = S.R.entries;
+  const rows = E.filter(x => x.run && x.run.pos != null).sort((a, b) => a.run.pos - b.run.pos), out = E.filter(x => x.run && x.run.pos == null);
+  let h = `<h3 style="margin-top:0">${fin ? '結果（確定）' : '着順（確定待ち）'}</h3>`;
+  const fl = out.filter(x => x.run.inc === 'F'), fa = out.filter(x => x.run.inc === 'fall');
+  if (fl.length) h += `<p class="kb-note" style="margin:0 0 6px">⚠ ${fl.map(x => `${x.num}号艇`).join('・')}はフライング（F）で返還欠場。この艇をふくむ券は返します</p>`;
+  if (fa.length) h += `<p class="kb-note" style="margin:0 0 6px">⚠ ${fa.map(x => `${x.num}番`).join('・')}は落車しました</p>`;
+  if (R.kimarite) h += `<p class="small" style="margin:0 0 6px"><span>決まり手：</span>${LANG === 'en' ? ' ' : ''}<b>${esc(prKim(sp, R.kimarite))}</b></p>`;
+  if (sp === 'boat') {
+    h += `<div class="scrollx"><table class="kb-table"><tr><th>着</th><th>艇</th><th>選手</th><th class="num">タイム</th><th class="num">ST</th><th class="num">人気</th></tr>` +
+      rows.map(x => `<tr><td><b>${x.run.pos}</b></td><td>${prChip(sp, x.num)}</td><td><span translate="no">${esc(prNm(x))}</span></td>
+        <td class="num">${prTime(x.run.time_ms)}</td><td class="num">${prST(x.run.st)}</td><td class="num">${x.ninki}</td></tr>`).join('') +
+      out.map(x => `<tr class="kb-scr"><td><b>F</b></td><td>${prChip(sp, x.num)}</td><td><span translate="no">${esc(prNm(x))}</span></td><td class="num">—</td><td class="num">${prST(x.run.st)}</td><td class="num">${x.ninki}</td></tr>`).join('') + `</table></div>`;
+  } else {
+    h += `<div class="scrollx"><table class="kb-table"><tr><th>着</th><th>車</th><th>選手</th><th>着差</th><th class="num">上がり（200m）</th><th class="num">人気</th></tr>` +
+      rows.map(x => `<tr><td><b>${x.run.pos}</b></td><td>${prChip(sp, x.num)}</td><td><span translate="no">${esc(prNm(x))}</span></td>
+        <td style="white-space:nowrap">${esc(x.run.margin || '')}</td><td class="num">${x.run.last != null ? Number(x.run.last).toFixed(1) : '—'}</td><td class="num">${x.ninki}</td></tr>`).join('') +
+      out.map(x => `<tr class="kb-scr"><td><b>落</b></td><td>${prChip(sp, x.num)}</td><td><span translate="no">${esc(prNm(x))}</span></td><td>—</td><td class="num">—</td><td class="num">${x.ninki}</td></tr>`).join('') + `</table></div>`;
+  }
+  if (fin && S.R.payouts.length) {
+    h += `<h3>払戻金（100あたり）</h3><div class="pay">` +
+      S.R.payouts.map(p => `<span class="k">${prK(sp, p.kind).label}</span><span>${prSel(sp, p.kind, p.sel)}</span><b>${fmt(Math.round(p.odds * 100))}</b>`).join('') + `</div>`;
+  }
+  el.innerHTML = h;
+}
+
+/* ---------- 選手の成績 ---------- */
+async function prRacer(sp, id) {
+  try {
+    const p = await call('pr_racer', { p_id: id });
+    const m = document.createElement('div'); m.className = 'modal';
+    m.innerHTML = `<div class="sheet">
+      <div class="row"><b style="font-size:20px" translate="no">${esc(prNm(p))}</b><span class="pr-gr g${p.grade}">${p.grade}</span><button class="btn" style="margin-left:auto" data-x>とじる</button></div>
+      <p class="muted small" style="margin:4px 0 10px">${sp === 'boat' ? `登録番号 ${p.regno}・${esc(p.pref)}支部` : `${p.term}期・${esc(p.pref)}<span>（${esc(p.area)}）</span>・${esc(p.style)}`}・${p.age}歳${p.retired ? '・引退' : ''}</p>
+      <div class="kv"><span>${sp === 'boat' ? '勝率' : '競走得点'}</span><b>${Number(p.rate).toFixed(2)}</b><span>2連対率・3連対率</span><b>${Math.round(p.r2)}%・${Math.round(p.r3)}%</b>
+        ${sp === 'boat' ? `<span>平均ST</span><b>${prST(p.st_avg)}${p.f ? `（F${p.f}）` : ''}</b>` : ''}
+        <span>成績</span><b>${p.starts}走 ${p.wins}勝・2着${p.seconds}回・3着${p.thirds}回</b></div>
+      <h3>これまでのレース</h3>
+      <div class="scrollx"><table class="kb-table"><tr><th>日付</th><th>レース</th><th class="num">${sp === 'boat' ? '艇' : '車'}</th><th class="num">着</th><th class="num">人気</th>${sp === 'boat' ? '<th class="num">ST</th>' : ''}<th>決まり手</th></tr>
+      ${p.runs.length ? p.runs.map(r => `<tr><td>${r.day.slice(5).replace('-', '/')}</td><td>${esc(r.venue)} ${r.rnum}R<small>${esc(r.name)}</small></td>
+        <td class="num">${prChip(sp, r.num)}</td><td class="num"><b>${r.pos ?? (r.inc === 'F' ? 'F' : '落')}</b></td><td class="num">${r.ninki ?? '—'}</td>
+        ${sp === 'boat' ? `<td class="num">${prST(r.st)}</td>` : ''}<td>${esc(prKim(sp, r.kimarite))}</td></tr>`).join('') : '<tr><td colspan="7" class="muted">まだ走っていません</td></tr>'}
+      </table></div></div>`;
+    m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) m.remove(); };
+    document.body.appendChild(m);
+  } catch (e) { toast(e.message); }
+}
+
+/* ---------- 時計（データの取り直し・画面の更新・レースの絵） ---------- */
+function prStartLoop() { if (!prLoop) { prLoop = true; requestAnimationFrame(prFrame); } }
+function prFrame() {
+  if (view !== 'vBoat' && view !== 'vBike') { prLoop = false; return; }
+  const sp = view === 'vBoat' ? 'boat' : 'bike', S = PRS[sp], now = Date.now(), sec = Math.floor(now / 1000), tick = sec !== prSec;
+  prSec = sec;
+  if (S.view && S.R) {
+    const R = S.R.race, s = kbStatus(R);
+    const needData = (s === 'running' && R.finish_ms == null) || (s === 'judging' && R.status !== 'final');
+    if ((needData && now - S.lastRace > 2500) || now - S.lastRace > 30000) prRefresh(sp);
+    if (s !== S.seen) { S.seen = s; prRenderBet(sp); prRenderMine(sp); }
+    if (tick) { prRenderHead(sp); prRenderResult(sp); }
+    try { prDraw(sp); } catch (e) { /* 絵のエラーで止めない */ }
+  } else if (S.D) {
+    if (now - S.lastDay > 20000) { S.lastDay = now; kbCall('pr_day', { p_sport: sp }).then(d => { S.D = d; setBal(d.balance); prRenderList(sp); }).catch(() => {}); }
+    if (tick) prRenderList(sp);
+  }
+  requestAnimationFrame(prFrame);
+}
+
+/* ---------- レースの絵（上から見たコース） ---------- */
+// 競艇：1周600m（直線230m・ターンマークのまわり半径22m）。スタートラインは1マークの92m手前
+const PRB = { C: 600, Ls: 230, Rr: 22, s0: 138 };
+// 競輪：1周400m（直線64m・半径43m）。ゴールは直線のおわりのほう、スタートは25m手前
+const PRK = { C: 400, Ls: 64, Rr: (400 - 128) / (2 * Math.PI), sf: 52 };
+const prLerp = (a, b, f) => a + (b - a) * Math.max(0, Math.min(1, f));
+// 競艇：時刻 t の、それぞれの艇の進んだ距離と横の位置
+function prBoat(S, t) {
+  const R = S.R.race, E = S.R.entries, run = R.finish_ms != null && E.every(x => x.run);
+  if (!run) {   // 発走の前（まだ結果を知らない）：スタートラインへ向かう
+    const v0 = 15;
+    return E.map(x => ({ x, d: Math.max(-240, Math.min(v0 * t - 2 - (x.course - 1) * 0.6, t > 0 ? 40 : 0)), lane: (x.course - 1) * 3.6, out: false }));
+  }
+  const fin = E.filter(x => x.run.time_ms != null), T1 = Math.min(...fin.map(x => x.run.time_ms / 1000));
+  const st0 = Math.min(...E.map(x => Number(x.run.st))), v = 1800 / (T1 - st0), L = v * (t - st0), m1 = (R.plan && R.plan.m1) || [];
+  const tm1 = st0 + 175 / v + 2;
+  return E.map(x => {
+    const st = Number(x.run.st), F = x.run.inc === 'F', g0 = v * (st - st0);
+    if (F) {   // フライング：1マークのあたりで外へ出て止まる
+      const d = Math.min(L - g0, 110);
+      return { x, d, lane: (x.course - 1) * 3.6 + Math.max(0, d - 70) * 0.4, out: d >= 110 };
+    }
+    const r1 = m1.indexOf(x.num), g1 = r1 * 8, Ti = x.run.time_ms / 1000, gF = v * (Ti - st0) - 1800;
+    let d;
+    if (t >= Ti) d = 1800 + Math.min(44 - (x.run.pos - 1) * 6, (t - Ti) * v * 0.5);
+    else if (t <= st0) d = L - g0;
+    else if (t <= tm1) d = L - prLerp(g0, g1, (t - st0) / (tm1 - st0));
+    else d = L - prLerp(g1, gF, (t - tm1) / (Ti - tm1));
+    return { x, d, lane: null, out: false };
+  });
+}
+// 競輪：先頭の進んだ距離（周回 → 残り2周 → 最終周回でスピードが上がる）
+function prBikeL(vv, t) {
+  const [v1, v2, v3] = vv.map(Number), t1 = 1225 / v1, t2 = t1 + 400 / v2;
+  if (t <= 0) return 0;
+  if (t <= t1) return v1 * t;
+  if (t <= t2) return 1225 + v2 * (t - t1);
+  return 1625 + v3 * (t - t2);
+}
+// 並び（番号の列）→ 先頭からの差（m）。ラインが変わるところは少しあける
+function prGaps(order, lineOf, step) {
+  const g = {}; let acc = 0;
+  order.forEach((n, i) => { if (i > 0) acc += step + (lineOf[n] !== lineOf[order[i - 1]] ? 1.6 : 0); g[n] = acc; });
+  return g;
+}
+function prBike(S, t) {
+  const R = S.R.race, E = S.R.entries, run = R.finish_ms != null && E.every(x => x.run) && R.plan && R.plan.laps;
+  const lineOf = {}; E.forEach(x => lineOf[x.num] = x.line);
+  if (!run || t <= 0) {   // 発走の前：スタートラインに横にならぶ
+    return { L: 0, riders: E.map((x, i) => ({ x, d: 0, lane: 0.6 + i * (8.4 / Math.max(1, E.length - 1)) })), pacer: { d: 6, lane: 0.9, gone: false } };
+  }
+  const P = R.plan, vv = P.v.map(Number), L = prBikeL(vv, t), v3 = vv[2];
+  const T1 = 1225 / vv[0] + 400 / vv[1] + 400 / vv[2];
+  const finOrd = E.filter(x => x.run.pos != null).sort((a, b) => a.run.pos - b.run.pos).map(x => x.num);
+  const fall = E.find(x => x.run.inc === 'fall');
+  const ordF = fall ? [...finOrd, fall.num] : finOrd;
+  const gL = prGaps(P.laps, lineOf, 3.6), gB = prGaps(P.bell, lineOf, 3.4), gC = prGaps(ordF, lineOf, 2.6);
+  const gE = {}; E.forEach(x => { gE[x.num] = x.run.time_ms != null ? v3 * (x.run.time_ms / 1000 - T1) : gC[x.num] + 6; });
+  const iL = {}, iB = {}, iC = {}; P.laps.forEach((n, i) => iL[n] = i); P.bell.forEach((n, i) => iB[n] = i); ordF.forEach((n, i) => iC[n] = i);
+  const riders = E.map(x => {
+    const n = x.num; let gap, lane = 0.9, f;
+    if (L <= 1225) gap = gL[n];
+    else if (L <= 1425) { f = (L - 1225) / 200; gap = prLerp(gL[n], gB[n], f); const up = iL[n] - iB[n]; if (up > 0) lane += Math.min(4.5, 1.4 * up) * Math.sin(Math.PI * f); }
+    else if (L <= 1825) { f = (L - 1425) / 400; gap = prLerp(gB[n], gC[n], f); const up = iB[n] - iC[n]; if (up > 0) lane += Math.min(4.5, 1.3 * up) * Math.sin(Math.PI * Math.min(1, f * 1.2)); }
+    else { f = (L - 1825) / 200; gap = prLerp(gC[n], gE[n], f); lane += (iC[n] % 4) * 1.1 * f; }
+    let d = L - gap, down = false;
+    if (x.run.inc === 'fall') { const df = 1625 + Number(x.run.inc_val || 0.5) * 400; if (d >= df) { d = df; down = true; lane = 6.5; } }
+    if (x.run.time_ms != null && t >= x.run.time_ms / 1000) d = Math.max(d, 2025 + Math.min(30 - (x.run.pos - 1) * 3, (t - x.run.time_ms / 1000) * 6));
+    return { x, d, lane, down };
+  });
+  const pacer = L < 1325 ? { d: L + 4 + Math.max(0, L - 1225) * 0.2, lane: 0.9 + Math.max(0, L - 1225) * 0.07, gone: L > 1300 } : null;
+  return { L, riders, pacer };
+}
+function prDraw(sp) {
+  const S = PRS[sp], cv = prQ(sp, '.pr-canvas'), W = cv.clientWidth; if (!W || !S.R) return;
+  const H = 280, dpr = window.devicePixelRatio || 1, now = Date.now();
+  if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); cv.style.height = H + 'px'; }
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const ff = getComputedStyle(document.body).fontFamily, R = S.R.race;
+  let t = (kbNow() - R.post_ms) / 1000;
+  const T = (R.finish_ms || 0) / 1000;
+  if (S.replay) { t = (now - S.replay) / 1000 - (sp === 'boat' ? 6 : 3); if (t > T + 6) S.replay = null; }
+  const dt = Math.min(0.1, (now - (prLastDraw || now)) / 1000); prLastDraw = now;
+  const top = 26, bot = H - 36;
+  const G = sp === 'boat' ? PRB : PRK;
+  const ext = sp === 'boat' ? 34 : 12;
+  const sx = (W - 24) / (G.Ls + 2 * (G.Rr + ext)), sy = Math.min(sx * 2.2, (bot - top - 8) / (2 * (G.Rr + ext))), scl = Math.min(sx, sy), cx = W / 2, cy = (top + bot) / 2;
+  const P = (s, o) => { const [x, y] = kbOval(s, G.C, G.Ls, G.Rr, o); return [cx + x * sx, cy - y * sy]; };
+  const strokePath = (o, w, col) => { g.lineWidth = w; g.strokeStyle = col; g.beginPath(); for (let s = 0; s <= G.C; s += G.C / 160) { const [x, y] = P(s, o); s ? g.lineTo(x, y) : g.moveTo(x, y); } g.closePath(); g.stroke(); };
+  let order = [], cap = '';
+  if (sp === 'boat') {
+    // 水面
+    const gr = g.createLinearGradient(0, 0, 0, H); gr.addColorStop(0, '#1F5F8B'); gr.addColorStop(1, '#2C79A8'); g.fillStyle = gr; g.fillRect(0, 0, W, H);
+    g.strokeStyle = 'rgba(255,255,255,.08)'; g.lineWidth = 1;
+    for (let i = 0; i < 14; i++) { const y = top + i * (bot - top) / 14 + Math.sin(now / 900 + i) * 2; g.beginPath(); g.moveTo(0, y); g.bezierCurveTo(W / 3, y + 3, W * 2 / 3, y - 3, W, y); g.stroke(); }
+    strokePath(14, Math.max(2, 30 * sy), 'rgba(255,255,255,.06)');
+    // ターンマーク（オレンジ）と、スタートライン・大時計
+    for (const k of [1, -1]) { const x = cx + k * (G.Ls / 2 + G.Rr - 5) * sx, y = cy; g.fillStyle = '#F28C28'; g.strokeStyle = '#fff'; g.lineWidth = 1; g.beginPath(); g.arc(x, y, 4, 0, 7); g.fill(); g.stroke(); }
+    g.font = `800 9px ${ff}`; g.fillStyle = 'rgba(255,255,255,.85)'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('1M', cx + (G.Ls / 2 + G.Rr - 5) * sx - 13, cy); g.fillText('2M', cx - (G.Ls / 2 + G.Rr - 5) * sx + 13, cy);
+    { const [x1, y1] = P(PRB.s0, -4), [x2, y2] = P(PRB.s0, 28); g.strokeStyle = 'rgba(255,255,255,.85)'; g.lineWidth = 1.5; g.setLineDash([4, 3]); g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke(); g.setLineDash([]); }
+    const B = prBoat(S, t), run = R.finish_ms != null;
+    const key = b => b.x.run && b.x.run.time_ms != null && t >= b.x.run.time_ms / 1000 ? 1e5 - b.x.run.pos : b.d;
+    order = B.filter(b => !b.out && !(b.x.run && b.x.run.inc === 'F')).sort((a, b) => key(b) - key(a));
+    // 横の位置：スタートはコースどおり、1マークのあとは順位で
+    for (const b of B) {
+      const k = R.id + ':' + b.x.num, rk = order.indexOf(b);
+      const target = b.lane != null ? b.lane : (b.d < 150 ? (b.x.course - 1) * 3.6 * Math.max(0, 1 - b.d / 150) + Math.max(0, rk) * 2.4 * Math.min(1, b.d / 150) : 1 + Math.max(0, rk) * 2.4);
+      S.lanes[k] = S.lanes[k] == null ? target : S.lanes[k] + (target - S.lanes[k]) * Math.min(1, dt * 2.5);
+      b.o = S.lanes[k];
+    }
+    // 艇（うしろから描く）
+    for (const b of [...B].sort((a, c) => a.d - c.d)) {
+      const s = PRB.s0 + b.d, [x, y] = P(s, b.o), [x2, y2] = P(s + 1, b.o), ang = Math.atan2(y2 - y, x2 - x), c = PR_COL.boat[b.x.num - 1];
+      if (t > -15 && !b.out) { g.strokeStyle = 'rgba(255,255,255,.35)'; g.lineWidth = 2; g.beginPath(); g.moveTo(x, y); const [wx, wy] = P(s - 14, b.o); g.lineTo(wx, wy); g.stroke(); }
+      g.save(); g.translate(x, y); g.rotate(ang);
+      g.fillStyle = c; g.strokeStyle = 'rgba(0,0,0,.7)'; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(7, 0); g.lineTo(-5, -4); g.lineTo(-5, 4); g.closePath(); g.fill(); g.stroke();
+      g.restore();
+      g.font = `900 9px ${ff}`; g.fillStyle = '#fff'; g.strokeStyle = 'rgba(0,0,0,.75)'; g.lineWidth = 2.5; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.strokeText(String(b.x.num), x, y - 9); g.fillText(String(b.x.num), x, y - 9);
+    }
+    // 大時計（スタートまでの12秒）
+    if (t > -14 && t < 2) {
+      const ccx = W - 26, ccy = top + 14, rr = 11, f = Math.max(0, Math.min(1, (t + 12) / 12));
+      g.fillStyle = '#fff'; g.beginPath(); g.arc(ccx, ccy, rr, 0, 7); g.fill();
+      g.fillStyle = '#F2C53D'; g.beginPath(); g.moveTo(ccx, ccy); g.arc(ccx, ccy, rr - 1, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2); g.closePath(); g.fill();
+      g.strokeStyle = '#1C1C1A'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(ccx, ccy); g.lineTo(ccx + Math.cos(-Math.PI / 2 + f * Math.PI * 2) * (rr - 1), ccy + Math.sin(-Math.PI / 2 + f * Math.PI * 2) * (rr - 1)); g.stroke();
+    }
+    const lead = order[0], lap = lead ? Math.min(3, Math.floor(Math.max(0, lead.d) / 600) + 1) : 1;
+    g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(8, 6, 120, 18);
+    g.fillStyle = '#fff'; g.font = `800 11px ${ff}`; g.textAlign = 'left'; g.textBaseline = 'middle';
+    g.fillText(tr(t < 0 ? 'スタート前' : lead && lead.d >= 1800 ? 'ゴール' : `${lap}周目`), 14, 15);
+    if (t > 0 && run) { const w1 = Math.min(...S.R.entries.filter(x => x.run && x.run.time_ms != null).map(x => x.run.time_ms)) / 1000;
+      g.textAlign = 'right'; g.fillText(prTime(Math.min(t, w1) * 1000), 124, 15); }
+    cap = prBoatCap(S, t, B, order);
+  } else {
+    g.fillStyle = '#3E6B4B'; g.fillRect(0, 0, W, H);
+    strokePath(4.5, Math.max(6, 10 * sy), '#C9B79C');
+    strokePath(-0.4, 1, 'rgba(0,0,0,.35)'); strokePath(1.6, 1.2, '#D93A2F'); strokePath(4, 1.2, '#2F5FC4'); strokePath(9.4, 1, 'rgba(255,255,255,.6)');
+    { const [x1, y1] = P(PRK.sf, -1), [x2, y2] = P(PRK.sf, 10); g.strokeStyle = '#fff'; g.lineWidth = 2; g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke(); }
+    const K = prBike(S, t), run = R.finish_ms != null && R.plan;
+    const ss = d => PRK.sf - 25 + d;
+    if (K.pacer && !K.pacer.gone && t > 0) {
+      const [x, y] = P(ss(K.pacer.d), K.pacer.lane);
+      g.fillStyle = '#2B2B2B'; g.strokeStyle = '#fff'; g.lineWidth = 1.2; g.beginPath(); g.arc(x, y, 4.5, 0, 7); g.fill(); g.stroke();
+    }
+    const key = r => r.x.run && r.x.run.time_ms != null && t >= r.x.run.time_ms / 1000 ? 1e5 - r.x.run.pos : r.d;
+    order = K.riders.filter(r => !r.down).sort((a, b) => key(b) - key(a));
+    for (const r of [...K.riders].sort((a, b) => a.d - b.d)) {
+      const k = R.id + ':' + r.x.num;
+      S.lanes[k] = S.lanes[k] == null ? r.lane : S.lanes[k] + (r.lane - S.lanes[k]) * Math.min(1, dt * 3);
+      const [x, y] = P(ss(r.d), S.lanes[k]), c = PR_COL.bike[r.x.num - 1];
+      g.fillStyle = r.down ? '#888' : c; g.strokeStyle = r.down ? '#555' : 'rgba(0,0,0,.75)'; g.lineWidth = 1;
+      g.beginPath(); g.arc(x, y, 4.5, 0, 7); g.fill(); g.stroke();
+      g.font = `900 8px ${ff}`; g.fillStyle = r.down ? '#fff' : PR_INK(c); g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(String(r.x.num), x, y + 0.5);
+    }
+    // 周回板
+    const L = K.L, rem = Math.max(0, 2025 - L), lapsLeft = Math.max(1, Math.ceil((rem - 25) / 400));
+    g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(8, 6, 120, 18);
+    g.fillStyle = '#fff'; g.font = `800 11px ${ff}`; g.textAlign = 'left'; g.textBaseline = 'middle';
+    g.fillText(tr(t < 0 ? 'スタート前' : L >= 2025 ? 'ゴール' : L >= 1625 ? '最終周回' : `残り${lapsLeft}周`), 14, 15);
+    if (L >= 1425 && L < 1625 && Math.floor(now / 300) % 2 === 0) { g.fillStyle = '#F2C53D'; g.font = `900 13px ${ff}`; g.textAlign = 'right'; g.fillText(tr('ジャン！'), W - 10, 15); }
+    cap = prBikeCap(S, t, K, order);
+  }
+  // 順位（下の帯）
+  g.fillStyle = 'rgba(0,0,0,.4)'; g.fillRect(0, bot + 4, W, H - bot - 4);
+  const show = t > 0 && order.length;
+  if (show) {
+    const w = Math.min(26, (W - 16) / order.length);
+    order.forEach((o, i) => {
+      const x = 8 + i * w + w / 2, y = bot + 20, c = PR_COL[sp][o.x.num - 1];
+      g.fillStyle = c; g.strokeStyle = 'rgba(255,255,255,.7)'; g.lineWidth = 1; g.fillRect(x - w / 2 + 2, y - 10, w - 4, 20); g.strokeRect(x - w / 2 + 2, y - 10, w - 4, 20);
+      g.font = `900 12px ${ff}`; g.fillStyle = PR_INK(c); g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(String(o.x.num), x, y + 0.5);
+    });
+  }
+  const capEl = prQ(sp, '.pr-cap'), ct = tr(cap);
+  if (capEl.textContent !== ct) capEl.textContent = ct;
+}
+const prWho = (sp, x) => LANG === 'en' ? `${sp === 'boat' ? 'Boat ' : '#'}${x.num} ${x.name_en}` : `${x.num}${sp === 'boat' ? '号艇' : '番'}${x.name}`;
+function prBoatCap(S, t, B, order) {
+  const R = S.R.race, run = R.finish_ms != null && S.R.entries.every(x => x.run);
+  if (t < -60) return `発走まで ${mmss(-t)}`;
+  if (t < -12) return '待機行動中…';
+  if (t < 0) return '大時計がまわっています。まもなくスタート！';
+  if (!run) return 'スタートしました！';
+  const F = S.R.entries.filter(x => x.run.inc === 'F');
+  if (t < 4) return F.length ? `スタート！ ${F.map(x => prWho('boat', x)).join('、')}はフライング！ 返還欠場です` : 'スタートしました！';
+  const fin = S.R.entries.filter(x => x.run.time_ms != null).sort((a, b) => a.run.time_ms - b.run.time_ms), w = fin[0];
+  if (t >= w.run.time_ms / 1000) {
+    if (t > R.finish_ms / 1000 + 2 && R.status === 'final') return `確定！ 1着 ${prWho('boat', w)}（${prKim('boat', R.kimarite)}）`;
+    return `${prWho('boat', w)}、1着でゴール！ 決まり手は${prKim('boat', R.kimarite)}`;
+  }
+  const a = order[0]; if (!a) return '';
+  const d = a.d % 600;
+  if (a.d < 150) return `1周1マーク、${prWho('boat', a.x)}が先頭で回ります`;
+  if (a.d >= 1200) return `最終周回！ 先頭は${prWho('boat', a.x)}`;
+  return `${Math.floor(a.d / 600) + 1}周目${d < 300 ? '' : ' 2マーク'}、先頭は${prWho('boat', a.x)}`;
+}
+function prBikeCap(S, t, K, order) {
+  const R = S.R.race, P = R.plan;
+  if (t < -60) return `発走まで ${mmss(-t)}`;
+  if (t < 0) return 'まもなく発走。選手がスタートラインにならびました';
+  if (!P) return 'スタートしました！';
+  const fin = S.R.entries.filter(x => x.run.time_ms != null).sort((a, b) => a.run.time_ms - b.run.time_ms), w = fin[0];
+  const nm = n => prWho('bike', S.R.entries.find(x => x.num === n));
+  if (t >= w.run.time_ms / 1000) {
+    if (t > R.finish_ms / 1000 + 2 && R.status === 'final') return `確定！ 1着 ${prWho('bike', w)}（${prKim('bike', R.kimarite)}）`;
+    return `${prWho('bike', w)}、1着でゴール！ 決まり手は${prKim('bike', R.kimarite)}`;
+  }
+  const L = K.L, a = order[0];
+  const fall = S.R.entries.find(x => x.run.inc === 'fall' && K.riders.find(r => r.x === x && r.down));
+  if (fall && L < 2025) return `あっと、${prWho('bike', fall)}が落車！`;
+  if (L < 1225) return `周回中。並びは ${P.lines.map(l => l.join('-')).join('・')}`;
+  if (L < 1425) return '残り2周。誘導員が退避して、各ラインが動きます';
+  if (L < 1625) return `ジャン（打鐘）！ ${nm(P.bell[0])}が先行`;
+  if (L < 1825) return `最終周回！ 先頭は${prWho('bike', a.x)}`;
+  return `最後の直線！ ${prWho('bike', a.x)}先頭、${order[1] ? prWho('bike', order[1].x) + 'も迫る！' : ''}`;
 }
 
 /* =================================================================
@@ -5356,7 +5932,7 @@ function kkResult(d) {
   const nm = s2 => esc(mName(d, s2));
   let h = `<div class="mj-res kk-res"><div class="small muted">${r.mon + 1}か月目の結果</div>`;
   if (r.kind === 'win') {
-    h += `<div class="kk-rt"><span class="kk-big">上がり</span><b>${nm(r.s)}</b>${r.auto ? '<span class="small muted">（最後の札で役ができた）</span>' : ''}</div>${kkYaku(r.yaku)}
+    h += `<div class="kk-rt"><span class="kk-big">あがり</span><b>${nm(r.s)}</b>${r.auto ? '<span class="small muted">（最後の札で役ができた）</span>' : ''}</div>${kkYaku(r.yaku)}
       <div class="kk-calc">${r.m7 || r.mk ? `<span>${r.base}点</span>${r.m7 ? '<span>× 2（7点以上）</span>' : ''}${r.mk ? '<span>× 2（こいこい返し）</span>' : ''}<span>＝</span>` : ''}<b>${r.pts}点</b></div>`;
   } else if (r.kind === 'teshi') {
     h += `<div class="kk-rt"><span class="kk-big">${r.name}</span><b>${nm(r.s)}</b></div>
@@ -6187,7 +6763,7 @@ $('#rvSend').onclick = async () => {
 };
 
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て', guest_rest: 'ゲストの残り（上限をこえた分・消えたゲスト）', lottery: '風の芽ジャンボ', auction: '競り市' };
+const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て', guest_rest: 'ゲストの残り（上限をこえた分・消えたゲスト）', lottery: '風の芽ジャンボ', auction: '競り市', boat: '競艇', keirin: '競輪' };
 async function moreLoad() {
   idLoad();
   try {

@@ -606,7 +606,7 @@ begin
   if a is not null then return; end if;      -- AIのアカウントは記録しない
   insert into tx_log(user_id, game, bet, payout, balance_after, detail)
   values (u, g, bet, pay, b, d);
-  if g in ('slot','roulette','hilo','blackjack','race','lottery','auction') then
+  if g in ('slot','roulette','hilo','blackjack','race','lottery','auction','boat','keirin') then
     update treasury set balance = balance + (bet - pay), casino_total = casino_total + (bet - pay) where id = 1;
   end if;
 end $$;
@@ -1034,7 +1034,7 @@ end $$;
 create or replace function public._income(u uuid, m int) returns bigint
 language sql stable set search_path = public as $$
   select greatest(coalesce(sum(payout - bet), 0), 0)::bigint from tx_log
-   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend','liquidation','game_bet','game_stake','pub_sale','review','auction')
+   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend','liquidation','game_bet','game_stake','pub_sale','review','auction','boat','keirin')
      and created_at >= _month_start(m) and created_at < _month_start(_next_month(m))
 $$;
 
@@ -12723,6 +12723,803 @@ begin
   end if;
 end $$;
 
+-- =====================================================================
+-- 公営競技：競艇（ボートレース）と競輪
+--   競馬のない時間に走る。競艇：9:30〜11:20（朝・12R）と 22:40〜23:50（ミッドナイト・8R）。競輪：13:50〜15:40（12R）
+--   選手は架空。成績（競艇は勝率、競輪は競走得点）がつき、毎月（1年＝1か月）級が上がったり下がったりする
+--   競艇：6艇・3周1800m。単勝・複勝（2着まで）・2連単・2連複・拡連複・3連単・3連複。フライング（F）の艇をふくむ券は返す
+--   競輪：A級7車・S級9車・2025m。同じ地区の選手がライン（3人まで）を組んで走る。2車単・2車複・ワイド・3連単・3連複・2枠単・2枠複（9車のレースだけ）
+--   オッズは買った時点で決まる（みんなの見立てから）。払戻率は単勝・複勝80%、ほかは75%
+--   券の種類（kind）：tan 単勝・fuku 複勝・ex2 2連単（2車単）・qn2 2連複（2車複）・wide 拡連複（ワイド）・ex3 3連単・tr3 3連複・wex 2枠単・wqn 2枠複
+-- =====================================================================
+create table if not exists public.pr_venues (
+  id       int primary key,
+  sport    text not null,                 -- boat 競艇 / bike 競輪
+  name     text not null,
+  water    text,                          -- 競艇：淡水・海水・汽水
+  inbias   numeric not null default 0,    -- 競艇：1コースの強さ（＋なら強い）
+  bank     int,                           -- 競輪：周長（m）
+  straight numeric                        -- 競輪：みなし直線（m）
+);
+insert into public.pr_venues(id, sport, name, water, inbias, bank, straight) values
+  (1, 'boat', '多摩川', '淡水', 0.12, null, null), (2, 'boat', '平和島', '海水', -0.18, null, null), (3, 'boat', '江戸川', '汽水', -0.08, null, null),
+  (11, 'bike', '立川', null, 0, 400, 58.0), (12, 'bike', '京王閣', null, 0, 400, 51.5), (13, 'bike', '平塚', null, 0, 400, 54.2)
+on conflict (id) do nothing;
+-- 選手
+create table if not exists public.pr_racers (
+  id       serial primary key,
+  sport    text not null check (sport in ('boat', 'bike')),
+  regno    int not null,                  -- 登録番号（競艇は4けた。競輪は期×1000＋番号）
+  name     text not null,
+  name_en  text not null,
+  pref     text not null,                 -- 支部（競艇）・府県（競輪）
+  area     text not null,                 -- 地区（競輪のラインのもと）
+  born     int not null,                  -- 生まれた月（_kb_midx。1年＝1か月）
+  term     int,                           -- 競輪：期
+  grade    text not null,                 -- 競艇 A1/A2/B1/B2・競輪 S1/S2/A1/A2/A3
+  ability  numeric not null,              -- 力（見せない）
+  st       numeric,                       -- 競艇：ふだんのスタートタイミング（見せない）
+  style    text,                          -- 競輪：逃（先行）・両（自在）・追（追込）
+  starts   int not null default 0,
+  wins     int not null default 0,
+  seconds  int not null default 0,
+  thirds   int not null default 0,
+  rate     numeric not null,              -- 競艇：勝率・競輪：競走得点（新しいレースほど重く）
+  r2       numeric not null,              -- 2連対率（%）
+  r3       numeric not null,              -- 3連対率（%）
+  st_avg   numeric,                       -- 競艇：平均ST（見せる）
+  f_count  int not null default 0,        -- 競艇：フライングの数（毎月0にもどる）
+  retired  boolean not null default false,
+  last_day date,
+  unique (sport, regno)
+);
+create index if not exists pr_racers_pick_idx on public.pr_racers(sport, retired, grade);
+-- 競艇のモーター（場ごとに60機）
+create table if not exists public.pr_motors (
+  venue  int not null,
+  no     int not null,
+  power  numeric not null,                -- 力（見せない）
+  starts int not null default 0,
+  r2     numeric not null,                -- 2連対率（%・見せる）
+  primary key (venue, no)
+);
+-- レース
+create table if not exists public.pr_races (
+  id        bigint primary key,           -- 日付(YYYYMMDD)*1000 ＋ 100（競艇）/ 200（競輪）＋ その日の番号
+  sport     text not null,
+  day       date not null,
+  no        int not null,                 -- その日の番号（競艇：朝 1〜12・ミッドナイト 13〜20、競輪 1〜12）
+  sess      text not null,                -- morning / midnight / day
+  post      timestamptz not null,         -- 発走（競艇はスタートの瞬間）
+  venue     int not null references public.pr_venues(id),
+  rnum      int not null,
+  title     text not null,                -- 開催の名前
+  name      text not null,                -- レースの名前（一般戦・特選・ドリーム戦…）
+  cls       text,                         -- 競輪：S級・A級
+  n         int not null,                 -- 艇数・車数
+  weather   text not null,
+  wind      numeric,                      -- 競艇：風（m）
+  wave      int,                          -- 競艇：波（cm）
+  finish_ms int,                          -- いちばん最後にゴールした選手の時間
+  kimarite  text,                         -- 決まり手（1着の選手）
+  plan      jsonb not null default '{}',  -- 絵のため（競艇：1周目1マークのあとの順・競輪：周回とジャンの並び、スピード）
+  settled   boolean not null default false
+);
+create index if not exists pr_races_day_idx on public.pr_races(day, sport, no);
+create index if not exists pr_races_open_idx on public.pr_races(settled, post);
+-- 出走表
+create table if not exists public.pr_entries (
+  race_id  bigint not null references public.pr_races(id) on delete cascade,
+  num      int not null,                  -- 艇番・車番
+  racer_id int not null references public.pr_racers(id),
+  waku     int not null,                  -- 枠（競艇は艇番と同じ）
+  course   int,                           -- 競艇：進入コース
+  motor    int,                           -- 競艇：モーター
+  line     int,                           -- 競輪：ライン
+  lpos     int,                           -- 競輪：ラインの何番手
+  w        numeric not null,              -- みんなの見立て（オッズのもと）
+  ninki    int,
+  odds_win numeric,                       -- 競艇：単勝オッズ
+  st       numeric,                       -- 競艇：スタートタイミング（マイナスはフライング）
+  pos      int,                           -- 着順（フライング・落車は null）
+  time_ms  int,                           -- ゴールまで
+  margin   text,                          -- 競輪：着差
+  last     numeric,                       -- 競輪：上がり（最後の200m）
+  incident text,                          -- F フライング・fall 落車
+  inc_val  numeric,                       -- 落車：最終周回のどこで（0〜1）
+  primary key (race_id, num)
+);
+create index if not exists pr_entries_racer_idx on public.pr_entries(racer_id, race_id desc);
+-- 券
+create table if not exists public.pr_tickets (
+  id         bigserial primary key,
+  race_id    bigint not null references public.pr_races(id) on delete cascade,
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  kind       text not null check (kind in ('tan','fuku','ex2','qn2','wide','ex3','tr3','wex','wqn')),
+  sel        int[] not null,
+  amount     bigint not null check (amount > 0),
+  odds       numeric not null,
+  payout     bigint,
+  refund     boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create index if not exists pr_tickets_race_idx on public.pr_tickets(race_id);
+create index if not exists pr_tickets_user_idx on public.pr_tickets(user_id, race_id desc);
+-- 画面から直接は読めない（着順はレースをつくるときに決まるので、発走の前に見られないように。全部 下の関数を通す）
+alter table public.pr_venues  enable row level security;
+alter table public.pr_racers  enable row level security;
+alter table public.pr_motors  enable row level security;
+alter table public.pr_races   enable row level security;
+alter table public.pr_entries enable row level security;
+alter table public.pr_tickets enable row level security;
+revoke all on public.pr_venues, public.pr_racers, public.pr_motors, public.pr_races, public.pr_entries, public.pr_tickets from anon, authenticated;
+
+-- 名前（漢字・ローマ字）。架空の組み合わせ
+create or replace function public._pr_name(fem boolean) returns text[]
+language plpgsql volatile as $$
+declare
+  S text[] := array['佐藤:Sato','鈴木:Suzuki','高橋:Takahashi','田中:Tanaka','伊藤:Ito','渡辺:Watanabe','山本:Yamamoto','中村:Nakamura','小林:Kobayashi',
+    '加藤:Kato','吉田:Yoshida','山田:Yamada','佐々木:Sasaki','山口:Yamaguchi','松本:Matsumoto','井上:Inoue','木村:Kimura','林:Hayashi','清水:Shimizu',
+    '山崎:Yamazaki','森:Mori','池田:Ikeda','橋本:Hashimoto','阿部:Abe','石川:Ishikawa','山下:Yamashita','中島:Nakajima','石井:Ishii','小川:Ogawa',
+    '前田:Maeda','岡田:Okada','長谷川:Hasegawa','藤田:Fujita','後藤:Goto','近藤:Kondo','村上:Murakami','遠藤:Endo','青木:Aoki','坂本:Sakamoto',
+    '斉藤:Saito','福田:Fukuda','太田:Ota','西村:Nishimura','藤井:Fujii','金子:Kaneko','岡本:Okamoto','藤原:Fujiwara','中野:Nakano','三浦:Miura',
+    '原田:Harada','中川:Nakagawa','松田:Matsuda','竹内:Takeuchi','小野:Ono','田村:Tamura','中山:Nakayama','和田:Wada','石田:Ishida','森田:Morita',
+    '上田:Ueda','原:Hara','内田:Uchida','柴田:Shibata','酒井:Sakai','宮崎:Miyazaki','横山:Yokoyama','高木:Takagi','安藤:Ando','宮本:Miyamoto',
+    '大野:Ono','小島:Kojima','谷口:Taniguchi','今井:Imai','工藤:Kudo','高田:Takada','増田:Masuda','丸山:Maruyama','杉山:Sugiyama','村田:Murata',
+    '大塚:Otsuka','新井:Arai','小山:Koyama','平野:Hirano','藤本:Fujimoto','河野:Kono','上野:Ueno','野口:Noguchi','武田:Takeda','松井:Matsui',
+    '千葉:Chiba','岩崎:Iwasaki','菅原:Sugawara','木下:Kinoshita','久保:Kubo','佐野:Sano','野村:Nomura','松尾:Matsuo','菊地:Kikuchi','杉本:Sugimoto',
+    '市川:Ichikawa','古川:Furukawa','大西:Onishi','島田:Shimada','水野:Mizuno','桜井:Sakurai','高野:Takano','吉川:Yoshikawa','山内:Yamauchi','西田:Nishida',
+    '飯田:Iida','北村:Kitamura','安田:Yasuda','五十嵐:Igarashi','川口:Kawaguchi','平田:Hirata','中田:Nakata','服部:Hattori','岩田:Iwata','土屋:Tsuchiya',
+    '川崎:Kawasaki','福島:Fukushima','本田:Honda','樋口:Higuchi','秋山:Akiyama','田口:Taguchi','永井:Nagai','山中:Yamanaka','中西:Nakanishi','吉村:Yoshimura',
+    '川上:Kawakami','石原:Ishihara','大橋:Ohashi','松岡:Matsuoka','馬場:Baba','浅野:Asano','荒木:Araki','野田:Noda','小池:Koike','田辺:Tanabe',
+    '松下:Matsushita','菅野:Kanno','熊谷:Kumagai','大石:Oishi'];
+  M text[] := array['翔太:Shota','大輔:Daisuke','拓也:Takuya','健太:Kenta','直樹:Naoki','和也:Kazuya','達也:Tatsuya','浩二:Koji','誠:Makoto','剛:Tsuyoshi',
+    '亮:Ryo','隆:Takashi','学:Manabu','修:Osamu','聡:Satoshi','武:Takeshi','勇気:Yuki','翼:Tsubasa','蓮:Ren','悠斗:Yuto','陸:Riku','颯太:Sota',
+    '大和:Yamato','海斗:Kaito','拓海:Takumi','翔:Sho','優太:Yuta','雄大:Yudai','智也:Tomoya','竜也:Tatsuya','秀樹:Hideki','正人:Masato','光太郎:Kotaro',
+    '慎吾:Shingo','健一:Kenichi','康平:Kohei','伸也:Shinya','圭介:Keisuke','将太:Shota','隼人:Hayato','大地:Daichi','祐介:Yusuke','雅人:Masato',
+    '健二:Kenji','一輝:Kazuki','啓太:Keita','純:Jun','敦:Atsushi','幸一:Koichi','博之:Hiroyuki','晃:Akira','豊:Yutaka','弘:Hiroshi','稔:Minoru',
+    '茂:Shigeru','進:Susumu','卓也:Takuya','洋平:Yohei','憲一:Kenichi','哲也:Tetsuya','克也:Katsuya','信也:Shinya','俊介:Shunsuke','匠:Takumi',
+    '航:Wataru','陽介:Yosuke','昌平:Shohei','太一:Taichi','涼:Ryo','大樹:Daiki','恭平:Kyohei','和樹:Kazuki','尚人:Naoto','秀人:Hideto',
+    '勝也:Katsuya','功:Isao','宏:Hiroshi','剛志:Tsuyoshi','裕太:Yuta','雄一:Yuichi'];
+  F text[] := array['美咲:Misaki','彩:Aya','愛:Ai','舞:Mai','優花:Yuka','千尋:Chihiro','真由:Mayu','遥:Haruka','結衣:Yui','沙織:Saori','恵:Megumi',
+    '香織:Kaori','菜々:Nana','茜:Akane','楓:Kaede','葵:Aoi','杏奈:Anna','梨花:Rika','由佳:Yuka','麻衣:Mai','理沙:Risa','瞳:Hitomi','七海:Nanami',
+    '美穂:Miho','加奈:Kana'];
+  a text[]; b text[];
+begin
+  a := string_to_array(S[1 + floor(random() * cardinality(S))::int], ':');
+  if fem then b := string_to_array(F[1 + floor(random() * cardinality(F))::int], ':');
+  else b := string_to_array(M[1 + floor(random() * cardinality(M))::int], ':'); end if;
+  return array[a[1] || ' ' || b[1], b[2] || ' ' || a[2]];
+end $$;
+
+-- 選手をつくる（gr：級、age：年齢）
+create or replace function public._pr_new_racer(sp text, gr text, age int) returns int
+language plpgsql volatile set search_path = public as $$
+declare
+  a numeric; nm text[]; fem boolean := sp = 'boat' and random() < 0.12; pf text; ar text; st0 numeric; sty text; reg int; tm int;
+  rate0 numeric; r20 numeric; rid int; i int; x text[]; cur int := _kb_midx(_now());
+  BP text[] := array['東京','埼玉','群馬','静岡','愛知','三重','福井','滋賀','大阪','兵庫','徳島','香川','岡山','広島','山口','福岡','佐賀','長崎'];
+  KP text[] := array['北海道:北日本','青森:北日本','岩手:北日本','宮城:北日本','福島:北日本','茨城:関東','栃木:関東','群馬:関東','埼玉:関東','新潟:関東',
+    '長野:関東','千葉:南関東','東京:南関東','神奈川:南関東','静岡:南関東','山梨:南関東','愛知:中部','岐阜:中部','三重:中部','富山:中部','石川:中部',
+    '大阪:近畿','京都:近畿','兵庫:近畿','奈良:近畿','和歌山:近畿','滋賀:近畿','福井:近畿','岡山:中国','広島:中国','山口:中国','鳥取:中国',
+    '香川:四国','徳島:四国','愛媛:四国','高知:四国','福岡:九州','佐賀:九州','長崎:九州','熊本:九州','大分:九州','宮崎:九州','鹿児島:九州'];
+begin
+  a := (case gr when 'S1' then 1.0 when 'S2' then 0.4 when 'A3' then -1.0 when 'B1' then -0.25 when 'B2' then -0.9
+               when 'A1' then case when sp = 'boat' then 1.1 else -0.1 end
+               when 'A2' then case when sp = 'boat' then 0.45 else -0.5 end else 0 end) + _kb_norm() * 0.3;
+  for i in 1..40 loop
+    nm := _pr_name(fem);
+    exit when not exists (select 1 from pr_racers where sport = sp and name = nm[1]);
+  end loop;
+  if sp = 'boat' then
+    pf := BP[1 + floor(random() * cardinality(BP))::int]; ar := pf;
+    st0 := round(least(0.23, greatest(0.10, 0.17 - 0.025 * a + _kb_norm() * 0.012)), 3);
+    reg := 5350 - (age - 20) * 40 + floor(random() * 40)::int;
+    rate0 := round(least(8.6, greatest(2.0, 5.3 + 1.6 * a + _kb_norm() * 0.35)), 2);
+    r20 := round(least(75, greatest(5, 33 + 16 * a + _kb_norm() * 4)), 1);
+  else
+    x := string_to_array(KP[1 + floor(random() * cardinality(KP))::int], ':'); pf := x[1]; ar := x[2];
+    sty := case when random() < 0.35 then '逃' when random() < 0.4 then '両' else '追' end;
+    tm := 127 - (age - 20) + floor(random() * 2)::int;
+    reg := tm * 1000 + floor(random() * 900)::int;
+    rate0 := round(96 + 13 * a + _kb_norm() * 1.5, 2);
+    r20 := round(least(70, greatest(3, 25 + 14 * (a - case when gr like 'S%' then 0.6 else -0.5 end) + _kb_norm() * 4)), 1);
+  end if;
+  while exists (select 1 from pr_racers where sport = sp and regno = reg) loop reg := reg + 1; end loop;
+  insert into pr_racers(sport, regno, name, name_en, pref, area, born, term, grade, ability, st, style, rate, r2, r3, st_avg)
+  values (sp, reg, nm[1], nm[2], pf, ar, cur - age, tm, gr, round(a, 3), st0, sty, rate0, r20,
+          round(least(92, r20 + 15 + _kb_norm() * 3), 1), case when sp = 'boat' then round(st0 + _kb_norm() * 0.008, 2) end)
+  returning id into rid;
+  return rid;
+end $$;
+
+-- 天気
+create or replace function public._pr_wx() returns text
+language sql volatile as $$ select case when random() < 0.55 then '晴' when random() < 0.67 then '曇' else '雨' end $$;
+
+-- 競輪：ラインの中の位置による強さ（lead：そのラインが先行するか）
+create or replace function public._pr_bonus(lpos int, lsize int, sty text, lead boolean) returns numeric
+language sql immutable as $$
+  select (case when lead then (array[0.35, 0.75, 0.25])[least(lpos, 3)]
+               when lsize = 1 then -0.15
+               when lpos = 1 then case when sty in ('逃', '両') then 0.15 else -0.1 end
+               when lpos = 2 then 0.2 else -0.05 end)::numeric $$;
+
+-- 競輪：着差（m → ことば）
+create or replace function public._pr_margin(m numeric) returns text
+language sql immutable as $$
+  select case when m < 0.1 then 'タイヤ差' when m < 0.2 then '1/8輪' when m < 0.35 then '1/4輪' when m < 0.55 then '1/2輪'
+              when m < 0.75 then '3/4輪' when m < 0.95 then '1輪' when m < 1.3 then '1/2車身' when m < 1.6 then '3/4車身'
+              when m < 2.6 then '1車身' when m < 4.4 then '2車身' when m < 6.2 then '3車身' when m < 8 then '4車身' else '大差' end $$;
+
+-- 1レースをつくる（出る選手・着順・タイムまで、ここで決まる。見せるのは発走のあと）
+--   top：上位の選手をえらぶ（特選・ドリーム戦・決勝など）。gs：えらぶ級（競輪）
+create or replace function public._pr_make_race(sp text, d date, no int, sess text, vid int, rnum int, post timestamptz,
+                                               ttl text, rname text, cls text, n int, top boolean, gs text[], wx text) returns bigint
+language plpgsql volatile set search_path = public as $$
+declare
+  rid bigint := to_char(d, 'YYYYMMDD')::bigint * 1000 + (case when sp = 'boat' then 100 else 200 end) + no;
+  v pr_venues; ids int[]; i int; j int; k int; rr pr_racers; mot int[]; mp numeric; mr numeric; rec record;
+  A numeric[] := '{}'; AE numeric[] := '{}'; ST numeric[] := '{}'; sc numeric[] := '{}'; pub numeric[] := '{}'; fl boolean[] := '{}';
+  cb numeric[] := array[1.75, 0.6, 0.5, 0.3, 0.0, -0.35]; ord int[]; m1 int[]; kim text; plan jsonb;
+  wind numeric; wave int; beta numeric := 1; t1 numeric; tm numeric[]; x numeric; y numeric;
+  ar text[] := '{}'; sty text[] := '{}'; ln int[]; lp int[]; nl int := 0; lead int; pw numeric[]; pe numeric[]; tot numeric; tote numeric;
+  fall int; lo int[]; laps int[]; bell int[]; v1 numeric; v2 numeric; v3 numeric; mg text[]; lst numeric[]; wk int[]; sz int; fv numeric;
+  pat text; ar1 text; usd text[] := '{}';
+begin
+  if exists (select 1 from pr_races where id = rid) then return rid; end if;
+  select * into v from pr_venues where id = vid;
+  -- 選手をえらぶ：競艇は1日2回まで・競輪は1日1回まで。ひとつ前のレースに出た選手はのぞく
+  ids := '{}';
+  if sp = 'bike' and not top then
+    -- 競輪：ラインができるように、地区を3〜5つえらんで、それぞれから選手をえらぶ（3-3-3・3-3-2-1・3-2-2 など）
+    pat := case when n = 9 then (array['3,3,3', '3,3,2,1', '3,2,2,2', '3,3,2,1', '2,2,2,2,1'])[1 + floor(random() * 5)::int]
+                else (array['3,2,2', '3,3,1', '2,2,2,1', '3,2,2'])[1 + floor(random() * 4)::int] end;
+    foreach sz in array string_to_array(pat, ',')::int[] loop
+      ar1 := null;
+      select q.area into ar1 from (
+        select r.area, count(*) c from pr_racers r
+         where r.sport = 'bike' and not r.retired and r.grade = any(gs) and not (r.id = any(ids))
+           and not exists (select 1 from pr_entries e join pr_races q2 on q2.id = e.race_id where e.racer_id = r.id and q2.day = d and q2.sport = 'bike')
+         group by r.area) q
+       where q.c >= sz and not (q.area = any(usd)) order by random() limit 1;
+      continue when ar1 is null;
+      usd := usd || ar1;
+      ids := ids || array(select r.id from pr_racers r
+                           where r.sport = 'bike' and not r.retired and r.grade = any(gs) and r.area = ar1 and not (r.id = any(ids))
+                             and not exists (select 1 from pr_entries e join pr_races q2 on q2.id = e.race_id where e.racer_id = r.id and q2.day = d and q2.sport = 'bike')
+                           order by random() limit sz);
+    end loop;
+  end if;
+  if cardinality(ids) < n then
+    select ids || coalesce(array_agg(z.id), '{}') into ids from (
+      select r.id from pr_racers r
+       where r.sport = sp and not r.retired and (gs is null or r.grade = any(gs)) and not (r.id = any(ids))
+         and (select count(*) from pr_entries e join pr_races q on q.id = e.race_id where e.racer_id = r.id and q.day = d and q.sport = sp)
+             < (case when sp = 'boat' then 2 else 1 end)
+         and not exists (select 1 from pr_entries e where e.race_id = rid - 1 and e.racer_id = r.id)
+       order by case when top then -(r.rate * (case when sp = 'boat' then 1 else 0.1 end) + random() * 0.8) else random() end
+       limit n - cardinality(ids)) z;
+  end if;
+  if cardinality(ids) < n then   -- まだ足りなければ、ほかの選手も（その日にまだ走っていない選手から）
+    select ids || coalesce(array_agg(z.id), '{}') into ids from (
+      select r.id from pr_racers r where r.sport = sp and not r.retired and not (r.id = any(ids))
+       order by exists (select 1 from pr_entries e join pr_races q on q.id = e.race_id where e.racer_id = r.id and q.day = d and q.sport = sp),
+                (gs is not null and r.grade = any(gs)) desc, random() limit n - cardinality(ids)) z;
+  end if;
+  -- 番号：力のありそうな選手ほど内（1号艇・1番車）に来やすい
+  select array_agg(z.id order by z.k desc) into ids from (
+    select r.id, r.rate * (case when sp = 'boat' then 1 else 0.1 end) + random() * (case when top then 0.4 else 2.2 end) k
+      from pr_racers r where r.id = any(ids)) z;
+
+  if sp = 'boat' then
+    wind := round((random() * 6)::numeric, 0); wave := (wind * 1.2 + random() * 3)::int;
+    beta := 1 + wave / 40.0;
+    mot := array(select mm.no from pr_motors mm where mm.venue = vid order by random() limit 6);
+    for i in 1..n loop
+      select * into rr from pr_racers where id = ids[i];
+      select mm.power, mm.r2 into mp, mr from pr_motors mm where mm.venue = vid and mm.no = mot[i];
+      ST := ST || round(greatest(-0.08, rr.st + _kb_norm() * 0.05), 2);
+      fl := fl || (ST[i] < 0);
+      x := cb[i] + case when i = 1 then v.inbias else 0 end;
+      sc := sc || (x + 0.9 * rr.ability + 0.45 * coalesce(mp, 0) - 7 * (ST[i] - 0.15) + beta * _kb_gumbel());
+      pub := pub || (x + 0.9 * (rr.rate - 5.3) / 1.6 + 0.45 * (coalesce(mr, 33) - 33) / 11.0 - 3 * (coalesce(rr.st_avg, 0.16) - 0.15));
+    end loop;
+    ord := array(select g from generate_series(1, n) g where not fl[g] order by sc[g] desc);
+    -- 1周目1マークのあとの順（ときどき、あとで抜く）
+    m1 := ord;
+    if cardinality(m1) >= 2 and random() < 0.07 then m1 := array[m1[2], m1[1]] || m1[3:]; end if;
+    if cardinality(m1) >= 4 and random() < 0.3 then m1 := m1[1:2] || array[m1[4], m1[3]] || m1[5:]; end if;
+    kim := case when cardinality(ord) = 0 then null
+                when m1[1] <> ord[1] then '抜き'
+                when fl[1] and ord[1] <> 1 then '恵まれ'
+                when ord[1] = 1 then '逃げ'
+                when ord[1] = 2 then case when random() < 0.75 then '差し' else 'まくり' end
+                else case when random() < 0.5 then 'まくり' else 'まくり差し' end end;
+    t1 := 106.5 + random() * 3 + wave * 0.1;
+    tm := array_fill(null::numeric, array[n]);
+    x := t1;
+    for k in 1..cardinality(ord) loop
+      if k > 1 then x := x + 0.35 + random() * 2.0 + (k - 2) * random() * 0.8; end if;
+      tm[ord[k]] := x;
+    end loop;
+    plan := jsonb_build_object('m1', to_jsonb(m1));
+    insert into pr_races(id, sport, day, no, sess, post, venue, rnum, title, name, cls, n, weather, wind, wave, finish_ms, kimarite, plan)
+    values (rid, sp, d, no, sess, post, vid, rnum, ttl, rname, cls, n, wx, wind, wave, round(x * 1000)::int, kim, plan);
+    for i in 1..n loop
+      insert into pr_entries(race_id, num, racer_id, waku, course, motor, w, st, pos, time_ms, incident)
+      values (rid, i, ids[i], i, i, mot[i], round(exp(pub[i] * 0.8), 6), ST[i], array_position(ord, i), round(tm[i] * 1000)::int, case when fl[i] then 'F' end);
+    end loop;
+  else
+    for i in 1..n loop
+      select * into rr from pr_racers where id = ids[i];
+      A := A || rr.ability; AE := AE || ((rr.rate - 96) / 13.0);
+      ar := ar || rr.area; sty := sty || coalesce(rr.style, '追');
+    end loop;
+    -- ライン：同じ地区の選手が組む（3人まで）。前から 逃 → 両 → 追、それぞれ力の強い順
+    ln := array_fill(0, array[n]); lp := array_fill(0, array[n]);
+    for rec in select q.a2 from (select distinct unnest(ar) a2) q order by random() loop
+      j := 0;
+      for i in select g from generate_series(1, n) g where ar[g] = rec.a2
+                order by case sty[g] when '逃' then 0 when '両' then 1 else 2 end, A[g] desc loop
+        if j % 3 = 0 then nl := nl + 1; end if;
+        j := j + 1;
+        ln[i] := nl; lp[i] := (j - 1) % 3 + 1;
+      end loop;
+    end loop;
+    -- 先頭の選手の力で、どのラインが先行（主導権）をとるか
+    pw := array_fill(0::numeric, array[nl]); pe := array_fill(0::numeric, array[nl]);
+    for i in 1..n loop
+      if lp[i] = 1 then
+        x := case sty[i] when '逃' then 0.3 when '両' then 0.1 else -0.4 end;
+        pw[ln[i]] := A[i] + x; pe[ln[i]] := AE[i] + x;
+      end if;
+    end loop;
+    tot := 0; tote := 0;
+    for k in 1..nl loop tot := tot + exp(2.2 * pw[k]); tote := tote + exp(2.2 * pe[k]); end loop;
+    x := random() * tot; lead := nl;
+    for k in 1..nl loop x := x - exp(2.2 * pw[k]); if x <= 0 then lead := k; exit; end if; end loop;
+    for i in 1..n loop
+      sz := (select count(*) from generate_series(1, n) g where ln[g] = ln[i]);
+      y := exp(2.2 * pe[ln[i]]) / tote;
+      sc := sc || (2.3 * A[i] + _pr_bonus(lp[i], sz, sty[i], ln[i] = lead) + _kb_gumbel());
+      pub := pub || (2.3 * AE[i] + y * _pr_bonus(lp[i], sz, sty[i], true) + (1 - y) * _pr_bonus(lp[i], sz, sty[i], false));
+    end loop;
+    ord := array(select g from generate_series(1, n) g order by sc[g] desc);
+    if random() < 0.015 then   -- 落車（たまに）
+      fall := ord[2 + floor(random() * (n - 1))::int];
+      ord := array_remove(ord, fall);
+    end if;
+    kim := case when ln[ord[1]] = lead then case when lp[ord[1]] = 1 then '逃げ' else '差し' end
+                when lp[ord[1]] = 1 then '捲り' else '差し' end;
+    -- 周回の並び（ラインごと。先行するラインはうしろから行くことが多い）と、ジャン（打鐘）のあとの並び
+    lo := array(select gk from generate_series(1, nl) gk order by random() + case when gk = lead then 0.5 else 0 end);
+    laps := array(select g from unnest(lo) with ordinality u(k, o) join generate_series(1, n) g on ln[g] = u.k order by u.o, lp[g]);
+    bell := array(select g from unnest(lo) with ordinality u(k, o) join generate_series(1, n) g on ln[g] = u.k order by (u.k = lead) desc, u.o, lp[g]);
+    -- スピード（周回 → 残り2周 → 最終周回）とタイム・着差・上がり
+    v1 := round((14.2 + random() * 0.4)::numeric, 2); v2 := round((15.6 + random() * 0.4)::numeric, 2); v3 := round((17.4 + random() * 0.5)::numeric, 2);
+    t1 := 1225 / v1 + 400 / v2 + 400 / v3;
+    tm := array_fill(null::numeric, array[n]); mg := array_fill(null::text, array[n]); lst := array_fill(null::numeric, array[n]);
+    x := 0;
+    for k in 1..cardinality(ord) loop
+      y := case when k = 1 then 0 when k = 2 then 0.1 + random() * 2.0 when k = 3 then 0.15 + random() * 2.2 else 0.4 + random() * 2.8 end;
+      x := x + y;
+      tm[ord[k]] := t1 + x / v3;
+      if k > 1 then mg[ord[k]] := _pr_margin(y); end if;
+      lst[ord[k]] := round((11.0 + random() * 0.6 + (k - 1) * 0.05)::numeric, 1);
+    end loop;
+    fv := case when fall is not null then round((0.3 + random() * 0.6)::numeric, 3) end;
+    wk := case when n = 9 then array[1, 2, 3, 4, 4, 5, 5, 6, 6] else array[1, 2, 3, 4, 5, 6, 6] end;
+    plan := jsonb_build_object('laps', to_jsonb(laps), 'bell', to_jsonb(bell), 'lead', lead,
+              'lines', (select jsonb_agg(z.m order by z.o) from (select u.o, jsonb_agg(g order by lp[g]) m
+                          from unnest(lo) with ordinality u(k, o) join generate_series(1, n) g on ln[g] = u.k group by u.o) z),
+              'v', jsonb_build_array(v1, v2, v3));
+    insert into pr_races(id, sport, day, no, sess, post, venue, rnum, title, name, cls, n, weather, finish_ms, kimarite, plan)
+    values (rid, sp, d, no, sess, post, vid, rnum, ttl, rname, cls, n, wx, round(t1 * 1000 + x / v3 * 1000)::int, kim, plan);
+    for i in 1..n loop
+      insert into pr_entries(race_id, num, racer_id, waku, line, lpos, w, pos, time_ms, margin, last, incident, inc_val)
+      values (rid, i, ids[i], wk[i], ln[i], lp[i], round(exp(pub[i] * 1.3), 6), array_position(ord, i), round(tm[i] * 1000)::int, mg[i], lst[i],
+              case when i = fall then 'fall' end, case when i = fall then fv end);
+    end loop;
+  end if;
+  update pr_entries e set ninki = z.rk from (select num, row_number() over (order by w desc, num) rk from pr_entries where race_id = rid) z
+   where e.race_id = rid and e.num = z.num;
+  if sp = 'boat' then update pr_entries set odds_win = _pr_odds(rid, 'tan', array[num]) where race_id = rid; end if;
+  return rid;
+end $$;
+
+-- 1日の番組をつくる（競艇：朝12R・ミッドナイト8R、競輪：12R）
+create or replace function public._pr_make_day(sp text, d date) returns void
+language plpgsql volatile set search_path = public as $$
+declare
+  dn int := d - date '2026-01-01'; sun boolean := extract(isodow from d) = 7; wx text; i int; base timestamptz; vid int; ttl text; nm text;
+  gs text[]; n int; cl text;
+  cups text[] := array['風の芽杯', '帝都京浜新聞社杯', '大東亰記念', '若葉賞', 'AiliNaX杯', '神楽坂通商事杯', '秋桜カップ'];
+  y int := extract(year from d)::int; mo int := extract(month from d)::int; dd int := extract(day from d)::int;
+begin
+  perform pg_advisory_xact_lock(7802);
+  if exists (select 1 from pr_races where day = d and sport = sp) then return; end if;
+  if sp = 'boat' then
+    vid := (array[1, 3, 2])[1 + dn % 3]; wx := _pr_wx();
+    ttl := (select name from pr_venues where id = vid) || ' ' || cups[1 + dn % 7];
+    base := make_timestamptz(y, mo, dd, 9, 30, 0, 'Asia/Tokyo');
+    for i in 1..12 loop
+      nm := case when i = 12 then case when sun then '優勝戦' else 'ドリーム戦' end when i >= 10 then '特選' else '一般戦' end;
+      perform _pr_make_race('boat', d, i, 'morning', vid, i, base + make_interval(mins => (i - 1) * 10), ttl, nm, null, 6, i >= 10, null, wx);
+    end loop;
+    vid := (array[2, 1, 3])[1 + dn % 3]; wx := _pr_wx();
+    ttl := (select name from pr_venues where id = vid) || ' ミッドナイト ' || cups[1 + (dn + 3) % 7];
+    base := make_timestamptz(y, mo, dd, 22, 40, 0, 'Asia/Tokyo');
+    for i in 1..8 loop
+      nm := case when i = 8 then '選抜戦' when i = 7 then '特選' else '一般戦' end;
+      perform _pr_make_race('boat', d, 12 + i, 'midnight', vid, i, base + make_interval(mins => (i - 1) * 10), ttl, nm, null, 6, i >= 7, null, wx);
+    end loop;
+  else
+    vid := (array[11, 12, 13])[1 + dn % 3]; wx := _pr_wx();
+    ttl := (select name from pr_venues where id = vid) || ' ' || cups[1 + (dn + 5) % 7];
+    base := make_timestamptz(y, mo, dd, 13, 50, 0, 'Asia/Tokyo');
+    for i in 1..12 loop
+      if i <= 3 then nm := 'A級チャレンジ'; cl := 'A'; gs := array['A3']; n := 7;
+      elsif i <= 6 then nm := 'A級一般'; cl := 'A'; gs := array['A1', 'A2']; n := 7;
+      elsif i <= 10 then nm := 'S級一般'; cl := 'S'; gs := array['S1', 'S2']; n := 9;
+      elsif i = 11 then nm := 'S級特選'; cl := 'S'; gs := array['S1', 'S2']; n := 9;
+      else nm := case when sun then 'S級決勝' else 'S級選抜' end; cl := 'S'; gs := array['S1', 'S2']; n := 9;
+      end if;
+      perform _pr_make_race('bike', d, i, 'day', vid, i, base + make_interval(mins => (i - 1) * 10), ttl, nm, cl, n, i >= 11, gs, wx);
+    end loop;
+  end if;
+end $$;
+
+-- 当たる確率（みんなの見立て。順番つきの確率は競馬と同じ式）
+create or replace function public._pr_prob(rid bigint, kind text, sel int[]) returns numeric
+language plpgsql stable set search_path = public as $$
+declare w numeric[]; wk int[]; n int; tw numeric := 0; p numeric := 0; i int; j int; x int; a int := sel[1]; b int := sel[2]; c int := sel[3];
+begin
+  select array_agg(e.w order by e.num), array_agg(e.waku order by e.num) into w, wk from pr_entries e where e.race_id = rid;
+  n := cardinality(w);
+  for i in 1..n loop tw := tw + w[i]; end loop;
+  case kind
+    when 'tan' then p := w[a] / tw;
+    when 'fuku' then   -- 2着まで
+      p := w[a] / tw;
+      for x in 1..n loop continue when x = a; p := p + _kb_seq(w, tw, array[x, a]); end loop;
+    when 'ex2' then p := _kb_seq(w, tw, array[a, b]);
+    when 'qn2' then p := _kb_seq(w, tw, array[a, b]) + _kb_seq(w, tw, array[b, a]);
+    when 'ex3' then p := _kb_seq(w, tw, array[a, b, c]);
+    when 'tr3' then p := _kb_prob_trio(w, tw, a, b, c);
+    when 'wide' then
+      for x in 1..n loop continue when x = a or x = b; p := p + _kb_prob_trio(w, tw, a, b, x); end loop;
+    when 'wex', 'wqn' then
+      for i in 1..n loop
+        for j in 1..n loop
+          continue when i = j;
+          if (wk[i] = a and wk[j] = b) or (kind = 'wqn' and a <> b and wk[i] = b and wk[j] = a) then p := p + _kb_seq(w, tw, array[i, j]); end if;
+        end loop;
+      end loop;
+    else p := 0;
+  end case;
+  return p;
+end $$;
+
+create or replace function public._pr_rate(kind text) returns numeric
+language sql immutable as $$ select (case when kind in ('tan', 'fuku') then 0.80 else 0.75 end)::numeric $$;
+
+-- オッズ（0.1倍きざみで切り捨て。最低1.0倍）。50倍をこえる大穴は少しおさえる（ほんとうの売り場と同じように、大穴は買われすぎる）
+create or replace function public._pr_odds(rid bigint, kind text, sel int[]) returns numeric
+language plpgsql stable set search_path = public as $$
+declare p numeric := _pr_prob(rid, kind, sel); o numeric;
+begin
+  if p <= 0 then return 99999.9; end if;
+  o := _pr_rate(kind) / p;
+  if o > 50 then o := 50 * power(o / 50, 0.88); end if;
+  return round(least(99999.9, greatest(1.0, floor(o * 10) / 10)), 1);
+end $$;
+
+-- 券の選び方を確かめて、決まった形にそろえる
+create or replace function public._pr_check_sel(rid bigint, kind text, sel int[]) returns int[]
+language plpgsql stable set search_path = public as $$
+declare r pr_races; need int; x int; wk int[];
+begin
+  select * into r from pr_races where id = rid;
+  if not found then raise exception 'レースが見つかりません'; end if;
+  if r.sport = 'boat' and coalesce(kind, '') not in ('tan', 'fuku', 'ex2', 'qn2', 'wide', 'ex3', 'tr3') then raise exception 'その券は競艇では買えません'; end if;
+  if r.sport = 'bike' and coalesce(kind, '') not in ('ex2', 'qn2', 'wide', 'ex3', 'tr3', 'wex', 'wqn') then raise exception 'その券は競輪では買えません'; end if;
+  if kind in ('wex', 'wqn') and r.n < 9 then raise exception '2枠単・2枠複は、9車のレースだけです'; end if;
+  need := case kind when 'tan' then 1 when 'fuku' then 1 when 'ex3' then 3 when 'tr3' then 3 else 2 end;
+  if sel is null or coalesce(cardinality(sel), 0) <> need then raise exception '%つえらんでください', need; end if;
+  if kind in ('wex', 'wqn') then
+    select array_agg(waku order by num) into wk from pr_entries where race_id = rid;
+    foreach x in array sel loop
+      if x is null or x < 1 or x > 6 then raise exception '枠は1〜6です'; end if;
+    end loop;
+    if sel[1] = sel[2] and (select count(*) from unnest(wk) z where z = sel[1]) < 2 then raise exception 'この枠には1人しかいません'; end if;
+    if kind = 'wqn' then return array[least(sel[1], sel[2]), greatest(sel[1], sel[2])]; end if;
+    return sel;
+  end if;
+  foreach x in array sel loop
+    if x is null or x < 1 or x > r.n then raise exception '番号は1〜%です', r.n; end if;
+  end loop;
+  if (select count(distinct z) from unnest(sel) z) <> need then raise exception '同じ番号は2回えらべません'; end if;
+  if kind in ('qn2', 'wide', 'tr3') then return array(select z from unnest(sel) z order by z); end if;
+  return sel;
+end $$;
+
+-- 当たったか（res：着順、wk：枠）
+create or replace function public._pr_hit(kind text, sel int[], res int[], wk int[]) returns boolean
+language sql immutable as $$
+  select coalesce(case kind
+    when 'tan'  then sel[1] = res[1]
+    when 'fuku' then sel[1] = any(res[1:2])
+    when 'ex2'  then sel[1] = res[1] and sel[2] = res[2]
+    when 'qn2'  then least(res[1], res[2]) = sel[1] and greatest(res[1], res[2]) = sel[2]
+    when 'wide' then sel[1] = any(res[1:3]) and sel[2] = any(res[1:3]) and cardinality(res) >= 3
+    when 'ex3'  then sel = res[1:3]
+    when 'tr3'  then cardinality(res) >= 3 and sel @> res[1:3] and res[1:3] @> sel
+    when 'wex'  then wk[res[1]] = sel[1] and wk[res[2]] = sel[2]
+    when 'wqn'  then least(wk[res[1]], wk[res[2]]) = sel[1] and greatest(wk[res[1]], wk[res[2]]) = sel[2]
+    else false end, false) $$;
+
+-- 発売の状態
+create or replace function public._pr_status(r public.pr_races) returns text
+language sql stable as $$
+  select case when r.settled then 'final'
+              when public._now() < r.post - interval '60 seconds' then 'sale'
+              when public._now() < r.post then 'closed'
+              when public._now() < r.post + make_interval(secs => (coalesce(r.finish_ms, 0) + 1500) / 1000.0) then 'running'
+              else 'judging' end $$;
+
+-- 確定して払い戻す。選手とモーターの成績も
+create or replace function public._pr_settle(rid bigint) returns void
+language plpgsql volatile set search_path = public as $$
+declare r pr_races; t pr_tickets; e pr_entries; res int[]; wk int[]; fl int[]; hit boolean; pay bigint; rf boolean; pts numeric; g text;
+begin
+  select * into r from pr_races where id = rid for update;
+  if not found or r.settled then return; end if;
+  select coalesce(array_agg(num order by pos), '{}') into res from pr_entries where race_id = rid and pos is not null;
+  select coalesce(array_agg(num), '{}') into fl from pr_entries where race_id = rid and incident = 'F';
+  select array_agg(waku order by num) into wk from pr_entries where race_id = rid;
+  g := case when r.sport = 'boat' then 'boat' else 'keirin' end;
+  for t in select * from pr_tickets where race_id = rid and payout is null order by id for update loop
+    rf := t.kind not in ('wex', 'wqn') and t.sel && fl;      -- フライングの艇をふくむ券は返す
+    hit := not rf and _pr_hit(t.kind, t.sel, res, wk);
+    pay := case when rf then t.amount when hit then floor(t.amount * t.odds) else 0 end;
+    update pr_tickets set payout = pay, refund = rf where id = t.id;
+    perform _give(t.user_id, pay);
+    perform _log(t.user_id, g, t.amount, pay, jsonb_build_object('pr', rid, 'kind', t.kind, 'sel', t.sel) || case when rf then '{"refund": true}'::jsonb else '{}'::jsonb end);
+  end loop;
+  for e in select * from pr_entries where race_id = rid loop
+    if r.sport = 'boat' then
+      pts := case when e.incident = 'F' then 0 else coalesce((array[10, 8, 6, 4, 2, 1])[e.pos], 0) end;
+      update pr_racers set starts = starts + 1, wins = wins + coalesce((e.pos = 1)::int, 0), seconds = seconds + coalesce((e.pos = 2)::int, 0),
+             thirds = thirds + coalesce((e.pos = 3)::int, 0), rate = round(rate * 0.94 + pts * 0.06, 3),
+             r2 = round(r2 * 0.94 + case when e.pos <= 2 then 6 else 0 end, 2), r3 = round(r3 * 0.94 + case when e.pos <= 3 then 6 else 0 end, 2),
+             st_avg = case when e.incident = 'F' or e.st is null then st_avg else round(coalesce(st_avg, e.st) * 0.9 + e.st * 0.1, 3) end,
+             f_count = f_count + case when e.incident = 'F' then 1 else 0 end, last_day = r.day
+       where id = e.racer_id;
+      update pr_motors set starts = starts + 1, r2 = round(r2 * 0.95 + case when e.pos <= 2 then 5 else 0 end, 2) where venue = r.venue and no = e.motor;
+    else
+      pts := (case when r.cls = 'S' then 100 else 80 end) + coalesce((array[20, 16, 13, 10, 8, 6, 4, 2, 0])[e.pos], 0);
+      update pr_racers set starts = starts + 1, wins = wins + coalesce((e.pos = 1)::int, 0), seconds = seconds + coalesce((e.pos = 2)::int, 0),
+             thirds = thirds + coalesce((e.pos = 3)::int, 0), rate = round(rate * 0.9 + pts * 0.1, 3),
+             r2 = round(r2 * 0.9 + case when e.pos <= 2 then 10 else 0 end, 2), r3 = round(r3 * 0.9 + case when e.pos <= 3 then 10 else 0 end, 2),
+             last_day = r.day
+       where id = e.racer_id;
+    end if;
+  end loop;
+  update pr_races set settled = true where id = rid;
+end $$;
+
+-- 月が変わったら（1年＝1か月）：力の変化・引退・級の見なおし（競輪はS級とA級の入れかえも）・新人
+create or replace function public._pr_month(cur int) returns void
+language plpgsql volatile set search_path = public as $$
+declare i int; n int;
+begin
+  update pr_racers set ability = round(ability + case when cur - born < 30 then 0.04 when cur - born > 45 then -0.04 else 0 end + _kb_norm() * 0.05, 3)
+   where not retired;
+  update pr_racers set retired = true
+   where not retired and ((sport = 'boat' and (cur - born >= 62 or (grade = 'B2' and cur - born >= 45 and random() < 0.3)))
+                       or (sport = 'bike' and (cur - born >= 58 or (grade = 'A3' and cur - born >= 42 and random() < 0.3))));
+  -- 新人（引退したぶん）
+  n := 180 - (select count(*) from pr_racers where sport = 'boat' and not retired);
+  for i in 1..greatest(n, 0) loop perform _pr_new_racer('boat', 'B2', 20 + floor(random() * 5)::int); end loop;
+  n := 200 - (select count(*) from pr_racers where sport = 'bike' and not retired);
+  for i in 1..greatest(n, 0) loop perform _pr_new_racer('bike', 'A3', 20 + floor(random() * 5)::int); end loop;
+  with dn as (select id from pr_racers where sport = 'bike' and not retired and grade like 'S%' order by rate limit 5),
+       up as (select id from pr_racers where sport = 'bike' and not retired and grade like 'A%' order by rate desc limit 5)
+  update pr_racers p set grade = case when p.id in (select id from dn) then 'A1' else 'S2' end,
+                         rate = p.rate + case when p.id in (select id from dn) then -14 else 14 end
+   where p.id in (select id from dn union all select id from up);
+  with s as (select id, sport, grade, row_number() over (partition by sport, (grade like 'S%') order by rate desc) rk,
+                    count(*) over (partition by sport, (grade like 'S%')) cnt
+               from pr_racers where not retired)
+  update pr_racers p set f_count = 0, grade = case
+      when s.sport = 'boat' then case when s.rk <= s.cnt * 0.2 then 'A1' when s.rk <= s.cnt * 0.4 then 'A2' when s.rk <= s.cnt * 0.9 then 'B1' else 'B2' end
+      when s.grade like 'S%' then case when s.rk <= s.cnt * 0.375 then 'S1' else 'S2' end
+      else case when s.rk <= s.cnt * 0.42 then 'A1' when s.rk <= s.cnt * 0.75 then 'A2' else 'A3' end end
+   from s where p.id = s.id;
+  update app_settings set value = cur::text where key = 'pr_month';
+end $$;
+
+-- はじめて動かすとき：選手とモーターをそろえ、きのうの分を走らせて成績をつくる
+create or replace function public._pr_seed() returns void
+language plpgsql volatile set search_path = public as $$
+declare i int; j int; r record; d date := _kb_jday(_now()) - 1; g text; p numeric;
+begin
+  perform pg_advisory_xact_lock(7801);
+  if exists (select 1 from pr_racers limit 1) then return; end if;
+  for i in 1..180 loop
+    g := case when i <= 36 then 'A1' when i <= 72 then 'A2' when i <= 162 then 'B1' else 'B2' end;
+    perform _pr_new_racer('boat', g, 20 + floor(random() * 36)::int);
+  end loop;
+  for i in 1..200 loop
+    g := case when i <= 30 then 'S1' when i <= 80 then 'S2' when i <= 130 then 'A1' when i <= 170 then 'A2' else 'A3' end;
+    perform _pr_new_racer('bike', g, 20 + floor(random() * 30)::int);
+  end loop;
+  for r in select id from pr_venues where sport = 'boat' loop
+    for j in 1..60 loop
+      p := round(_kb_norm(), 3);
+      insert into pr_motors(venue, no, power, r2, starts) values (r.id, j, p, round(least(60, greatest(15, 33 + 11 * p + _kb_norm() * 4)), 1), 30)
+      on conflict do nothing;
+    end loop;
+  end loop;
+  insert into app_settings values ('pr_month', _kb_midx(_now())::text) on conflict (key) do update set value = excluded.value;
+  perform _pr_make_day('boat', d); perform _pr_make_day('bike', d);
+  for r in select id from pr_races where day = d order by id loop perform _pr_settle(r.id); end loop;
+end $$;
+
+-- 時計：終わったレースの確定、月の変わり目、きょうの番組づくり（毎分と、画面を開いたとき）
+create or replace function public._pr_tick() returns void
+language plpgsql volatile set search_path = public as $$
+declare r record; cur int := _kb_midx(_now()); last int; today date := _kb_jday(_now());
+begin
+  if not exists (select 1 from pr_racers limit 1) then perform _pr_seed(); end if;
+  for r in select x.id from pr_races x
+            where not x.settled and x.post + make_interval(secs => (coalesce(x.finish_ms, 0) + 15000) / 1000.0) <= _now()
+            order by x.id loop
+    perform _pr_settle(r.id);
+  end loop;
+  select value::int into last from app_settings where key = 'pr_month';
+  if last is null then insert into app_settings values ('pr_month', cur::text) on conflict (key) do nothing;
+  elsif last < cur then perform _pr_month(cur);
+  end if;
+  if not exists (select 1 from pr_races where day = today and sport = 'boat') then perform _pr_make_day('boat', today);
+  elsif not exists (select 1 from pr_races where day = today and sport = 'bike') then perform _pr_make_day('bike', today);
+  end if;
+end $$;
+
+-- きょうの番組（p_sport：boat 競艇・bike 競輪）
+create or replace function public.pr_day(p_sport text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); today date;
+begin
+  if coalesce(p_sport, '') not in ('boat', 'bike') then raise exception '競艇か競輪をえらんでください'; end if;
+  perform _pr_tick();
+  today := _kb_jday(_now());
+  return jsonb_build_object('now_ms', _kb_ms(_now()), 'day', today, 'sport', p_sport,
+    'races', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'no', r.no, 'rnum', r.rnum, 'sess', r.sess, 'post_ms', _kb_ms(r.post),
+        'venue', v.name, 'title', r.title, 'name', r.name, 'cls', r.cls, 'n', r.n, 'weather', r.weather, 'status', _pr_status(r),
+        'finish_ms', case when r.post <= _now() then r.finish_ms end,
+        'winner', case when r.settled then (select jsonb_build_object('num', e.num, 'name', p.name, 'name_en', p.name_en, 'ninki', e.ninki)
+                                              from pr_entries e join pr_racers p on p.id = e.racer_id where e.race_id = r.id and e.pos = 1) end,
+        'mine', (select count(*) from pr_tickets t where t.race_id = r.id and t.user_id = u)) order by r.post), '[]'::jsonb)
+      from pr_races r join pr_venues v on v.id = r.venue where r.day = today and r.sport = p_sport),
+    'balance', _bal(u));
+end $$;
+
+-- 1レース分（出走表・オッズ・自分の券。発走のあとは走り、確定のあとは払戻）
+create or replace function public.pr_race(p_race bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); r pr_races; v pr_venues; started boolean; ent jsonb; pays jsonb := '[]'::jsonb; mine jsonb; res int[]; wk int[];
+        cur int := _kb_midx(_now()); s int[]; k text;
+begin
+  perform _pr_tick();
+  select * into r from pr_races where id = p_race;
+  if not found then raise exception 'レースが見つかりません'; end if;
+  select * into v from pr_venues where id = r.venue;
+  started := r.post <= _now();
+  select jsonb_agg(jsonb_build_object(
+      'num', e.num, 'waku', e.waku, 'course', e.course, 'line', e.line, 'lpos', e.lpos, 'ninki', e.ninki, 'odds_win', e.odds_win,
+      'id', p.id, 'name', p.name, 'name_en', p.name_en, 'regno', p.regno, 'term', p.term, 'grade', p.grade, 'pref', p.pref, 'area', p.area,
+      'age', cur - p.born, 'style', p.style, 'rate', p.rate, 'r2', p.r2, 'r3', p.r3, 'st_avg', p.st_avg, 'f', p.f_count,
+      'motor', e.motor, 'motor_r2', (select m.r2 from pr_motors m where m.venue = r.venue and m.no = e.motor),
+      'last5', (select coalesce(jsonb_agg(jsonb_build_object('pos', x.pos, 'inc', x.incident, 'n', x.n) order by x.race_id desc), '[]'::jsonb)
+                  from (select e2.race_id, e2.pos, e2.incident, r2.n from pr_entries e2 join pr_races r2 on r2.id = e2.race_id
+                         where e2.racer_id = p.id and e2.race_id < r.id and r2.settled order by e2.race_id desc limit 5) x),
+      'run', case when started then jsonb_build_object('pos', e.pos, 'st', e.st, 'time_ms', e.time_ms, 'margin', e.margin, 'last', e.last,
+                                                       'inc', e.incident, 'inc_val', e.inc_val) end
+    ) order by e.num) into ent
+    from pr_entries e join pr_racers p on p.id = e.racer_id where e.race_id = r.id;
+  if r.settled then
+    select coalesce(array_agg(num order by pos), '{}') into res from pr_entries where race_id = r.id and pos is not null;
+    select array_agg(waku order by num) into wk from pr_entries where race_id = r.id;
+    if cardinality(res) >= 3 then
+      if r.sport = 'boat' then
+        pays := pays || jsonb_build_object('kind', 'tan', 'sel', array[res[1]], 'odds', _pr_odds(r.id, 'tan', array[res[1]]))
+                     || jsonb_build_object('kind', 'fuku', 'sel', array[res[1]], 'odds', _pr_odds(r.id, 'fuku', array[res[1]]))
+                     || jsonb_build_object('kind', 'fuku', 'sel', array[res[2]], 'odds', _pr_odds(r.id, 'fuku', array[res[2]]));
+      end if;
+      pays := pays || jsonb_build_object('kind', 'ex2', 'sel', res[1:2], 'odds', _pr_odds(r.id, 'ex2', res[1:2]));
+      s := array[least(res[1], res[2]), greatest(res[1], res[2])];
+      pays := pays || jsonb_build_object('kind', 'qn2', 'sel', s, 'odds', _pr_odds(r.id, 'qn2', s));
+      foreach s slice 1 in array array[[least(res[1], res[2]), greatest(res[1], res[2])], [least(res[1], res[3]), greatest(res[1], res[3])],
+                                       [least(res[2], res[3]), greatest(res[2], res[3])]] loop
+        pays := pays || jsonb_build_object('kind', 'wide', 'sel', s, 'odds', _pr_odds(r.id, 'wide', s));
+      end loop;
+      pays := pays || jsonb_build_object('kind', 'ex3', 'sel', res[1:3], 'odds', _pr_odds(r.id, 'ex3', res[1:3]));
+      select array_agg(z order by z) into s from unnest(res[1:3]) z;
+      pays := pays || jsonb_build_object('kind', 'tr3', 'sel', s, 'odds', _pr_odds(r.id, 'tr3', s));
+      if r.sport = 'bike' and r.n >= 9 then
+        pays := pays || jsonb_build_object('kind', 'wex', 'sel', array[wk[res[1]], wk[res[2]]], 'odds', _pr_odds(r.id, 'wex', array[wk[res[1]], wk[res[2]]]));
+        s := array[least(wk[res[1]], wk[res[2]]), greatest(wk[res[1]], wk[res[2]])];
+        pays := pays || jsonb_build_object('kind', 'wqn', 'sel', s, 'odds', _pr_odds(r.id, 'wqn', s));
+      end if;
+    end if;
+  end if;
+  select coalesce(jsonb_agg(jsonb_build_object('kind', t.kind, 'sel', t.sel, 'amount', t.amount, 'odds', t.odds, 'payout', t.payout, 'refund', t.refund) order by t.id), '[]'::jsonb)
+    into mine from pr_tickets t where t.race_id = r.id and t.user_id = u;
+  return jsonb_build_object('now_ms', _kb_ms(_now()),
+    'race', jsonb_build_object('id', r.id, 'sport', r.sport, 'no', r.no, 'rnum', r.rnum, 'day', r.day, 'sess', r.sess, 'post_ms', _kb_ms(r.post),
+      'status', _pr_status(r), 'title', r.title, 'name', r.name, 'cls', r.cls, 'n', r.n, 'weather', r.weather, 'wind', r.wind, 'wave', r.wave,
+      'venue', jsonb_build_object('name', v.name, 'water', v.water, 'bank', v.bank, 'straight', v.straight),
+      'finish_ms', case when started then r.finish_ms end, 'kimarite', case when started then r.kimarite end,
+      'plan', case when started then r.plan end,
+      'lines', case when r.sport = 'bike' then (select jsonb_agg(z.m order by z.l) from (select line l, jsonb_agg(num order by lpos) m from pr_entries where race_id = r.id group by line) z) end,
+      'rates', jsonb_build_object('tan', _pr_rate('tan'), 'ex3', _pr_rate('ex3'))),
+    'entries', coalesce(ent, '[]'::jsonb), 'payouts', pays, 'mine', mine, 'balance', _bal(u));
+end $$;
+
+-- 買う前にオッズを見る
+create or replace function public.pr_odds(p_race bigint, p_kind text, p_sel int[]) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); s int[];
+begin
+  s := _pr_check_sel(p_race, p_kind, p_sel);
+  return jsonb_build_object('sel', s, 'odds', _pr_odds(p_race, p_kind, s));
+end $$;
+
+-- 券を買う（オッズは買った時点で決まる）
+create or replace function public.pr_bet(p_race bigint, p_kind text, p_sel int[], p_amount bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); r pr_races; s int[]; od numeric;
+begin
+  perform _pr_tick();
+  select * into r from pr_races where id = p_race;
+  if not found then raise exception 'レースが見つかりません'; end if;
+  if _now() >= r.post - interval '60 seconds' then raise exception 'このレースの発売は締め切りました'; end if;
+  s := _pr_check_sel(p_race, p_kind, p_sel);
+  od := _pr_odds(p_race, p_kind, s);
+  perform _take(u, p_amount);
+  insert into pr_tickets(race_id, user_id, kind, sel, amount, odds) values (p_race, u, p_kind, s, p_amount, od);
+  return jsonb_build_object('odds', od, 'sel', s,
+    'mine', (select coalesce(jsonb_agg(jsonb_build_object('kind', t.kind, 'sel', t.sel, 'amount', t.amount, 'odds', t.odds, 'payout', t.payout, 'refund', t.refund) order by t.id), '[]'::jsonb)
+               from pr_tickets t where t.race_id = p_race and t.user_id = u),
+    'balance', _bal(u));
+end $$;
+
+-- 選手のくわしい成績
+create or replace function public.pr_racer(p_id int) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); p pr_racers;
+begin
+  select * into p from pr_racers where id = p_id;
+  if not found then raise exception '選手が見つかりません'; end if;
+  return jsonb_build_object('id', p.id, 'sport', p.sport, 'name', p.name, 'name_en', p.name_en, 'regno', p.regno, 'term', p.term, 'grade', p.grade,
+    'pref', p.pref, 'area', p.area, 'age', _kb_midx(_now()) - p.born, 'style', p.style, 'rate', p.rate, 'r2', p.r2, 'r3', p.r3, 'st_avg', p.st_avg,
+    'f', p.f_count, 'starts', p.starts, 'wins', p.wins, 'seconds', p.seconds, 'thirds', p.thirds, 'retired', p.retired,
+    'runs', (select coalesce(jsonb_agg(jsonb_build_object('day', r.day, 'venue', v.name, 'rnum', r.rnum, 'name', r.name, 'n', r.n, 'num', e.num,
+                 'pos', e.pos, 'st', e.st, 'inc', e.incident, 'ninki', e.ninki, 'kimarite', case when e.pos = 1 then r.kimarite end) order by r.id desc), '[]'::jsonb)
+               from (select * from pr_entries where racer_id = p.id order by race_id desc limit 30) e
+               join pr_races r on r.id = e.race_id join pr_venues v on v.id = r.venue where r.settled));
+end $$;
+
+-- 毎分：確定・番組づくり（pg_cron があるとき）
+do $$
+begin
+  if exists (select 1 from pg_namespace where nspname = 'cron') then
+    perform cron.schedule('ailinax-pr', '* * * * *', 'select public._pr_tick()');
+  end if;
+end $$;
+
 -- ---------------------------------------------------------------------
 -- 実行権限：内部用（_ではじまる）は画面から呼べないようにする
 -- ---------------------------------------------------------------------
@@ -12796,7 +13593,8 @@ begin
             '_bt_tok','_bt_auth','_bt_row','_bt_create','_bt_start','_bt_settle','_bt_cron','bt_ticket','bt_list','bt_state','bt_join','bt_leave',
             'bt_lobby_set','bt_bet','bt_react',
             '_lot_seed','_lot_prize','_lot_tier_name','_rnd','_lot_next_at','_lot_tick','_lot_draw','lot_buy','lot_state','dm_list','dm_thread','dm_send','_sp_json','support_list','support_thread','support_open','support_send','support_close',
-            'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse') loop
+            'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse',
+            '_pr_bonus','_pr_check_sel','_pr_hit','_pr_make_day','_pr_make_race','_pr_margin','_pr_month','_pr_name','_pr_new_racer','_pr_odds','_pr_prob','_pr_rate','_pr_seed','_pr_settle','_pr_status','_pr_tick','_pr_wx','pr_bet','pr_day','pr_odds','pr_race','pr_racer') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
       execute format('revoke all on function %s from authenticated', f.sig);
