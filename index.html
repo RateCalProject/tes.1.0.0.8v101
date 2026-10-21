@@ -938,7 +938,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=e104cffa","zh-TW":"zh-TW.js?v=608e90a7","zh-CN":"zh-CN.js?v=a2d919b8","ko":"ko.js?v=62f4b0ca","ko-Hani":"ko-Hani.js?v=230243c1"};
+  window.AX_LANGS = {"en":"en.js?v=e9da99a6","zh-TW":"zh-TW.js?v=3a17f3b0","zh-CN":"zh-CN.js?v=99daafba","ko":"ko.js?v=4b4378c1","ko-Hani":"ko-Hani.js?v=43d8a6e7"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -1295,7 +1295,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 <!-- 釣り（中身はスクリプトでつくる） -->
 <section id="vFish" class="view hidden">
   <div class="card">
-    <button class="btn s" id="fiBack">‹ 風の芽製作所</button>
+    <button class="btn s" id="fiBack">‹ ミニゲーム</button>
     <div class="row" style="margin-top:10px"><h2 style="margin:0">🎣 釣り</h2><span class="chip fi-tod"></span><span class="chip fi-sea"></span></div>
     <p class="muted small" style="margin:6px 0 0">釣り場をえらんで投げる（1回ごとにエサ代）。浮きがしずんだら「合わせる」、やりとりでは、魚があばれたらはなしてゆるめ、休んだら押して巻く。釣った魚はいけすに入れて、競り市で売れます。</p>
   </div>
@@ -1988,9 +1988,9 @@ function subStep(d) {
 // 遊戯の一覧：まず分類（公営競技・ミニゲーム・風の芽製作所・メダカ研究所）。分類を押すと、そこのゲームの一覧
 const GAME_GROUPS = [
   ['公営競技', '', ['vRace', 'vOwner', 'vBike', 'vBoat'], '🏇'],
-  ['ミニゲーム', 'その他', ['vSlot', 'vBj', 'vRou', 'vHilo', 'reversi', 'chess', 'shogi', 'onecard', 'mahjong'], '🎲'],
-  ['風の芽製作所', 'オリジナル', ['battle', 'vLot', 'auction', 'koikoi', 'vFish'], '🌱'],
-  ['メダカ研究所', '', ['medaka'], '🐟'],
+  ['ミニゲーム', 'その他', ['vSlot', 'vBj', 'vRou', 'vHilo', 'reversi', 'chess', 'shogi', 'onecard', 'mahjong', 'koikoi', 'auction', 'vFish'], '🎲'],
+  ['風の芽製作所', 'オリジナル', ['battle', 'vLot'], '🌱'],   // 風の芽製作所は、うちの作品だけ（花札・競り市・釣りはミニゲームへ）
+  ['メダカ研究所', '', ['kani'], '🐟'],
 ];
 const GAME_LIST = [
   ['vRace', '🏇', '競馬', '毎日 12:30〜13:30（昼競馬）と 16:30〜22:30（20:30はメインレース、そのあと深夜競馬）。みんなで同じレースに賭ける、いちばんの目玉'],
@@ -2002,7 +2002,7 @@ const GAME_LIST = [
   ['koikoi', '🎴', '花札こいこい', 'ふたりで遊ぶ花札。同じ月の札を合わせてとり、役をそろえる。「こいこい」でつづけるか「勝負」で上がるか（3・6・12か月。コンピューターとも）'],
   ['vFish', '🎣', '釣り', '堤防・磯・沖・川・湖で釣る。季節と時間で釣れる魚がかわる。釣った魚は競り市で売れる。毎日16:00から夕まずめ釣り大会'],
   ['vLot', '🎫', '風の芽ジャンボ', '週に1回の宝くじ（1枚100 X）。毎週日曜21:30に抽せん。1等はジャックポットで、当たりが出なければ次の回に持ちこし'],
-  ['medaka', '🐟', 'メダカ研究所', '準備中'],
+  ['kani', '🦀', 'カニノケンカ 3D', 'カニどうしの3D対戦アクション。はさむ・なげる・とっしんで、相手を場外に落とすか3秒ダウンさせたら1本、2本先取で勝ち（CPUとも・1台で2人でも。所持金は使いません）'],
   ['vSlot', '7', 'スロット', '絵柄を3つそろえて当たり'],
   ['vBj', '♠', 'ブラックジャック', 'カードの合計を21に近づけて、ディーラーと勝負'],
   ['vRou', '◎', 'ルーレット', '数字や色に賭けて、玉の止まる場所を当てる'],
@@ -2048,6 +2048,7 @@ $('#gameList').onclick = ev => {
   const g = r.dataset.g;
   if (r.classList.contains('soon')) return;
   if (g === 'battle') { location.href = 'battle/?bet=1'; return; }
+  if (g === 'kani') { location.href = 'kani/'; return; }   // カニノケンカ 3D（メダカ研究所。ログインなしでも遊べる別のページ）
   if (g.startsWith('v')) return go(g);
   if (!BOARD_GAMES[g]) return toast('準備中です。もうしばらくお待ちください');
   LB.game = g; go('vLobby');
@@ -3573,7 +3574,7 @@ function prBikeCap(S, t, K, order) {
 }
 
 /* =================================================================
-   釣り（風の芽製作所）
+   釣り（ミニゲーム）
    ================================================================= */
 const FI_TOD = { 1: '🌅 朝まずめ', 2: '☀ 日中', 4: '🌇 夕まずめ', 8: '🌙 夜' };
 const FI_SEA = { 1: '🌸 春', 2: '🌻 夏', 4: '🍁 秋', 8: '❄ 冬' };
