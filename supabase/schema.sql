@@ -3454,6 +3454,13 @@ begin
     'loans', my_loans());
 end $$;
 
+-- 持っている会社の数（社長として。審査中・活動中・休業中。国営・AIの会社はのぞく）と、持てる数（1人5社・管理者と副管理者は15社）
+create or replace function public._corp_owned(u uuid) returns int
+language sql stable set search_path = public as $$
+  select count(*)::int from companies where owner = u and status in ('pending', 'active', 'suspended') and not official and not ai $$;
+create or replace function public._corp_max(u uuid) returns int
+language sql stable set search_path = public as $$ select case when _role(u) in ('admin', 'sub') then 15 else 5 end $$;
+
 -- 企業の申請
 drop function if exists public.corp_apply(text, text, text);
 drop function if exists public.corp_apply(text, text, boolean, text, text);
@@ -3470,8 +3477,8 @@ begin
   inds := _ind_norm(p_inds, p_kind, false);
   if p_inds is not null and cardinality(inds) = 0 then raise exception '業種を1つ以上えらんでください'; end if;
   nm := case when coalesce(p_pre, true) then p_form || base else base || p_form end;
-  if (select count(*) from companies where owner = u and status in ('pending', 'active', 'suspended') and not official) >= 3 then
-    raise exception '会社は1人3つまでです';
+  if _corp_owned(u) >= _corp_max(u) then
+    raise exception '持てる会社は%社までです', _corp_max(u);
   end if;
   if exists (select 1 from companies where lower(name) = lower(nm) and status not in ('rejected', 'closed', 'bankrupt')) then
     raise exception 'その名前の会社はもうあります';
@@ -4241,8 +4248,8 @@ begin
   select * into t from _find_id(p_to);
   if t.rid is null then raise exception '社長にできるのはユーザーだけです'; end if;
   if t.rid = u then raise exception 'あなたがもう社長です'; end if;
-  if (select count(*) from companies where owner = t.rid and status in ('pending', 'active', 'suspended')) >= 3 then
-    raise exception 'その人はもう3社の社長です';
+  if not c.official and _corp_owned(t.rid) >= _corp_max(t.rid) then
+    raise exception 'その人はもう%社の社長です（持てる会社は%社まで）', _corp_owned(t.rid), _corp_max(t.rid);
   end if;
   select * into me from profiles where id = u;
   update companies set owner = t.rid where id = c.id;
@@ -15750,7 +15757,8 @@ begin
             '_gt_today','_gt_kinds','_gt_pool','_gt_label','_gt_ensure','_gt_xpb','_gt_need','_gt_lv','_gt_titles','_gt_title','_gt_tiers','_gt_tier','_gt_tname',
             '_gt_cpts','_gt_badge','_gt_add_xp','_gt_casino','_gt_pay','_gt_settle','_gt_event0','_gt_event','_gt_tx_trg','_gt_buy_trg','_gt_room_trg',
             '_gt_brief','_gt_board','game_tasks',
-            '_self_shares','_corp_parent','_corp_subs','_corp_hold_uid','_corp_hold_money','corp_share_offer') loop
+            '_self_shares','_corp_parent','_corp_subs','_corp_hold_uid','_corp_hold_money','corp_share_offer',
+            '_corp_owned','_corp_max') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
       execute format('revoke all on function %s from authenticated', f.sig);
