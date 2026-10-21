@@ -937,6 +937,31 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 .ho-pat button{height:44px;border-radius:8px;border:1px solid var(--line);background:var(--bg);cursor:pointer;padding:0}
 .ho-pat button.on{outline:3px solid var(--accent);outline-offset:1px}
 .ho-pat .silk{width:28px;height:28px;margin:0;vertical-align:middle}
+/* 所持馬（育成）・せり場 */
+.chip.ill{background:color-mix(in srgb,var(--red) 14%,transparent);color:var(--red);border-color:color-mix(in srgb,var(--red) 40%,transparent)}
+.hx-door .row{gap:8px;align-items:center}
+.hc-mini{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;margin-top:5px;font-size:12px}
+.hc-c{font-weight:800;white-space:nowrap}.hc-c.c1{color:var(--red)}.hc-c.c2{color:#D35400}.hc-c.c3{color:var(--muted)}.hc-c.c4{color:#2E8B57}.hc-c.c5{color:#13A35A}
+.hc-fat{display:inline-block;width:64px;height:7px;border-radius:4px;background:var(--soft);overflow:hidden;vertical-align:middle}
+.hc-fat i{display:block;height:100%;background:#3CB371}.hc-fat i.f2{background:#E0A020}.hc-fat i.f3{background:var(--red)}
+.hc-state{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0}
+.hc-state>div{background:var(--soft);border-radius:10px;padding:6px 8px;text-align:center;min-width:0}
+.hc-state small{display:block;color:var(--muted);font-size:11px}.hc-state b{font-size:17px}
+.hc-bar{display:grid;grid-template-columns:5.6em 1fr 1.6em 3.2em;align-items:center;gap:6px;margin:5px 0;font-size:13px}
+.hc-bar i{height:8px;border-radius:4px;background:var(--soft);overflow:hidden}.hc-bar i b{display:block;height:100%;background:var(--accent)}
+.hc-bar em{font-style:normal;font-weight:800;text-align:center}.hc-bar small{color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+.hc-menus{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+@media (max-width:440px){.hc-menus{grid-template-columns:repeat(2,1fr)}}
+.hc-menu{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:7px 7px;text-align:left;cursor:pointer;color:var(--ink);min-width:0}
+.hc-menu b{display:block;font-size:13px}.hc-menu small{display:block;font-size:10.5px;color:var(--muted);line-height:1.35}
+.hc-menu:disabled{opacity:.45;cursor:default}
+.hc-seg{display:flex;width:100%;margin:2px 0}.hc-seg button{flex:1;min-width:0}.hc-seg small{display:block;font-size:10px;font-weight:400}
+.hc-kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13px;margin:6px 0}.hc-kv span{color:var(--muted)}
+.hx-stats{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-top:6px}
+.hx-stats div{background:var(--soft);border-radius:8px;text-align:center;padding:3px 0;font-size:11px;min-width:0}
+.hx-stats b{display:block;font-size:15px}.hx-stats small{display:block;color:var(--muted);font-size:10px}
+.hx-form-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:6px 0}
+.hx-form-stats label{display:flex;flex-direction:column;gap:2px}.hx-form-stats input{width:100%!important}
 .kb-own{color:var(--muted)}.kb-mine td{background:color-mix(in srgb,var(--accent) 7%,transparent)}
 /* お金の動き（自分・会社） */
 .mh li{align-items:flex-start}
@@ -964,7 +989,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=33ecbe5b","zh-TW":"zh-TW.js?v=d8510a0e","zh-CN":"zh-CN.js?v=967b34cf","ko":"ko.js?v=6aae17f3","ko-Hani":"ko-Hani.js?v=ac7f9067"};
+  window.AX_LANGS = {"en":"en.js?v=b8f7a11f","zh-TW":"zh-TW.js?v=8c9bf918","zh-CN":"zh-CN.js?v=9883b387","ko":"ko.js?v=63c9fa22","ko-Hani":"ko-Hani.js?v=9bfe8a08"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -1043,6 +1068,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <p class="muted small" style="margin:8px 0 0">こまったこと・不具合・ルール違反の通報などを、運営（管理者）に送れます。あなたと管理者だけが見られます。</p>
   </div>
   <div class="card hidden" data-sub="msg" id="spInboxCard"><h3 style="margin-top:0">みんなからの問い合わせ（管理者）</h3><div id="spInbox"></div></div>
+  <div data-sub="horses" id="hoBox"></div>
 </section>
 
 <!-- 仕事 -->
@@ -1925,7 +1951,7 @@ const MENU = [
   ['vInfo', '情報', 'i', [['today', '今日'], ['cur', '通貨'], ['pub', '広報・書籍'], ['mkt', '相場'], ['tl', 'TL'], ['people', '人をさがす'], ['jack', '競馬億万長者']]],
   ['vWork', '仕事', '✎', [['jobs', '仕事をえらぶ'], ['stat', '給料'], ['corp', '企業ページ'], ['mywork', '勤め先']]],
   ['vGame', '遊戯', '♠', [['vGameList', '≡ 一覧'], ['vTask', '★ タスク'], ['vRace', '🏇 競馬'], ['vBoat', '🚤 競艇'], ['vBike', '🚲 競輪'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
-  ['vHome', 'メイン', '◉', [['menu', 'メニュー'], ['friend', 'フレンド'], ['msg', '連絡']]],
+  ['vHome', 'メイン', '◉', [['menu', 'メニュー'], ['horses', '所持馬'], ['friend', 'フレンド'], ['msg', '連絡']]],
   ['vCorp', '企業', LANG !== 'ja' ? '🏢' : '社', [['search', '会社検索'], ['review', '評価（500 X）'], ['pin', 'ピン留め'], ['desk', '相談'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所']]],
   ['vTax', '役所', LANG !== 'ja' ? '🏛' : '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['court', '訴え'], ['kokko', '国庫・番付']]],
   ['vMore', '設定', '⚙', [['prof', 'プロフィール'], ['style', 'スタイル'], ['hist', '記録'], ['rule', '規約']]],
@@ -1936,6 +1962,7 @@ const BETA = { vBoat: 'boat', vBike: 'bike', auction: 'auction', koikoi: 'koikoi
 const betaHidden = id => !!BETA[id] && (!ME.beta || ME.beta.includes(BETA[id]));
 $('#tabs .wrap').innerHTML = MENU.map(m => `<button data-v="${m[0]}" class="${m[0] === 'vHome' ? 'tb-mid' : ''}"><b>${m[2]}</b>${m[1]}${m[0] === 'vHome' ? '<i class="tb-n hidden" id="msgN"></i>' : ''}</button>`).join('');
 function go(v, sub) {
+  if (v === 'vOwner') { v = 'vHome'; sub = 'horses'; }   // 馬主は、メインの「所持馬」に
   const main = GAMES.includes(v) ? 'vGame' : (MENU_OF[v] ? v : 'vInfo');
   const subs = MENU_OF[main][3].filter(x => (x[0] !== 'vRace' || RACE_ON) && !betaHidden(x[0]));
   if (main === 'vGame' && GAMES.includes(v)) sub = v;
@@ -2029,7 +2056,7 @@ const GAME_GROUPS = [
 ];
 const GAME_LIST = [
   ['vRace', '🏇', '競馬', '毎日 12:30〜13:30（昼競馬）と 16:30〜22:30（20:30はメインレース、そのあと深夜競馬）。みんなで同じレースに賭ける、いちばんの目玉'],
-  ['vOwner', '🐴', '馬主', '毎週土曜21:00から24時間、2歳馬のせり（売れ残りは定価）。名前・勝負服・出るレースを決めて走らせ、5着までに入ると賞金'],
+  ['vOwner', '🐴', '馬主', '新東京競馬競市のせりで馬を買い、調教・エサ・休養で育ててレースへ。5着までに入ると賞金、走るたびに出走手当（メイン →「所持馬」）'],
   ['vBike', '🚲', '競輪', '毎日 13:50〜15:40（12R）。同じ地区の選手がラインを組んで走る。2車単・3連単・2枠複など7種類の車券'],
   ['vBoat', '🚤', '競艇', '毎日 朝 9:30〜11:20（12R）と ミッドナイト 22:40〜23:50（8R）。6艇で3周。単勝から3連単まで7種類の舟券'],
   ['battle', '⚔', '市区町村バトル', '日本全国の市区町村の地図で遊ぶ陣取り将棋（最大16人）。賭けありの部屋では、所持金を賭けて対戦できます（観戦して賭けることも）'],
@@ -2278,7 +2305,7 @@ function kbRenderList() {
   const rs = KD.races;
   const focus = rs.find(r => ['closed', 'running', 'judging'].includes(kbStatus(r))) || rs.find(r => kbStatus(r) === 'sale');
   const dd = new Date(KD.day + 'T12:00:00+09:00');
-  let h = `${betaHidden('vOwner') ? '' : '<button class="btn s" data-owner style="float:right;margin-top:14px">🐴 馬主</button>'}<h2 style="margin-bottom:2px">${dd.getMonth() + 1}月${dd.getDate()}日（${'日月火水木金土'[dd.getDay()]}）の開催</h2>
+  let h = `${betaHidden('vOwner') ? '' : '<button class="btn s" data-owner style="float:right;margin-top:14px">🐴 所持馬</button>'}<h2 style="margin-bottom:2px">${dd.getMonth() + 1}月${dd.getDate()}日（${'日月火水木金土'[dd.getDay()]}）の開催</h2>
     <p class="muted small" style="margin:0 0 6px">昼競馬は12:30から10分おきに7R（13:30まで）。ふだんのレースは16:30・17:30・18:30・19:30から7Rずつ。メインレースは20:30。深夜競馬は20:42・21:42から7Rずつ（22:30の最終レースまで）</p>`;
   if (focus) {
     const s = kbStatus(focus), left = (focus.post_ms - kbNow()) / 1000;
@@ -2517,12 +2544,13 @@ function kbRenderResult() {
    馬主（競走馬のせり・定価・自分の馬）
    ================================================================= */
 const HO = { st: null, timer: null, last: 0, busy: false };
-const HO_EVAL = { A: 'A（とてもよさそう）', B: 'B（よさそう）', C: 'C（ふつう）', D: 'D（いまひとつ）' };
+const HO_EVAL = { S: 'S（すばらしい）', A: 'A（とてもよさそう）', B: 'B（よさそう）', C: 'C（ふつう）', D: 'D（いまひとつ）' };
 const HO_DIST = { short: '短距離むき', mile: 'マイルむき', mid: '中距離むき', long: '長距離むき' };
 const HO_TURF = { turf: '芝むき', dirt: 'ダートむき', both: '芝もダートも' };
 const hoJ = ms => new Date(ms + 9 * 3600e3);
 const hoMD = ms => { const j = hoJ(ms); return `${j.getUTCMonth() + 1}月${j.getUTCDate()}日（${'日月火水木金土'[j.getUTCDay()]}）`; };
 const hoLeft = ms => { const s = Math.max(0, Math.ceil(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+  if (s >= 86400) return `${Math.floor(s / 86400)}日${Math.floor(s % 86400 / 3600)}時間`;
   return h ? `${h}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}` : `${m}:${String(x).padStart(2, '0')}`; };
 const hoKata = s => String(s || '').trim().replace(/[ぁ-ゖ]/g, c => String.fromCharCode(c.charCodeAt(0) + 0x60)).replace(/ｰ/g, 'ー');
 const hoLine = H => `<span>${H.sex}${H.age}</span>・<span>${COAT[H.coat] ? COAT[H.coat][0] : ''}</span>・<span>${STYLE[H.style]}</span>・<span>馬体重 ${H.body}kg</span>`;
@@ -2530,87 +2558,85 @@ const hoLine = H => `<span>${H.sex}${H.age}</span>・<span>${COAT[H.coat] ? COAT
 const hoNames = ns => { if (window.I18N && I18N.addHorse) ns.forEach(n => n && I18N.addHorse(n)); };
 const hoEval = I => `<div class="ho-eval"><span>見立て <b>${esc(HO_EVAL[I.eval] || '—')}</b></span><span>${esc(HO_DIST[I.dist] || '')}</span><span>${esc(HO_TURF[I.turf] || '')}</span></div>`;
 
+const HC_STAT = [['spd', 'スピード'], ['sta', 'スタミナ'], ['pow', 'パワー'], ['guts', '根性'], ['wis', '賢さ']];
+const HC_COND = ['絶不調', '不調', '普通', '好調', '絶好調'], HC_CONDI = ['⬇', '↘', '➡', '↗', '⬆'];
+const HC_GROW = { early: '早熟', normal: '普通', late: '晩成' };
+const HC_ROOM = { big: 'まだまだのびる', mid: 'まだのびる', small: 'そろそろ頭打ち', none: '頭打ち' };
+const HC_MODE = [['auto', 'おまかせ'], ['reg', '登録したレースだけ'], ['rest', '休ませる']];
+const HC_FEED = ['normal', 'good', 'best'], HC_MENU = ['hill', 'wood', 'spar', 'gate', 'pool', 'turf', 'dirt', 'rest'];
+const HC_FX = { hill: 'スピード・パワー', wood: 'スタミナ・根性', spar: '根性・スピード', gate: '賢さ', pool: 'スタミナ・疲れがとれる',
+  turf: 'スピード・芝むきに', dirt: 'パワー・ダートむきに', rest: '疲れがとれる・調子が上がる' };
+const hcGrade = v => v >= 90 ? 'S' : v >= 80 ? 'A' : v >= 70 ? 'B' : v >= 60 ? 'C' : v >= 50 ? 'D' : v >= 40 ? 'E' : v >= 30 ? 'F' : 'G';
+const hcFat = f => f >= 80 ? '限界' : f >= 60 ? 'かなり疲れている' : f >= 40 ? '疲れている' : f >= 20 ? '少し疲れ' : '元気';
+const hcFatBar = f => `<span class="hc-fat"><i class="${f >= 60 ? 'f3' : f >= 30 ? 'f2' : ''}" style="width:${Math.max(3, f)}%"></i></span>`;
+const hcCond = c => `<span class="hc-c c${c}">${HC_CONDI[c - 1]} ${HC_COND[c - 1]}</span>`;
+const hcDist = C => `${fmt(Math.max(1000, Math.round((C.dist - C.width / 2) / 100) * 100))}〜${fmt(Math.min(3600, Math.round((C.dist + C.width / 2) / 100) * 100))}m`;
+const hcTurf = t => t >= 0.62 ? '芝むき' : t <= 0.38 ? 'ダートむき' : '芝もダートも';
+const hcHeavy = v => v >= 0.3 ? '重い馬場が得意' : v <= -0.3 ? '重い馬場が苦手' : '馬場はふつう';
+const hoOn = () => view === 'vHome' && !!$('#hoBox') && !$('#hoBox').classList.contains('subhide');
+
 async function hoLoad() {
   if (HO.busy) return; HO.busy = true;
-  try { HO.st = await kbCall('owner_state'); HO.last = Date.now(); setBal(HO.st.balance); hoRender(); }
-  catch (e) { toast(e.message); }
+  try { HO.st = await kbCall('owner_state'); HO.last = Date.now(); setBal(HO.st.balance); hoRender(); if (HC.id) hcSheetRender(); }
+  catch (e) { const el = $('#hoBox'); if (el && !HO.st) el.innerHTML = `<div class="card"><p class="muted small" style="margin:0">${esc(e.message)}</p></div>`; else toast(e.message); }
   HO.busy = false;
   if (!HO.timer) HO.timer = setInterval(hoTick, 1000);
 }
 function hoTick() {
-  if (view !== 'vOwner') { clearInterval(HO.timer); HO.timer = null; return; }
-  const S = HO.st; if (!S) return;
+  if (!hoOn()) { clearInterval(HO.timer); HO.timer = null; return; }
+  if (!HO.st) return;
   const now = kbNow();
-  $$('#vOwner [data-left]').forEach(el => { el.textContent = hoLeft(Number(el.dataset.left) - now); });
-  const L = S.sale.lots || [], open = L.some(l => l.status === 'open');
-  const due = L.some(l => l.status === 'open' && l.ends_ms <= now) || (!L.length && S.next_ms <= now);
-  if ((due && Date.now() - HO.last > 3000) || (open && Date.now() - HO.last > 15000) || Date.now() - HO.last > 60000) hoLoad();
+  $$('#hoBox [data-left]').forEach(el => { el.textContent = hoLeft(Number(el.dataset.left) - now); });
+  if (Date.now() - HO.last > 60000 && !HC.id) hoLoad();
 }
 // 操作のあと（サーバーが新しい状態を返す）
 async function hoDo(fn, args, ok) {
-  try { const d = await call(fn, args); HO.st = d; HO.last = Date.now(); setBal(d.balance); hoRender(); if (ok) toast(ok); return true; }
+  try { const d = await call(fn, args); HO.st = d; HO.last = Date.now(); setBal(d.balance); hoRender(); if (HC.id) hcSheetRender(); if (ok) toast(ok); return d; }
   catch (e) { toast(e.message); return false; }
 }
 
 function hoRender() {
-  const S = HO.st, c = S.c;
-  hoNames([...(S.sale.lots || []), ...(S.fixed || []), ...(S.resale || [])].map(l => l.horse.name).concat((S.horses || []).map(x => x.name)));
+  const S = HO.st, el = $('#hoBox'); if (!S || !el) return;
+  hoNames([...(S.fixed || []), ...(S.resale || [])].map(l => l.horse.name).concat((S.horses || []).map(x => x.name)));
   const mo = S.month || { prize: 0, cost: 0 };
   let h = `<div class="card">
-    <button class="btn s" id="hoBack">‹ 競馬</button>
-    <h2 style="margin:10px 0 0">🐴 馬主</h2>
-    <p class="muted small" style="margin:6px 0 0">毎週土曜21:00から24時間、2歳馬のせり（${c.nsale}頭）。いちばん高い値をつけた人が馬主になります。売れ残りは定価 ${fmt(c.fixed)} X で、次のせりまで買えます。5着までに入ると賞金、毎日6時に預託料（1頭 ${fmt(c.upkeep)} X）。持てるのは${c.max}頭まで。</p>
+    <div class="row"><h2 style="margin:0" class="grow">🐴 所持馬</h2><button class="btn s" id="hoRace">🏇 競馬</button></div>
+    <p class="muted small" style="margin:6px 0 0">新東京競馬競市のせりで馬を買って、調教・エサ・休養で育てて、レースに出しましょう。5着までに入ると賞金、走るたびに出走手当。エサ代は毎朝6時。病気やけがをすることもあり、寿命もあります。持てる馬の数に上限はありません。</p>
     <div class="ho-me">${S.silks ? `<span class="silk big" style="background:${silkCss(S.silks.silk1, S.silks.silk2, S.silks.silk_pat)}"></span>` : '<span class="silk big" style="background:var(--soft)"></span>'}
       <span class="grow"><b>あなたの勝負服</b><small>${S.silks ? '持っている馬みんなが、この勝負服で走ります' : 'はじめて馬を持つときに決まります（あとからかえられます）'}</small></span>
       <button class="btn s" data-silks>かえる</button></div>
-    <p class="small" style="margin:8px 0 0">今月：賞金 <b style="color:var(--win)">+${fmt(mo.prize)} X</b>・費用 <b>${fmt(mo.cost)} X</b><span class="muted">（せり・定価・預託料）</span></p>
+    <p class="small" style="margin:8px 0 0">今月：賞金・手当 <b style="color:var(--win)">+${fmt(mo.prize)} X</b>・費用 <b>${fmt(mo.cost)} X</b><span class="muted">（せり・エサ・調教・獣医など）</span></p>
   </div>`;
-  h += hoSaleHtml() + hoFixedHtml() + hoResaleHtml() + hoMineHtml();
-  const el = $('#vOwner'); el.innerHTML = h;
-  $('#hoBack').onclick = () => go('vRace');
+  h += hoAuctionHtml() + hoMineHtml() + hoFixedHtml() + hoResaleHtml();
+  el.innerHTML = h;
+  $('#hoRace').onclick = () => go('vRace');
   el.querySelector('[data-silks]').onclick = hoSilks;
+  el.querySelectorAll('[data-hx]').forEach(b => b.onclick = hxOpen);
   el.querySelectorAll('.hn[data-h]').forEach(x => x.onclick = () => kbHorse(Number(x.dataset.h)));
-  el.querySelectorAll('[data-bid]').forEach(b => b.onclick = () => hoBid(Number(b.dataset.bid), Number(b.dataset.min), b.dataset.nm));
+  el.querySelectorAll('[data-hcopen]').forEach(b => b.onclick = () => hcOpen(Number(b.dataset.hcopen)));
   el.querySelectorAll('[data-buy]').forEach(b => b.onclick = () => {
     if (!confirm(`「${b.dataset.nm}」を ${fmt(Number(b.dataset.price))} X で買いますか？`)) return;
     hoDo('owner_buy', { p_sale: Number(b.dataset.buy) }, `「${b.dataset.nm}」はあなたの馬になりました`);
   });
   el.querySelectorAll('[data-act]').forEach(b => b.onclick = () => hoAct(b.dataset.act, Number(b.dataset.id)));
 }
-function hoSaleHtml() {
-  const S = HO.st, L = S.sale.lots || [], now = kbNow();
-  const openL = L.filter(l => l.status === 'open'), ends = Math.max(0, ...openL.map(l => l.ends_ms));
-  let h = `<div class="card"><div class="row"><h3 style="margin:0">🔨 せり</h3>`;
-  if (openL.length) h += `<span class="chip run">開催中</span><span class="muted small" style="margin-left:auto">のこり <b data-left="${ends}">${hoLeft(ends - now)}</b></span>`;
-  else if (L.length) h += '<span class="chip">終わりました</span>';
-  h += '</div>';
-  if (!L.length) {
-    h += `<p class="small" style="margin:8px 0 0">次のせり：<b>${hoMD(S.next_ms)} 21:00</b>（あと <b data-left="${S.next_ms}">${hoLeft(S.next_ms - now)}</b>）</p>`;
-  } else {
-    h += `<p class="muted small" style="margin:6px 0 0">${hoMD(S.sale.opens_ms)} 21:00 からの24時間。つけた値はあずかり、ほかの人がもっと高い値をつけたら返します。終わる${S.c.snipe_min}分前からは、値がつくたびに${S.c.snipe_min}分のびます。</p>
-      <div class="ho-list">${L.map(hoLotHtml).join('')}</div>`;
-    if (!openL.length) h += `<p class="small" style="margin:8px 0 0">次のせり：<b>${hoMD(S.next_ms)} 21:00</b></p>`;
-  }
-  return h + '</div>';
-}
-function hoLotHtml(l, i) {
-  const H = l.horse, now = kbNow(), open = l.status === 'open' && l.ends_ms > now;
-  const st = l.status === 'sold' ? (l.won ? '<span class="chip sale">落札しました</span>' : `<span class="chip">落札 ${fmt(l.sold_price)} X</span>`)
-    : l.status === 'unsold' ? '<span class="chip">売れ残り（定価へ）</span>'
-    : l.top_me ? '<span class="chip sale">あなたがいちばん</span>' : '';
-  return `<div class="ho-lot${l.top_me || l.won ? ' me' : ''}">
-    <div class="row"><span class="ho-no">${i + 1}</span>${silk(H)}<b class="hn" data-h="${H.id}">${esc(H.name)}</b>${st}</div>
-    <small class="muted">${hoLine(H)}</small>${hoEval(l.info || {})}
-    <div class="row" style="margin-top:6px">${l.price != null ? `<span>いまの値 <b class="ho-p">${fmt(l.price)} X</b><small class="muted">（${l.nbids}回）</small></span>` : `<span>はじまりの値 <b class="ho-p">${fmt(l.start)} X</b></span>`}
-      ${open && l.ends_ms - now < 600000 ? `<span class="muted small">のこり <b data-left="${l.ends_ms}">${hoLeft(l.ends_ms - now)}</b></span>` : ''}
-      ${open && !l.top_me ? `<button class="btn main s" data-bid="${l.id}" data-min="${l.min}" data-nm="${esc(H.name)}" style="margin-left:auto">値をつける（${fmt(l.min)} X〜）</button>` : ''}</div>
-  </div>`;
+// せり場の入口
+function hoAuctionHtml() {
+  const A = HO.st.auction || {}, now = kbNow();
+  if (!A.co) return '';
+  let s;
+  if (A.co.status !== 'active') s = '<span class="chip">休業中</span>';
+  else if (A.open) s = `<span class="chip run">開催中 ${A.open}頭</span>${A.end_ms ? `<span class="muted small">次のしめきりまで <b data-left="${A.end_ms}">${hoLeft(A.end_ms - now)}</b></span>` : ''}`;
+  else if (A.soon) s = `<span class="chip">まもなく</span><span class="muted small">はじまるまで <b data-left="${A.next_ms}">${hoLeft(A.next_ms - now)}</b></span>`;
+  else s = '<span class="muted small">いまは出品がありません</span>';
+  return `<div class="card hx-door"><div class="row"><b class="grow">🔨 ${esc(A.co.name)}のせり</b><button class="btn main s" data-hx>せり場へ</button></div>
+    <div class="row" style="margin-top:6px;flex-wrap:wrap">${s}${A.holding ? `<span class="chip sale">あなたがいちばん ${A.holding}頭</span>` : ''}</div></div>`;
 }
 function hoFixedHtml() {
-  const S = HO.st, F = S.fixed || [];
+  const F = HO.st.fixed || [];
   if (!F.length) return '';
   return `<div class="card"><h3 style="margin:0">🏷 定価の馬</h3>
-    <p class="muted small" style="margin:6px 0 0">せりで売れ残った馬です。次のせり（${hoMD(S.next_ms)} 21:00）まで、だれでも定価で買えます。そのあとは、ふつうの馬としてデビューします。</p>
+    <p class="muted small" style="margin:6px 0 0">せりで売れ残った馬です。期限まで、だれでも定価で買えます。そのあとは、ふつうの馬としてデビューします。</p>
     <div class="ho-list">${F.map(f => `<div class="ho-lot"><div class="row">${silk(f.horse)}<b class="hn" data-h="${f.horse.id}">${esc(f.horse.name)}</b>
       <button class="btn main s" data-buy="${f.id}" data-price="${f.price}" data-nm="${esc(f.horse.name)}" style="margin-left:auto">買う（${fmt(f.price)} X）</button></div>
       <small class="muted">${hoLine(f.horse)}</small>${hoEval(f.info || {})}</div>`).join('')}</div></div>`;
@@ -2619,46 +2645,52 @@ function hoResaleHtml() {
   const R = HO.st.resale || [];
   if (!R.length) return '';
   return `<div class="card"><h3 style="margin:0">🤝 売り出し中の馬</h3>
-    <p class="muted small" style="margin:6px 0 0">馬主が売りに出している馬です。買うと、その場であなたの馬になります（売り手は売り値の${HO.st.c.fee}%を手数料として引かれます）。</p>
+    <p class="muted small" style="margin:6px 0 0">馬主が売りに出している馬です。買うと、その場であなたの馬になります（売り手は売り値の${HO.st.c.fee}%を手数料として引かれます）。能力や調子は、買ってから見られます。</p>
     <div class="ho-list">${R.map(r => `<div class="ho-lot"><div class="row">${silk(r.horse)}<b class="hn" data-h="${r.horse.id}">${esc(r.horse.name)}</b>
       ${r.mine ? '<span class="chip">あなたが売り出し中</span>' : `<button class="btn main s" data-buy="${r.id}" data-price="${r.price}" data-nm="${esc(r.horse.name)}" style="margin-left:auto">買う（${fmt(r.price)} X）</button>`}</div>
       <small class="muted">${hoLine(r.horse)}・<span>${CLASSN[r.horse.class]}</span>・<span>${r.horse.starts}戦${r.horse.wins}勝</span>${r.horse.graded ? `・<span>重賞${r.horse.graded}勝</span>` : ''}</small>
       <small class="muted">売り手 <span translate="no">${esc(r.seller || '—')}</span>・${fmt(r.price)} X</small></div>`).join('')}</div></div>`;
 }
 function hoMineHtml() {
-  const S = HO.st, M = S.horses || [], act = M.filter(x => !x.retired), ret = M.filter(x => x.retired);
-  let h = `<div class="card"><div class="row"><h3 style="margin:0">🐎 自分の馬</h3><span class="muted small"><span>${act.length}/${S.c.max}頭</span>${S.holding ? `<span>（せりで${S.holding}頭に値をつけています）</span>` : ''}</span></div>`;
-  if (!M.length) return h + '<p class="muted small" style="margin:6px 0 0">まだいません。せりか定価で買うと、ここに出ます。</p></div>';
-  h += `<p class="muted small" style="margin:6px 0 0">出るレースは、あしたの番組から登録できます（登録しなければ、出られるレースに自動で出ます）。あしたの番組は毎日0時ごろに出ます。</p>
+  const M = HO.st.horses || [], dead = M.filter(x => x.care && x.care.dead), act = M.filter(x => !x.retired), ret = M.filter(x => x.retired && !(x.care && x.care.dead));
+  let h = `<div class="card"><div class="row"><h3 style="margin:0" class="grow">🐎 自分の馬</h3><span class="muted small">${act.length}頭</span></div>`;
+  if (!act.length) h += '<p class="muted small" style="margin:6px 0 0">まだいません。せり場で落札するか、売り出し中の馬を買うと、ここに出ます。</p>';
+  else h += `<p class="muted small" style="margin:6px 0 0">「育成」から、調教（1日1回）・エサ・出走の方針・出走登録ができます。おまかせの馬は、出られるレースに自動で出ます。</p>
     <div class="ho-list">${act.map(hoMyHtml).join('')}</div>`;
-  if (ret.length) h += `<details style="margin-top:8px"><summary class="small">引退した馬（${ret.length}頭）</summary><div class="ho-list">${ret.map(hoMyHtml).join('')}</div></details>`;
+  if (ret.length) h += `<details style="margin-top:8px"><summary class="small">牧場の馬（引退・${ret.length}頭）</summary><div class="ho-list">${ret.map(hoMyHtml).join('')}</div></details>`;
+  if (dead.length) h += `<details style="margin-top:8px"><summary class="small">思い出（${dead.length}頭）</summary><div class="ho-list">${dead.map(hoMyHtml).join('')}</div></details>`;
   return h + '</div>';
 }
-function hoMyHtml(H) {
-  const f = (H.last5 || []).map(x => x.pos == null ? `<i>${x.inc === 'jogai' ? '除' : '中'}</i>` : `<i class="p${x.pos <= 3 ? x.pos : 0}">${x.pos}</i>`).join('');
+function hoStLine(H) {
   let st = '';
   if (H.entry) st = `<small class="ho-st">出走：${hoMD(H.entry.post_ms)} ${hhmm(H.entry.post_ms)} ${esc(H.entry.venue)} ${H.entry.rnum}R「${esc(H.entry.name)}」${H.entry.uma}番</small>`;
   else if (H.reg) st = `<small class="ho-st">登録：あした ${hhmm(H.reg.post_ms)} ${esc(H.reg.venue)} ${H.reg.rnum}R「${esc(H.reg.name)}」</small>`;
   if (H.listing) st += `<small class="ho-st">売り出し中：${fmt(H.listing.price)} X</small>`;
+  return st;
+}
+function hoMyHtml(H) {
+  const C = H.care || {}, X = HO.st.hc;
+  const f = (H.last5 || []).map(x => x.pos == null ? `<i>${x.inc === 'jogai' ? '除' : '中'}</i>` : `<i class="p${x.pos <= 3 ? x.pos : 0}">${x.pos}</i>`).join('');
+  let chips = '';
+  if (C.dead) chips = '<span class="chip">🕊 思い出</span>';
+  else if (H.retired) chips = '<span class="chip">引退</span>';
+  else {
+    if (C.ill) chips += `<span class="chip ill">${esc(X.ills[C.ill].name)}・あと${C.ill_days}日</span>`;
+    else if (C.mode === 'rest') chips += '<span class="chip">休養中</span>';
+    else if (C.mode === 'reg') chips += '<span class="chip">登録したレースだけ</span>';
+  }
   let b = '';
-  if (!H.retired) {
-    if (H.can_name) b += `<button class="btn s" data-act="name" data-id="${H.id}">名前をつける</button>`;
+  if (H.retired) b = `<button class="btn s" data-act="release" data-id="${H.id}">${C.dead ? '思い出から消す' : '手放す'}</button>`;
+  else {
+    b = `<button class="btn main s" data-hcopen="${H.id}">${C.trained || C.ill ? '育成' : '育成（調教まだ）'}</button>`;
     if (H.can && H.can.length) b += `<button class="btn s" data-act="reg" data-id="${H.id}">${H.reg ? '登録をかえる' : '出走登録'}</button>`;
-    if (H.reg) b += `<button class="btn s" data-act="unreg" data-id="${H.id}">登録をやめる</button>`;
-    b += H.listing ? `<button class="btn s" data-act="unsell" data-id="${H.id}">売り出しをやめる</button>` : `<button class="btn s" data-act="sell" data-id="${H.id}">売りに出す</button>`;
-    b += `<button class="btn s" data-act="retire" data-id="${H.id}">引退</button>`;
   }
   return `<div class="ho-lot">
-    <div class="row">${silk(H)}<b class="hn" data-h="${H.id}">${esc(H.name)}</b>${H.retired ? '<span class="chip">引退</span>' : ''}${f ? `<span class="form" style="margin-left:auto">${f}</span>` : ''}</div>
+    <div class="row">${silk(H)}<b class="hn" data-h="${H.id}">${esc(H.name)}</b>${chips}${f ? `<span class="form" style="margin-left:auto">${f}</span>` : ''}</div>
     <small class="muted">${hoLine(H)}・<span>${CLASSN[H.class]}</span>・<span>${H.starts}戦${H.wins}勝</span>${H.graded ? `・<span>重賞${H.graded}勝</span>` : ''}・<span>賞金 ${fmt(H.earned)} X</span></small>
-    ${st}${b ? `<div class="ho-btns">${b}</div>` : ''}</div>`;
-}
-async function hoBid(id, min, nm) {
-  const v = prompt(`「${nm}」にいくらの値をつけますか？（${fmt(min)} X 以上。つけた値はあずかります）`, String(min));
-  if (v === null) return;
-  const n = Math.floor(Number(String(v).replace(/[,，\s]/g, '')));
-  if (!(n > 0)) return toast('数字で入れてください');
-  hoDo('owner_bid', { p_sale: id, p_amount: n }, `「${nm}」に ${fmt(n)} X の値をつけました`);
+    ${C.dead ? `<small class="muted">${esc(C.dead_why || '')}（${hoMD(C.dead_ms)}）</small>` : ''}
+    ${!H.retired && C.spd != null ? `<div class="hc-mini">${hcCond(C.cond)}<span>総合 <b>${hcGrade(C.total)}</b></span><span>疲れ ${hcFatBar(C.fatigue)} <span class="muted">${hcFat(C.fatigue)}</span></span></div>` : ''}
+    ${hoStLine(H)}<div class="ho-btns">${b}</div></div>`;
 }
 async function hoAct(a, id) {
   const H = (HO.st.horses || []).find(x => x.id === id); if (!H) return;
@@ -2680,9 +2712,178 @@ async function hoAct(a, id) {
   }
   if (a === 'unsell') return hoDo('owner_sell', { p_horse: id, p_price: null }, '売り出しをやめました');
   if (a === 'retire') {
-    if (!confirm(`「${H.name}」を引退させますか？もうレースには出ません（預託料もかからなくなります）。もとに戻せません。`)) return;
+    if (!confirm(`「${H.name}」を引退させますか？もうレースには出ません。牧場ですごし（費用はかかりません）、寿命まで生きます。もとに戻せません。`)) return;
     return hoDo('owner_retire', { p_horse: id }, `「${H.name}」は引退しました`);
   }
+  if (a === 'release') {
+    const dead = H.care && H.care.dead;
+    if (!confirm(dead ? `「${H.name}」を思い出から消しますか？` : `「${H.name}」を手放しますか？（ほかの牧場にひきとってもらいます。もとに戻せません）`)) return;
+    return hoDo('hc_release', { p_horse: id }, dead ? '思い出から消しました' : `「${H.name}」を手放しました`);
+  }
+}
+
+/* ---------- 育成（1頭のくわしい画面） ---------- */
+const HC = { id: null, m: null };
+function hcOpen(id) { HC.id = id; if (HC.m) HC.m.remove(); HC.m = null; hcSheetRender(); }
+function hcClose() { if (HC.m) HC.m.remove(); HC.m = null; HC.id = null; }
+function hcSheetRender() {
+  const S = HO.st, H = S && (S.horses || []).find(x => x.id === HC.id);
+  if (!H || !H.care) return hcClose();
+  const C = H.care, X = S.hc, busy = C.dead || H.retired;
+  if (!HC.m || !document.body.contains(HC.m)) {
+    HC.m = document.createElement('div'); HC.m.className = 'modal'; HC.m.innerHTML = '<div class="sheet"></div>';
+    HC.m.onclick = ev => { if (ev.target === HC.m || ev.target.hasAttribute('data-x')) hcClose(); };
+    document.body.appendChild(HC.m);
+  }
+  const sh = HC.m.querySelector('.sheet'), y = sh.scrollTop;
+  const bars = HC_STAT.map(([k, nm]) => `<div class="hc-bar"><span>${nm}</span><i><b style="width:${Math.min(100, C[k])}%"></b></i><em>${hcGrade(C[k])}</em><small>${Number(C[k]).toFixed(1)}</small></div>`).join('');
+  const ill = C.ill ? X.ills[C.ill] : null;
+  let body = '';
+  if (!busy) {
+    const menus = HC_MENU.map(k => { const mm = X.menus[k], dis = C.trained || (C.ill && k !== 'rest');
+      return `<button class="hc-menu" data-tr="${k}" ${dis ? 'disabled' : ''}><b>${esc(mm.name)}</b><small>${esc(HC_FX[k])}</small><small>${mm.fee ? fmt(mm.fee) + ' X' : '無料'}</small></button>`; }).join('');
+    const feeds = HC_FEED.map(k => `<button data-feed="${k}" class="${C.feed === k ? 'on' : ''}">${esc(X.feeds[k].name)}<small>${fmt(X.feeds[k].fee)} X／日</small></button>`).join('');
+    const modes = HC_MODE.map(([k, nm]) => `<button data-mode="${k}" class="${C.mode === k ? 'on' : ''}">${nm}</button>`).join('');
+    let btn = '';
+    if (H.can && H.can.length && C.mode !== 'rest') btn += `<button class="btn main s" data-act="reg" data-id="${H.id}">${H.reg ? '登録をかえる' : '出走登録（あしたのレース）'}</button>`;
+    if (H.reg) btn += `<button class="btn s" data-act="unreg" data-id="${H.id}">登録をやめる</button>`;
+    if (H.can_name) btn += `<button class="btn s" data-act="name" data-id="${H.id}">名前をつける</button>`;
+    btn += H.listing ? `<button class="btn s" data-act="unsell" data-id="${H.id}">売り出しをやめる</button>` : `<button class="btn s" data-act="sell" data-id="${H.id}">売りに出す</button>`;
+    btn += `<button class="btn s" data-act="retire" data-id="${H.id}">引退</button>`;
+    body = `<h3>調教 <small class="muted" style="font-weight:400">${C.trained ? '1日1回・きょうはもう調教しました' : '1日1回・きょうはまだです'}</small></h3>
+      <div class="hc-menus">${menus}</div>
+      <p class="muted small" style="margin:6px 0 0">若いほど・調子がいいほど・エサがいいほど、よくのびます。素質に近づくと、のびにくくなります。疲れが70をこえると、のびは半分で、けがもしやすくなります。出走の1時間前からは調教できません。</p>
+      <h3>エサ <small class="muted" style="font-weight:400">毎朝6時にはらいます</small></h3><div class="seg sm hc-seg">${feeds}</div>
+      <p class="muted small" style="margin:4px 0 0">いいエサほど、疲れがとれて、調子が上がりやすく、病気になりにくく、調教でものびます。</p>
+      <h3>出走</h3><div class="seg sm hc-seg">${modes}</div>
+      <p class="muted small" style="margin:4px 0 0">おまかせ：出られるレースに自動で出ます（出走登録もできます）。登録したレースだけ：出走登録したレースにだけ出ます。休ませる：レースに出ず、疲れがよくとれます。</p>
+      ${hoStLine(H)}<div class="ho-btns">${btn}</div>`;
+  } else if (H.retired && !C.dead) {
+    body = `<p class="small">引退して、牧場ですごしています（費用はかかりません）。</p><div class="ho-btns"><button class="btn s" data-act="release" data-id="${H.id}">手放す</button></div>`;
+  }
+  sh.innerHTML = `<div class="row"><b style="font-size:19px">${silk(H)}${esc(H.name)}</b><button class="btn" style="margin-left:auto" data-x>とじる</button></div>
+    <p class="muted small" style="margin:2px 0 0">${hoLine(H)}・<span>${CLASSN[H.class]}</span>・<span>${H.starts}戦${H.wins}勝</span>${H.graded ? `・<span>重賞${H.graded}勝</span>` : ''}・<span>賞金 ${fmt(H.earned)} X</span></p>
+    ${C.dead ? `<p class="notice small" style="margin:8px 0">🕊 ${esc(C.dead_why || '')}（${hoMD(C.dead_ms)}）</p>` : ''}
+    ${busy ? '' : `<div class="hc-state"><div><small>調子</small><b>${hcCond(C.cond)}</b></div>
+      <div><small>疲れ</small><b>${C.fatigue}</b><small>${hcFatBar(C.fatigue)} ${hcFat(C.fatigue)}</small></div>
+      <div><small>総合</small><b>${hcGrade(C.total)}</b><small>${Number(C.total).toFixed(1)}</small></div></div>`}
+    ${ill ? `<div class="item" style="margin:6px 0"><b style="color:var(--red)">${esc(ill.name)}</b>　<span class="small">治るまで あと${C.ill_days}日ほど</span>${C.ill_treated ? '<span class="small muted">（獣医にみせました）</span>' : ''}
+      ${C.ill_treated ? '' : `<div class="row" style="margin-top:6px"><button class="btn main s" data-vet>獣医にみせる（${fmt(ill.vet)} X）</button><span class="muted small">${ill.die ? '治るまでの日数が半分に。命にかかわる病気です' : '治るまでの日数が半分に'}</span></div>`}</div>` : ''}
+    <h3>能力</h3>${bars}
+    <div class="hc-kv"><span>成長型</span><b>${HC_GROW[C.grow] || '—'}</b><span>のびしろ</span><b>${HC_ROOM[C.room] || '—'}</b>
+      <span>距離</span><b>${hcDist(C)}</b><span>芝・ダート</span><b>${hcTurf(C.turf)}</b><span>馬場</span><b>${hcHeavy(C.heavy)}</b>
+      <span>調教</span><b>${C.train_n}回</b>${C.bought != null ? `<span>買った値</span><b>${fmt(C.bought)} X</b>` : ''}<span>これまでの費用</span><b>${fmt(C.cost)} X</b><span>受け取った賞金</span><b>${fmt(H.earned)} X</b></div>
+    ${body}`;
+  sh.scrollTop = y;
+  sh.querySelectorAll('[data-tr]').forEach(b => b.onclick = () => hcTrain(H, b.dataset.tr));
+  sh.querySelectorAll('[data-feed]').forEach(b => b.onclick = () => { if (b.dataset.feed !== C.feed) hoDo('hc_feed', { p_horse: H.id, p_feed: b.dataset.feed }, `エサを「${X.feeds[b.dataset.feed].name}」にしました（あしたの朝から）`); });
+  sh.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { if (b.dataset.mode !== C.mode) hoDo('hc_mode', { p_horse: H.id, p_mode: b.dataset.mode }, `出走を「${HC_MODE.find(m => m[0] === b.dataset.mode)[1]}」にしました`); });
+  sh.querySelectorAll('[data-act]').forEach(b => b.onclick = () => hoAct(b.dataset.act, Number(b.dataset.id)));
+  const vet = sh.querySelector('[data-vet]');
+  if (vet) vet.onclick = () => { if (confirm(`「${H.name}」を獣医にみせますか？（${fmt(ill.vet)} X）`)) hoDo('hc_vet', { p_horse: H.id }, '獣医にみせました'); };
+}
+async function hcTrain(H, k) {
+  const mm = HO.st.hc.menus[k];
+  if (mm.fee && !confirm(`「${H.name}」に「${mm.name}」をさせますか？（${fmt(mm.fee)} X）`)) return;
+  const d = await hoDo('hc_train', { p_horse: H.id, p_menu: k });
+  if (!d || !d.trained) return;
+  const T = d.trained, b = T.before, a = T.after, parts = [];
+  for (const [s, nm] of HC_STAT) { const x = Math.round((a[s] - b[s]) * 10) / 10; if (x > 0) parts.push(`${nm} +${x}`); }
+  const df = a.fatigue - b.fatigue; parts.push(`疲れ ${df >= 0 ? '+' : ''}${df}`);
+  toast(`${mm.name}：${parts.join('・')}`);
+  if (T.hurt) setTimeout(() => toast(`「${H.name}」が${HO.st.hc.ills[T.hurt].name}になってしまいました`), 1600);
+}
+
+/* ---------- せり場（新東京競馬競市） ---------- */
+const HX = { st: null, m: null, timer: null, last: 0, busy: false };
+async function hxOpen() {
+  $$('.modal').forEach(m => m.remove()); HC.m = null; HC.id = null;
+  HX.m = document.createElement('div'); HX.m.className = 'modal';
+  HX.m.innerHTML = '<div class="sheet"><p class="muted small">読みこみ中…</p></div>';
+  HX.m.onclick = ev => { if (ev.target === HX.m || ev.target.hasAttribute('data-x')) hxClose(); };
+  document.body.appendChild(HX.m);
+  await hxLoad();
+  if (!HX.timer) HX.timer = setInterval(hxTick, 1000);
+}
+function hxClose() { if (HX.m) HX.m.remove(); HX.m = null; clearInterval(HX.timer); HX.timer = null; if (hoOn()) hoLoad(); }
+async function hxLoad() {
+  if (HX.busy) return; HX.busy = true;
+  try { HX.st = await kbCall('hx_state'); HX.last = Date.now(); setBal(HX.st.balance); hxRender(); }
+  catch (e) { toast(e.message); }
+  HX.busy = false;
+}
+function hxTick() {
+  if (!HX.m || !document.body.contains(HX.m)) { clearInterval(HX.timer); HX.timer = null; HX.m = null; return; }
+  const S = HX.st; if (!S) return;
+  const now = kbNow();
+  HX.m.querySelectorAll('[data-left]').forEach(el => { el.textContent = hoLeft(Number(el.dataset.left) - now); });
+  const due = (S.lots || []).some(l => l.ends_ms <= now || (l.opens_ms > S.now_ms && l.opens_ms <= now));
+  if ((due && Date.now() - HX.last > 3000) || Date.now() - HX.last > 15000) hxLoad();
+}
+function hxInfoHtml(I) {
+  if (!I || !I.show) return '';
+  if (I.show === 'hidden') return hoEval(I);
+  return `<div class="hx-stats">${HC_STAT.map(([k, nm]) => `<div><small>${nm}</small><b>${esc(String(I[k]))}</b>${I.show === 'exact' ? `<small>${hcGrade(I[k])}</small>` : ''}</div>`).join('')}</div>
+    <div class="ho-eval">${I.pot ? `<span>素質 <b>${esc(I.pot)}</b></span>` : ''}${HC_GROW[I.grow] ? `<span>${HC_GROW[I.grow]}</span>` : ''}<span>${fmt(Math.round(I.dist / 100) * 100)}m前後</span><span>${hcTurf(I.turf)}</span></div>`;
+}
+function hxLotHtml(l, live) {
+  const H = l.horse, I = l.info || {}, now = kbNow(), S = HX.st;
+  let act = '';
+  if (live && S.open && !S.guest && !l.own) {
+    if (!l.top_me) act += `<button class="btn main s" data-hxbid="${l.id}" data-min="${l.min}" data-nm="${esc(H.name)}">値をつける（${fmt(l.min)} X〜）</button>`;
+    if (l.buy_now) act += `<button class="btn s" data-hxbuy="${l.id}" data-price="${l.buy_now}" data-nm="${esc(H.name)}">即決で買う（${fmt(l.buy_now)} X）</button>`;
+  }
+  return `<div class="ho-lot${l.top_me ? ' me' : ''}">
+    <div class="row">${silk(H)}<b class="hn" data-h="${H.id}">${esc(H.name)}</b>${l.top_me ? '<span class="chip sale">あなたがいちばん</span>' : ''}${l.own ? '<span class="chip">あなたの出品</span>' : ''}</div>
+    <small class="muted">${hoLine(H)}・<span>${CLASSN[H.class]}</span></small>
+    ${I.sire || I.dam ? `<small class="muted">父 <span translate="no">${esc(I.sire || '—')}</span>・母 <span translate="no">${esc(I.dam || '—')}</span></small>` : ''}
+    ${l.note ? `<p class="small" style="margin:4px 0;white-space:pre-wrap">${esc(l.note)}</p>` : ''}
+    ${hxInfoHtml(I)}
+    <div class="row" style="margin-top:6px;flex-wrap:wrap;gap:4px 12px">${l.price != null ? `<span>いまの値 <b class="ho-p">${fmt(l.price)} X</b><span class="muted small">（${l.nbids}回）</span></span>` : `<span>はじまりの値 <b class="ho-p">${fmt(l.start)} X</b></span>`}
+      ${l.buy_now ? `<span class="small">即決 <b>${fmt(l.buy_now)} X</b></span>` : ''}
+      <span class="muted small">${live ? `のこり <b data-left="${l.ends_ms}">${hoLeft(l.ends_ms - now)}</b>` : `はじまるまで <b data-left="${l.opens_ms}">${hoLeft(l.opens_ms - now)}</b>（${hoMD(l.opens_ms)} ${hhmm(l.opens_ms)}）`}</span></div>
+    ${act ? `<div class="ho-btns">${act}</div>` : ''}</div>`;
+}
+function hxDoneHtml(d) {
+  return `<div class="ho-lot"><div class="row">${silk(d.horse)}<b class="hn" data-h="${d.horse.id}">${esc(d.horse.name)}</b>
+    ${d.status === 'sold' ? (d.won ? `<span class="chip sale">あなたが落札 ${fmt(d.sold_price)} X</span>` : `<span class="chip">落札 ${fmt(d.sold_price)} X</span>`) : '<span class="chip">売れ残り</span>'}</div>
+    <small class="muted">${hoMD(d.at_ms)} ${hhmm(d.at_ms)}${d.status === 'sold' && d.buyer ? `・落札 <span translate="no">${esc(d.buyer)}</span>` : ''}</small></div>`;
+}
+function hxRender() {
+  const S = HX.st, sh = HX.m && HX.m.querySelector('.sheet'); if (!S || !sh) return;
+  const now = kbNow(), L = S.lots || [], live = L.filter(l => l.opens_ms <= now), soon = L.filter(l => l.opens_ms > now);
+  hoNames([...L, ...(S.done || [])].map(l => l.horse.name));
+  const y = sh.scrollTop;
+  sh.innerHTML = `<div class="row"><b style="font-size:19px">🔨 ${esc(S.co ? S.co.name : '新東京競馬競市')}</b><button class="btn" style="margin-left:auto" data-x>とじる</button></div>
+    <div class="row" style="gap:8px;margin:6px 0">${S.open ? '<span class="chip run">営業中</span>' : '<span class="chip">休業中</span>'}${S.co ? `<a class="men small" data-hxco="${S.co.cid}">会社のページ</a>` : ''}</div>
+    <p class="muted small" style="margin:4px 0 8px">運営が出品する競走馬のせりです。いちばん高い値をつけた人が落札します（つけた値はあずかり、ほかの人がもっと高い値をつけたら返します）。即決の値があれば、その値ですぐ買えます。終わる${S.snipe_min}分前からは、値がつくたびに${S.snipe_min}分のびます。AI投資家も値をつけます。落札した馬は、メインの「所持馬」で育てられます。</p>
+    ${S.co && !S.open ? '<p class="notice small" style="margin:0 0 6px">いまは休業中なので、値をつけられません。</p>' : ''}
+    ${!S.co ? '<p class="notice small" style="margin:0 0 6px">いまは、せりを開いていません。</p>' : ''}
+    ${S.guest ? '<p class="notice small" style="margin:0 0 6px">ゲストは、せりに参加できません（本登録すると参加できます）。</p>' : ''}
+    <h3>開催中 <small class="muted" style="font-weight:400">${live.length}頭</small></h3>${live.length ? live.map(l => hxLotHtml(l, true)).join('') : '<p class="muted small" style="margin:0">いまは開催中のせりはありません。</p>'}
+    ${soon.length ? `<h3>これから <small class="muted" style="font-weight:400">${soon.length}頭</small></h3>${soon.map(l => hxLotHtml(l, false)).join('')}` : ''}
+    ${(S.done || []).length ? `<h3>最近の結果</h3>${S.done.map(hxDoneHtml).join('')}` : ''}`;
+  sh.scrollTop = y;
+  sh.querySelectorAll('.hn[data-h]').forEach(x => x.onclick = () => kbHorse(Number(x.dataset.h)));
+  sh.querySelectorAll('[data-hxbid]').forEach(b => b.onclick = () => hxBid(Number(b.dataset.hxbid), Number(b.dataset.min), b.dataset.nm));
+  sh.querySelectorAll('[data-hxbuy]').forEach(b => b.onclick = () => hxBuy(Number(b.dataset.hxbuy), Number(b.dataset.price), b.dataset.nm));
+  const co = sh.querySelector('[data-hxco]'); if (co) co.onclick = () => { hxClose(); corpOpen(co.dataset.hxco); };
+}
+async function hxBid(id, min, nm) {
+  const v = prompt(`「${nm}」にいくらの値をつけますか？（${fmt(min)} X 以上。つけた値はあずかります）`, String(min));
+  if (v === null) return;
+  const n = Math.floor(Number(String(v).replace(/[,，\s]/g, '')));
+  if (!(n > 0)) return toast('数字で入れてください');
+  try {
+    HX.st = await call('hx_bid', { p_sale: id, p_amount: n }); HX.last = Date.now(); setBal(HX.st.balance); hxRender();
+    const won = (HX.st.done || []).find(d => d.id === id && d.won);
+    toast(won ? `「${nm}」を即決の値 ${fmt(won.sold_price)} X で落札しました` : `「${nm}」に ${fmt(n)} X の値をつけました`);
+  } catch (e) { toast(e.message); }
+}
+async function hxBuy(id, price, nm) {
+  if (!confirm(`「${nm}」を即決の値 ${fmt(price)} X で買いますか？`)) return;
+  try { HX.st = await call('hx_buynow', { p_sale: id }); HX.last = Date.now(); setBal(HX.st.balance); hxRender(); toast(`「${nm}」を落札しました。メインの「所持馬」で育てられます`); }
+  catch (e) { toast(e.message); }
 }
 // 出走登録：あしたの番組から、出られるレースをえらぶ
 function hoRegPick(H) {
@@ -4738,6 +4939,8 @@ async function corpOpen(cid, ccOpen) {
     ${c.description ? `<p style="white-space:pre-wrap;margin:8px 0">${esc(c.description)}</p>` : ''}
     ${c.ai ? `<p class="small" style="margin:6px 0;padding:8px 10px;border-radius:8px;background:var(--soft)"><span class="aitag" style="margin:0 4px 0 0">AI</span>この会社は<b>AIが運営</b>しています（ルールとさいころで自動で動きます）。社員はAIの登場人物です。売上は外の客から毎日入り、<b>毎週月曜9時ごろ</b>に決算と配当があります。</p>` : ''}
     ${c.cert ? `<p class="small" style="margin:6px 0;color:#2B6FD6"><b>${CERT_SVG} サイトの認証を受けた会社です</b>（${c.cert_until}まで）</p>` : ''}
+    ${c.horse_auction && !dead ? `<div class="item hx-door" style="margin:8px 0"><div class="row"><b class="grow">🔨 せり場（競走馬のせり）</b><button class="btn main s" data-hx>せり場へ</button></div>
+      <small class="muted">${c.status === 'active' ? '営業中：だれでも参加できます（ゲストはのぞく）' : '休業中：いまは値をつけられません'}</small></div>` : ''}
     <div class="small" style="margin:6px 0">評価：${ratingH(rt)}${rt.n ? `<span class="muted">　★5 ${rt.dist[4]}・★4 ${rt.dist[3]}・★3 ${rt.dist[2]}・★2 ${rt.dist[1]}・★1 ${rt.dist[0]}</span>` : ''}</div>
     ${c.listed ? `<div class="row" style="margin:6px 0"><span class="small">株価 <b style="font-size:16px">${c.price != null ? fmt(c.price) + ' X' : '—'}</b>${c.price != null ? '' : '（まだ取引なし）'}・風の芽証券取引所に上場</span>
       <button class="btn main s" data-stk="${c.cid}" style="margin-left:auto">株を売り買いする</button></div>` : ''}
@@ -4788,6 +4991,7 @@ async function corpOpen(cid, ccOpen) {
     try { await call('admin_corp_cert', { p_cid: cid, p_days: on ? Number(m.querySelector('#ctDays').value) : 0, p_note: note }); toast(on ? '認証マークをつけました' : '取り消しました'); corpOpen(cid, true); }
     catch (e) { toast(e.message); }
   });
+  const hxB = m.querySelector('[data-hx]'); if (hxB) hxB.onclick = () => { m.remove(); hxOpen(); };
   const pinB = m.querySelector('[data-pin]'); if (pinB) pinB.onclick = () => act('corp_pin', { p_cid: cid, p_on: !c.pinned }, c.pinned ? 'ピン留めをやめました' : 'ピン留めしました');
   const dkN = m.querySelector('[data-dknew]'); if (dkN) dkN.onclick = () => deskNew(c.cid, c.name, c.desk_note);
   const dkI = m.querySelector('[data-dkinbox]');
@@ -5201,7 +5405,7 @@ function adShow(tab) {
   $$('#adminBox [data-adtab]').forEach(c => c.classList.toggle('hidden', c.dataset.adtab !== tab));
   if (AD.loaded[tab]) return;
   AD.loaded[tab] = true;
-  if (tab === 'corp') adAiLoad();
+  if (tab === 'corp') { adAiLoad(); adHxLoad(); }
   if (tab === 'money') adIvLoad(null, AD.d ? AD.d.listed : []);
   if (tab === 'event') { adKbLoad(); adBnLoad(); }
   if (tab === 'staff') adStaffLoad();
@@ -5276,6 +5480,7 @@ async function adminLoad() {
           ${adm ? (c.status === 'suspended' ? `<button class="btn s" data-cact="resume" data-cid="${c.cid}">再開させる</button>` : `<button class="btn s" data-cact="suspend" data-cid="${c.cid}">休業命令</button>`)
             + `<button class="btn s" data-cact="bankrupt" data-cid="${c.cid}">倒産させる</button>` : ''}</div>`).join('') || '<p class="muted small">まだありません</p>'}`)
       + card('corp', '', 'AI会社', '<div id="adAi"><p class="muted small" style="margin:0">読みこみ中…</p></div>')
+      + card('corp', '', '🐴 せりの出品（新東京競馬競市）', '<div id="adHx"><p class="muted small" style="margin:0">読みこみ中…</p></div>')
       + (adm ? card('corp', '', '取引所の手数料', `      <div class="row"><input class="inp" id="adFee" type="number" min="0" max="10" step="0.01" value="${Number(d.fee_pct)}" style="width:110px;margin:0"><span class="small">%</span><button class="btn s" id="adFeeSave">保存</button></div>
       <p class="muted small" style="margin:4px 0 0">買った人の X と、売った人の CA から引いて、風の芽証券取引所に入ります。</p>
 `) : '')
@@ -5392,6 +5597,67 @@ async function adBnLoad() {
 // 管理：臨時のレース
 const KX = { venue: 3, surface: '芝' };
 const KX_GR = [['G1', 'G1'], ['G2', 'G2'], ['G3', 'G3'], ['L', 'リステッド'], ['OP', 'オープン'], ['c3', '3勝クラス'], ['c2', '2勝クラス'], ['c1', '1勝クラス'], ['c0', '未勝利']];
+const HXA_MIN = [[10, '10分'], [30, '30分'], [60, '1時間'], [180, '3時間'], [360, '6時間'], [720, '12時間'], [1440, '1日'], [2880, '2日'], [4320, '3日'], [7200, '5日']];
+async function adHxLoad() {
+  const box = $('#adHx'); if (!box) return;
+  let v; try { v = await call('hx_admin_state'); } catch (e) { box.innerHTML = `<p class="muted small" style="margin:0">${esc(e.message)}</p>`; return; }
+  const sel = (id, opts, val) => `<select class="inp grow" id="${id}" style="margin:0">${opts.map(o => `<option value="${o[0]}" ${String(o[0]) === String(val) ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>`;
+  const num = (id, val, mn, mx, w) => `<input class="inp" id="${id}" type="number" inputmode="numeric" min="${mn}" max="${mx}" value="${val}" style="margin:0;width:${w || '4.6em'}">`;
+  const row = (label, body) => `<div class="row"><span class="small" style="width:6.5em;flex:none">${label}</span>${body}</div>`;
+  const ST = { open: '開催中', sold: '落札', unsold: '売れ残り', cancel: '取り消し' };
+  box.innerHTML = `${v.co ? `<p class="small" style="margin:0 0 6px">会社：<b>${esc(v.co.name)}</b>（${v.co.status === 'active' ? '営業中' : v.co.status === 'suspended' ? '休業中' : esc(v.co.status)}）</p>`
+      : '<p class="notice small" style="margin:0 0 6px">競市の会社が決まっていません。出品はできますが、だれも値をつけられません。</p>'}
+    <input class="inp" id="hxName" maxlength="9" placeholder="馬名（カタカナ2〜9文字）">
+    ${row('性別・年齢', sel('hxSex', [['牡', '牡'], ['牝', '牝'], ['セ', 'セン']], '牡') + sel('hxAge', [2, 3, 4, 5, 6].map(a => [a, a + '歳']), 2))}
+    ${row('クラス', sel('hxCls', CLASSN.map((c, i) => [i, c]), 0))}
+    ${row('毛色・体重', sel('hxCoat', COAT.map((c, i) => [i, c[0]]), 0) + num('hxBody', 470, 400, 560, '5em') + '<span class="small">kg</span>')}
+    ${row('父・母', '<input class="inp grow" id="hxSire" maxlength="20" placeholder="父" style="margin:0"><input class="inp grow" id="hxDam" maxlength="20" placeholder="母" style="margin:0">')}
+    <div class="hx-form-stats">${HC_STAT.map(([k, nm]) => `<label class="small">${nm}${num('hx_' + k, 50, 1, 100)}</label>`).join('')}<label class="small">素質（のびる上限）${num('hx_pot', 80, 1, 100)}</label></div>
+    <button class="btn s" id="hxRand" style="margin:2px 0 6px">🎲 能力をおまかせで入れる</button>
+    ${row('距離', num('hxDist', 2000, 1000, 3600, '6em') + '<span class="small">m</span>' + sel('hxSurf', [['芝', '芝'], ['ダ', 'ダート'], ['両', '芝・ダート']], '芝'))}
+    ${row('脚質・成長', sel('hxStyle', STYLE.map((s, i) => [i, s]), 1) + sel('hxGrow', [['early', '早熟'], ['normal', '普通'], ['late', '晩成']], 'normal'))}
+    ${row('見せ方', sel('hxShow', [['grade', 'ランク（S〜G）'], ['exact', '数字'], ['hidden', '見立てだけ（評価・距離・芝ダート）']], 'grade'))}
+    ${row('はじまりの値', num('hxStart', 10000, 1, 100000000, '8em') + '<span class="small">X</span>')}
+    ${row('即決の値', num('hxBuy', '', 0, 1000000000, '8em') + '<span class="small">X（なしでもOK）</span>')}
+    ${row('はじまり', '<input class="inp grow" id="hxOpen" type="datetime-local" style="margin:0"><span class="small">（空ならすぐ）</span>')}
+    ${row('長さ', sel('hxMin', HXA_MIN, 60))}
+    <textarea class="inp" id="hxNote" rows="2" maxlength="300" placeholder="説明（イベントの名前・馬の紹介など。なしでもOK）"></textarea>
+    <button class="btn main s" id="hxGo">出品する</button>
+    <p class="muted small" style="margin:6px 0 0">せりの長さは10分〜5日。落札の代金は競市の会社に入ります。AI投資家も値をつけます。出品した人は、その馬に値をつけられません。売れ残った馬は、ふつうの競走馬としてデビューします。4歳以上は1勝クラスより上に（未勝利のまま4歳になると引退です）。</p>
+    ${v.lots.length ? '<h4 style="margin:10px 0 2px">出品したせり（最近40件）</h4>' + v.lots.map(l => `<div class="line"><span class="grow">${esc(l.name)} <small class="muted">${l.sex}${l.age}</small>
+        <small><span>${ST[l.status] || esc(l.status)}</span>${l.status === 'open' ? (l.opens_ms > v.now_ms ? `<span>（${hoMD(l.opens_ms)} ${hhmm(l.opens_ms)}から）</span>` : `<span>（のこり ${hoLeft(l.ends_ms - v.now_ms)}）</span>`) : ''}・<span>はじまり ${fmt(l.start)} X</span>${l.buy_now ? `・<span>即決 ${fmt(l.buy_now)} X</span>` : ''}
+          ${l.status === 'open' && l.price != null ? `・<span>いま ${fmt(l.price)} X</span>（<span>${l.nbids}回</span>・<span translate="no">${esc(l.top || '')}</span>${l.top_ai ? AITAG : ''}）` : ''}${l.status === 'sold' ? `・<span>${fmt(l.sold_price)} X</span>（<span translate="no">${esc(l.buyer || '')}</span>）` : ''}${l.by ? `・<span>出品</span> <span translate="no">${esc(l.by)}</span>` : ''}</small>
+        ${l.stats ? `<small class="muted">${HC_STAT.map(([k, nm]) => `<span>${nm} ${Math.round(l.stats[k])}</span>`).join('・')}・<span>素質 ${Math.round(l.stats.pot)}</span>・<span>${HC_GROW[l.stats.grow] || ''}</span></small>` : ''}</span>
+        ${l.status === 'open' ? `<button class="btn s" data-hxcancel="${l.id}" data-nm="${esc(l.name)}">取り消す</button>` : ''}</div>`).join('') : ''}`;
+  $('#hxRand').onclick = () => {
+    const base = 38 + Math.floor(Math.random() * 30);
+    let mx = 0;
+    for (const [k] of HC_STAT) { const x = Math.max(15, Math.min(95, base + Math.floor(Math.random() * 17) - 8)); $('#hx_' + k).value = x; mx = Math.max(mx, x); }
+    $('#hx_pot').value = Math.min(100, mx + 5 + Math.floor(Math.random() * 20));
+    $('#hxDist').value = [1200, 1400, 1600, 1800, 2000, 2200, 2400, 2500, 3000, 3200][Math.floor(Math.random() * 10)];
+    $('#hxStyle').value = Math.floor(Math.random() * 4); $('#hxGrow').value = ['early', 'normal', 'normal', 'late'][Math.floor(Math.random() * 4)];
+    $('#hxCoat').value = Math.floor(Math.random() * 6); $('#hxBody').value = 430 + Math.floor(Math.random() * 90);
+  };
+  $('#hxGo').onclick = async () => {
+    const name = hoKata($('#hxName').value);
+    if (!name) return toast('馬名を入れてください');
+    const op = $('#hxOpen').value, spec = { name, sex: $('#hxSex').value, age: Number($('#hxAge').value), cls: Number($('#hxCls').value), coat: Number($('#hxCoat').value),
+      body: Number($('#hxBody').value), sire: $('#hxSire').value.trim(), dam: $('#hxDam').value.trim(), dist: Number($('#hxDist').value), surface: $('#hxSurf').value,
+      style: Number($('#hxStyle').value), grow: $('#hxGrow').value, show: $('#hxShow').value, start: Number($('#hxStart').value), buy_now: $('#hxBuy').value ? Number($('#hxBuy').value) : '',
+      opens_at: op ? new Date(op).toISOString() : '', minutes: Number($('#hxMin').value), note: $('#hxNote').value.trim() };
+    for (const [k] of HC_STAT) spec[k] = Number($('#hx_' + k).value);
+    spec.pot = Number($('#hx_pot').value);
+    const dur = HXA_MIN.find(x => x[0] === spec.minutes)[1];
+    if (!confirm(spec.buy_now ? `「${name}」をせりに出しますか？（はじまりの値 ${fmt(spec.start)} X・即決 ${fmt(spec.buy_now)} X・${dur}）` : `「${name}」をせりに出しますか？（はじまりの値 ${fmt(spec.start)} X・${dur}）`)) return;
+    $('#hxGo').disabled = true;
+    try { await call('hx_admin_create', { p_spec: spec }); toast(`「${name}」をせりに出しました`); adHxLoad(); }
+    catch (e) { toast(e.message); $('#hxGo').disabled = false; }
+  };
+  box.querySelectorAll('[data-hxcancel]').forEach(b => b.onclick = async () => {
+    if (!confirm(`「${b.dataset.nm}」のせりを取り消しますか？（つけられていた値は返します。まだ走っていない馬は消えます）`)) return;
+    try { await call('hx_admin_cancel', { p_sale: Number(b.dataset.hxcancel) }); toast('取り消しました'); adHxLoad(); } catch (e) { toast(e.message); }
+  });
+}
 async function adKbLoad() {
   const box = $('#adKb'); if (!box) return;
   let v; try { v = await call('admin_kb_extras'); } catch (e) { box.innerHTML = `<p class="muted small" style="margin:0">${esc(e.message)}</p>`; return; }
@@ -5622,13 +5888,14 @@ function homeLoad(sub) {
   if (sub === 'menu') hmRender();
   if (sub === 'friend') friendLoad();
   if (sub === 'msg') msgLoad();
+  if (sub === 'horses') hoLoad();
 }
 // よく使うメニュー：えらべるもの（メニューのサブメニューと、対戦ゲーム）
 const HM_IC = { 'vInfo:today': '📰', 'vInfo:cur': '💱', 'vInfo:pub': '📚', 'vInfo:mkt': '📈', 'vInfo:tl': '💬', 'vInfo:people': '🔍', 'vInfo:jack': '🏆',
   'vWork:jobs': '🛠️', 'vWork:stat': '💴', 'vWork:corp': '🏢', 'vWork:mywork': '👔', 'vCorp:search': '🔎', 'vCorp:review': '⭐', 'vCorp:pin': '📌',
   'vCorp:desk': '🗨️', 'vCorp:job': '📋', 'vCorp:bank': '🏦', 'vCorp:order': '🛍️', 'vCorp:stock': '📊', 'vCorp:invest': '💹', 'vTax:tax': '🧾',
   'vTax:xfer': '💸', 'vTax:bill': '📨', 'vTax:court': '⚖️', 'vTax:kokko': '🏛️', 'vMore:prof': '👤', 'vMore:hist': '📜', 'vMore:rule': '📖',
-  'vMore:admin': '🛡️', 'vMore:users': '🗂️', 'vHome:friend': '👥', 'vHome:msg': '✉️', 'vGame:vGameList': '🎮' };
+  'vMore:admin': '🛡️', 'vMore:users': '🗂️', 'vHome:friend': '👥', 'vHome:msg': '✉️', 'vHome:horses': '🐴', 'vGame:vGameList': '🎮' };
 const HM_DEF = ['vGame:vTask', 'vGame:vRace', 'vInfo:today', 'vHome:msg', 'vWork:jobs', 'vTax:xfer', 'vCorp:invest'];
 function hmCatalog() {
   const L = [];
@@ -7402,12 +7669,13 @@ const NT_GO = { フレンド: ['vHome', 'friend'], メッセージ: ['vHome', 'm
   没収: ['vTax', 'tax'], 企業申請: ['vWork', 'corp'], 社長交代: ['vWork', 'corp'], 命令: ['vWork', 'corp'], 応募: ['vWork', 'corp'], 口座の申込: ['vWork', 'corp'],
   借入の申込: ['vWork', 'corp'], 返済: ['vWork', 'corp'], 採用: ['vWork', 'mywork'], 株: ['vCorp', 'stock'], 株の譲渡: ['vCorp', 'stock'], 配当: ['vCorp', 'stock'],
   口座: ['vCorp', 'bank'], 借入: ['vCorp', 'bank'], 交換: ['vCorp', 'invest'], 本: ['vInfo', 'pub'], '広報・書籍': ['vInfo', 'pub'], 対戦: ['vGame', 'vGameList'],
-  倒産: ['vMore', 'hist'], 風の芽ジャンボ: ['vGame', 'vLot'], タスク: ['vGame', 'vTask'], ゲームランク: ['vGame', 'vTask'], カジノランク: ['vGame', 'vTask'], 廃業: ['vMore', 'hist'], お金: ['vMore', 'hist'], 認証: ['vWork', 'corp'], 窓口: ['vCorp', 'desk'], サーバー: ['vWork', 'corp'], 上場: ['vWork', 'corp'] };
+  倒産: ['vMore', 'hist'], 風の芽ジャンボ: ['vGame', 'vLot'], タスク: ['vGame', 'vTask'], ゲームランク: ['vGame', 'vTask'], カジノランク: ['vGame', 'vTask'], 廃業: ['vMore', 'hist'], お金: ['vMore', 'hist'], 認証: ['vWork', 'corp'], 窓口: ['vCorp', 'desk'], サーバー: ['vWork', 'corp'], 上場: ['vWork', 'corp'], 馬主: ['vHome', 'horses'], せり: ['vHome', 'horses'] };
 function noticeGo(n) {
   const L = n.link || {}, b = n.body || '', tag = noticeTag(b);
   $$('.modal').forEach(m => m.remove());
   if (L.go === 'room' || (tag === '対戦' && /部屋 #(\d+)/.test(b))) { RM.id = Number(L.room || /部屋 #(\d+)/.exec(b)[1]); return go('vRoom'); }
   if (L.go === 'corp' && L.cid) return corpOpen(L.cid);
+  if (tag === 'せり' && !/落札しました/.test(b)) { go('vHome', 'horses'); return hxOpen(); }
   if (L.go === 'desk' && L.t) return deskOpen(Number(L.t));
   if (L.go === 'dm' && L.u) return dmOpen(L.u);
   if (L.go === 'sp' && L.t) return spOpen(Number(L.t));
