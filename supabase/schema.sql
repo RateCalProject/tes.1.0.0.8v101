@@ -727,7 +727,7 @@ alter table public.profiles add column if not exists prefs jsonb not null defaul
 
 create or replace function public.ensure_profile() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me_g(); up boolean := false;
+declare u uuid := _me_g(); up boolean := false; gtb jsonb;
 begin
   insert into profiles(id, nickname, balance)
   values (u, case when _is_guest(u) then 'ゲスト' else 'プレイヤー' end || lpad(_rint(10000)::text, 4, '0'), 1000)
@@ -744,9 +744,14 @@ begin
   exception when others then
     raise warning 'tax tick failed: %', sqlerrm;
   end;
+  begin
+    gtb := _gt_brief(u);
+  exception when others then
+    raise warning 'game tasks failed: %', sqlerrm; gtb := null;
+  end;
   return (select jsonb_build_object('nickname', nickname, 'balance', balance, 'tax', _tax_badge(u),
             'account_no', account_no, 'is_admin', _is_admin(u), 'role', _role(u), 'event', _is_event(u), 'badge', _badge(u), 'prefs', prefs, 'guest', _is_guest(u),
-            'guest_info', _guest_json(u), 'upgraded', up, 'beta', _beta_list(u))
+            'guest_info', _guest_json(u), 'upgraded', up, 'beta', _beta_list(u), 'gt', gtb)
             from profiles where id = u);
 end $$;
 
@@ -794,7 +799,7 @@ begin
                        'debt', _debt(id), 'mail', mail_verified_at is not null and mail_verified_at >= _now() - interval '183 days',
                        'mail_at', case when mail_verified_at is null then null else _dlabel(mail_verified_at) end,
                        'mail_until', case when mail_verified_at is null then null else _dlabel(mail_verified_at + interval '183 days') end),
-            'guest', _guest_json(id))
+            'guest', _guest_json(id), 'gt', _gt_brief(id))
             from profiles where id = _me_g());
 end $$;
 
@@ -1133,7 +1138,7 @@ end $$;
 create or replace function public._income(u uuid, m int) returns bigint
 language sql stable set search_path = public as $$
   select greatest(coalesce(sum(payout - bet), 0), 0)::bigint from tx_log
-   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend','liquidation','game_bet','game_stake','pub_sale','review','auction','boat','keirin','fishing','owner')
+   where user_id = u and game in ('slot','roulette','hilo','blackjack','race','work','interest','salary','dividend','liquidation','game_bet','game_stake','pub_sale','review','auction','boat','keirin','fishing','owner','task')
      and created_at >= _month_start(m) and created_at < _month_start(_next_month(m))
 $$;
 
@@ -1182,7 +1187,8 @@ begin
   if not found then return null; end if;
   return jsonb_build_object('role', _role(u), 'ev', _role(u) is null and _is_event(u),
     'ok', _debt(u) = 0 and _now() >= coalesce(p.ok7_at, p.created_at + interval '7 days')
-          and p.mail_verified_at is not null and p.mail_verified_at >= _now() - interval '183 days');
+          and p.mail_verified_at is not null and p.mail_verified_at >= _now() - interval '183 days')
+         || coalesce(_gt_badge(u), '{}'::jsonb);   -- 今月の称号・カジノランク
 end $$;
 
 -- ログインのしかたを見て、メールで認証した時刻を覚える（メールのリンク・登録の確認など）
@@ -1449,7 +1455,7 @@ begin
     'treasury', jsonb_build_object('casino', coalesce(tr.casino_total, 0),
                                    'tax', coalesce(tr.tax_total, 0), 'benefit', coalesce(tr.benefit_total, 0),
                                    'confiscated', coalesce(tr.confiscated_total, 0),
-                                   'wage', coalesce(tr.wage_total, 0), 'fee', coalesce(tr.fee_total, 0), 'review', coalesce(tr.review_total, 0),
+                                   'wage', coalesce(tr.wage_total, 0), 'fee', coalesce(tr.fee_total, 0), 'review', coalesce(tr.review_total, 0), 'task', coalesce(tr.task_total, 0),
                                    'consumption', coalesce(tr.consumption_total, 0)),
     'top', top, 'top_month', topm,
     'balance', _bal(u));
@@ -9343,6 +9349,11 @@ begin
   if not found then raise exception 'その人は見つかりません'; end if;
   return _person_card(p, u) || jsonb_build_object(
     'since', to_char(p.created_at at time zone 'Asia/Tokyo', 'YYYY"年"FMMM"月"'),
+    'rank', (select jsonb_build_object('lv', _gt_lv(coalesce(x.xp, 0)), 'title', _gt_title(_gt_lv(coalesce(x.xp, 0))),
+               'titles', (select count(*) from gt_titles g where g.user_id = p.id),
+               'best', (select z.name from _gt_titles() z join gt_titles g on g.lv = z.lv and g.user_id = p.id order by z.lv desc limit 1),
+               'cr', _gt_tier(coalesce(_gt_cpts(c.pts, c.last_at), 0)), 'cr_name', _gt_tname(_gt_tier(coalesce(_gt_cpts(c.pts, c.last_at), 0))))
+               from (select 1) one left join gt_xp x on x.user_id = p.id and x.month = _month_of(_now()) left join gt_casino c on c.user_id = p.id),
     'companies', (select coalesce(jsonb_agg(_corp_card(c, u) order by (c.status in ('active', 'suspended')) desc, c.id), '[]'::jsonb)
                     from companies c where c.owner = p.id and c.status in ('active', 'suspended', 'closed', 'bankrupt')),
     'books', (select coalesce(jsonb_agg(jsonb_build_object('id', x.id, 'title', x.title, 'price', x.price, 'kind', x.kind,
@@ -14945,6 +14956,446 @@ begin
   end if;
 end $$;
 
+-- =====================================================================
+-- ゲームタスク・ゲームランク・カジノランク
+--   タスク：毎日（日本時間の0時に新しく）、人ごとに4つ。1つクリアで 400 X、4つともクリアで さらに 400 X（1日最大 2,000 X）
+--           ゲストは 1つ 100 X・全部で さらに 100 X（最大 500 X）。クリアしたときに国庫から自動で入る（所得）。国庫が足りないときは入らない
+--   ゲームランク：遊ぶたびに経験値（賭けた額が大きいほど少し多め・勝つとおまけ・タスクのクリアでも）。月のはじめにレベル1から
+--                 レベルごとに称号。一度とった称号は残る（名前の横には、今月のレベルの称号）
+--   カジノランク：カジノ（スロット・ブラックジャック・ルーレット・ハイ＆ロー）と競馬・競艇・競輪。10 X 以上の1回で1点、勝つと さらに2点
+--                 最後に遊んでから7日すぎると、1日5%ずつ下がる
+--   数えるもと：遊んだ記録（tx_log）・馬券や券を買ったとき・対戦が終わったとき・魚をつったとき。ゲームの処理は止めない（まちがいがあっても何もしない）
+-- =====================================================================
+create table if not exists public.gt_days (
+  user_id  uuid not null references public.profiles(id) on delete cascade,
+  day      date not null,                        -- 日本時間の日付
+  kinds    text[] not null default '{}',         -- その日に遊んだゲームの種類（「○種類のゲームで遊ぶ」）
+  bets     bigint not null default 0,            -- その日に賭けた合計（カジノ・公営競技）
+  guest    boolean not null default false,       -- ゲストの日（ごほうびが少ない）
+  bonus    int not null default 0,               -- 全部クリアのごほうび（払った額）
+  bonus_at timestamptz,
+  primary key (user_id, day)
+);
+create table if not exists public.gt_tasks (
+  user_id uuid not null,
+  day     date not null,
+  no      smallint not null,                     -- 1〜4
+  kind    text not null,
+  goal    int not null,                          -- めざす数（「賭ける」は X）
+  prog    int not null default 0,
+  reward  int not null,
+  done_at timestamptz,                           -- クリアした時刻
+  paid    int not null default 0,                -- 払った額（国庫が足りないと 0）
+  primary key (user_id, day, no),
+  foreign key (user_id, day) references public.gt_days(user_id, day) on delete cascade
+);
+create table if not exists public.gt_xp (            -- ゲームランク（月ごと）
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  month   int not null,
+  xp      bigint not null default 0,
+  plays   int not null default 0,
+  wins    int not null default 0,
+  primary key (user_id, month)
+);
+create index if not exists gt_xp_month_idx on public.gt_xp(month, xp desc);
+create table if not exists public.gt_titles (        -- とった称号（ずっと残る）
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  lv      int not null,
+  month   int not null,                          -- はじめてとった月
+  at      timestamptz not null default now(),
+  primary key (user_id, lv)
+);
+create table if not exists public.gt_casino (        -- カジノランク
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  pts     numeric not null default 0,            -- ポイント（下がる分は、つぎに遊んだときにまとめて引く）
+  plays   bigint not null default 0,
+  wins    bigint not null default 0,
+  last_at timestamptz,                           -- 最後にカジノ・公営競技で遊んだ時刻
+  best    numeric not null default 0             -- いちばん高かったポイント
+);
+alter table public.gt_days    enable row level security;
+alter table public.gt_tasks   enable row level security;
+alter table public.gt_xp      enable row level security;
+alter table public.gt_titles  enable row level security;
+alter table public.gt_casino  enable row level security;
+alter table public.treasury add column if not exists task_total bigint not null default 0;   -- タスクのごほうび（累計）
+
+create or replace function public._gt_today() returns date
+language sql stable set search_path = public as $$ select (_now() at time zone 'Asia/Tokyo')::date $$;
+
+-- タスクの種類：kind・文（{n} に数）・めざす数の候補・グループ（同じ日に同じグループは出さない）・出やすさ
+create or replace function public._gt_kinds() returns table(kind text, label text, goals int[], grp text, w int)
+language sql immutable as $$
+  select * from (values
+    ('slot',     'スロットを{n}回まわす',               array[10, 20, 30],      'slot',  3),
+    ('slot_win', 'スロットで{n}回当てる',               array[2, 3, 5],         'slot',  2),
+    ('bj',       'ブラックジャックを{n}回あそぶ',       array[3, 5, 8],         'bj',    3),
+    ('bj_win',   'ブラックジャックで{n}回勝つ',         array[1, 2, 3],         'bj',    2),
+    ('rou',      'ルーレットで{n}回賭ける',             array[5, 10],           'rou',   3),
+    ('rou_win',  'ルーレットで{n}回当てる',             array[1, 2, 3],         'rou',   2),
+    ('hilo',     'ハイ＆ローを{n}回あそぶ',             array[3, 5],            'hilo',  3),
+    ('hilo_win', 'ハイ＆ローで{n}回勝つ',               array[1, 2],            'hilo',  2),
+    ('race',     '競馬の馬券を{n}枚買う',               array[1, 3, 5],         'race',  3),
+    ('race_hit', '競馬で{n}回当てる',                   array[1, 2],            'race',  1),
+    ('pr',       '競艇か競輪の券を{n}枚買う',           array[1, 3],            'pr',    2),
+    ('room',     '対戦ゲームを{n}回あそぶ（CPUとでも・1分以上）', array[1, 2],    'room',  2),
+    ('fish',     '釣りで{n}匹つる',                     array[3, 5],            'fish',  2),
+    ('bets',     'カジノと公営競技で合計{n} X 賭ける',  array[300, 500, 1000],  'bets',  2),
+    ('kinds',    '{n}種類のゲームで遊ぶ',               array[3, 4],            'kinds', 2)
+  ) t(kind, label, goals, grp, w) $$;
+-- その人に出せるもの（まだ公開していないゲームは出さない）
+create or replace function public._gt_pool(u uuid) returns table(kind text, label text, goals int[], grp text, w int)
+language sql stable set search_path = public as $$
+  select t.* from _gt_kinds() t
+   where (t.kind <> 'pr' or _beta_ok(u, 'boat') or _beta_ok(u, 'bike'))
+     and (t.kind <> 'fish' or _beta_ok(u, 'fishing')) $$;
+create or replace function public._gt_label(k text, n int) returns text
+language sql stable set search_path = public as $$
+  select replace(coalesce((select t.label from _gt_kinds() t where t.kind = k), k), '{n}', _fmt(n)) $$;
+
+-- その日のタスクを用意する（まだなければ。4つ。グループがかぶらないように、出やすさの重みつきでえらぶ）。AIのアカウントは null
+create or replace function public._gt_ensure(u uuid) returns date
+language plpgsql set search_path = public as $$
+declare d date := _gt_today(); g boolean; r record; used text[] := '{}'; n int := 0; per int;
+begin
+  if exists (select 1 from gt_days where user_id = u and day = d) then return d; end if;
+  if not exists (select 1 from profiles where id = u and ai is null) then return null; end if;
+  g := _is_guest(u);
+  insert into gt_days(user_id, day, guest) values (u, d, g) on conflict do nothing;
+  if not found then return d; end if;          -- ほかで同時に作った
+  per := case when g then 100 else 400 end;
+  for r in select p.* from _gt_pool(u) p order by -ln(1 - random()) / p.w loop
+    continue when r.grp = any(used);
+    n := n + 1; used := used || r.grp;
+    insert into gt_tasks(user_id, day, no, kind, goal, reward)
+    values (u, d, n, r.kind, r.goals[1 + floor(random() * cardinality(r.goals))::int], per);
+    exit when n >= 4;
+  end loop;
+  delete from gt_days where user_id = u and day < d - 14;    -- 2週間より前の日は消す
+  return d;
+end $$;
+
+-- 経験値：賭けた額から（10 X で3・100 X で10・400 X で20・1,600 X 以上で40）
+create or replace function public._gt_xpb(bet bigint) returns int
+language sql immutable as $$ select least(40, greatest(1, round(sqrt(greatest(coalesce(bet, 0), 0)::numeric))::int)) $$;
+-- レベル L になるのに要る経験値：50·L·(L−1)（L1 は 0、L2 は 100、L3 は 300、L10 は 4,500…）
+create or replace function public._gt_need(lv int) returns bigint
+language sql immutable as $$ select (50::bigint * lv * (lv - 1)) $$;
+create or replace function public._gt_lv(xp bigint) returns int
+language plpgsql immutable as $$
+declare l int := greatest(1, floor((1 + sqrt(1 + 0.08 * greatest(coalesce(xp, 0), 0)::numeric)) / 2)::int);
+begin
+  while _gt_need(l + 1) <= coalesce(xp, 0) loop l := l + 1; end loop;
+  while l > 1 and _gt_need(l) > coalesce(xp, 0) loop l := l - 1; end loop;
+  return l;
+end $$;
+-- 称号（レベル・名前）
+create or replace function public._gt_titles() returns table(lv int, name text)
+language sql immutable as $$
+  select * from (values (3, '見習い'), (5, '常連さん'), (10, '腕利き'), (15, '勝負師'), (20, '目利き'), (25, '千両役者'),
+                        (30, '風の芽の名手'), (40, '豪傑'), (50, '伝説の勝負師'), (70, '風の芽の主'), (100, '天下無双')) t(lv, name) $$;
+create or replace function public._gt_title(lv int) returns text
+language sql immutable as $$ select t.name from _gt_titles() t where t.lv <= $1 order by t.lv desc limit 1 $$;
+-- カジノランクの段
+create or replace function public._gt_tiers() returns table(tier int, name text, pts int)
+language sql immutable as $$
+  select * from (values (0, 'ビギナー', 0), (1, 'ブロンズ', 30), (2, 'シルバー', 150), (3, 'ゴールド', 500), (4, 'プラチナ', 1500),
+                        (5, 'ダイヤモンド', 4000), (6, 'マスター', 10000), (7, 'レジェンド', 25000)) t(tier, name, pts) $$;
+create or replace function public._gt_tier(p numeric) returns int
+language sql immutable as $$ select coalesce(max(t.tier), 0) from _gt_tiers() t where t.pts <= floor(coalesce($1, 0)) $$;
+create or replace function public._gt_tname(t int) returns text
+language sql immutable as $$ select z.name from _gt_tiers() z where z.tier = $1 $$;
+-- いまのポイント（最後に遊んでから7日すぎると、1日5%ずつ下がる）
+create or replace function public._gt_cpts(p numeric, last_at timestamptz) returns numeric
+language sql stable set search_path = public as $$
+  select case when last_at is null or coalesce(p, 0) <= 0 then greatest(coalesce(p, 0), 0)
+              else p * power(0.95::numeric, greatest(0, floor(extract(epoch from (_now() - last_at)) / 86400)::int - 7)) end $$;
+-- 名前の横のしるし用（今月の称号・カジノランクの段）
+create or replace function public._gt_badge(u uuid) returns jsonb
+language sql stable set search_path = public as $$
+  select jsonb_build_object(
+    'ttl', _gt_title(_gt_lv(coalesce((select x.xp from gt_xp x where x.user_id = u and x.month = _month_of(_now())), 0))),
+    'cr', _gt_tier(coalesce((select _gt_cpts(c.pts, c.last_at) from gt_casino c where c.user_id = u), 0))) $$;
+
+-- 経験値を足す（レベルが上がって新しい称号に届いたら、とった称号に入れて知らせる）
+create or replace function public._gt_add_xp(u uuid, n int, play boolean, win boolean) returns void
+language plpgsql set search_path = public as $$
+declare m int := _month_of(_now()); x bigint; t record; lv1 int;
+begin
+  insert into gt_xp(user_id, month, xp, plays, wins)
+  values (u, m, greatest(n, 0), case when play then 1 else 0 end, case when win then 1 else 0 end)
+  on conflict (user_id, month) do update set xp = gt_xp.xp + excluded.xp, plays = gt_xp.plays + excluded.plays, wins = gt_xp.wins + excluded.wins
+  returning xp into x;
+  lv1 := _gt_lv(x);
+  if lv1 > _gt_lv(x - greatest(n, 0)) then
+    for t in select z.* from _gt_titles() z where z.lv <= lv1 and z.lv > _gt_lv(x - greatest(n, 0)) order by z.lv loop
+      insert into gt_titles(user_id, lv, month, at) values (u, t.lv, m, _now()) on conflict do nothing;
+      if found then perform _notice(u, format('【ゲームランク】レベル%sになって、称号「%s」をとりました！', t.lv, t.name)); end if;
+    end loop;
+  end if;
+end $$;
+
+-- カジノランク：1回（10 X 以上）で1点、勝つと さらに2点。上の段に上がったら知らせる
+create or replace function public._gt_casino(u uuid, win boolean) returns void
+language plpgsql set search_path = public as $$
+declare c gt_casino; p numeric; t0 int; t1 int;
+begin
+  insert into gt_casino(user_id) values (u) on conflict do nothing;
+  select * into c from gt_casino where user_id = u for update;
+  p := _gt_cpts(c.pts, c.last_at); t0 := _gt_tier(p);
+  p := p + 1 + case when win then 2 else 0 end; t1 := _gt_tier(p);
+  update gt_casino set pts = p, plays = plays + 1, wins = wins + case when win then 1 else 0 end, last_at = _now(), best = greatest(best, p)
+   where user_id = u;
+  if t1 > t0 then perform _notice(u, format('【カジノランク】カジノランクが「%s」に上がりました！', _gt_tname(t1))); end if;
+end $$;
+
+-- 国庫からごほうびを払う（足りないときは払わない）。払った額を返す。why はタスクの文（全部クリアのときは null）
+create or replace function public._gt_pay(u uuid, amt int, why text) returns int
+language plpgsql set search_path = public as $$
+declare tb bigint;
+begin
+  select balance into tb from treasury where id = 1 for update;
+  if coalesce(tb, 0) < amt then
+    perform _notice(u, case when why is null then format('【タスク】今日のタスクを全部クリアしましたが、国庫が足りないため、ごほうび %s X は入りませんでした', _fmt(amt))
+                            else format('【タスク】「%s」をクリアしましたが、国庫が足りないため、ごほうび %s X は入りませんでした', why, _fmt(amt)) end);
+    return 0;
+  end if;
+  update treasury set balance = balance - amt, task_total = task_total + amt where id = 1;
+  perform _give(u, amt);
+  perform _log(u, 'task', 0, amt, jsonb_build_object('task', coalesce(why, 'all')));
+  perform _notice(u, case when why is null then format('【タスク】今日のタスクを全部クリア！ ごほうび %s X が入りました', _fmt(amt))
+                          else format('【タスク】「%s」をクリア！ %s X が入りました', why, _fmt(amt)) end);
+  return amt;
+end $$;
+
+-- クリアしたタスクと、全部クリアのごほうびを払う
+create or replace function public._gt_settle(u uuid, d date) returns void
+language plpgsql set search_path = public as $$
+declare t record; gd gt_days; p int;
+begin
+  for t in select * from gt_tasks where user_id = u and day = d and done_at is null and prog >= goal order by no for update loop
+    p := _gt_pay(u, t.reward, _gt_label(t.kind, t.goal));
+    update gt_tasks set done_at = _now(), paid = p where user_id = u and day = d and no = t.no;
+    perform _gt_add_xp(u, 50, false, false);
+  end loop;
+  select * into gd from gt_days where user_id = u and day = d for update;
+  if found and gd.bonus_at is null and exists (select 1 from gt_tasks where user_id = u and day = d)
+     and not exists (select 1 from gt_tasks where user_id = u and day = d and done_at is null) then
+    p := _gt_pay(u, case when gd.guest then 100 else 400 end, null);
+    update gt_days set bonus_at = _now(), bonus = p where user_id = u and day = d;
+    perform _gt_add_xp(u, 100, false, false);
+  end if;
+end $$;
+
+-- 遊んだ1回ごと：経験値・カジノランク・タスク
+--   k：slot / blackjack / roulette / hilo（1回）・race / boat / keirin（券の結果）・kb_buy / pr_buy（券を買った）・room（対戦が終わった）・fish（つった）・lottery（ジャンボを買った）
+create or replace function public._gt_event0(u uuid, k text, bet bigint, pay bigint, refund boolean) returns void
+language plpgsql set search_path = public as $$
+declare d date; kd text;
+        cas boolean := k in ('slot', 'blackjack', 'roulette', 'hilo');
+        win boolean := coalesce(pay, 0) > coalesce(bet, 0) and not coalesce(refund, false);
+        hit boolean := coalesce(pay, 0) > 0 and not coalesce(refund, false);
+        xp int;
+begin
+  if u is null or not exists (select 1 from profiles where id = u and ai is null) then return; end if;
+  -- ゲームランクの経験値
+  xp := case when cas then _gt_xpb(bet) + case when win then 5 else 0 end
+             when k in ('kb_buy', 'pr_buy', 'lottery') then _gt_xpb(bet)
+             when k in ('race', 'boat', 'keirin') then case when hit then 5 else 0 end
+             when k = 'room' then 30 + case when win then 20 else 0 end
+             when k = 'fish' then 5 else 0 end;
+  if xp > 0 or cas or k in ('kb_buy', 'pr_buy', 'room') then
+    perform _gt_add_xp(u, xp, cas or k in ('kb_buy', 'pr_buy', 'room'),
+                       (cas and win) or (k in ('race', 'boat', 'keirin') and hit) or (k = 'room' and win));
+  end if;
+  -- カジノランク（10 X 以上の1回。競馬・競艇・競輪は券の結果で。返った券は数えない）
+  if (cas or k in ('race', 'boat', 'keirin')) and coalesce(bet, 0) >= 10 and not coalesce(refund, false) then
+    perform _gt_casino(u, win);
+  end if;
+  -- タスク
+  d := _gt_ensure(u);
+  if d is null then return; end if;
+  kd := case k when 'slot' then 'slot' when 'blackjack' then 'bj' when 'roulette' then 'rou' when 'hilo' then 'hilo'
+               when 'kb_buy' then 'race' when 'pr_buy' then 'pr' when 'room' then 'room' when 'fish' then 'fish' end;
+  if kd is not null then
+    update gt_days set kinds = kinds || kd where user_id = u and day = d and not (kd = any(kinds));
+  end if;
+  if cas or k in ('kb_buy', 'pr_buy') then
+    update gt_days set bets = bets + greatest(coalesce(bet, 0), 0) where user_id = u and day = d;
+  end if;
+  update gt_tasks t set prog = case t.kind
+           when 'bets' then least(t.goal::bigint, (select z.bets from gt_days z where z.user_id = u and z.day = d))::int
+           when 'kinds' then least(t.goal, (select cardinality(z.kinds) from gt_days z where z.user_id = u and z.day = d))
+           else least(t.goal, t.prog + 1) end
+   where t.user_id = u and t.day = d and t.done_at is null
+     and (   (t.kind = 'slot' and k = 'slot')           or (t.kind = 'slot_win' and k = 'slot' and hit)
+          or (t.kind = 'bj' and k = 'blackjack')        or (t.kind = 'bj_win' and k = 'blackjack' and win)
+          or (t.kind = 'rou' and k = 'roulette')        or (t.kind = 'rou_win' and k = 'roulette' and hit)
+          or (t.kind = 'hilo' and k = 'hilo')           or (t.kind = 'hilo_win' and k = 'hilo' and win)
+          or (t.kind = 'race' and k = 'kb_buy')         or (t.kind = 'race_hit' and k = 'race' and hit)
+          or (t.kind = 'pr' and k = 'pr_buy')           or (t.kind = 'room' and k = 'room')
+          or (t.kind = 'fish' and k = 'fish')
+          or (t.kind = 'bets' and (cas or k in ('kb_buy', 'pr_buy')))
+          or (t.kind = 'kinds' and kd is not null));
+  perform _gt_settle(u, d);
+end $$;
+-- ゲームの処理を止めないように（まちがいがあっても、そのぶんだけなかったことにする）
+create or replace function public._gt_event(u uuid, k text, bet bigint, pay bigint, refund boolean) returns void
+language plpgsql set search_path = public as $$
+begin
+  perform _gt_event0(u, k, bet, pay, refund);
+exception when others then
+  raise warning 'gt_event %: %', k, sqlerrm;
+end $$;
+
+-- 記録（tx_log）から：カジノ・競馬・競艇・競輪の結果、ジャンボを買った
+create or replace function public._gt_tx_trg() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if new.game in ('slot', 'blackjack', 'roulette', 'hilo', 'race', 'boat', 'keirin') then
+    perform _gt_event(new.user_id, new.game, new.bet, new.payout, coalesce(new.detail->>'refund', '') = 'true');
+  elsif new.game = 'lottery' and new.bet > 0 then
+    perform _gt_event(new.user_id, 'lottery', new.bet, 0, false);
+  end if;
+  return null;
+end $$;
+drop trigger if exists gt_tx on public.tx_log;
+create trigger gt_tx after insert on public.tx_log for each row execute function public._gt_tx_trg();
+-- 馬券を買った・競艇や競輪の券を買った・魚をつった
+create or replace function public._gt_buy_trg() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if tg_table_name = 'keiba_tickets' then perform _gt_event(new.user_id, 'kb_buy', new.amount, 0, false);
+  elsif tg_table_name = 'pr_tickets' then perform _gt_event(new.user_id, 'pr_buy', new.amount, 0, false);
+  elsif tg_table_name = 'fi_catches' then perform _gt_event(new.user_id, 'fish', 0, 0, false);
+  end if;
+  return null;
+end $$;
+drop trigger if exists gt_kb on public.keiba_tickets;
+create trigger gt_kb after insert on public.keiba_tickets for each row execute function public._gt_buy_trg();
+drop trigger if exists gt_pr on public.pr_tickets;
+create trigger gt_pr after insert on public.pr_tickets for each row execute function public._gt_buy_trg();
+drop trigger if exists gt_fi on public.fi_catches;
+create trigger gt_fi after insert on public.fi_catches for each row execute function public._gt_buy_trg();
+-- 対戦が終わった（1分以上つづいた対戦。席にいた人それぞれ。勝った席は勝ち）
+create or replace function public._gt_room_trg() returns trigger
+language plpgsql set search_path = public as $$
+declare i int;
+begin
+  if new.status = 'finished' and old.status is distinct from 'finished' and new.started_at is not null
+     and coalesce(new.finished_at, _now()) - new.started_at >= interval '60 seconds' then
+    for i in 1 .. coalesce(cardinality(new.seats), 0) loop
+      if new.seats[i] is not null then
+        perform _gt_event(new.seats[i], 'room', 0, case when new.winner = i - 1 then 1 else 0 end, false);
+      end if;
+    end loop;
+  end if;
+  return null;
+end $$;
+drop trigger if exists gt_room on public.game_rooms;
+create trigger gt_room after update of status on public.game_rooms for each row execute function public._gt_room_trg();
+
+-- 今日のタスクの残り（メニューの印に）
+create or replace function public._gt_brief(u uuid) returns jsonb
+language plpgsql set search_path = public as $$
+declare d date := _gt_ensure(u);
+begin
+  if d is null then return null; end if;
+  return (select jsonb_build_object('left', count(*) filter (where t.done_at is null), 'n', count(*)) from gt_tasks t where t.user_id = u and t.day = d);
+end $$;
+
+-- 番付（今月のゲームランク・いまのカジノランク。ゲストとAIは出さない）
+create or replace function public._gt_board(u uuid) returns jsonb
+language sql stable set search_path = public as $$
+  select jsonb_build_object(
+    'lv', (select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id), 'me', p.id = u,
+                'lv', _gt_lv(z.xp), 'title', _gt_title(_gt_lv(z.xp))) order by z.xp desc, p.nickname), '[]'::jsonb)
+             from (select x.* from gt_xp x where x.month = _month_of(_now()) and x.xp > 0
+                      and not _is_guest(x.user_id) order by x.xp desc limit 10) z join profiles p on p.id = z.user_id and p.ai is null),
+    'cr', (select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id), 'me', p.id = u,
+                'pts', floor(z.e)::bigint, 'tier', _gt_tier(z.e), 'name', _gt_tname(_gt_tier(z.e))) order by z.e desc, p.nickname), '[]'::jsonb)
+             from (select c.user_id, _gt_cpts(c.pts, c.last_at) e from gt_casino c where not _is_guest(c.user_id)
+                    order by 2 desc limit 10) z join profiles p on p.id = z.user_id and p.ai is null where z.e >= 1)) $$;
+
+-- 遊戯の「タスク」の画面：今日のタスク・ゲームランク（今月）・とった称号・カジノランク・番付
+create or replace function public.game_tasks() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); d date; gd gt_days; m int := _month_of(_now()); x gt_xp; mylv int; c gt_casino; p numeric; t int; idle int;
+begin
+  d := _gt_ensure(u);
+  select * into gd from gt_days where user_id = u and day = d;
+  select * into x from gt_xp where user_id = u and month = m;
+  mylv := _gt_lv(coalesce(x.xp, 0));
+  select * into c from gt_casino where user_id = u;
+  p := _gt_cpts(c.pts, c.last_at); t := _gt_tier(p);
+  idle := case when c.last_at is null then null else floor(extract(epoch from (_now() - c.last_at)) / 86400)::int end;
+  return jsonb_build_object(
+    'day', _dlabel(_now()), 'guest', coalesce(gd.guest, _is_guest(u)),
+    'per', case when coalesce(gd.guest, _is_guest(u)) then 100 else 400 end,
+    'max', case when coalesce(gd.guest, _is_guest(u)) then 500 else 2000 end,
+    'tasks', (select coalesce(jsonb_agg(jsonb_build_object('no', z.no, 'kind', z.kind, 'label', _gt_label(z.kind, z.goal), 'goal', z.goal, 'prog', z.prog,
+                'reward', z.reward, 'done', z.done_at is not null, 'paid', z.paid) order by z.no), '[]'::jsonb)
+                from gt_tasks z where z.user_id = u and z.day = d),
+    'bonus', jsonb_build_object('reward', case when coalesce(gd.guest, _is_guest(u)) then 100 else 400 end, 'done', gd.bonus_at is not null, 'paid', coalesce(gd.bonus, 0)),
+    'got', coalesce((select sum(z.paid) from gt_tasks z where z.user_id = u and z.day = d), 0) + coalesce(gd.bonus, 0),
+    'level', jsonb_build_object('month', m % 100, 'ym', format('%s年%s月', m / 100, m % 100), 'lv', mylv, 'xp', coalesce(x.xp, 0), 'base', _gt_need(mylv), 'next', _gt_need(mylv + 1),
+               'plays', coalesce(x.plays, 0), 'wins', coalesce(x.wins, 0), 'title', _gt_title(mylv),
+               'next_title', (select jsonb_build_object('lv', z.lv, 'name', z.name) from _gt_titles() z where z.lv > mylv order by z.lv limit 1)),
+    'titles', (select jsonb_agg(jsonb_build_object('lv', z.lv, 'name', z.name, 'got', g.lv is not null,
+                 'month', case when g.lv is not null then format('%s年%s月', g.month / 100, g.month % 100) end) order by z.lv)
+                 from _gt_titles() z left join gt_titles g on g.user_id = u and g.lv = z.lv),
+    'history', (select coalesce(jsonb_agg(jsonb_build_object('month', format('%s年%s月', z.month / 100, z.month % 100), 'lv', _gt_lv(z.xp),
+                  'title', _gt_title(_gt_lv(z.xp))) order by z.month desc), '[]'::jsonb)
+                  from (select * from gt_xp where user_id = u and month < m order by month desc limit 6) z),
+    'casino', jsonb_build_object('tier', t, 'name', _gt_tname(t), 'pts', floor(p)::bigint,
+                'base', (select z.pts from _gt_tiers() z where z.tier = t),
+                'next', (select jsonb_build_object('tier', z.tier, 'name', z.name, 'pts', z.pts) from _gt_tiers() z where z.tier = t + 1),
+                'plays', coalesce(c.plays, 0), 'wins', coalesce(c.wins, 0), 'idle', idle, 'decay', coalesce(idle > 7, false),
+                'best', _gt_tname(_gt_tier(coalesce(c.best, 0)))),
+    'tiers', (select jsonb_agg(jsonb_build_object('tier', z.tier, 'name', z.name, 'pts', z.pts) order by z.tier) from _gt_tiers() z),
+    'board', _gt_board(u));
+end $$;
+
+-- はじめて入れたとき：これまでの記録から、カジノランク（これまでぜんぶ）と、今月のゲームランク（今月の分）を作る（知らせは出さない）
+do $$
+declare m int := _month_of(_now()); r record;
+begin
+  if exists (select 1 from gt_casino) or exists (select 1 from gt_xp) then return; end if;
+  insert into gt_casino(user_id, pts, plays, wins, last_at, best)
+  select t.user_id, count(*) + 2 * count(*) filter (where t.payout > t.bet), count(*), count(*) filter (where t.payout > t.bet), max(t.created_at),
+         count(*) + 2 * count(*) filter (where t.payout > t.bet)
+    from tx_log t join profiles p on p.id = t.user_id and p.ai is null
+   where t.game in ('slot', 'blackjack', 'roulette', 'hilo', 'race', 'boat', 'keirin') and t.bet >= 10
+     and coalesce(t.detail->>'refund', '') <> 'true'
+   group by t.user_id;
+  insert into gt_xp(user_id, month, xp, plays, wins)
+  select z.user_id, m, sum(z.xp), sum(z.pl), sum(z.wn) from (
+      select t.user_id,
+             case when t.game in ('slot', 'blackjack', 'roulette', 'hilo') then _gt_xpb(t.bet) + case when t.payout > t.bet then 5 else 0 end
+                  when t.game = 'lottery' and t.bet > 0 then _gt_xpb(t.bet)
+                  when t.game in ('race', 'boat', 'keirin') and t.payout > 0 and coalesce(t.detail->>'refund', '') <> 'true' then 5 else 0 end xp,
+             case when t.game in ('slot', 'blackjack', 'roulette', 'hilo') then 1 else 0 end pl,
+             case when (t.game in ('slot', 'blackjack', 'roulette', 'hilo') and t.payout > t.bet)
+                    or (t.game in ('race', 'boat', 'keirin') and t.payout > 0 and coalesce(t.detail->>'refund', '') <> 'true') then 1 else 0 end wn
+        from tx_log t where t.created_at >= _month_start(m)
+      union all
+      select k.user_id, _gt_xpb(k.amount), 1, 0 from keiba_tickets k where k.created_at >= _month_start(m)
+      union all
+      select k.user_id, _gt_xpb(k.amount), 1, 0 from pr_tickets k where k.created_at >= _month_start(m)
+      union all
+      select f.user_id, 5, 0, 0 from fi_catches f where f.at >= _month_start(m)
+      union all
+      select s.u, 30 + case when s.w then 20 else 0 end, 1, case when s.w then 1 else 0 end
+        from (select g.seats[i] u, g.winner = i - 1 w from game_rooms g, generate_series(1, cardinality(g.seats)) i
+               where g.status = 'finished' and g.finished_at >= _month_start(m) and g.started_at is not null
+                 and g.finished_at - g.started_at >= interval '60 seconds' and g.seats[i] is not null) s
+    ) z join profiles p on p.id = z.user_id and p.ai is null
+   group by z.user_id having sum(z.xp) > 0;
+  for r in select x.user_id, _gt_lv(x.xp) lv from gt_xp x where x.month = m loop
+    insert into gt_titles(user_id, lv, month, at) select r.user_id, t.lv, m, _now() from _gt_titles() t where t.lv <= r.lv on conflict do nothing;
+  end loop;
+end $$;
+
 -- ---------------------------------------------------------------------
 -- 実行権限：内部用（_ではじまる）は画面から呼べないようにする
 -- ---------------------------------------------------------------------
@@ -15021,7 +15472,10 @@ begin
             'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse',
             'money_history','corp_ledger_page','_kb_bid_min','_kb_can_run','_kb_colors','_kb_give_horse','_kb_hint','_kb_hjson','_kb_own_c','_kb_own_open','_kb_own_tick','_kb_owned_n','_kb_owner_row','_kb_prog_day','_kb_release','_kb_sale_at','_kb_sale_day','_kb_sales_tick','_kb_take_regs','_kb_upkeep_tick','owner_bid','owner_buy','owner_name','owner_reg','owner_retire','owner_sell','owner_silks','owner_state',
             'fi_cast','fi_consign','fi_hook','fi_join','fi_land','fi_state',
-            '_pr_bonus','_pr_check_sel','_pr_hit','_pr_make_day','_pr_make_race','_pr_margin','_pr_month','_pr_name','_pr_new_racer','_pr_odds','_pr_open','_pr_prob','_pr_rate','_pr_seed','_pr_settle','_pr_status','_pr_tick','_pr_wx','pr_bet','pr_day','pr_odds','pr_race','pr_racer') loop
+            '_pr_bonus','_pr_check_sel','_pr_hit','_pr_make_day','_pr_make_race','_pr_margin','_pr_month','_pr_name','_pr_new_racer','_pr_odds','_pr_open','_pr_prob','_pr_rate','_pr_seed','_pr_settle','_pr_status','_pr_tick','_pr_wx','pr_bet','pr_day','pr_odds','pr_race','pr_racer',
+            '_gt_today','_gt_kinds','_gt_pool','_gt_label','_gt_ensure','_gt_xpb','_gt_need','_gt_lv','_gt_titles','_gt_title','_gt_tiers','_gt_tier','_gt_tname',
+            '_gt_cpts','_gt_badge','_gt_add_xp','_gt_casino','_gt_pay','_gt_settle','_gt_event0','_gt_event','_gt_tx_trg','_gt_buy_trg','_gt_room_trg',
+            '_gt_brief','_gt_board','game_tasks') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
       execute format('revoke all on function %s from authenticated', f.sig);

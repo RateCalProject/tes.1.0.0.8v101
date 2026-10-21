@@ -529,6 +529,30 @@ h3{font-size:15px;margin:16px 0 8px}
 .admtag{display:inline-block;font-size:10px;line-height:1;padding:3px 5px;border-radius:5px;background:#1C1C1A;color:#fff;margin-left:4px;vertical-align:1px;font-weight:800}
 .admtag.sub{background:#6B6A64}
 .admtag.ev{background:#C2427A}
+/* 名前の横：今月の称号（ゲームランク）・カジノランク */
+.gttl{display:inline-block;font-size:10px;line-height:1;padding:2px 5px;border-radius:5px;border:1px solid var(--accent);color:var(--accent);margin-left:4px;vertical-align:1px;font-weight:800;white-space:nowrap}
+.gcr{display:inline-block;font-size:10px;line-height:1;padding:3px 5px;border-radius:5px;background:#6B6A64;color:#fff;margin-left:4px;vertical-align:1px;font-weight:800;white-space:nowrap}
+.gcr.t1{background:#A0623A}.gcr.t2{background:#7F8A95}.gcr.t3{background:#B8901C}.gcr.t4{background:#2F8C9E}.gcr.t5{background:#2F6FDB}.gcr.t6{background:#7C4DDB}.gcr.t7{background:linear-gradient(90deg,#D9482B,#B8901C)}
+#vRoom .nm .gttl,#vRoom .nm .gcr,#vRoom .kk-who .gttl,#vRoom .kk-who .gcr,#vRoom .who .gttl,#vRoom .who .gcr{display:none}
+/* 遊戯：タスク・ゲームランク・カジノランク */
+.gt-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
+.gt-row:first-of-type{border-top:0}
+.gt-row .ttx{flex:1;min-width:0}
+.gt-row .ttx b{display:block;font-size:14px}
+.gt-row .ttx small{display:block;margin-top:3px}
+.gt-row .rw{font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
+.gt-row.done .ttx b{color:var(--muted)}
+.gt-row.done .rw{color:var(--win)}
+.gt-bar{height:7px;border-radius:4px;background:var(--soft);overflow:hidden;margin-top:6px}
+.gt-bar i{display:block;height:100%;background:var(--accent);border-radius:4px}
+.gt-lv{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.gt-lv .lvn{font-size:32px;font-weight:900;font-variant-numeric:tabular-nums;line-height:1.1}
+.gt-lv .gttl{font-size:14px;padding:4px 8px;vertical-align:4px}
+.gt-tl{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.gt-tl>span{font-size:12px;padding:4px 8px;border-radius:8px;border:1px solid var(--line);color:var(--muted)}
+.gt-tl>span.got{border-color:var(--accent);color:var(--ink);font-weight:700}
+.gt-tier{display:inline-block;font-size:17px;font-weight:900;padding:6px 12px;border-radius:10px;color:#fff;background:#6B6A64}
+.gt-tier.t1{background:#A0623A}.gt-tier.t2{background:#7F8A95}.gt-tier.t3{background:#B8901C}.gt-tier.t4{background:#2F8C9E}.gt-tier.t5{background:#2F6FDB}.gt-tier.t6{background:#7C4DDB}.gt-tier.t7{background:linear-gradient(90deg,#D9482B,#B8901C)}
 /* 管理の画面 */
 .ad-top .ad-ttl{font-size:17px}
 .ad-todo{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
@@ -938,7 +962,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=836d4280","zh-TW":"zh-TW.js?v=86a852a7","zh-CN":"zh-CN.js?v=1d1ff309","ko":"ko.js?v=4af78c8a","ko-Hani":"ko-Hani.js?v=9b115038"};
+  window.AX_LANGS = {"en":"en.js?v=b66f318f","zh-TW":"zh-TW.js?v=4413ecc5","zh-CN":"zh-CN.js?v=dcf52254","ko":"ko.js?v=77afcdac","ko-Hani":"ko-Hani.js?v=5acb237c"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -1162,6 +1186,14 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 <section id="vGameList" class="view hidden">
   <div class="card" style="padding:6px 16px"><div id="gameList"></div></div>
   <p class="muted small" style="margin:8px 4px">勝ち負けはすべてサーバーで決まります。もうけ（払い戻し − 賭け金）は所得になり、税金の対象です（風の芽ジャンボの当せん金はのぞく）。</p>
+</section>
+
+<!-- 遊戯：ゲームタスク・ゲームランク・カジノランク -->
+<section id="vTask" class="view hidden">
+  <div class="card" id="gtToday"><p class="muted small" style="margin:0">読みこみ中…</p></div>
+  <div class="card" id="gtLevel"></div>
+  <div class="card" id="gtCasino"></div>
+  <div class="card" id="gtBoard"></div>
 </section>
 
 <!-- 風の芽ジャンボ（週1回の宝くじ） -->
@@ -1884,13 +1916,13 @@ async function enter() {
   }
 }
 function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
-const GAMES = ['vGameList', 'vRace', 'vBoat', 'vBike', 'vSlot', 'vBj', 'vRou', 'vHilo', 'vLobby', 'vRoom', 'vLot', 'vFish', 'vOwner'];
+const GAMES = ['vGameList', 'vTask', 'vRace', 'vBoat', 'vBike', 'vSlot', 'vBj', 'vRou', 'vHilo', 'vLobby', 'vRoom', 'vLot', 'vFish', 'vOwner'];
 const HIDDEN_SUBS = ['vLobby', 'vRoom', 'vLot', 'vFish', 'vOwner'];
 // メインメニュー（左から）とサブメニュー
 const MENU = [
   ['vInfo', '情報', 'i', [['today', '今日'], ['cur', '通貨'], ['pub', '広報・書籍'], ['mkt', '相場'], ['tl', 'TL'], ['people', '人をさがす'], ['jack', '競馬億万長者']]],
   ['vWork', '仕事', '✎', [['jobs', '仕事をえらぶ'], ['stat', '給料'], ['corp', '企業ページ'], ['mywork', '勤め先']]],
-  ['vGame', '遊戯', '♠', [['vGameList', '≡ 一覧'], ['vRace', '🏇 競馬'], ['vBoat', '🚤 競艇'], ['vBike', '🚲 競輪'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
+  ['vGame', '遊戯', '♠', [['vGameList', '≡ 一覧'], ['vTask', '★ タスク'], ['vRace', '🏇 競馬'], ['vBoat', '🚤 競艇'], ['vBike', '🚲 競輪'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
   ['vHome', 'メイン', '◉', [['menu', 'メニュー'], ['friend', 'フレンド'], ['msg', '連絡']]],
   ['vCorp', '企業', LANG !== 'ja' ? '🏢' : '社', [['search', '会社検索'], ['review', '評価（500 X）'], ['pin', 'ピン留め'], ['desk', '相談'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所']]],
   ['vTax', '役所', LANG !== 'ja' ? '🏛' : '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['court', '訴え'], ['kokko', '国庫・番付']]],
@@ -1915,7 +1947,7 @@ function go(v, sub) {
   $$(`#${main} [data-sub]`).forEach(el => el.classList.toggle('subhide', !el.dataset.sub.split(' ').includes(sub)));
   $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === main));
   $('#subNav').classList.remove('hidden');
-  $('#subNav').innerHTML = subs.map(x => `<button data-s="${x[0]}" class="${x[0] === sub ? 'on' : ''}">${x[1]}${main === 'vHome' && x[0] === 'msg' && MSGN ? `<span class="dm-n">${MSGN}</span>` : ''}</button>`).join('');
+  $('#subNav').innerHTML = subs.map(x => `<button data-s="${x[0]}" class="${x[0] === sub ? 'on' : ''}">${x[1]}${main === 'vHome' && x[0] === 'msg' && MSGN ? `<span class="dm-n">${MSGN}</span>` : ''}${main === 'vGame' && x[0] === 'vTask' && ME.gt && ME.gt.left ? `<span class="dm-n">${ME.gt.left}</span>` : ''}</button>`).join('');
   $$('#subNav button').forEach(b => b.onclick = () => { if (b.dataset.s === 'vGameList') setGcat(null); go(main, b.dataset.s); });
   { const sn = $('#subNav'), on = sn.querySelector('button.on'); if (on) sn.scrollLeft = on.offsetLeft - (sn.clientWidth - on.offsetWidth) / 2; }
   window.scrollTo(0, 0);
@@ -1927,6 +1959,7 @@ function go(v, sub) {
   if (sec === 'vBike') prLoad('bike');
   if (sec === 'vLobby') lobbyLoad();
   if (sec === 'vGameList') renderGameList();
+  if (sec === 'vTask') gtLoad();
   if (sec === 'vRoom') roomStart();
   if (sec === 'vLot') lotLoad();
   if (sec === 'vFish') fiLoad();
@@ -3911,10 +3944,66 @@ const cardHtml = (c, cls = '') => `<div class="pc ${c.s === 1 || c.s === 2 ? 're
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 // 名前の横のしるし（オレンジのチェック・管理者タグ）
 const badgeH = b => !b ? '' : (b.ok ? '<span class="chk" title="チェック：滞納なし・半年以内にメール認証">✓</span>' : '')
-  + (b.role ? `<span class="admtag ${b.role === 'sub' ? 'sub' : ''}">${b.role === 'admin' ? '管理者' : '副管理者'}</span>` : b.ev ? '<span class="admtag ev">イベント</span>' : '');
+  + (b.role ? `<span class="admtag ${b.role === 'sub' ? 'sub' : ''}">${b.role === 'admin' ? '管理者' : '副管理者'}</span>` : b.ev ? '<span class="admtag ev">イベント</span>' : '')
+  + (b.ttl ? `<span class="gttl" title="ゲームランクの称号（今月）">${esc(b.ttl)}</span>` : '')
+  + (b.cr ? `<span class="gcr t${b.cr}" title="カジノランク">${esc(CR_SHORT[b.cr] || '')}</span>` : '');
 const nameB = (n, b) => esc(n) + badgeH(b);
 const AITAG = '<span class="aitag">AI</span>';   // AIが運営する会社・AIのアカウントの印
 const fmtP = n => numStr(n, 4);
+
+/* ---------------- ゲームタスク・ゲームランク・カジノランク ---------------- */
+const CR_SHORT = ['', 'ブロンズ', 'シルバー', 'ゴールド', 'プラチナ', 'ダイヤ', 'マスター', 'レジェンド'];
+const gtBar = (v, max) => `<div class="gt-bar"><i style="width:${Math.max(0, Math.min(100, max > 0 ? v / max * 100 : 0)).toFixed(1)}%"></i></div>`;
+async function gtLoad() {
+  let d; try { d = await call('game_tasks'); } catch (e) { $('#gtToday').innerHTML = `<p class="muted small" style="margin:0">${esc(e.message)}</p>`; return; }
+  ME.gt = { left: d.tasks.filter(t => !t.done).length, n: d.tasks.length };
+  gtTab(); gtRender(d);
+}
+// 遊戯のタブ「タスク」の残りの数
+function gtTab() {
+  const on = $('#subNav button[data-s="vTask"]'); if (!on) return;
+  const n = on.querySelector('.dm-n'); if (n) n.remove();
+  if (ME.gt && ME.gt.left) on.insertAdjacentHTML('beforeend', `<span class="dm-n">${ME.gt.left}</span>`);
+}
+function gtRender(d) {
+  const done = d.tasks.filter(t => t.done).length;
+  $('#gtToday').innerHTML = `<h3 style="margin:0">★ 今日のタスク</h3><p class="muted small" style="margin:2px 0 4px">${d.day}・0時に新しくなります</p>
+    ${d.tasks.map(t => `<div class="gt-row ${t.done ? 'done' : ''}"><div class="ttx"><b>${esc(t.label)}</b>
+        ${t.done ? `<small class="muted">${t.paid ? 'クリア！' : 'クリア（国庫が足りず、ごほうびは入りませんでした）'}</small>`
+                 : `${gtBar(t.prog, t.goal)}<small class="muted num">${t.kind === 'bets' ? `${fmt(t.prog)} / ${fmt(t.goal)} X` : `${t.prog} / ${t.goal}`}</small>`}</div>
+        <span class="rw">${t.done ? '✓ ' : ''}${fmt(t.reward)} X</span></div>`).join('') || '<p class="muted small">今日のタスクはありません</p>'}
+    <div class="gt-row ${d.bonus.done ? 'done' : ''}"><div class="ttx"><b>4つともクリアのごほうび</b><small class="muted num">${done} / ${d.tasks.length}</small></div>
+      <span class="rw">${d.bonus.done ? '✓ ' : '+'}${fmt(d.bonus.reward)} X</span></div>
+    <div class="kv" style="margin-top:8px"><span class="muted">今日もらった</span><b>${fmt(d.got)} / ${fmt(d.max)} X</b></div>
+    <p class="muted small" style="margin:8px 0 0">${d.guest ? '<span>ゲストは、1つ100 X・1日最大500 X です（本登録すると1つ400 X・最大2,000 X）。</span>' : ''}<span>クリアすると、その場で国庫から入ります（所得になります）。タスクは人ごとにちがいます。</span></p>`;
+  const L = d.level, nt = L.next_title;
+  $('#gtLevel').innerHTML = `<h3 style="margin-top:0">🎮 ゲームランク（${L.ym}）</h3>
+    <div class="gt-lv"><span class="muted small">レベル</span><span class="lvn">${L.lv}</span>${L.title ? `<span class="gttl">${esc(L.title)}</span>` : ''}</div>
+    ${gtBar(L.xp - L.base, L.next - L.base)}
+    <p class="muted small num" style="margin:4px 0 0">経験値 ${fmt(L.xp)}（つぎのレベルまで あと ${fmt(L.next - L.xp)}）</p>
+    ${nt ? `<p class="small" style="margin:6px 0 0">つぎの称号：レベル${nt.lv}「${esc(nt.name)}」</p>` : ''}
+    <div class="kv" style="margin-top:8px"><span class="muted">今月遊んだ回数</span><b>${fmt(L.plays)}</b><span class="muted">今月勝った回数</span><b>${fmt(L.wins)}</b></div>
+    <h4 style="margin:12px 0 0">とった称号</h4>
+    <div class="gt-tl">${d.titles.map(t => `<span class="${t.got ? 'got' : ''}">Lv${t.lv} <span>${esc(t.name)}</span>${t.got ? ' ✓' : ''}</span>`).join('')}</div>
+    ${d.history.length ? `<h4 style="margin:12px 0 4px">これまで</h4><div class="kv">${d.history.map(h => `<span class="muted">${h.month}</span><b>レベル${h.lv}${h.title ? `「${esc(h.title)}」` : ''}</b>`).join('')}</div>` : ''}
+    <p class="muted small" style="margin:8px 0 0">遊ぶたびに経験値が入ります（賭けた額が大きいほど少し多め・勝つとおまけ・対戦ゲームは1回30）。タスクのクリアで50、全部クリアで100。月のはじめにレベル1にもどります。とった称号はずっと残り、名前の横には今月の称号が出ます。</p>`;
+  const c = d.casino;
+  $('#gtCasino').innerHTML = `<h3 style="margin-top:0">♠ カジノランク</h3>
+    <div class="row"><span class="gt-tier t${c.tier}">${esc(c.name)}</span><span class="bigline num">${fmt(c.pts)}<small class="muted" style="font-size:13px"> 点</small></span></div>
+    ${c.next ? `${gtBar(c.pts - c.base, c.next.pts - c.base)}<p class="muted small" style="margin:4px 0 0">つぎの「${esc(c.next.name)}」（${fmt(c.next.pts)}点）まで あと ${fmt(c.next.pts - c.pts)}</p>`
+             : '<p class="small" style="margin:6px 0 0">いちばん上の段です</p>'}
+    <div class="kv" style="margin-top:8px"><span class="muted">勝負した回数</span><b>${fmt(c.plays)}</b><span class="muted">勝った回数</span><b>${fmt(c.wins)}</b><span class="muted">いちばん高かった段</span><b>${esc(c.best || '')}</b></div>
+    <p class="small" style="margin:8px 0 0;${c.decay ? 'color:var(--lose);font-weight:700' : 'color:var(--muted)'}">${c.idle == null ? 'まだカジノで遊んでいません。'
+        : c.decay ? `最後に遊んでから${c.idle}日。ランクが1日5%ずつ下がっています（遊ぶと止まります）。` : `最後に遊んでから${c.idle}日（7日すぎると、1日5%ずつ下がります）。`}</p>
+    <div class="gt-tl">${d.tiers.map(t => `<span class="${t.tier <= c.tier ? 'got' : ''}"><span>${esc(t.name)}</span> ${fmt(t.pts)}</span>`).join('')}</div>
+    <p class="muted small" style="margin:8px 0 0">スロット・ブラックジャック・ルーレット・ハイ＆ローと、競馬・競艇・競輪で数えます。10 X 以上の1回で1点、勝つと さらに2点（競馬・競艇・競輪は券の結果で）。</p>`;
+  const B = d.board, row = (r, i, v) => `<li><b>${i + 1}</b><span class="plink" data-person="${r.uid}">${nameB(r.nickname, r.badge)}</span><span class="v">${v}</span></li>`;
+  $('#gtBoard').innerHTML = `<h3 style="margin-top:0">🏆 番付</h3>
+    <h4 style="margin:4px 0">ゲームランク（${L.ym}）</h4>
+    ${B.lv.length ? `<ul class="rank">${B.lv.map((r, i) => row(r, i, `レベル${r.lv}`)).join('')}</ul>` : '<p class="muted small" style="margin:0">まだだれもいません</p>'}
+    <h4 style="margin:12px 0 4px">カジノランク</h4>
+    ${B.cr.length ? `<ul class="rank">${B.cr.map((r, i) => row(r, i, `${fmt(r.pts)}点`)).join('')}</ul>` : '<p class="muted small" style="margin:0">まだだれもいません</p>'}`;
+}
 
 /* ---------------- ブラックジャック ---------------- */
 const bjBet = betBox($('#bjBetBox'), 50);
@@ -4121,6 +4210,7 @@ function taxRender() {
     <span class="muted">給料（累計）</span><b>${fmt(T.treasury.wage)}</b>
     <span class="muted">給付金（累計）</span><b>${fmt(T.treasury.benefit)}</b>
     <span class="muted">企業評価の謝礼（累計）</span><b>${fmt(T.treasury.review || 0)}</b>
+    <span class="muted">タスクのごほうび（累計）</span><b>${fmt(T.treasury.task || 0)}</b>
     <span class="muted">消費税（累計）</span><b>${fmt(T.treasury.consumption || 0)}</b></div>`;
 
   // 高額納税者番付
@@ -5529,7 +5619,7 @@ const HM_IC = { 'vInfo:today': '📰', 'vInfo:cur': '💱', 'vInfo:pub': '📚',
   'vCorp:desk': '🗨️', 'vCorp:job': '📋', 'vCorp:bank': '🏦', 'vCorp:order': '🛍️', 'vCorp:stock': '📊', 'vCorp:invest': '💹', 'vTax:tax': '🧾',
   'vTax:xfer': '💸', 'vTax:bill': '📨', 'vTax:court': '⚖️', 'vTax:kokko': '🏛️', 'vMore:prof': '👤', 'vMore:hist': '📜', 'vMore:rule': '📖',
   'vMore:admin': '🛡️', 'vMore:users': '🗂️', 'vHome:friend': '👥', 'vHome:msg': '✉️', 'vGame:vGameList': '🎮' };
-const HM_DEF = ['vGame:vRace', 'vInfo:today', 'vHome:msg', 'vWork:jobs', 'vTax:xfer', 'vCorp:invest'];
+const HM_DEF = ['vGame:vTask', 'vGame:vRace', 'vInfo:today', 'vHome:msg', 'vWork:jobs', 'vTax:xfer', 'vCorp:invest'];
 function hmCatalog() {
   const L = [];
   for (const m of MENU) for (const x of m[3]) {
@@ -7260,6 +7350,11 @@ async function bellPoll() {
           try { new Notification('風の芽経済組', { body: tr(noticeText(d.latest_body)), tag: 'kz-' + d.latest }); } catch (e) {}
         }
         ntLocal('ntLatest', String(d.latest));
+        // タスクをクリアした知らせ：タスクの画面・タブの残りの数を新しく
+        if (/^【タスク】/.test(d.latest_body || '')) {
+          if (!$('#vTask').classList.contains('hidden')) gtLoad();
+          else call('my_profile').then(p => { if (p.gt) { ME.gt = p.gt; gtTab(); } }).catch(() => {});
+        }
       }
     } catch (e) {}
   }
@@ -7273,7 +7368,7 @@ const NT_GO = { フレンド: ['vHome', 'friend'], メッセージ: ['vHome', 'm
   没収: ['vTax', 'tax'], 企業申請: ['vWork', 'corp'], 社長交代: ['vWork', 'corp'], 命令: ['vWork', 'corp'], 応募: ['vWork', 'corp'], 口座の申込: ['vWork', 'corp'],
   借入の申込: ['vWork', 'corp'], 返済: ['vWork', 'corp'], 採用: ['vWork', 'mywork'], 株: ['vCorp', 'stock'], 株の譲渡: ['vCorp', 'stock'], 配当: ['vCorp', 'stock'],
   口座: ['vCorp', 'bank'], 借入: ['vCorp', 'bank'], 交換: ['vCorp', 'invest'], 本: ['vInfo', 'pub'], '広報・書籍': ['vInfo', 'pub'], 対戦: ['vGame', 'vGameList'],
-  倒産: ['vMore', 'hist'], 風の芽ジャンボ: ['vGame', 'vLot'], 廃業: ['vMore', 'hist'], お金: ['vMore', 'hist'], 認証: ['vWork', 'corp'], 窓口: ['vCorp', 'desk'], サーバー: ['vWork', 'corp'], 上場: ['vWork', 'corp'] };
+  倒産: ['vMore', 'hist'], 風の芽ジャンボ: ['vGame', 'vLot'], タスク: ['vGame', 'vTask'], ゲームランク: ['vGame', 'vTask'], カジノランク: ['vGame', 'vTask'], 廃業: ['vMore', 'hist'], お金: ['vMore', 'hist'], 認証: ['vWork', 'corp'], 窓口: ['vCorp', 'desk'], サーバー: ['vWork', 'corp'], 上場: ['vWork', 'corp'] };
 function noticeGo(n) {
   const L = n.link || {}, b = n.body || '', tag = noticeTag(b);
   $$('.modal').forEach(m => m.remove());
@@ -7377,6 +7472,8 @@ async function personOpen(uid) {
   const m = document.createElement('div'); m.className = 'modal';
   m.innerHTML = `<div class="sheet"><div class="row"><b style="font-size:20px">${nameB(d.nickname, d.badge)}</b><button class="btn s" style="margin-left:auto" data-x>とじる</button></div>
     <p class="muted small" style="margin:4px 0">ID <b style="user-select:all">${d.uid}</b>・${d.since}から${d.me ? '・あなたです' : ''} ${friendTag(d.friend)}</p>
+    ${d.rank ? `<div class="kv" style="margin:6px 0"><span class="muted">🎮 今月のゲームランク</span><b>レベル${d.rank.lv}${d.rank.title ? `「${esc(d.rank.title)}」` : ''}</b>
+      <span class="muted">とった称号</span><b>${d.rank.titles}</b><span class="muted">♠ カジノランク</span><b><span class="gcr t${d.rank.cr}">${esc(d.rank.cr_name)}</span></b></div>` : ''}
     ${d.me ? '' : `<div class="row" style="margin:8px 0;flex-wrap:wrap;gap:6px">
       ${d.friend === 'ok' ? '<button class="btn main s" data-pa="dm">メッセージ</button>' : d.friend === 'out' ? '' : d.friend === 'in' ? '<button class="btn main s" data-pa="ok">フレンド申請を受ける</button>' : '<button class="btn main s" data-pa="fr">フレンド申請</button>'}
       <button class="btn s" data-pa="men">メンションする</button><button class="btn s" data-pa="send">送金</button><button class="btn s" data-pa="bill">請求</button></div>`}
@@ -7430,7 +7527,7 @@ $('#rvSend').onclick = async () => {
 };
 
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て', guest_rest: 'ゲストの残り（上限をこえた分・消えたゲスト）', lottery: '風の芽ジャンボ', auction: '競り市', boat: '競艇', keirin: '競輪', fishing: '釣り', review: '評価のお礼', gov_share: '国から株', owner: '馬主', owner_hold: 'せり（あずかり）', owner_back: 'せり（あずかりを返した）' };
+const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て', guest_rest: 'ゲストの残り（上限をこえた分・消えたゲスト）', lottery: '風の芽ジャンボ', auction: '競り市', boat: '競艇', keirin: '競輪', fishing: '釣り', review: '評価のお礼', gov_share: '国から株', owner: '馬主', owner_hold: 'せり（あずかり）', owner_back: 'せり（あずかりを返した）', task: 'タスクのごほうび' };
 // 記録のない所持金の動き（あずかり・返金など）は、呼ばれた操作から
 const MH_SRC = { room_move: '競り市・対戦（あずかり・返金）', room_state: '競り市・対戦（返金など）', room_list: '競り市・対戦（返金など）', room_join: '対戦の賭け金',
   room_start: '対戦の賭け金', room_leave: '対戦の賭け金（返金）', room_quit: '対戦の賭け金', stock_order: '株の注文（代金をあずかる）', stock_cancel: '株の注文の取り消し（返金）',
@@ -7442,8 +7539,8 @@ function mhLabel(it) {
   return MH_SRC[k] || 'お金の動き';
 }
 function mhSub(it) {
-  const d = (it.logs || []).map(l => l.detail || {}).find(x => x.to || x.from || x.company || x.bank || x.title || x.item || x.lot) || {};
-  return d.to ? `→ ${d.to}` : d.from ? `← ${d.from}` : d.item ? `${d.company || ''} ${d.item}` : d.company || d.bank || d.title || d.lot || '';
+  const d = (it.logs || []).map(l => l.detail || {}).find(x => x.to || x.from || x.company || x.bank || x.title || x.item || x.lot || x.task) || {};
+  return d.to ? `→ ${d.to}` : d.from ? `← ${d.from}` : d.item ? `${d.company || ''} ${d.item}` : d.task ? (d.task === 'all' ? '4つともクリア' : d.task) : d.company || d.bank || d.title || d.lot || '';
 }
 const MH = { items: [], more: false, busy: false };
 function mhRender() {
