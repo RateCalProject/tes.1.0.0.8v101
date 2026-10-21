@@ -938,7 +938,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=69b34135","zh-TW":"zh-TW.js?v=7019b435","zh-CN":"zh-CN.js?v=0376c5da","ko":"ko.js?v=b3031f20","ko-Hani":"ko-Hani.js?v=d3ad427e"};
+  window.AX_LANGS = {"en":"en.js?v=69b34135","zh-TW":"zh-TW.js?v=555eff77","zh-CN":"zh-CN.js?v=7ed3f4e3","ko":"ko.js?v=b2c6ab1a","ko-Hani":"ko-Hani.js?v=aef34d02"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
