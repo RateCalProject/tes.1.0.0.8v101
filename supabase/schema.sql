@@ -567,6 +567,8 @@ create table if not exists public.guests (
   ip         text                                      -- 作りすぎを止めるため
 );
 create index if not exists guests_created_idx on public.guests(created_at);
+alter table public.guests add column if not exists ext_until timestamptz;   -- 延長した期限（確定申告をしたゲスト。延長すると、5日間来なくても期限までは消えない）
+alter table public.guests add column if not exists ext_month int;           -- 延長に使った申告の月（申告した月ごとに1回）
 -- ゲストを作った記録（回線ごとの数の制限に使う。3日で消す）
 create table if not exists public.guest_signups (
   id bigserial primary key,
@@ -600,11 +602,14 @@ begin
                   (select last_seen_at from profiles where id = u),
                   (select created_at from tx_log where user_id = u order by id desc limit 1));
 end $$;
--- ゲストが消える時刻：はじめてから31日・5日間来ないとき の早いほう
+-- ゲストが消える時刻：はじめてから31日・5日間来ないとき の早いほう（確定申告をして延長したゲストは、のばした期限）
 create or replace function public._guest_until(u uuid) returns timestamptz
 language plpgsql stable set search_path = public as $$
 begin
-  return (select least(g.created_at + interval '31 days', _guest_last(u) + interval '5 days') from guests g where g.id = u);
+  -- 延長した人（確定申告をしたゲスト）は、5日間来なくても、のばした期限までは消えない
+  return (select case when g.ext_until is not null then g.ext_until
+                      else least(g.created_at + interval '31 days', _guest_last(u) + interval '5 days') end
+            from guests g where g.id = u);
 end $$;
 -- ゲストがこの5日間に送金した額（手数料はのぞく）
 create or replace function public._guest_sent5(u uuid) returns bigint
@@ -739,7 +744,7 @@ begin
   exception when others then
     raise warning 'tax tick failed: %', sqlerrm;
   end;
-  return (select jsonb_build_object('nickname', nickname, 'balance', balance, 'tax', case when _is_guest(u) then null else _tax_badge(u) end,
+  return (select jsonb_build_object('nickname', nickname, 'balance', balance, 'tax', _tax_badge(u),
             'account_no', account_no, 'is_admin', _is_admin(u), 'role', _role(u), 'event', _is_event(u), 'badge', _badge(u), 'prefs', prefs, 'guest', _is_guest(u),
             'guest_info', _guest_json(u), 'upgraded', up, 'beta', _beta_list(u))
             from profiles where id = u);
@@ -1248,7 +1253,10 @@ begin
   insert into tax_months(month) values (m) on conflict (month) do nothing;
   if (select processed from tax_months where month = m for update) then return; end if;
 
-  for p in select id from profiles where created_at < mend and ai is null and not _is_guest(id) order by created_at loop
+  -- ゲストは、その月を申告したときだけ（申告しなければ対象外のまま）
+  for p in select pr.id from profiles pr where pr.created_at < mend and pr.ai is null
+              and (not _is_guest(pr.id) or exists (select 1 from tax_returns t0 where t0.user_id = pr.id and t0.month = m and t0.declared is not null))
+            order by pr.created_at loop
     tru := _income(p.id, m);
     select * into r from tax_returns where user_id = p.id and month = m for update;
     if found and r.declared is not null then
@@ -1343,7 +1351,7 @@ begin
   end loop;
 
   -- 給付金：期限内に申告して納め、脱税が見つからず、滞納がなく、所持金が5,000以下の人
-  for r in select * from tax_returns where month = m and declared is not null and ontime and not evasion loop
+  for r in select * from tax_returns where month = m and declared is not null and ontime and not evasion and not _is_guest(user_id) loop   -- ゲストは給付金なし
     if _debt(r.user_id) > 0 then
       perform _notice(r.user_id, format('%sの給付金は、滞納があるためもらえませんでした。', lbl));
     elsif _assets(r.user_id) > 5000 then
@@ -1427,7 +1435,7 @@ begin
 
   select max(month) into topm from tax_months where processed;
   select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'badge', _badge(p.id)) order by t.tax_paid desc), '[]'::jsonb) into top
-    from (select * from tax_returns where month = topm and tax_paid > 0 order by tax_paid desc limit 10) t
+    from (select * from tax_returns where month = topm and tax_paid > 0 and not _is_guest(user_id) order by tax_paid desc limit 10) t
     join profiles p on p.id = t.user_id;
 
   select * into tr from treasury where id = 1;
@@ -1450,7 +1458,7 @@ end $$;
 -- 申告する（期限内なら何度でも出し直せる）
 create or replace function public.tax_file(p_declared bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); nowt timestamptz; cm int; fm int; r tax_returns; refund bigint;
+declare u uuid := _me_g(); nowt timestamptz; cm int; fm int; r tax_returns; refund bigint;   -- ゲストも申告できる（延長のため）
 begin
   perform _tax_tick();
   nowt := _now(); cm := _month_of(nowt); fm := _prev_month(cm);
@@ -1482,7 +1490,7 @@ end $$;
 -- 納める（滞納の古い月から、今の申告の分まで、残高でまかなえるだけ）
 create or replace function public.tax_pay() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); got bigint;
+declare u uuid := _me_g(); got bigint;
 begin
   perform _tax_tick();
   got := _pay_tax(u, _bal(u), false, 'tax');
@@ -12098,20 +12106,41 @@ end $$;
 -- ゲストの状態（画面用）。ゲストでなければ null
 create or replace function public._guest_json(u uuid) returns jsonb
 language plpgsql stable security definer set search_path = public as $$
-declare g guests; s bigint; w timestamptz; t timestamptz;
+declare g guests; s bigint; w timestamptz; t timestamptz; e timestamptz; fm int;
 begin
   select * into g from guests where id = u;
   if not found then return null; end if;
   s := _guest_sent5(u);
   t := _guest_until(u);
+  e := coalesce(g.ext_until, g.created_at + interval '31 days');
+  select max(month) into fm from tax_returns where user_id = u and declared is not null;
   w := case when coalesce((select value from app_settings where key = 'guest_wait7'), '1') = '1' and _now() < g.created_at + interval '7 days'
             then g.created_at + interval '7 days' end;
   return jsonb_build_object(
     'email', (select email from auth.users where id = u),
-    'end', g.created_at + interval '31 days', 'end_l', to_char((g.created_at + interval '31 days') at time zone 'Asia/Tokyo', 'FMMM"月"FMDD"日" HH24:MI'),
+    'end', e, 'end_l', to_char(e at time zone 'Asia/Tokyo', 'FMMM"月"FMDD"日" HH24:MI'),
+    'ext', g.ext_until is not null, 'ext_days', 31, 'ext_month', fm,
+    'can_ext', fm is not null and (g.ext_month is null or fm > g.ext_month),
     'until', t, 'until_l', to_char(t at time zone 'Asia/Tokyo', 'FMMM"月"FMDD"日" HH24:MI'),
     'cap', 40000, 'bet_cap', 100, 'send_cap', 2000, 'sent5', s, 'send_left', greatest(2000 - s, 0),
     'send_from', w, 'send_from_l', case when w is not null then to_char(w at time zone 'Asia/Tokyo', 'FMMM"月"FMDD"日" HH24:MI') end);
+end $$;
+
+-- ゲストの延長：確定申告をした月ごとに1回、消える日を31日のばす（延長すると、5日間来なくても期限までは消えない）
+create or replace function public.guest_extend() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); g guests; m int; e timestamptz;
+begin
+  select * into g from guests where id = u for update;
+  if not found then raise exception 'ゲストではありません'; end if;
+  select max(month) into m from tax_returns where user_id = u and declared is not null;
+  if m is null then raise exception '延長できるのは、確定申告をしたゲストだけです（毎月1日〜15日に、前の月の分を申告できます）'; end if;
+  if g.ext_month is not null and m <= g.ext_month then
+    raise exception '%月分の申告では、もう延長しました（次の月の分を申告すると、また延長できます）', m % 100;
+  end if;
+  e := greatest(coalesce(g.ext_until, g.created_at + interval '31 days'), _now()) + interval '31 days';
+  update guests set ext_until = e, ext_month = m where id = u;
+  return jsonb_build_object('guest', _guest_json(u));
 end $$;
 
 -- ゲストの送金の制限（ゲストでなければ何もしない）
@@ -12255,7 +12284,7 @@ declare g record; n int := 0; b bigint;
 begin
   if not pg_try_advisory_xact_lock(7601) then return -1; end if;
   for g in select x.id from guests x
-            where x.created_at <= _now() - interval '31 days' or _guest_last(x.id) <= _now() - interval '5 days'
+            where _guest_until(x.id) <= _now()
             order by x.created_at limit 200 loop
     -- 対戦の部屋（はじまる前・対戦中）にいる・賭けているあいだは、終わるまで待つ
     if exists (select 1 from game_rooms r where r.status in ('waiting', 'playing') and (r.host = g.id or g.id = any(r.seats)))
@@ -14984,7 +15013,7 @@ begin
             'stock_order','stock_cancel','stock_list_apply','stock_list_withdraw','admin_stock_decide','admin_stock_delist','_unlock_orders',
             '_kb_wx','admin_kb_extras','admin_kb_extra','admin_kb_extra_cancel','banner_list','admin_banners','admin_banner_save','admin_banner_end',
             'prefs_save','_admin_ids','_msg_unread','_is_guest','_me_g','_is_event','_staff_list','admin_staff','admin_staff_set',
-            '_guest_last','_guest_until','_guest_sent5','_guest_json','_guest_send_check','_guest_verify','_guest_cap_trg','_sink_user','_guest_flush',
+            '_guest_last','_guest_until','_guest_sent5','_guest_json','guest_extend','_guest_send_check','_guest_verify','_guest_cap_trg','_sink_user','_guest_flush',
             '_guest_purge','_req_ip','guest_signup','guest_set_email',
             '_bt_tok','_bt_auth','_bt_row','_bt_create','_bt_start','_bt_settle','_bt_cron','bt_ticket','bt_list','bt_state','bt_join','bt_leave',
             'bt_lobby_set','bt_bet','bt_react',
