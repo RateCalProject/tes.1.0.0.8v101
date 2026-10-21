@@ -407,6 +407,9 @@ alter table public.companies add column if not exists ai boolean not null defaul
 alter table public.companies add column if not exists ipo_price bigint;
 -- 株価の起点（上場・株価の決めなおしの時刻）。これより前の取引は、いまの株価・値幅に使わない（null なら上場の時刻）
 alter table public.companies add column if not exists price_from timestamptz;
+-- 会社が株を持つときの口座（ai = 'corp' のアカウント。はじめて株を受け取るときに作る）。corp_holders ではこの口座が株主になる
+alter table public.companies add column if not exists holder uuid references public.profiles(id) on delete set null;
+create unique index if not exists companies_holder_idx on public.companies(holder) where holder is not null;
 create table if not exists public.ai_staff (
   id         bigserial primary key,
   company_id int not null references public.companies(id) on delete cascade,
@@ -3139,7 +3142,7 @@ create table if not exists public.corp_cert_log (
 alter table public.corp_cert_log enable row level security;
 revoke all on public.corp_cert_log from anon, authenticated;
 -- 業種（日本標準産業分類の中分類）・ゲーム／Discordのサーバー・窓口（くわしくは下の「業種」「ゲーム・Discordのサーバー」「窓口」）
-alter table public.companies add column if not exists industries text[]  not null default '{}';          -- 中分類のコード（5つまで）
+alter table public.companies add column if not exists industries text[]  not null default '{}';          -- 中分類のコード（25まで）
 alter table public.companies add column if not exists servers    jsonb   not null default '[]'::jsonb;  -- ゲーム・Discordのサーバー（5つまで）
 alter table public.companies add column if not exists desk_on    boolean not null default true;         -- 窓口で相談を受け付ける
 alter table public.companies add column if not exists desk_note  text    not null default '';           -- 窓口の案内（受付時間など）
@@ -3229,6 +3232,35 @@ language sql stable set search_path = public as $$
   from corp_reviews where company_id = cid_int $$;
 
 
+-- 自社株（その会社が自分で持っている株）の数
+create or replace function public._self_shares(cid_int int) returns bigint
+language plpgsql stable set search_path = public as $$
+begin
+  return coalesce((select h.shares from companies c join corp_holders h on h.company_id = c.id and h.user_id = c.holder where c.id = cid_int), 0);
+end $$;
+-- 親会社：株（自社株をのぞく）の半分より多くを持っている会社（なければ行なし）
+create or replace function public._corp_parent(cid_int int) returns table(id int, cid text, name text, pct numeric)
+language plpgsql stable set search_path = public as $$
+#variable_conflict use_column
+begin
+  return query
+  select p.id, p.cid, p.name, round(h.shares * 100.0 / greatest(x.shares - _self_shares(x.id), 1), 1)
+    from companies x join corp_holders h on h.company_id = x.id
+    join companies p on p.holder = h.user_id and p.id <> x.id and p.status in ('active', 'suspended')
+   where x.id = cid_int and h.shares * 2 > x.shares - _self_shares(x.id)
+   order by h.shares desc limit 1;
+end $$;
+-- 子会社の一覧
+create or replace function public._corp_subs(cid_int int) returns jsonb
+language plpgsql stable set search_path = public as $$
+begin
+  return (select coalesce(jsonb_agg(jsonb_build_object('cid', x.cid, 'name', x.name,
+                    'pct', round(h.shares * 100.0 / greatest(x.shares - _self_shares(x.id), 1), 1)) order by x.id), '[]'::jsonb)
+            from companies p join corp_holders h on h.user_id = p.holder
+            join companies x on x.id = h.company_id and x.id <> p.id and x.status in ('active', 'suspended')
+           where p.id = cid_int and h.shares * 2 > x.shares - _self_shares(x.id));
+end $$;
+
 create or replace function public._corp_card(c companies, u uuid) returns jsonb
 language sql stable set search_path = public as $$
   select jsonb_build_object('cid', c.cid, 'cid_full', _cfull(c), 'name', c.name, 'form', c.form, 'kind', c.kind, 'description', c.description,
@@ -3248,6 +3280,7 @@ language sql stable set search_path = public as $$
     'desk_note', case when c.status in ('active', 'suspended') then c.desk_note else '' end,
     'listed', c.listed and c.status in ('active', 'suspended'),
     'price', case when c.listed then _stock_last(c.id) end,
+    'parent', (select jsonb_build_object('cid', z.cid, 'name', z.name, 'pct', z.pct) from _corp_parent(c.id) z),
     'mine', c.owner = u)
 $$;
 
@@ -3308,7 +3341,7 @@ begin
     'packs', (select coalesce(jsonb_agg(_pack_json(lp) order by lp.amount), '[]'::jsonb) from loan_packs lp where lp.company_id = c.id and lp.active and c.loan_on),
     'loans', (select coalesce(jsonb_agg(_loan_json(l) order by l.id desc), '[]'::jsonb) from loans l
                where l.company_id = c.id and l.user_id = u and l.status in ('pending', 'active')),
-    'shares', c.shares, 'holders', _corp_holders(c.id),
+    'shares', c.shares, 'holders', _corp_holders(c.id), 'subs', _corp_subs(c.id),
     'desk_mine', (select count(*) from desk_threads t where t.company_id = c.id and t.user_id = u),
     'desk_staff', _desk_staff(c.id, u),
     'staff', case when c.ai then (select coalesce(jsonb_agg(jsonb_build_object('name', s.name, 'title', s.title, 'desk', s.desk, 'since', _dlabel(_jday_start(s.joined)))
@@ -4035,14 +4068,17 @@ select c.id, c.owner, c.shares from public.companies c
 
 create or replace function public._corp_holders(cid_int int) returns jsonb
 language sql stable set search_path = public as $$
-  select coalesce(jsonb_agg(jsonb_build_object('nickname', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id), 'ai', p.ai is not null, 'shares', h.n,
-           'pct', round(h.n * 100.0 / greatest(c.shares, 1), 2)) order by h.n desc, p.nickname), '[]'::jsonb)
+  select coalesce(jsonb_agg(jsonb_build_object('nickname', coalesce(hc.name, p.nickname), 'uid', p.account_no,
+           'badge', case when hc.id is null then _badge(p.id) end, 'ai', p.ai is not null and hc.id is null, 'shares', h.n,
+           'pct', round(h.n * 100.0 / greatest(c.shares, 1), 2),
+           'corp', case when hc.id is not null then jsonb_build_object('cid', hc.cid, 'name', hc.name, 'self', hc.id = cid_int) end)
+           order by h.n desc, p.nickname), '[]'::jsonb)
     from (select user_id, sum(n)::bigint n, sum(s)::bigint s from (
             select user_id, shares n, 0 s from corp_holders where company_id = cid_int
             union all
             select user_id, remain, remain from stock_orders where company_id = cid_int and side = 'sell' and status = 'open') y
           group by user_id) h
-    join profiles p on p.id = h.user_id join companies c on c.id = cid_int
+    join profiles p on p.id = h.user_id join companies c on c.id = cid_int left join companies hc on hc.holder = h.user_id
 $$;
 -- 持ち株（売り注文に出している分もふくめる）。配当・分配に使う
 create or replace function public._holdings(cid_int int) returns table(user_id uuid, shares bigint)
@@ -4090,7 +4126,7 @@ end $$;
 -- 持っている株をほかの人にゆずる（代金は請求・送金で別にやりとりする）
 create or replace function public.share_give(p_cid text, p_to text, p_shares bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); c companies; mine bigint; t record; me profiles;
+declare u uuid := _me(); c companies; mine bigint; t record; me profiles; to_u uuid; tc companies;
 begin
   if (select official from companies where cid = _cid_norm(p_cid)) then raise exception '国営の会社には株がありません'; end if;
   select * into c from companies where cid = _cid_norm(p_cid) and status in ('active', 'suspended');
@@ -4099,14 +4135,28 @@ begin
   if p_shares is null or p_shares < 1 then raise exception 'ゆずる数を入れてください'; end if;
   if coalesce(mine, 0) < p_shares then raise exception 'ゆずれるのは持っている % までです', coalesce(mine, 0); end if;
   select * into t from _find_id(p_to);
-  if t.rid is null then raise exception '株をゆずれるのはユーザーだけです'; end if;
   if t.rid = u then raise exception '自分にはゆずれません'; end if;
+  if t.rid is null then   -- 会社にゆずる：その会社の持ち株に（自分の会社・その会社自身＝自社株も）
+    to_u := _corp_hold_uid(t.rcomp);
+    select * into tc from companies where id = t.rcomp;
+  else
+    to_u := t.rid;
+  end if;
   select * into me from profiles where id = u;
   update corp_holders set shares = shares - p_shares where company_id = c.id and user_id = u;
   delete from corp_holders where company_id = c.id and shares <= 0;
-  perform _add_shares(c.id, t.rid, p_shares);
-  perform _notice(t.rid, format('【株】%s（ID %s）から「%s」の%s %s をゆずり受けました。', me.nickname, me.account_no, c.name,
-                  case when c.form = '株式会社' then '株' else '出資' end, _fmt(p_shares)));
+  perform _add_shares(c.id, to_u, p_shares);
+  if tc.id is not null then
+    insert into corp_ledger(company_id, kind, amount, memo, balance_after)
+    values (tc.id, 'shares_in', 0, format('「%s」の%s %s を受け取った', c.name, case when c.form = '株式会社' then '株' else '出資' end, _fmt(p_shares)), tc.balance);
+    if tc.owner <> u then
+      perform _notice(tc.owner, format('【株】%s（ID %s）から、会社「%s」が「%s」の%s %s をゆずり受けました。', me.nickname, me.account_no, tc.name, c.name,
+                      case when c.form = '株式会社' then '株' else '出資' end, _fmt(p_shares)));
+    end if;
+  else
+    perform _notice(to_u, format('【株】%s（ID %s）から「%s」の%s %s をゆずり受けました。', me.nickname, me.account_no, c.name,
+                    case when c.form = '株式会社' then '株' else '出資' end, _fmt(p_shares)));
+  end if;
   return my_stocks();
 end $$;
 
@@ -4130,24 +4180,46 @@ begin
     'offers_in', (select coalesce(jsonb_agg(_offer_json(o) order by o.id desc), '[]'::jsonb) from share_offers o where o.to_user = u and o.status = 'open'),
     'offers_out', (select coalesce(jsonb_agg(_offer_json(o) order by o.id desc), '[]'::jsonb) from (
                     select * from share_offers where from_user = u order by (status = 'open') desc, id desc limit 20) o),
+    'corps', (select coalesce(jsonb_agg(jsonb_build_object('cid', f.cid, 'cid_full', _cfull(f), 'name', f.name, 'status', f.status, 'balance', f.balance,
+               'stocks', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'form', c.form, 'status', c.status, 'shares', h.shares, 'total', c.shares,
+                            'pct', round(h.shares * 100.0 / greatest(c.shares, 1), 2), 'listed', c.listed, 'price', case when c.listed then _stock_last(c.id) end, 'ai', c.ai,
+                            'self', c.id = f.id, 'sub', c.id <> f.id and h.shares * 2 > c.shares - _self_shares(c.id))
+                            order by (c.id = f.id) desc, c.name), '[]'::jsonb)
+                          from corp_holders h join companies c on c.id = h.company_id and c.status in ('active', 'suspended')
+                         where f.holder is not null and h.user_id = f.holder),
+               'offers_in', (select coalesce(jsonb_agg(_offer_json(o) order by o.id desc), '[]'::jsonb) from share_offers o
+                              where f.holder is not null and o.to_user = f.holder and o.status = 'open'),
+               'offers_out', (select coalesce(jsonb_agg(_offer_json(o) order by o.id desc), '[]'::jsonb) from (
+                               select * from share_offers where f.holder is not null and from_user = f.holder order by (status = 'open') desc, id desc limit 20) o))
+             order by f.id), '[]'::jsonb)
+             from companies f where f.owner = u and f.status in ('active', 'suspended') and not f.ai),
     'balance', _bal(u));
 end $$;
 
 -- 配当：会社のお金から、持ち株の数に合わせて株主に配る（端数は会社に残る）。もらった人の所得になる
 create or replace function public.corp_dividend(p_cid text, p_amount bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); c companies; h record; amt bigint; total bigint := 0; n int := 0; r jsonb;
+declare u uuid := _me(); c companies; h record; amt bigint; total bigint := 0; n int := 0; r jsonb; hc companies; base bigint;
 begin
   if (select official from companies where cid = _cid_norm(p_cid)) then raise exception '国営の会社は配当を出せません'; end if;
   c := _my_corp(u, p_cid);
   if c.status not in ('active', 'suspended') then raise exception 'この会社はいま動かせません（審査中・廃業など）'; end if;
   if p_amount is null or p_amount < 1 or p_amount > c.balance then raise exception '配当に使えるのは会社のお金 % X までです', c.balance; end if;
+  base := c.shares - _self_shares(c.id);   -- 自社株には配当を出さない（ほかの株主で分ける）
+  if base < 1 then raise exception '配当を受け取れる株主がいません（自社株だけです）'; end if;
   for h in select * from _holdings(c.id) loop
-    amt := floor(p_amount::numeric * h.shares / c.shares);
+    if c.holder is not null and h.user_id = c.holder then continue; end if;
+    amt := floor(p_amount::numeric * h.shares / base);
     if amt > 0 then
-      perform _give(h.user_id, amt);
-      perform _log(h.user_id, 'dividend', 0, amt, jsonb_build_object('company', c.name, 'company_id', c.id));
-      perform _notice(h.user_id, format('【配当】「%s」から配当 %s X が入りました。', c.name, _fmt(amt)));
+      select * into hc from companies where holder = h.user_id;
+      if hc.id is not null then   -- 株主が会社：会社のお金に
+        perform _corp_move(hc.id, amt, 'dividend_in', format('「%s」からの配当', c.name));
+        perform _notice(hc.owner, format('【配当】会社「%s」の持ち株に、「%s」から配当 %s X が入りました（会社のお金）。', hc.name, c.name, _fmt(amt)));
+      else
+        perform _give(h.user_id, amt);
+        perform _log(h.user_id, 'dividend', 0, amt, jsonb_build_object('company', c.name, 'company_id', c.id));
+        perform _notice(h.user_id, format('【配当】「%s」から配当 %s X が入りました。', c.name, _fmt(amt)));
+      end if;
       total := total + amt; n := n + 1;
     end if;
   end loop;
@@ -4740,6 +4812,7 @@ create or replace function public._corp_close(cid_int int, how text, why text) r
 language plpgsql set search_path = public as $$
 declare c companies; r record; owed_orders bigint; owed_int bigint; owed_court bigint; claims bigint;
   ratio numeric; amt bigint; rest bigint; total bigint := 0; label text; refunded bigint := 0; deposits bigint := 0; holders int := 0;
+  hc companies; selfn bigint; r2 record; given bigint;
 begin
   select * into c from companies where id = cid_int for update;
   if not found or c.status not in ('active', 'suspended') then raise exception 'この会社はもう活動していません'; end if;
@@ -4829,15 +4902,22 @@ begin
     perform _notice(r.user_id, format('【%s】勤め先の「%s」が%sしました。', label, c.name, label));
   end loop;
   delete from corp_members where company_id = c.id;
-  -- 残ったお金を株主に（持ち株の割合。端数は社長）
+  -- 残ったお金を株主に（持ち株の割合。自社株の分はのぞく。株主が会社なら会社のお金に。端数は社長）
+  selfn := _self_shares(c.id);
   select balance into rest from companies where id = c.id;
   if rest > 0 then
-    for r in select * from corp_holders where company_id = c.id loop
-      amt := floor(rest::numeric * r.shares / greatest(c.shares, 1));
+    for r in select * from corp_holders where company_id = c.id and user_id is distinct from c.holder loop
+      amt := floor(rest::numeric * r.shares / greatest(c.shares - selfn, 1));
       if amt > 0 then
-        perform _give(r.user_id, amt);
-        perform _log(r.user_id, 'liquidation', 0, amt, jsonb_build_object('company', c.name));
-        perform _notice(r.user_id, format('【%s】「%s」の残ったお金から、持ち株の割合で %s X を受け取りました。', label, c.name, _fmt(amt)));
+        select * into hc from companies where holder = r.user_id;
+        if hc.id is not null then
+          perform _corp_move(hc.id, amt, 'liquidation_in', format('「%s」の残ったお金の分配（%s）', c.name, label));
+          perform _notice(hc.owner, format('【%s】「%s」の残ったお金から、会社「%s」が持ち株の割合で %s X を受け取りました（会社のお金）。', label, c.name, hc.name, _fmt(amt)));
+        else
+          perform _give(r.user_id, amt);
+          perform _log(r.user_id, 'liquidation', 0, amt, jsonb_build_object('company', c.name));
+          perform _notice(r.user_id, format('【%s】「%s」の残ったお金から、持ち株の割合で %s X を受け取りました。', label, c.name, _fmt(amt)));
+        end if;
         total := total + amt; holders := holders + 1;
       end if;
     end loop;
@@ -4846,6 +4926,32 @@ begin
       perform _log(c.owner, 'liquidation', 0, rest - total, jsonb_build_object('company', c.name));
     end if;
     perform _corp_move(c.id, -rest, 'liquidation', '残ったお金を株主に分配（' || label || '）');
+  end if;
+  -- この会社が持っていた、ほかの会社の株：この会社の株主に、持ち株の割合で（自社株の分はのぞく。端数は社長）
+  if c.holder is not null then
+    update share_offers set status = 'canceled', done_at = _now() where status = 'open' and (from_user = c.holder or to_user = c.holder);
+    for r in select h.company_id, h.shares, y.name yname, case when y.form = '株式会社' then '株' else '出資' end yunit
+               from corp_holders h join companies y on y.id = h.company_id where h.user_id = c.holder and h.company_id <> c.id order by h.company_id loop
+      given := 0;
+      for r2 in select * from corp_holders where company_id = c.id and user_id is distinct from c.holder order by shares desc, user_id loop
+        amt := floor(r.shares::numeric * r2.shares / greatest(c.shares - selfn, 1));
+        if amt > 0 then
+          perform _add_shares(r.company_id, r2.user_id, amt);
+          given := given + amt;
+          select * into hc from companies where holder = r2.user_id;
+          if hc.id is not null then
+            perform _notice(hc.owner, format('【%s】「%s」が持っていた「%s」の%s %s を、会社「%s」が持ち株の割合で受け取りました。', label, c.name, r.yname, r.yunit, _fmt(amt), hc.name));
+          else
+            perform _notice(r2.user_id, format('【%s】「%s」が持っていた「%s」の%s %s を、持ち株の割合で受け取りました。', label, c.name, r.yname, r.yunit, _fmt(amt)));
+          end if;
+        end if;
+      end loop;
+      if r.shares - given > 0 then
+        perform _add_shares(r.company_id, c.owner, r.shares - given);
+        perform _notice(c.owner, format('【%s】「%s」が持っていた「%s」の%s %s を、社長として受け取りました（割りきれなかった分）。', label, c.name, r.yname, r.yunit, _fmt(r.shares - given)));
+      end if;
+      delete from corp_holders where company_id = r.company_id and user_id = c.holder;
+    end loop;
   end if;
   if c.ca > 0 then
     update profiles set ca = ca + c.ca where id = c.owner;
@@ -4949,14 +5055,18 @@ language sql stable set search_path = public as $$
     'fee', _xfer_fee(o.price),
     'cid', (select cid from companies where id = o.company_id), 'company', (select name from companies where id = o.company_id),
     'unit', (select case when form = '株式会社' then '株' else '口' end from companies where id = o.company_id),
-    'from_name', (select nickname from profiles where id = o.from_user), 'from_id', (select account_no from profiles where id = o.from_user),
-    'from_badge', _badge(o.from_user),
-    'to_name', (select nickname from profiles where id = o.to_user), 'to_id', (select account_no from profiles where id = o.to_user))
+    'from_name', coalesce((select x.name from companies x where x.holder = o.from_user), (select nickname from profiles where id = o.from_user)),
+    'from_id', coalesce((select _cfull(x) from companies x where x.holder = o.from_user), (select account_no from profiles where id = o.from_user)),
+    'from_corp', exists (select 1 from companies x where x.holder = o.from_user),
+    'from_badge', case when exists (select 1 from companies x where x.holder = o.from_user) then null else _badge(o.from_user) end,
+    'to_name', coalesce((select x.name from companies x where x.holder = o.to_user), (select nickname from profiles where id = o.to_user)),
+    'to_id', coalesce((select _cfull(x) from companies x where x.holder = o.to_user), (select account_no from profiles where id = o.to_user)),
+    'to_corp', exists (select 1 from companies x where x.holder = o.to_user))
 $$;
 
 create or replace function public.share_offer(p_cid text, p_to text, p_shares bigint, p_price bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); c companies; mine bigint; t record; me profiles;
+declare u uuid := _me(); c companies; mine bigint; t record; me profiles; to_u uuid; tc companies;
 begin
   if (select official from companies where cid = _cid_norm(p_cid)) then raise exception '国営の会社には株がありません'; end if;
   if coalesce(p_price, 0) = 0 then
@@ -4970,49 +5080,82 @@ begin
   select shares into mine from corp_holders where company_id = c.id and user_id = u;
   if coalesce(mine, 0) < p_shares then raise exception 'ゆずれるのは持っている % までです', coalesce(mine, 0); end if;
   select * into t from _find_id(p_to);
-  if t.rid is null then raise exception '株をゆずれるのはユーザーだけです'; end if;
   if t.rid = u then raise exception '自分にはゆずれません'; end if;
+  if t.rid is null then
+    to_u := _corp_hold_uid(t.rcomp);
+    select * into tc from companies where id = t.rcomp;
+  else
+    to_u := t.rid;
+  end if;
   select * into me from profiles where id = u;
   if _now() < coalesce(me.ok7_at, me.created_at + interval '7 days') then raise exception '登録から7日たつまで、代金つきの譲渡はできません'; end if;
   if (select count(*) from share_offers where from_user = u and status = 'open') >= 20 then raise exception '返事待ちの申し出は20件までです'; end if;
-  insert into share_offers(company_id, from_user, to_user, shares, price, created_at) values (c.id, u, t.rid, p_shares, p_price, _now());
-  perform _notice(t.rid, format('【株の譲渡】%s（ID %s）から「%s」の%s %s を %s X でゆずりたいという申し出が来ました。企業タブの「持ち株」から返事できます。',
-                  me.nickname, me.account_no, c.name, case when c.form = '株式会社' then '株' else '出資' end, _fmt(p_shares), _fmt(p_price)));
+  insert into share_offers(company_id, from_user, to_user, shares, price, created_at) values (c.id, u, to_u, p_shares, p_price, _now());
+  if tc.id is not null then
+    perform _notice(tc.owner, format('【株の譲渡】%s（ID %s）から、会社「%s」あてに「%s」の%s %s を %s X でゆずりたいという申し出が来ました。企業タブの「持ち株」から返事できます。',
+                    me.nickname, me.account_no, tc.name, c.name, case when c.form = '株式会社' then '株' else '出資' end, _fmt(p_shares), _fmt(p_price)));
+  else
+    perform _notice(to_u, format('【株の譲渡】%s（ID %s）から「%s」の%s %s を %s X でゆずりたいという申し出が来ました。企業タブの「持ち株」から返事できます。',
+                    me.nickname, me.account_no, c.name, case when c.form = '株式会社' then '株' else '出資' end, _fmt(p_shares), _fmt(p_price)));
+  end if;
   return my_stocks();
 end $$;
 
 -- 申し出に返事する（受ける＝代金を払って株を受け取る）
 create or replace function public.share_offer_answer(p_id bigint, p_ok boolean) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); o share_offers; c companies; me profiles; seller profiles; mine bigint; fee bigint;
+declare u uuid := _me(); o share_offers; c companies; me profiles; mine bigint; fee bigint; bc companies; sc companies;
 begin
-  select * into o from share_offers where id = p_id and to_user = u and status = 'open' for update;
+  -- 自分あて、または自分が社長をしている会社あての申し出
+  select * into o from share_offers where id = p_id and status = 'open'
+     and (to_user = u or to_user in (select holder from companies where owner = u and holder is not null)) for update;
   if not found then raise exception '申し出が見つかりません'; end if;
   select * into c from companies where id = o.company_id;
-  select * into seller from profiles where id = o.from_user;
+  select * into bc from companies where holder = o.to_user;     -- 受け取る側が会社
+  select * into sc from companies where holder = o.from_user;   -- ゆずる側が会社
   if not p_ok then
     update share_offers set status = 'declined', done_at = _now() where id = o.id;
-    perform _notice(o.from_user, format('【株の譲渡】「%s」の株の申し出（#%s）は断られました。', c.name, o.id));
+    perform _notice(coalesce(sc.owner, o.from_user), format('【株の譲渡】「%s」の株の申し出（#%s）は断られました。', c.name, o.id));
     return my_stocks();
   end if;
   if c.status not in ('active', 'suspended') then raise exception 'この会社はもうありません'; end if;
   select * into me from profiles where id = u for update;
   if _now() < coalesce(me.ok7_at, me.created_at + interval '7 days') then raise exception '登録から7日たつまで、代金つきの譲渡は受けられません'; end if;
-  if _debt(u) > 0 then raise exception '税金の滞納があるので払えません'; end if;
   select shares into mine from corp_holders where company_id = c.id and user_id = o.from_user for update;
   if coalesce(mine, 0) < o.shares then raise exception '相手がもう、その数の株を持っていません'; end if;
   fee := _xfer_fee(o.price);
-  if me.balance < o.price + fee then raise exception 'AiliNaXが足りません（手数料 % X をふくめて % X 必要です）', fee, o.price + fee; end if;
-  update profiles set balance = balance - (o.price + fee) where id = u;
+  if bc.id is not null then   -- 会社のお金で払う
+    if bc.status not in ('active', 'suspended') then raise exception 'この会社はいま動かせません（審査中・廃業など）'; end if;
+    if (select balance from companies where id = bc.id for update) < o.price + fee then
+      raise exception '会社のお金が足りません（手数料 % X をふくめて % X 必要です）', fee, o.price + fee;
+    end if;
+    perform _corp_move(bc.id, -(o.price + fee), 'share_buy', format('「%s」の株 %s を買った（手数料 %s X）', c.name, _fmt(o.shares), _fmt(fee)));
+  else
+    if _debt(u) > 0 then raise exception '税金の滞納があるので払えません'; end if;
+    if me.balance < o.price + fee then raise exception 'AiliNaXが足りません（手数料 % X をふくめて % X 必要です）', fee, o.price + fee; end if;
+    update profiles set balance = balance - (o.price + fee) where id = u;
+    perform _log(u, 'share_buy', o.price + fee, 0, jsonb_build_object('company', c.name, 'shares', o.shares, 'fee', fee));
+  end if;
   update treasury set balance = balance + fee, fee_total = fee_total + fee where id = 1;
-  perform _log(u, 'share_buy', o.price + fee, 0, jsonb_build_object('company', c.name, 'shares', o.shares, 'fee', fee));
-  perform _give(o.from_user, o.price);
-  perform _log(o.from_user, 'share_sell', 0, o.price, jsonb_build_object('company', c.name, 'shares', o.shares));
+  if sc.id is not null then   -- 代金は、ゆずった会社のお金に
+    perform _corp_move(sc.id, o.price, 'share_sell', format('「%s」の株 %s を売った', c.name, _fmt(o.shares)));
+  else
+    perform _give(o.from_user, o.price);
+    perform _log(o.from_user, 'share_sell', 0, o.price, jsonb_build_object('company', c.name, 'shares', o.shares));
+  end if;
   update corp_holders set shares = shares - o.shares where company_id = c.id and user_id = o.from_user;
   delete from corp_holders where company_id = c.id and shares <= 0;
-  perform _add_shares(c.id, u, o.shares);
+  perform _add_shares(c.id, o.to_user, o.shares);
   update share_offers set status = 'done', done_at = _now() where id = o.id;
-  perform _notice(o.from_user, format('【株の譲渡】%s さんが「%s」の株 %s を %s X で受けました。代金が入りました。', me.nickname, c.name, _fmt(o.shares), _fmt(o.price)));
+  perform _notice(coalesce(sc.owner, o.from_user), case
+    when bc.id is not null and sc.id is not null then
+      format('【株の譲渡】会社「%s」が「%s」の株 %s を %s X で受けました。代金は会社「%s」に入りました。', bc.name, c.name, _fmt(o.shares), _fmt(o.price), sc.name)
+    when bc.id is not null then
+      format('【株の譲渡】会社「%s」が「%s」の株 %s を %s X で受けました。代金が入りました。', bc.name, c.name, _fmt(o.shares), _fmt(o.price))
+    when sc.id is not null then
+      format('【株の譲渡】%s さんが「%s」の株 %s を %s X で受けました。代金は会社「%s」に入りました。', me.nickname, c.name, _fmt(o.shares), _fmt(o.price), sc.name)
+    else
+      format('【株の譲渡】%s さんが「%s」の株 %s を %s X で受けました。代金が入りました。', me.nickname, c.name, _fmt(o.shares), _fmt(o.price)) end);
   return my_stocks() || jsonb_build_object('balance', _bal(u));
 end $$;
 
@@ -5020,7 +5163,9 @@ create or replace function public.share_offer_cancel(p_id bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me();
 begin
-  update share_offers set status = 'canceled', done_at = _now() where id = p_id and from_user = u and status = 'open';
+  update share_offers set status = 'canceled', done_at = _now()
+   where id = p_id and status = 'open'
+     and (from_user = u or from_user in (select holder from companies where owner = u and holder is not null));   -- 自分の会社から出した申し出も
   if not found then raise exception '取り消せる申し出が見つかりません'; end if;
   return my_stocks();
 end $$;
@@ -9486,7 +9631,7 @@ end $$;
 
 -- ---------------------------------------------------------------------
 -- 業種（日本標準産業分類・令和5年7月改定の中分類）
---   会社ごとに5つまで。銀行は「62 銀行業」、証券は「65 金融商品取引業、商品先物取引業」を必ずふくむ（62・65 はその会社だけ）
+--   会社ごとに25まで。銀行は「62 銀行業」、証券は「65 金融商品取引業、商品先物取引業」を必ずふくむ（62・65 はその会社だけ）
 --   「97 国家公務」「98 地方公務」は国営の会社だけ
 -- ---------------------------------------------------------------------
 create table if not exists public.industry_majors (
@@ -9628,7 +9773,7 @@ on conflict (code) do update set major = excluded.major, name = excluded.name;
 update public.companies set industries = '{62}' where kind = '銀行' and industries = '{}';
 update public.companies set industries = '{65}' where kind = '証券' and industries = '{}';
 
--- 業種のコードをそろえる（重ならない・小さい順・5つまで。銀行・証券は必ずふくむ）
+-- 業種のコードをそろえる（重ならない・小さい順・25まで。銀行・証券は必ずふくむ）
 create or replace function public._ind_norm(p text[], knd text, offi boolean) returns text[]
 language plpgsql stable set search_path = public as $$
 declare r text[]; x text; must text := case knd when '銀行' then '62' when '証券' then '65' end;
@@ -9642,7 +9787,7 @@ begin
     if x = '62' and knd is distinct from '銀行' and not coalesce(offi, false) then raise exception '「銀行業」は銀行の会社だけがえらべます'; end if;
     if x = '65' and knd is distinct from '証券' and not coalesce(offi, false) then raise exception '「金融商品取引業、商品先物取引業」は証券の会社だけがえらべます'; end if;
   end loop;
-  if cardinality(r) > 5 then raise exception '業種は5つまでです'; end if;
+  if cardinality(r) > 25 then raise exception '業種は25までです'; end if;
   return r;
 end $$;
 
@@ -11717,7 +11862,7 @@ begin
                  'locked', (select coalesce(sum(locked), 0) from stock_orders o where o.user_id = p.id and o.status = 'open' and o.side = 'buy'),
                  'stocks', round(_ai_stock_value(p.id)),
                  'orders', (select count(*) from stock_orders o where o.user_id = p.id and o.status = 'open')) order by p.ai), '[]'::jsonb)
-                from profiles p where p.ai is not null) end,
+                from profiles p where p.ai is not null and p.ai <> 'corp') end,
     'ai_out', case when adm then (select ai_out from treasury where id = 1) end,
     'made', case when adm then (select coalesce(sum(revenue - cost), 0) from ai_days) end,
     'articles_today', (select count(*) from pub_items i join pubs p on p.id = i.pub_id join ai_corps a on a.company_id = p.company_id and a.role = 'news'
@@ -11965,7 +12110,7 @@ end $$;
 -- 管理者：国が持っている株を、人に渡す（p_to が空なら自分に）。代金はなし
 create or replace function public.admin_gov_share_give(p_cid text, p_to text, p_shares bigint) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); g uuid := 'a1000000-0000-4000-8000-000000000099'; c companies; t record; to_u uuid; to_name text; to_id text; have bigint;
+declare u uuid := _me(); g uuid := 'a1000000-0000-4000-8000-000000000099'; c companies; t record; to_u uuid; to_name text; to_id text; have bigint; tc companies;
 begin
   if not _is_admin(u) then raise exception '国の株を渡せるのは管理者だけです'; end if;
   if p_shares is null or p_shares < 1 then raise exception '渡す株数を入れてください'; end if;
@@ -11975,10 +12120,15 @@ begin
     to_u := u;
   else
     select * into t from _find_id(p_to);
-    if t.rid is null then raise exception '株を渡せるのは人だけです（会社には渡せません）'; end if;
-    to_u := t.rid;
+    if t.rid is null then   -- 会社：その会社の持ち株に
+      to_u := _corp_hold_uid(t.rcomp);
+      select * into tc from companies where id = t.rcomp;
+    else
+      to_u := t.rid;
+    end if;
   end if;
   select nickname, account_no into to_name, to_id from profiles where id = to_u;
+  if tc.id is not null then to_name := tc.name; to_id := tc.cid; end if;
   perform pg_advisory_xact_lock(7400, c.id);
   select shares into have from corp_holders where company_id = c.id and user_id = g for update;
   if coalesce(have, 0) < p_shares then raise exception '国が持っている「%」の株は %株です', c.name, _fmt(coalesce(have, 0)); end if;
@@ -11986,7 +12136,14 @@ begin
   delete from corp_holders where company_id = c.id and user_id = g and shares <= 0;
   perform _add_shares(c.id, to_u, p_shares);
   perform _log(to_u, 'gov_share', 0, 0, jsonb_build_object('company', c.name, 'company_id', c.id, 'shares', p_shares));
-  if to_u <> u then
+  if tc.id is not null then
+    insert into corp_ledger(company_id, kind, amount, memo, balance_after)
+    values (tc.id, 'shares_in', 0, format('「%s」の%s %s を受け取った', c.name, '株', _fmt(p_shares)), tc.balance);
+    if tc.owner <> u then
+      perform _notice_l(tc.owner, format('【株】国から「%s」の株 %s株を、会社「%s」が受け取りました。「企業 → 持ち株」で見られます。', c.name, _fmt(p_shares), tc.name),
+                        jsonb_build_object('go', 'corp', 'cid', c.cid), u);
+    end if;
+  elsif to_u <> u then
     perform _notice_l(to_u, format('【株】国から「%s」の株 %s株を受け取りました。「企業 → 持ち株」で見られます。', c.name, _fmt(p_shares)),
                       jsonb_build_object('go', 'corp', 'cid', c.cid), u);
   end if;
@@ -15396,6 +15553,120 @@ begin
   end loop;
 end $$;
 
+-- =====================================================================
+-- 会社が株を持つ（法人の株主）・子会社
+--   会社ごとに「株を持つための口座」（ai = 'corp' のアカウント。companies.holder）を作り、corp_holders ではその口座が株主になる
+--   人や会社が、会社のID（3けた）あてに株をゆずる・売る（代金つきの申し出）と、その会社の持ち株になる
+--   社長が会社の名前で、会社の持ち株を人や会社にゆずる・売る。会社あての申し出には、社長が会社のお金で払って受け取る
+--   配当・残ったお金の分配は会社のお金に入る。自社株（自分の会社の株）も持てるが、配当・分配は出ない（ほかの株主で分ける）
+--   子会社：別の会社が、株（自社株をのぞく）の半分より多くを持っている会社（_corp_parent・_corp_subs）
+--   会社が廃業・倒産したら、持っていた株は、その会社の株主に持ち株の割合で（端数は社長）
+-- =====================================================================
+-- 会社の「株を持つための口座」（なければ作る）
+create or replace function public._corp_hold_uid(cid_int int) returns uuid
+language plpgsql set search_path = public as $$
+declare c companies; g uuid; cols text[];
+begin
+  select * into c from companies where id = cid_int for update;
+  if not found then raise exception '会社が見つかりません'; end if;
+  if c.holder is not null then return c.holder; end if;
+  if c.ai then raise exception 'AIの会社は株を持てません'; end if;
+  g := gen_random_uuid();
+  select array_agg(column_name::text) into cols from information_schema.columns where table_schema = 'auth' and table_name = 'users';
+  if 'email' = any(cols) and 'confirmation_token' = any(cols) and 'banned_until' = any(cols) then
+    execute 'insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+               confirmation_token, recovery_token, email_change_token_new, email_change, banned_until)
+             values ($1, ''00000000-0000-0000-0000-000000000000'', ''authenticated'', ''authenticated'', $2,
+               ''{"provider":"ai","providers":["ai"]}''::jsonb, ''{"ai":true}''::jsonb, now(), now(), '''', '''', '''', '''', ''2999-12-31'')'
+      using g, 'corp-' || c.id || '@ailinax.invalid';
+  elsif 'email' = any(cols) then
+    execute 'insert into auth.users (id, email) values ($1, $2)' using g, 'corp-' || c.id || '@ailinax.invalid';
+  else
+    execute 'insert into auth.users (id) values ($1)' using g;
+  end if;
+  insert into profiles(id, nickname, balance, created_at, ai) values (g, c.name, 0, _now(), 'corp');
+  update companies set holder = g where id = c.id;
+  return g;
+end $$;
+
+-- 念のため：株を持つための口座にお金が入ったら（配当・分配など）、会社のお金へ（会社がもう活動していなければ社長へ）
+create or replace function public._corp_hold_money() returns trigger
+language plpgsql set search_path = public as $$
+declare c companies; dx bigint := coalesce(new.balance, 0) - coalesce(old.balance, 0); dc numeric := coalesce(new.ca, 0) - coalesce(old.ca, 0);
+begin
+  if dx = 0 and dc = 0 then return new; end if;
+  select * into c from companies where holder = new.id;
+  if not found then return new; end if;
+  if c.status in ('active', 'suspended') then
+    if dx <> 0 then perform _corp_move(c.id, dx, 'holding', '持ち株の口座から（配当・分配など）'); end if;
+    if dc <> 0 then update companies set ca = ca + dc where id = c.id; end if;
+  else
+    update profiles set balance = balance + dx, ca = ca + dc where id = c.owner;
+  end if;
+  new.balance := old.balance; new.ca := old.ca;
+  return new;
+end $$;
+drop trigger if exists corp_hold_money on public.profiles;
+create trigger corp_hold_money before update of balance, ca on public.profiles
+  for each row when (new.ai = 'corp') execute function public._corp_hold_money();
+
+-- 社長：会社の持ち株を、人や会社にゆずる（代金 0）・売る（代金つきの申し出）
+create or replace function public.corp_share_offer(p_from text, p_cid text, p_to text, p_shares bigint, p_price bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); f companies; c companies; mine bigint; t record; to_u uuid; tc companies; me profiles; unit text;
+begin
+  f := _my_corp(u, p_from);
+  if f.status not in ('active', 'suspended') then raise exception 'この会社はいま動かせません（審査中・廃業など）'; end if;
+  if (select official from companies where cid = _cid_norm(p_cid)) then raise exception '国営の会社には株がありません'; end if;
+  select * into c from companies where cid = _cid_norm(p_cid) and status in ('active', 'suspended');
+  if not found then raise exception '会社が見つかりません'; end if;
+  if p_shares is null or p_shares < 1 then raise exception 'ゆずる数を入れてください'; end if;
+  perform 1 from companies where id = f.id for update;
+  select shares into mine from corp_holders where company_id = c.id and user_id = f.holder for update;
+  if f.holder is null or coalesce(mine, 0) < p_shares then raise exception 'ゆずれるのは会社が持っている % までです', coalesce(mine, 0); end if;
+  select * into t from _find_id(p_to);
+  if t.rid is null then
+    if t.rcomp = f.id then raise exception '同じ会社にはゆずれません'; end if;
+    to_u := _corp_hold_uid(t.rcomp);
+    select * into tc from companies where id = t.rcomp;
+  else
+    to_u := t.rid;
+  end if;
+  unit := case when c.form = '株式会社' then '株' else '出資' end;
+  select * into me from profiles where id = u;
+  if coalesce(p_price, 0) = 0 then
+    update corp_holders set shares = shares - p_shares where company_id = c.id and user_id = f.holder;
+    delete from corp_holders where company_id = c.id and shares <= 0;
+    perform _add_shares(c.id, to_u, p_shares);
+    insert into corp_ledger(company_id, kind, amount, memo, balance_after)
+    values (f.id, 'shares_out', 0, format('「%s」の%s %s を「%s」にゆずった', c.name, unit, _fmt(p_shares), coalesce(tc.name, t.rname)), (select balance from companies where id = f.id));
+    if tc.id is not null then
+      insert into corp_ledger(company_id, kind, amount, memo, balance_after)
+      values (tc.id, 'shares_in', 0, format('「%s」の%s %s を受け取った', c.name, unit, _fmt(p_shares)), (select balance from companies where id = tc.id));
+      if tc.owner <> u then
+        perform _notice(tc.owner, format('【株】会社「%s」から、会社「%s」が「%s」の%s %s をゆずり受けました。', f.name, tc.name, c.name, unit, _fmt(p_shares)));
+      end if;
+    elsif to_u <> u then
+      perform _notice(to_u, format('【株】会社「%s」から「%s」の%s %s をゆずり受けました。', f.name, c.name, unit, _fmt(p_shares)));
+    end if;
+    return my_stocks();
+  end if;
+  -- 代金つき：相手（会社なら社長）に申し出が届き、相手が払うと株が動く
+  if p_price < 0 or p_price > 1000000000000 then raise exception '代金は0〜1兆 X にしてください'; end if;
+  if _now() < coalesce(me.ok7_at, me.created_at + interval '7 days') then raise exception '登録から7日たつまで、代金つきの譲渡はできません'; end if;
+  if (select count(*) from share_offers where from_user = f.holder and status = 'open') >= 20 then raise exception '返事待ちの申し出は20件までです'; end if;
+  insert into share_offers(company_id, from_user, to_user, shares, price, created_at) values (c.id, f.holder, to_u, p_shares, p_price, _now());
+  if tc.id is not null then
+    perform _notice(tc.owner, format('【株の譲渡】会社「%s」から、会社「%s」あてに「%s」の%s %s を %s X でゆずりたいという申し出が来ました。企業タブの「持ち株」から返事できます。',
+                    f.name, tc.name, c.name, unit, _fmt(p_shares), _fmt(p_price)));
+  else
+    perform _notice(to_u, format('【株の譲渡】会社「%s」から「%s」の%s %s を %s X でゆずりたいという申し出が来ました。企業タブの「持ち株」から返事できます。',
+                    f.name, c.name, unit, _fmt(p_shares), _fmt(p_price)));
+  end if;
+  return my_stocks();
+end $$;
+
+
 -- ---------------------------------------------------------------------
 -- 実行権限：内部用（_ではじまる）は画面から呼べないようにする
 -- ---------------------------------------------------------------------
@@ -15475,7 +15746,8 @@ begin
             '_pr_bonus','_pr_check_sel','_pr_hit','_pr_make_day','_pr_make_race','_pr_margin','_pr_month','_pr_name','_pr_new_racer','_pr_odds','_pr_open','_pr_prob','_pr_rate','_pr_seed','_pr_settle','_pr_status','_pr_tick','_pr_wx','pr_bet','pr_day','pr_odds','pr_race','pr_racer',
             '_gt_today','_gt_kinds','_gt_pool','_gt_label','_gt_ensure','_gt_xpb','_gt_need','_gt_lv','_gt_titles','_gt_title','_gt_tiers','_gt_tier','_gt_tname',
             '_gt_cpts','_gt_badge','_gt_add_xp','_gt_casino','_gt_pay','_gt_settle','_gt_event0','_gt_event','_gt_tx_trg','_gt_buy_trg','_gt_room_trg',
-            '_gt_brief','_gt_board','game_tasks') loop
+            '_gt_brief','_gt_board','game_tasks',
+            '_self_shares','_corp_parent','_corp_subs','_corp_hold_uid','_corp_hold_money','corp_share_offer') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
       execute format('revoke all on function %s from authenticated', f.sig);
