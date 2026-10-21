@@ -5011,6 +5011,8 @@ function ownRender() {
         <div class="row"><button class="btn s" data-own-back="list">‹ 会社の一覧</button></div>
         <h3 style="margin:10px 0 4px">${esc(c.name)}${kindTag({ ...c, status: '' })} ${sus ? `<span class="stag">${c.court_lock ? '休業中（命令）' : '休業中'}</span>` : '<span class="tag good">営業中</span>'}</h3>
         <p class="muted small" style="margin:0 0 6px">ID ${c.cid_full}・会社のお金 <b>${fmt(c.balance)} X</b></p>
+        ${c.parent ? `<p class="small" style="margin:0 0 6px"><span>親会社</span> <a class="men" data-hco="${c.parent.cid}">${esc(c.parent.name)}</a> <span class="muted">（株の${Number(c.parent.pct)}%）</span></p>` : ''}
+        ${c.subs && c.subs.length ? `<p class="small" style="margin:0 0 6px"><span>子会社</span>：${c.subs.map(s3 => `<a class="men" data-hco="${s3.cid}">${esc(s3.name)}</a>`).join('・')}</p>` : ''}
         ${S.map(s2 => `<div class="co-row" data-own-sec="${s2[0]}"><span class="nm"><b>${s2[1]}</b><small>${s2[2]}</small></span>${dot(s2[3])}<span style="color:var(--muted);font-size:20px">›</span></div>`).join('')}</div>`;
     } else {
       h = `<div class="card own" data-co="${c.cid}">
@@ -5955,7 +5957,7 @@ $('#vCorp').addEventListener('click', async ev => {
 
 /* ---------------- 株式（上場・売り買い） ---------------- */
 const chgH = (last, base) => { if (last == null || !base) return ''; const c = (last - base) / base * 100; return `<b class="${udc(c)}">${sgn(c)}${Math.abs(c).toFixed(2)}%</b>`; };
-const stkRow = x => `<div class="co-row" data-stk="${x.cid}"><span class="nm"><b>${esc(x.name)}${x.ai ? AITAG : ''}${stopTag(x)}${x.status === 'suspended' ? '<span class="stag">売買停止</span>' : ''}</b>
+const stkRow = x => `<div class="co-row" data-stk="${x.cid}"><span class="nm"><b>${esc(x.name)}${x.ai ? AITAG : ''}${x.parent ? '<span class="kindtag sub">子会社</span>' : ''}${stopTag(x)}${x.status === 'suspended' ? '<span class="stag">売買停止</span>' : ''}</b>
   <small>${x.last != null ? `時価総額 ${fmt(x.cap)} X・` : ''}きょう ${fmt(x.vol)}株${x.last == null ? '・まだ取引がありません' : ''}</small></span>
   <span style="text-align:right;white-space:nowrap"><b class="num">${x.last != null ? fmt(x.last) + ' X' : '—'}</b><br><small>${chgH(x.close, x.base)}</small></span></div>`;
 async function stkListLoad() {
@@ -6008,7 +6010,7 @@ async function stkOpen(cid) {
   STK.cid = d.cid; STK.d = d; STK.side = 'buy';
   const m = document.createElement('div'); m.className = 'modal';
   m.innerHTML = `<div class="sheet">
-    <div class="row"><b style="font-size:19px" class="grow">${esc(d.name)}${d.ai ? AITAG : ''}<span class="kindtag">株式</span></b><button class="btn s" data-x>とじる</button></div>
+    <div class="row"><b style="font-size:19px" class="grow">${esc(d.name)}${d.ai ? AITAG : ''}<span class="kindtag">株式</span>${d.parent ? '<span class="kindtag sub">子会社</span>' : ''}</b><button class="btn s" data-x>とじる</button></div>
     <p class="small muted" style="margin:2px 0 6px"><a class="men" data-stkco>会社のページ</a>・風の芽証券取引所</p>
     <div id="stkTop"></div>
     <div class="seg sm hidden" id="stkSpan" style="margin-top:8px">${STK_SPANS.map(([k, t]) => `<button data-k="${k}" class="${k === STK.span ? 'on' : ''}">${t}</button>`).join('')}</div>
@@ -6121,7 +6123,7 @@ async function stockLoad() {
         <div class="small muted">${nameB(o.from_name, o.from_badge)}（ID ${o.from_id}）から・代金 <b>${fmt(o.price)} X</b>（手数料 ${fmt(o.fee)} X）・${o.at}</div>
         <div class="row" style="margin-top:6px"><button class="btn main s" data-ofok="${o.id}" data-p="${o.price}" data-f="${o.fee}">払って受け取る</button><button class="btn s" data-ofng="${o.id}">断る</button></div></div>`).join('') : '')
       + (d.stocks.length ? `<h4 style="margin:${d.offers_in.length ? 12 : 0}px 0 4px">持っている株</h4>` : '')
-      + (d.stocks.map(x => `<div class="item"><div class="row"><b>${esc(x.name)}${x.ai ? AITAG : ''}${x.listed ? '<span class="kindtag">上場</span>' : ''}${x.status === 'suspended' ? '<span class="stag">休業中</span>' : ''}</b><b class="num" style="margin-left:auto">${fmt(x.shares + (x.on_sale || 0))} ${unitOf(x)}</b></div>
+      + (d.stocks.map(x => `<div class="item"><div class="row"><b>${esc(x.name)}${x.ai ? AITAG : ''}${x.listed ? '<span class="kindtag">上場</span>' : ''}${x.parent ? '<span class="kindtag sub">子会社</span>' : ''}${x.status === 'suspended' ? '<span class="stag">休業中</span>' : ''}</b><b class="num" style="margin-left:auto">${fmt(x.shares + (x.on_sale || 0))} ${unitOf(x)}</b></div>
       <div class="small muted">発行 ${fmt(x.total)} ${unitOf(x)} のうち ${Number(x.pct)}%・社長 ${esc(x.owner)}${x.mine ? '（あなた）' : x.ai ? '（AI）' : ''}・もらった配当 ${fmt(x.dividend_total)} X</div>
       ${x.listed ? `<div class="small">株価 ${x.price != null ? `<b>${fmt(x.price)} X</b>（評価額 ${fmt(x.price * (x.shares + (x.on_sale || 0)))} X）` : 'まだ取引なし'}${x.on_sale ? `・売り注文中 ${fmt(x.on_sale)}株` : ''}</div>` : ''}
       <div class="row" style="margin-top:6px">${x.listed ? `<button class="btn main s" data-stk="${x.cid}">取引所で売り買い</button>` : ''}<button class="btn s" data-give="${x.cid}" data-max="${x.shares}">ゆずる・売る</button><button class="btn s" data-co="${x.cid}">会社を見る</button></div></div>`).join('')

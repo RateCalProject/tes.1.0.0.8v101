@@ -3529,7 +3529,8 @@ begin
       'loan_requests', (select coalesce(jsonb_agg(_loan_json(l) order by l.id), '[]'::jsonb) from loans l where l.company_id = c.id and l.status = 'pending'),
       'loans_active', (select coalesce(jsonb_agg(_loan_json(l) order by l.due_at), '[]'::jsonb) from loans l where l.company_id = c.id and l.status = 'active'),
       'shares', c.shares, 'holders', _corp_holders(c.id)
-    ) order by c.id), '[]'::jsonb) from companies c where c.owner = u and c.status <> 'rejected'),
+    ) || jsonb_build_object('parent', (select jsonb_build_object('cid', z.cid, 'name', z.name, 'pct', z.pct) from _corp_parent(c.id) z), 'subs', _corp_subs(c.id))
+    order by c.id), '[]'::jsonb) from companies c where c.owner = u and c.status <> 'rejected'),
     'rejected', (select coalesce(jsonb_agg(jsonb_build_object('name', name, 'reason', reason) order by id desc), '[]'::jsonb)
                    from (select * from companies where owner = u and status = 'rejected' order by id desc limit 5) r),
     'balance', _bal(u));
@@ -4170,6 +4171,7 @@ begin
            'on_sale', h.on_sale, 'listed', c.listed,
            'price', case when c.listed then _stock_last(c.id) end,
            'owner', case when c.ai then _ai_ceo(c.id) else (select nickname from profiles where id = c.owner) end, 'mine', c.owner = u, 'ai', c.ai,
+           'parent', (select jsonb_build_object('cid', z.cid, 'name', z.name, 'pct', z.pct) from _corp_parent(c.id) z),
            'dividend_total', (select coalesce(sum(payout), 0) from tx_log where user_id = u and game = 'dividend' and detail->>'company_id' = c.id::text))
            order by c.name), '[]'::jsonb)
          from (select company_id, sum(n)::bigint shares, sum(s)::bigint on_sale from (
@@ -10628,7 +10630,7 @@ create or replace function public._stock_list() returns jsonb
 language sql stable set search_path = public as $$
   select coalesce(jsonb_agg(j order by (j->>'value')::bigint desc, j->>'name'), '[]'::jsonb) from (
     select _stock_day(c.id, _kb_jday(_now())) || jsonb_build_object('cid', c.cid, 'name', c.name, 'status', c.status, 'shares', c.shares,
-             'listed_at', _dlabel(c.listed_at), 'last', l.p, 'cap', l.p * c.shares, 'ai', c.ai) j
+             'listed_at', _dlabel(c.listed_at), 'last', l.p, 'cap', l.p * c.shares, 'ai', c.ai, 'parent', (select jsonb_build_object('cid', z.cid, 'name', z.name, 'pct', z.pct) from _corp_parent(c.id) z)) j
       from companies c
       cross join lateral (select _stock_last(c.id) p) l
      where c.listed and c.status in ('active', 'suspended') offset 0) z
@@ -10653,7 +10655,7 @@ begin
     raise exception 'その会社は上場していません';
   end if;
   select * into me from profiles where id = u;
-  return jsonb_build_object('cid', c.cid, 'name', c.name, 'ai', c.ai, 'status', c.status, 'listed', c.listed, 'listed_at', _dlabel(c.listed_at), 'ipo_price', c.ipo_price,
+  return jsonb_build_object('cid', c.cid, 'name', c.name, 'ai', c.ai, 'status', c.status, 'parent', (select jsonb_build_object('cid', z.cid, 'name', z.name, 'pct', z.pct) from _corp_parent(c.id) z), 'listed', c.listed, 'listed_at', _dlabel(c.listed_at), 'ipo_price', c.ipo_price,
     'market', _stock_market(c.id),
     'exch', case when ex.id is null then null else jsonb_build_object('cid', ex.cid, 'name', ex.name, 'open', ex.status = 'active', 'fee_pct', ex.fx_fee) end,
     'can_trade', c.listed and c.status = 'active' and ex.id is not null and ex.status = 'active',
@@ -10984,6 +10986,7 @@ begin
                  where i.created_at >= t0 - interval '7 days' and i.created_at < t0 and i.active and c.status = 'active' order by i.id desc limit 6) z),
     -- 新しくできた会社（その日に審査が通った会社）
     'corps', (select coalesce(jsonb_agg(jsonb_build_object('cid', c.cid, 'name', c.name, 'kind', c.kind, 'form', c.form, 'official', c.official, 'ai', c.ai,
+                 'parent', (select jsonb_build_object('cid', z.cid, 'name', z.name, 'pct', z.pct) from _corp_parent(c.id) z),
                 'industries', c.industries, 'description', left(c.description, 100)) order by c.decided_at), '[]'::jsonb)
               from companies c where c.decided_at >= t0 and c.decided_at < t1 and c.status in ('active', 'suspended')),
     'fx', fxj,
