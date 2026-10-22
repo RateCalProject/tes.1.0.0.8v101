@@ -989,7 +989,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=b8f7a11f","zh-TW":"zh-TW.js?v=8c9bf918","zh-CN":"zh-CN.js?v=9883b387","ko":"ko.js?v=63c9fa22","ko-Hani":"ko-Hani.js?v=9bfe8a08"};
+  window.AX_LANGS = {"en":"en.js?v=d83fabfe","zh-TW":"zh-TW.js?v=e03b69b5","zh-CN":"zh-CN.js?v=126edc74","ko":"ko.js?v=6a3d9425","ko-Hani":"ko-Hani.js?v=487fa7ac"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -7669,7 +7669,7 @@ const NT_GO = { フレンド: ['vHome', 'friend'], メッセージ: ['vHome', 'm
   没収: ['vTax', 'tax'], 企業申請: ['vWork', 'corp'], 社長交代: ['vWork', 'corp'], 命令: ['vWork', 'corp'], 応募: ['vWork', 'corp'], 口座の申込: ['vWork', 'corp'],
   借入の申込: ['vWork', 'corp'], 返済: ['vWork', 'corp'], 採用: ['vWork', 'mywork'], 株: ['vCorp', 'stock'], 株の譲渡: ['vCorp', 'stock'], 配当: ['vCorp', 'stock'],
   口座: ['vCorp', 'bank'], 借入: ['vCorp', 'bank'], 交換: ['vCorp', 'invest'], 本: ['vInfo', 'pub'], '広報・書籍': ['vInfo', 'pub'], 対戦: ['vGame', 'vGameList'],
-  倒産: ['vMore', 'hist'], 風の芽ジャンボ: ['vGame', 'vLot'], タスク: ['vGame', 'vTask'], ゲームランク: ['vGame', 'vTask'], カジノランク: ['vGame', 'vTask'], 廃業: ['vMore', 'hist'], お金: ['vMore', 'hist'], 認証: ['vWork', 'corp'], 窓口: ['vCorp', 'desk'], サーバー: ['vWork', 'corp'], 上場: ['vWork', 'corp'], 馬主: ['vHome', 'horses'], せり: ['vHome', 'horses'] };
+  倒産: ['vMore', 'hist'], 風の芽ジャンボ: ['vGame', 'vLot'], タスク: ['vGame', 'vTask'], ゲームランク: ['vGame', 'vTask'], カジノランク: ['vGame', 'vTask'], 廃業: ['vMore', 'hist'], お金: ['vMore', 'hist'], 認証: ['vWork', 'corp'], 窓口: ['vCorp', 'desk'], サーバー: ['vWork', 'corp'], 上場: ['vWork', 'corp'], 馬主: ['vHome', 'horses'], せり: ['vHome', 'horses'], 補助金: ['vWork', 'corp'] };
 function noticeGo(n) {
   const L = n.link || {}, b = n.body || '', tag = noticeTag(b);
   $$('.modal').forEach(m => m.remove());
