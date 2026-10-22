@@ -106,7 +106,7 @@ h3{font-size:15px;margin:16px 0 8px}
 
 .msg{min-height:24px;font-weight:700;text-align:center;margin:8px 0}
 .msg.win{color:var(--win)} .msg.lose{color:var(--lose)}
-.toast{position:fixed;left:50%;bottom:calc(76px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;font-weight:700;z-index:20;max-width:90vw;text-align:center;box-shadow:0 6px 20px rgba(0,0,0,.2)}
+.toast{position:fixed;left:50%;bottom:calc(76px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;font-weight:700;z-index:40;max-width:90vw;text-align:center;box-shadow:0 6px 20px rgba(0,0,0,.2)}
 
 /* ログイン */
 .center{min-height:70vh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:14px}
@@ -1673,7 +1673,7 @@ function setBal(b, flash) {
 let toastT;
 function toast(t) {
   let e = $('.toast'); if (!e) { e = document.createElement('div'); e.className = 'toast'; document.body.appendChild(e); }
-  e.textContent = numT(t); e.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => e.hidden = true, 2600);
+  e.textContent = numT(t); e.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => e.hidden = true, String(t).length > 24 ? 5000 : 2600);   // 長い文（エラーなど）は長めに
 }
 function show(id) { $$('main > section').forEach(s => s.classList.toggle('hidden', s.id !== id)); }
 
