@@ -16890,7 +16890,7 @@ language sql stable set search_path = public as $$
       'lease', 0.001, 'lease_gov', 0.0005, 'prop_tax', 0.0001,
       'rail', 300000, 'road', 150000, 'dbl_mul', 1.7, 'elec', 100000,
       'sta_base', 20000000, 'sta_m', 100000, 'stop', 500000,
-      'dep_S', 100000000, 'dep_M', 300000000, 'dep_L', 700000000, 'bdep_S', 20000000, 'bdep_M', 50000000,
+      'dep_S', 100000000, 'dep_M', 300000000, 'dep_L', 700000000, 'dep_base', 20000000, 'dep_car', 5500000, 'bdep_S', 20000000, 'bdep_M', 50000000,
       'up_rail', 1500, 'up_road', 300, 'up_sta', 50000, 'up_stop', 500, 'up_dep', 60000, 'up_bdep', 20000,
       'g_rail', 0.55, 'g_bus', 0.12, 'fare_base', 150, 'fare_km', 20, 'bus_fare', 220, 'bus_km', 15,
       'catch_rail', 20, 'catch_bus', 6, 'max_tiles', 600, 'grow', 0.0002, 'grow_sta', 0.0006, 'urb_k', 0.03, 'urb_sta', 0.02
@@ -17059,6 +17059,9 @@ $$;
 -- 変わったことを記録（ほかの人の画面へ）
 create or replace function public._mp_chg(k text, r bigint, o text, b box) returns void
 language sql set search_path = public as $$ insert into mp_changes(kind, ref, op, bb) values (k, r, o, b) $$;
+-- 同じ持ち主の「つくる」は1つずつ（2回押しても、同じものが2つできないように。トランザクションの終わりまで）
+create or replace function public._mp_lock(pu uuid, pc int) returns void
+language sql as $$ select pg_advisory_xact_lock(hashtextextended('mp:' || coalesce(pu::text, '') || ':' || coalesce(pc::text, ''), 7)) $$;
 
 /* ---------- 住所・地目・地価 ---------- */
 -- 地価（1マス。売り買いできないマスは null）
@@ -17249,10 +17252,10 @@ begin
     'stas', (select coalesce(jsonb_agg(jsonb_build_object('id', s.id, 'k', s.kind, 'seg', s.seg, 'at', s.at, 'x', s.x, 'y', s.y, 'a', s.ang, 'pl', s.plat, 'tr', s.tracks, 'n', s.name,
                   'mine', coalesce(s.own_u = u or s.own_c = any(me_cs), false), 'o', case when s.own_u is not null then 'u:' || s.own_u else 'c:' || s.own_c end,
                   'rt', (select coalesce(jsonb_agg(jsonb_build_object('id', ro.id, 'c', ro.color, 'n', ro.name)), '[]'::jsonb) from mp_routes ro where s.id = any(ro.stops)))), '[]'::jsonb)
-               from mp_stations s where s.x between p_x0 * 100 and p_x1 * 100 and s.y between p_y0 * 100 and p_y1 * 100 and (p_lod < 2 or s.kind = 'rail')),
+               from mp_stations s where s.x between (p_x0 - 5) * 100 and (p_x1 + 5) * 100 and s.y between (p_y0 - 5) * 100 and (p_y1 + 5) * 100 and (p_lod < 2 or s.kind = 'rail')),
     'deps', (select coalesce(jsonb_agg(jsonb_build_object('id', d.id, 'k', d.kind, 'seg', d.seg, 'at', d.at, 'side', d.side, 'sz', d.size, 'x', d.x, 'y', d.y, 'a', d.ang, 'n', d.name, 'cap', d.cap,
                   'mine', coalesce(d.own_u = u or d.own_c = any(me_cs), false))), '[]'::jsonb)
-               from mp_depots d where d.x between p_x0 * 100 and p_x1 * 100 and d.y between p_y0 * 100 and p_y1 * 100 and p_lod < 2),
+               from mp_depots d where d.x between (p_x0 - 13) * 100 and (p_x1 + 13) * 100 and d.y between (p_y0 - 13) * 100 and (p_y1 + 13) * 100 and p_lod < 2),
     -- 筆：[id, 行ごとの区画のならび [y, x0, x1, …], 1 他人・2 自分, 売り出し, 建物, 地番, 持ち主のキー]
     'parcels', case when p_lod > 0 then '[]'::jsonb else (select coalesce(jsonb_agg(jsonb_build_array(pa.id,
                   (select jsonb_agg(v order by rn.y, rn.x0, u.o) from (
@@ -17394,6 +17397,100 @@ begin
   perform _mp_chg('seg', bid, 'set', sg.bb);
   return nid;
 end $$;
+-- 線の点を逆向きに
+create or replace function public._mp_rev(p int[]) returns int[]
+language sql immutable as $$
+  select coalesce(array_agg(u.v order by z.i desc, u.o), '{}') from (select i, p[2 * i - 1] x, p[2 * i] y from generate_series(1, coalesce(array_length(p, 1), 0) / 2) i) z,
+    lateral unnest(array[z.x, z.y]) with ordinality u(v, o)
+$$;
+-- 2本の線路（分かれ道のない点でつながっている）を1本にする。のこるのは x。駅・車庫・使っているマス・使用料もうつす。だめなら理由を raise
+create or replace function public._mp_seg_join2(xid bigint, yid bigint) returns bigint
+language plpgsql set search_path = public as $$
+declare x mp_segs; y mp_segs; nd bigint; xr boolean; yr boolean; px int[]; py int[]; pm int[]; lx real; jl real; n int; d real;
+begin
+  select * into x from mp_segs where id = xid for update;
+  select * into y from mp_segs where id = yid for update;
+  if x.id is null or y.id is null or x.id = y.id or x.kind <> 'rail' or y.kind <> 'rail' then raise exception '線が見つかりません'; end if;
+  nd := case when x.n1 is not null and x.n1 in (y.n0, y.n1) then x.n1 when x.n0 is not null and x.n0 in (y.n0, y.n1) then x.n0 end;
+  if nd is null then raise exception '起点と終点のあいだに分かれ道があるか、線路がつながっていません（分かれ道はまたげません）'; end if;
+  if (select count(*) from mp_segs s where s.n0 = nd or s.n1 = nd) <> 2 then raise exception '起点と終点のあいだに分かれ道があるか、線路がつながっていません（分かれ道はまたげません）'; end if;
+  if not (x.own_u is not distinct from y.own_u and x.own_c is not distinct from y.own_c and x.gov = y.gov) then raise exception 'ほかの会社の線路にはつなげません'; end if;
+  if x.dbl <> y.dbl or x.elec <> y.elec then raise exception '単線と複線、電化と非電化がかわるところは、またげません（線路の設定をそろえてください）'; end if;
+  if x.name <> '' and y.name <> '' and x.name <> y.name then raise exception '名前のちがう線路のつなぎ目は、またげません（線路の名前をそろえてください）'; end if;
+  xr := x.n1 is distinct from nd;   -- x は nd で終わるように
+  yr := y.n0 is distinct from nd;   -- y は nd から始まるように
+  px := case when xr then _mp_rev(x.pts) else x.pts end;
+  py := case when yr then _mp_rev(y.pts) else y.pts end;
+  n := array_length(px, 1);
+  d := sqrt(((py[1] - px[n - 1]) / 100.0) ^ 2 + ((py[2] - px[n]) / 100.0) ^ 2);
+  pm := px || case when d < 0.03 then py[3:] else py end;
+  lx := _mp_len(px); jl := lx + case when d < 0.03 then 0 else d end;
+  if _mp_minr(_mp_sub(pm, greatest(0, lx - 1.5), least(_mp_len(pm), lx + 1.5))) < 3 then raise exception 'つなぎ目のカーブがきつすぎて、またげません'; end if;
+  -- 駅・車庫の位置（はじめからの長さ）を、1本にした線の上に
+  update mp_stations set at = case when xr then x.len - at else at end where seg = x.id;
+  update mp_depots set at = case when xr then x.len - at else at end where seg = x.id;
+  update mp_stations set seg = x.id, at = jl + case when yr then y.len - at else at end where seg = y.id;
+  update mp_depots set seg = x.id, at = jl + case when yr then y.len - at else at end where seg = y.id;
+  -- 使っているマス・使用料は x へ（同じ区画は1つに）
+  delete from mp_occ o where o.what = 'rail' and o.ref = y.id and exists (select 1 from mp_occ o2 where o2.what = 'rail' and o2.ref = x.id and o2.x = o.x and o2.y = o.y);
+  update mp_occ set ref = x.id where what = 'rail' and ref = y.id;
+  delete from mp_leases l where l.ref_kind = 'seg' and l.ref = y.id and exists (select 1 from mp_leases l2 where l2.ref_kind = 'seg' and l2.ref = x.id and l2.x = l.x and l2.y = l.y);
+  update mp_leases set ref = x.id where ref_kind = 'seg' and ref = y.id;
+  update mp_segs set pts = pm, ctl = null, bb = _mp_bb(pm), len = _mp_len(pm), vlim = _mp_vlim(_mp_minr(pm)),
+                     n0 = case when xr then x.n1 else x.n0 end, n1 = case when yr then y.n0 else y.n1 end,
+                     name = case when x.name <> '' then x.name else y.name end, cost = x.cost + y.cost
+   where id = x.id;
+  delete from mp_segs where id = y.id;
+  delete from mp_nodes where id = nd;
+  perform _mp_chg('seg', y.id, 'del', y.bb);
+  perform _mp_chg('seg', x.id, 'set', _mp_bb(pm));
+  return x.id;
+end $$;
+-- 線路 a から b まで、分かれ道のない点だけを通ってたどる（線の番号の列）。見つからなければ null
+create or replace function public._mp_seg_chain(a bigint, b bigint) returns bigint[]
+language plpgsql stable set search_path = public as $$
+declare s0 mp_segs; dir int; cur bigint; nd bigint; nx bigint; chain bigint[]; k int; t mp_segs;
+begin
+  select * into s0 from mp_segs where id = a;
+  if not found then return null; end if;
+  for dir in 0..1 loop
+    chain := array[a]; cur := a; nd := case when dir = 0 then s0.n1 else s0.n0 end;
+    for k in 1..60 loop
+      exit when nd is null;
+      exit when (select count(*) from mp_segs s where s.n0 = nd or s.n1 = nd) <> 2;
+      nx := (select s.id from mp_segs s where (s.n0 = nd or s.n1 = nd) and s.id <> cur limit 1);
+      exit when nx is null or nx = any(chain);
+      chain := chain || nx;
+      if nx = b then return chain; end if;
+      select * into t from mp_segs where id = nx;
+      nd := case when t.n0 = nd then t.n1 else t.n0 end;
+      cur := nx;
+    end loop;
+  end loop;
+  return null;
+end $$;
+-- 線路を1本にする（駅のホーム・車両基地を、つなぎ目をまたいで作るとき）。1本にした線を返す（mp_area の線と同じ形）
+create or replace function public.mp_seg_join(p_a bigint, p_b bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); a mp_segs; me_cs int[]; ch bigint[]; m bigint; i int; s mp_segs;
+begin
+  perform _mp_ok(u);
+  select * into a from mp_segs where id = p_a;
+  if not found or a.kind <> 'rail' then raise exception '線が見つかりません'; end if;
+  me_cs := array(select id from companies where owner = u);
+  if not coalesce(a.own_u = u or a.own_c = any(me_cs), false) then raise exception 'あなたの線ではありません'; end if;
+  perform _mp_lock(a.own_u, a.own_c);
+  m := p_a;
+  if p_b is not null and p_b <> p_a then
+    ch := _mp_seg_chain(p_a, p_b);
+    if ch is null then raise exception '起点と終点のあいだに分かれ道があるか、線路がつながっていません（分かれ道はまたげません）'; end if;
+    for i in 2..array_length(ch, 1) loop m := _mp_seg_join2(m, ch[i]); end loop;
+    perform _mp_renet(a.own_u, a.own_c); perform _mp_routes_fix(a.own_u, a.own_c);
+  end if;
+  select * into s from mp_segs where id = m;
+  return jsonb_build_object('id', s.id, 'k', s.kind, 'c', s.cls, 'n', s.name, 'w', s.w, 'l', s.lanes, 'p', to_jsonb(s.pts), 'dbl', s.dbl, 'el', s.elec, 'art', s.art,
+    'o', case when s.own_u is not null then 'u:' || s.own_u else 'c:' || s.own_c end, 'mine', true, 'n0', s.n0, 'n1', s.n1, 'v', s.vlim, 'len', round(s.len::numeric, 1), 'ctl', to_jsonb(s.ctl));
+end $$;
 -- 線を引く（p_dry なら見つもりだけ）
 --   p_kind：road / rail。p_cls：道路の種類（人・会社は priv 私道。国は exp nat pref city lane も）
 --   p_pts：線の点（1/100 マス）。p_ctl：引いたときの点（あとで直すとき用）。p_opts：{dbl: 複線, elec: 電化, name: 路線名, lanes: 道路の車線（片側 0〜3）}
@@ -17418,6 +17515,8 @@ begin
     if cls = 'lane' then ln_ := 0; end if;
   else ln_ := 0; end if;
   perform _mp_geom_ok(p_pts);
+  if not p_dry then perform _mp_lock(pa.pu, pa.pc); end if;
+  if exists (select 1 from mp_segs s where s.kind = p_kind and s.bb && _mp_bb(p_pts) and s.pts = p_pts) then raise exception '同じところに、同じ線がもうあります'; end if;
   tiles := _mp_tiles(p_pts); ln := _mp_len(p_pts); rmin := _mp_minr(p_pts);
   if array_length(tiles, 1) / 2 > _mp_rate('max_tiles') then raise exception '一度に引けるのは %マスまでです。分けて引いてください', _mp_rate('max_tiles'); end if;
   if p_kind = 'rail' and rmin < 3 then raise exception 'カーブがきつすぎます（半径 %m。線路は150m以上）', round(rmin * 50); end if;
@@ -17619,6 +17718,7 @@ begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
   if pa.gv then raise exception '駅・バス停は人か会社で作ります'; end if;
+  if not p_dry then perform _mp_lock(pa.pu, pa.pc); end if;
   select * into sg from mp_segs where id = p_seg;
   if not found then raise exception '線が見つかりません'; end if;
   select * into q from _mp_proj(sg.pts, p_x, p_y); s := q.s;
@@ -17632,7 +17732,7 @@ begin
     if s - span / 2 < 0.3 or s + span / 2 > sg.len - 0.3 then raise exception 'ホームが線路からはみ出します（線路のはしから離すか、ホームを短くしてください）'; end if;
     if _mp_minr(_mp_sub(sg.pts, s - span / 2, s + span / 2)) < 8 then raise exception 'ホームはカーブのゆるいところ（半径400m以上）に作ります'; end if;
     if exists (select 1 from mp_stations t where t.seg = p_seg and abs(t.at - s) < (t.plat / 50.0 + span) / 2 + 1)
-       or exists (select 1 from mp_depots t where t.seg = p_seg and abs(t.at - s) < span / 2 + 5) then raise exception '近くにほかの駅・車庫があります'; end if;
+       or exists (select 1 from mp_depots t where t.seg = p_seg and abs(t.at - s) < (span + (_mp_dep_dim(t.kind, t.size))[1]) / 2 + 0.2) then raise exception '近くにほかの駅・車庫があります'; end if;
     tiles := _mp_tiles(_mp_sub(sg.pts, s - span / 2, s + span / 2));
     if _mp_bld_hit((select coalesce(array_agg(u.v order by z.y, z.x, u.o), '{}') from _mp_line_cells(_mp_sub(sg.pts, s - span / 2, s + span / 2), greatest(0.5, (0.22 * p_tracks + 0.18) * 2.5)::real) z,
                     lateral unnest(array[z.x, z.y]) with ordinality u(v, o))) is not null then raise exception 'ホームが建物のある土地にかかります'; end if;
@@ -17680,7 +17780,7 @@ end $$;
 
 /* ---------- 車庫（鉄道の車両基地・バスの営業所） ---------- */
 -- 線の横に長方形（大きさ S・M・L）。p_side：1 右・-1 左
-create or replace function public._mp_dep_tiles(p int[], s real, side int, lt real, wt real) returns int[]
+create or replace function public._mp_dep_tiles_g(p int[], s real, side int, lt real, wt real, gap real) returns int[]
 language plpgsql immutable as $$
 declare q record; out int[] := '{}'; a real; b real; px real; py real; tx int; ty int; seen text[] := '{}'; k text; nx real; ny real;
 begin
@@ -17688,8 +17788,8 @@ begin
   nx := -sin(q.ang) * side; ny := cos(q.ang) * side;
   a := -lt / 2;
   while a <= lt / 2 loop
-    b := 0.9;
-    while b <= 0.9 + wt loop
+    b := gap;
+    while b <= gap + wt loop
       px := q.x + cos(q.ang) * a + nx * b; py := q.y + sin(q.ang) * a + ny * b;
       tx := floor(px)::int; ty := floor(py)::int; k := tx || ',' || ty;
       if not (k = any(seen)) then seen := seen || k; out := out || tx || ty; end if;
@@ -17699,14 +17799,17 @@ begin
   end loop;
   return out;
 end $$;
+create or replace function public._mp_dep_tiles(p int[], s real, side int, lt real, wt real) returns int[]
+language sql immutable as $$ select _mp_dep_tiles_g(p, s, side, lt, wt, 0.9::real) $$;
 create or replace function public.mp_dep_build(p_kind text, p_seg bigint, p_x real, p_y real, p_side int, p_size text, p_name text, p_as text, p_dry boolean) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); pa record; sg mp_segs; q record; s real; lt real; wt real; cap int; cost numeric; tiles int[]; ters text[]; bad text; lq record; did bigint; pt record; dcells int[];
+declare u uuid := _me(); pa record; sg mp_segs; q record; s real; lt real; wt real; gap real := 0.9; dim real[]; cap int; cost numeric; tiles int[]; ters text[]; bad text; lq record; did bigint; pt record; dcells int[];
         nm text := left(trim(coalesce(p_name, '')), 20); side int := case when p_side < 0 then -1 else 1 end;
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
   if pa.gv then raise exception '車庫は人か会社で作ります'; end if;
+  if not p_dry then perform _mp_lock(pa.pu, pa.pc); end if;
   select * into sg from mp_segs where id = p_seg;
   if not found then raise exception '線が見つかりません'; end if;
   select * into q from _mp_proj(sg.pts, p_x, p_y); s := q.s;
@@ -17714,9 +17817,17 @@ begin
   if nm = '' then raise exception '名前をつけてください'; end if;
   if p_kind = 'rail' then
     if sg.kind <> 'rail' or not _mp_same(sg.own_u, sg.own_c, sg.gov, pa.pu, pa.pc, false) then raise exception '車両基地は自分（この名義）の線路の横に作ります'; end if;
-    lt := case p_size when 'L' then 10 when 'M' then 7 else 5 end; wt := case p_size when 'L' then 4 when 'M' then 3 else 2 end;
-    cap := case p_size when 'L' then 120 when 'M' then 48 else 16 end;
-    cost := _mp_rate('dep_' || case when p_size in ('S', 'M', 'L') then p_size else 'S' end);
+    if coalesce(p_size, '') like 'T%' then   -- 線路をなぞった大きさ（長さ20m単位・留置線の数）
+      if p_size !~ '^T[0-9]{2,4}x[0-9]{1,2}$' then raise exception '車両基地の大きさが読めません'; end if;
+      if split_part(substr(p_size, 2), 'x', 1)::int not between 40 and 1000 or split_part(substr(p_size, 2), 'x', 1)::int % 20 <> 0 then raise exception '車両基地の長さは20m単位で、40〜1000mです'; end if;
+      if split_part(p_size, 'x', 2)::int not between 1 and 20 then raise exception '留置線は1〜20本です'; end if;
+      dim := _mp_dep_dim('rail', p_size); lt := dim[1]; wt := dim[2]; gap := dim[3]; cap := dim[4]::int;
+      cost := _mp_rate('dep_base') + cap * _mp_rate('dep_car');
+    else
+      lt := case p_size when 'L' then 10 when 'M' then 7 else 5 end; wt := case p_size when 'L' then 4 when 'M' then 3 else 2 end;
+      cap := case p_size when 'L' then 120 when 'M' then 48 else 16 end;
+      cost := _mp_rate('dep_' || case when p_size in ('S', 'M', 'L') then p_size else 'S' end);
+    end if;
   elsif p_kind = 'bus' then
     if sg.kind <> 'road' then raise exception 'バスの営業所は道路の横に作ります'; end if;
     lt := case p_size when 'M' then 5 else 3 end; wt := case p_size when 'M' then 3 else 2 end;
@@ -17724,7 +17835,8 @@ begin
     cost := _mp_rate('bdep_' || case when p_size = 'M' then 'M' else 'S' end);
   else raise exception '作るものがちがいます'; end if;
   if s - lt / 2 < 0.2 or s + lt / 2 > sg.len - 0.2 then raise exception '線のはしからはみ出します'; end if;
-  tiles := _mp_dep_tiles(sg.pts, s, side, lt, wt);
+  if exists (select 1 from mp_stations t where t.seg = p_seg and abs(t.at - s) < (t.plat / 50.0 + lt) / 2 + 0.2) then raise exception '近くにほかの駅・車庫があります'; end if;
+  tiles := _mp_dep_tiles_g(sg.pts, s, side, lt, wt, gap);
   ters := _mp_ters(tiles);
   if '?' = any(ters) or 'D' = any(ters) or 'S' = any(ters) or 'R' = any(ters) or 'L' = any(ters) then raise exception '水の上や地図のないところには作れません'; end if;
   select string_agg(distinct o.x || ',' || o.y, ' ') into bad from mp_occ o
@@ -17735,7 +17847,8 @@ begin
   dcells := (select coalesce(array_agg(u.v order by z.y, z.x, u.o), '{}') from _mp_dep_cells(pt.x, pt.y, pt.ang, side, p_kind, coalesce(p_size, 'S')) z, lateral unnest(array[z.x, z.y]) with ordinality u(v, o));
   if _mp_bld_hit(dcells) is not null then raise exception '道路・線路・建物などのあるマスには作れません（%）。反対側か、ほかの場所にしてください', _mp_bld_hit(dcells); end if;
   select * into lq from _mp_lease_quote(dcells, pa.pu, pa.pc, false);
-  if p_dry then return jsonb_build_object('cost', round(cost), 'lease', round(lq.fee), 'cap', cap, 'tiles', array_length(tiles, 1) / 2, 'up_day', _mp_rate('up_dep')); end if;
+  if p_dry then return jsonb_build_object('cost', round(cost), 'lease', round(lq.fee), 'cap', cap, 'tiles', array_length(tiles, 1) / 2,
+    'up_day', round(_mp_rate(case when p_kind = 'rail' then 'up_dep' else 'up_bdep' end) * case when coalesce(p_size, '') like 'T%' then greatest(1, cap / 24.0) when p_size = 'L' then 5 when p_size = 'M' then 2.5 else 1 end)); end if;
   perform _mp_pay(pa.pu, pa.pc, false, round(cost)::bigint, 'dep', format('%s「%s」の工事', case when p_kind = 'rail' then '車両基地' else '営業所' end, nm));
   select * into pt from _mp_at(sg.pts, s);
   insert into mp_depots(kind, seg, at, side, size, x, y, ang, cap, name, own_u, own_c, cost)
@@ -17743,16 +17856,19 @@ begin
   returning id into did;
   perform _mp_occ_set(did, 'dep', tiles);
   perform _mp_lease_set('dep', did, pa.pu, pa.pc, false);
-  perform _mp_chg('dep', did, 'set', box(point(pt.x - 8, pt.y - 8), point(pt.x + 8, pt.y + 8)));
+  perform _mp_chg('dep', did, 'set', box(point(pt.x - greatest(8, lt / 2 + gap + wt + 1), pt.y - greatest(8, lt / 2 + gap + wt + 1)),
+                                         point(pt.x + greatest(8, lt / 2 + gap + wt + 1), pt.y + greatest(8, lt / 2 + gap + wt + 1))));
   return jsonb_build_object('id', did, 'cost', round(cost), 'cap', cap);
 end $$;
 create or replace function public.mp_dep_edit(p_id bigint, p_name text, p_del boolean) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); d mp_depots; me_cs int[];
+declare u uuid := _me(); d mp_depots; me_cs int[]; dm real[]; r real; bx box;
 begin
   perform _mp_ok(u);
   select * into d from mp_depots where id = p_id for update;
   if not found then raise exception '車庫が見つかりません'; end if;
+  dm := _mp_dep_dim(d.kind, d.size); r := greatest(8, dm[1] / 2 + dm[2] + dm[3] + 1);
+  bx := box(point(d.x / 100.0 - r, d.y / 100.0 - r), point(d.x / 100.0 + r, d.y / 100.0 + r));
   me_cs := array(select id from companies where owner = u);
   if not coalesce(d.own_u = u or d.own_c = any(me_cs) or _is_admin(u), false) then raise exception 'あなたの車庫ではありません'; end if;
   if p_del then
@@ -17760,12 +17876,12 @@ begin
     delete from mp_occ where what = 'dep' and ref = p_id;
     perform _mp_lease_del('dep', p_id);
     delete from mp_depots where id = p_id;
-    perform _mp_chg('dep', p_id, 'del', box(point(d.x / 100.0 - 8, d.y / 100.0 - 8), point(d.x / 100.0 + 8, d.y / 100.0 + 8)));
+    perform _mp_chg('dep', p_id, 'del', bx);
     return jsonb_build_object('ok', true);
   end if;
   if trim(coalesce(p_name, '')) = '' then raise exception '名前をつけてください'; end if;
   update mp_depots set name = left(trim(p_name), 20) where id = p_id;
-  perform _mp_chg('dep', p_id, 'set', box(point(d.x / 100.0 - 8, d.y / 100.0 - 8), point(d.x / 100.0 + 8, d.y / 100.0 + 8)));
+  perform _mp_chg('dep', p_id, 'set', bx);
   return jsonb_build_object('ok', true);
 end $$;
 
@@ -18126,10 +18242,53 @@ begin
   end if;
   return _mp_leg_from(out);
 end $$;
--- 道すじ [[線, 入る位置, 出る位置], …] → leg {d, p, e, s, g}
+-- 線の s0〜s1 の制限速度（その場所のカーブの半径から・100m ごと）：[[m, km/h], …]。s0 > s1 なら逆向きの順
+create or replace function public._mp_vruns(p int[], s0 real, s1 real) returns jsonb
+language plpgsql immutable as $$
+declare n int := coalesce(array_length(p, 1), 0) / 2; g int := 3; i int; acc real[]; rr real[]; lo real := least(s0, s1); hi real := greatest(s0, s1);
+        ax real; ay real; bx real; by_ real; cx real; cy real; a real; b real; c real; ar real;
+        nb int; bmin real[]; k int; t0 real; t1 real; v int; out jsonb := '[]'::jsonb; lastv int := -1; lastm real := 0; step real := 2;
+begin
+  if n < 2 or hi - lo < 1e-4 then return '[]'::jsonb; end if;
+  acc := array_fill(0::real, array[n]);
+  for i in 2..n loop acc[i] := acc[i - 1] + sqrt(((p[2 * i - 1] - p[2 * i - 3]) / 100.0) ^ 2 + ((p[2 * i] - p[2 * i - 2]) / 100.0) ^ 2); end loop;
+  -- 点ごとのカーブの半径（_mp_minr と同じ見かた）
+  rr := array_fill(1e9::real, array[n]);
+  if n >= 3 then
+    if n < 2 * g + 1 then g := greatest(1, (n - 1) / 2); end if;
+    for i in (1 + g)..(n - g) loop
+      ax := p[2 * (i - g) - 1] / 100.0; ay := p[2 * (i - g)] / 100.0; bx := p[2 * i - 1] / 100.0; by_ := p[2 * i] / 100.0; cx := p[2 * (i + g) - 1] / 100.0; cy := p[2 * (i + g)] / 100.0;
+      a := sqrt((bx - cx) ^ 2 + (by_ - cy) ^ 2); b := sqrt((ax - cx) ^ 2 + (ay - cy) ^ 2); c := sqrt((ax - bx) ^ 2 + (ay - by_) ^ 2);
+      ar := abs((bx - ax) * (cy - ay) - (by_ - ay) * (cx - ax)) / 2;
+      if ar > 1e-6 then rr[i] := a * b * c / (4 * ar); end if;
+    end loop;
+  end if;
+  -- 100m（2マス）ごとの、いちばん小さい半径 → 制限速度
+  nb := greatest(1, ceil((hi - lo) / step)::int);
+  bmin := array_fill(1e9::real, array[nb]);
+  for i in 1..n loop
+    if acc[i] >= lo - 0.25 and acc[i] <= hi + 0.25 then
+      k := least(nb, greatest(1, floor((acc[i] - lo) / step)::int + 1));
+      if rr[i] < bmin[k] then bmin[k] := rr[i]; end if;
+    end if;
+  end loop;
+  for k in 1..nb loop
+    t0 := lo + (k - 1) * step; t1 := least(hi, lo + k * step);
+    v := _mp_vlim(bmin[k]);
+    if v = lastv then lastm := lastm + (t1 - t0) * 50;
+    else
+      if lastv >= 0 then out := out || jsonb_build_array(jsonb_build_array(round(lastm::numeric, 1), lastv)); end if;
+      lastv := v; lastm := (t1 - t0) * 50;
+    end if;
+  end loop;
+  if lastv >= 0 then out := out || jsonb_build_array(jsonb_build_array(round(lastm::numeric, 1), lastv)); end if;
+  if s0 > s1 then out := (select coalesce(jsonb_agg(z.e order by z.o desc), '[]'::jsonb) from jsonb_array_elements(out) with ordinality z(e, o)); end if;
+  return out;
+end $$;
+-- 道すじ [[線, 入る位置, 出る位置], …] → leg {d, p, e, s, g}。制限速度 p は、線路はその場所のカーブから、道路は道の種類と車線から
 create or replace function public._mp_leg_from(g jsonb) returns jsonb
 language plpgsql stable set search_path = public as $$
-declare it jsonb; sg mp_segs; m real; total real := 0; ell boolean := true; sgl boolean := false; p jsonb := '[]'::jsonb; lastv int := -1; lastm real := 0; v int;
+declare it jsonb; sg mp_segs; m real; total real := 0; ell boolean := true; sgl boolean := false; p jsonb := '[]'::jsonb; lastv int := -1; lastm real := 0; v int; e jsonb; runs jsonb;
 begin
   for it in select * from jsonb_array_elements(g) loop
     select * into sg from mp_segs where id = (it ->> 0)::bigint;
@@ -18137,13 +18296,20 @@ begin
     m := abs((it ->> 2)::real - (it ->> 1)::real) * 50;
     if m < 0.01 then continue; end if;
     total := total + m;
-    if sg.kind = 'rail' then ell := ell and sg.elec; sgl := sgl or not sg.dbl; v := sg.vlim;
-    else v := sg.vlim; end if;
-    if v = lastv then lastm := lastm + m;
+    if sg.kind = 'rail' then
+      ell := ell and sg.elec; sgl := sgl or not sg.dbl;
+      runs := _mp_vruns(sg.pts, (it ->> 1)::real, (it ->> 2)::real);
     else
-      if lastv >= 0 then p := p || jsonb_build_array(jsonb_build_array(round(lastm::numeric, 1), lastv)); end if;
-      lastv := v; lastm := m;
+      runs := jsonb_build_array(jsonb_build_array(m, sg.vlim));
     end if;
+    for e in select * from jsonb_array_elements(runs) loop
+      v := (e ->> 1)::int;
+      if v = lastv then lastm := lastm + (e ->> 0)::real;
+      else
+        if lastv >= 0 then p := p || jsonb_build_array(jsonb_build_array(round(lastm::numeric, 1), lastv)); end if;
+        lastv := v; lastm := (e ->> 0)::real;
+      end if;
+    end loop;
   end loop;
   if lastv >= 0 then p := p || jsonb_build_array(jsonb_build_array(round(lastm::numeric, 1), lastv)); end if;
   return jsonb_build_object('d', round(total::numeric, 1), 'p', p, 'e', ell, 's', sgl, 'g', g);
@@ -18648,7 +18814,7 @@ begin
       select own_u pu, own_c pc, len * _mp_rate(case when kind = 'rail' then 'up_rail' else 'up_road' end) * case when dbl then 1.6 else 1 end * case when elec then 1.3 else 1 end a, '線路・道路' k
         from mp_segs where not gov and (kind = 'rail' or cls = 'priv')
       union all select own_u, own_c, case when kind = 'rail' then _mp_rate('up_sta') * (1 + 0.25 * (tracks - 1)) else _mp_rate('up_stop') end, '駅' from mp_stations
-      union all select own_u, own_c, _mp_rate(case when kind = 'rail' then 'up_dep' else 'up_bdep' end) * case size when 'L' then 5 when 'M' then 2.5 else 1 end, '車庫' from mp_depots
+      union all select own_u, own_c, _mp_rate(case when kind = 'rail' then 'up_dep' else 'up_bdep' end) * case when size like 'T%' then greatest(1, cap / 24.0) when size = 'L' then 5 when size = 'M' then 2.5 else 1 end, '車庫' from mp_depots
       union all select c.own_u, c.own_c, t.upkeep, '車両' from mp_cars c join mp_types t on t.code = c.type
     ) z group by pu, pc
   loop
@@ -18879,19 +19045,29 @@ language sql stable set search_path = public as $$
    where st.id = sid and st.kind = 'rail'
 $$;
 -- 車庫の区画（線の横の四角。画面の depPoly と同じ形）
+-- 車庫の大きさ：[長さ, はば, 線からのあき（マス）, 入る両数]。sz は S・M・L か、線路をなぞった 'T長さx留置線の数'（例 T400x6：400m・6本）
+create or replace function public._mp_dep_dim(kind text, sz text) returns real[]
+language plpgsql immutable as $$
+declare l int; n int;
+begin
+  if kind = 'rail' and sz ~ '^T[0-9]{2,4}x[0-9]{1,2}$' then
+    l := split_part(substr(sz, 2), 'x', 1)::int; n := split_part(sz, 'x', 2)::int;
+    return array[l / 50.0, (n * 5 + 10) / 50.0, 0.25, floor(l / 20.0) * n]::real[];
+  end if;
+  if kind = 'bus' then return case sz when 'M' then array[5, 3, 0.9, 60] else array[3, 2, 0.9, 20] end::real[]; end if;
+  return case sz when 'L' then array[10, 4, 0.9, 120] when 'M' then array[7, 3, 0.9, 48] else array[5, 2, 0.9, 16] end::real[];
+end $$;
 create or replace function public._mp_dep_cells(fx real, fy real, ang real, side int, kind text, sz text) returns table (x int, y int)
 language sql immutable as $$
-  with d as (
-    select (case when kind = 'bus' then case sz when 'M' then 5 else 3 end else case sz when 'L' then 10 when 'M' then 7 else 5 end end)::real lt,
-           (case when kind = 'bus' then case sz when 'M' then 3 else 2 end else case sz when 'L' then 4 when 'M' then 3 else 2 end end)::real wt,
-           cos(ang)::real c, sin(ang)::real s
+  with dm as (select _mp_dep_dim(kind, sz) v),
+       d as (select dm.v[1] lt, dm.v[2] wt, dm.v[3] gap, cos(ang)::real c, sin(ang)::real s from dm
   )
   select gx.v, gy.v from d,
     lateral generate_series(floor((fx - d.lt - d.wt - 1) * 5)::int, ceil((fx + d.lt + d.wt + 1) * 5)::int) gx(v),
     lateral generate_series(floor((fy - d.lt - d.wt - 1) * 5)::int, ceil((fy + d.lt + d.wt + 1) * 5)::int) gy(v),
     lateral (select (gx.v + 0.5) / 5.0 - fx dx, (gy.v + 0.5) / 5.0 - fy dy) q
    where abs(q.dx * d.c + q.dy * d.s) <= d.lt / 2
-     and (-q.dx * d.s + q.dy * d.c) * side between 0.9 and 0.9 + d.wt
+     and (-q.dx * d.s + q.dy * d.c) * side between d.gap and d.gap + d.wt
 $$;
 -- ものが使う区画（seg・sta・dep）
 create or replace function public._mp_struct_cells(rk text, rid bigint) returns table (x int, y int)
@@ -20175,21 +20351,22 @@ begin
             '_mp_addr','_mp_admin','_mp_angdiff','_mp_at','_mp_ban','_mp_bb','_mp_bld_check','_mp_bld_defname',
             '_mp_bld_dem','_mp_bld_hit','_mp_bld_make','_mp_bld_people','_mp_bld_plan','_mp_bld_presets','_mp_bld_refresh','_mp_bld_shape',
             '_mp_bld_tick_day','_mp_bld_tick_hour','_mp_bus_path','_mp_busy_cells','_mp_catch','_mp_cell','_mp_chg','_mp_chimoku',
-            '_mp_cho_at','_mp_cho_set_tiles','_mp_cho_text','_mp_cmuls','_mp_cval','_mp_dens','_mp_dep_cells','_mp_dep_tiles',
-            '_mp_earn','_mp_edec','_mp_end','_mp_end_ang','_mp_form_perf','_mp_form_rule','_mp_g','_mp_geom_ok',
-            '_mp_hms','_mp_hourf','_mp_lease_del','_mp_lease_quote','_mp_lease_set','_mp_leg_from','_mp_leg_time','_mp_len',
-            '_mp_line_cells','_mp_mine','_mp_minr','_mp_npc_name','_mp_occ_set','_mp_ok','_mp_okey','_mp_party',
-            '_mp_pay','_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_proj','_mp_pub_cells','_mp_rail_path','_mp_rate',
-            '_mp_renet','_mp_resched','_mp_road_mul','_mp_road_v','_mp_road_w','_mp_room','_mp_route_catch','_mp_routes_fix',
-            '_mp_run','_mp_same','_mp_seg_cells_arr','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells',
-            '_mp_struct_cells','_mp_sub','_mp_t49_from_tiles','_mp_t5','_mp_ters','_mp_thin','_mp_tick','_mp_tick_day',
-            '_mp_tick_hour','_mp_tiles','_mp_tmul','_mp_train_calc','_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim',
-            '_mp_world','_mp_zname','_mp_zone_rule','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_place_at','mp_admin_rates','mp_admin_rename',
-            'mp_admin_state','mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote',
-            'mp_bld_set','mp_boot','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_list','mp_cho_get',
-            'mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia','mp_form_del','mp_form_set','mp_land_buy','mp_ledger_page',
-            'mp_parcel_buy','mp_parcel_merge','mp_parcel_sell','mp_parcel_split','mp_poll','mp_route_del','mp_route_save','mp_routes_list',
-            'mp_seg_build','mp_seg_del','mp_seg_edit','mp_seg_opts','mp_seg_split','mp_spot','mp_sta_build','mp_sta_edit',
+            '_mp_cho_at','_mp_cho_set_tiles','_mp_cho_text','_mp_cmuls','_mp_cval','_mp_dens','_mp_dep_cells','_mp_dep_dim',
+            '_mp_dep_tiles','_mp_dep_tiles_g','_mp_earn','_mp_edec','_mp_end','_mp_end_ang','_mp_form_perf','_mp_form_rule',
+            '_mp_g','_mp_geom_ok','_mp_hms','_mp_hourf','_mp_lease_del','_mp_lease_quote','_mp_lease_set','_mp_leg_from',
+            '_mp_leg_time','_mp_len','_mp_line_cells','_mp_lock','_mp_mine','_mp_minr','_mp_npc_name','_mp_occ_set',
+            '_mp_ok','_mp_okey','_mp_party','_mp_pay','_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_proj',
+            '_mp_pub_cells','_mp_rail_path','_mp_rate','_mp_renet','_mp_resched','_mp_rev','_mp_road_mul','_mp_road_v',
+            '_mp_road_w','_mp_room','_mp_route_catch','_mp_routes_fix','_mp_run','_mp_same','_mp_seg_cells_arr','_mp_seg_chain',
+            '_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_struct_cells','_mp_sub',
+            '_mp_t49_from_tiles','_mp_t5','_mp_ters','_mp_thin','_mp_tick','_mp_tick_day','_mp_tick_hour','_mp_tiles',
+            '_mp_tmul','_mp_train_calc','_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim','_mp_vruns','_mp_world',
+            '_mp_zname','_mp_zone_rule','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state',
+            'mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set',
+            'mp_boot','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_list','mp_cho_get','mp_chunk_get',
+            'mp_dep_build','mp_dep_edit','mp_dia','mp_form_del','mp_form_set','mp_land_buy','mp_ledger_page','mp_parcel_buy',
+            'mp_parcel_merge','mp_parcel_sell','mp_parcel_split','mp_poll','mp_route_del','mp_route_save','mp_routes_list','mp_seg_build',
+            'mp_seg_del','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_split','mp_spot','mp_sta_build','mp_sta_edit',
             'mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market','mp_unit_mine',
             'mp_unit_set') loop
     execute format('revoke all on function %s from public, anon', f.sig);

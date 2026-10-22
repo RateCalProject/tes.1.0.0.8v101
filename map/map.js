@@ -330,14 +330,17 @@ function needCells() {
     for (const [k] of all.slice(0, S.cells.size - 400)) S.cells.delete(k);
   }
 }
-// 読んだものを描きやすく（点をマスの小数に）
+// 線を描きやすく（点をマスの小数に）
+function prepSeg(s) {
+  const p = s.p, n = p.length / 2, P = new Float32Array(p.length);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i < p.length; i += 2) { const x = p[i] / 100, y = p[i + 1] / 100; P[i] = x; P[i + 1] = y; if (x < x0) x0 = x; if (y < y0) y0 = y; if (x > x1) x1 = x; if (y > y1) y1 = y; }
+  s.P = P; s.bb = [x0, y0, x1, y1]; s.np = n;
+  return s;
+}
+// 読んだものを描きやすく
 function prepArea(d) {
-  for (const s of d.segs) {
-    const p = s.p, n = p.length / 2, P = new Float32Array(p.length);
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (let i = 0; i < p.length; i += 2) { const x = p[i] / 100, y = p[i + 1] / 100; P[i] = x; P[i + 1] = y; if (x < x0) x0 = x; if (y < y0) y0 = y; if (x > x1) x1 = x; if (y > y1) y1 = y; }
-    s.P = P; s.bb = [x0, y0, x1, y1]; s.np = n;
-  }
+  for (const s of d.segs) prepSeg(s);
   for (const s of d.stas) { s.fx = s.x / 100; s.fy = s.y / 100; }
   for (const s of d.deps) { s.fx = s.x / 100; s.fy = s.y / 100; }
   for (const n of d.nodes) { n.fx = n.x / 100; n.fy = n.y / 100; }
@@ -650,11 +653,18 @@ function drawStation(g, s, z) {
   g.restore();
   if (z >= 1.6) label(g, s.n, x, y - Wd / 2 - 10, { size: z >= 6 ? 13 : 11, bold: true, color: '#111', bg: 'rgba(255,255,255,.9)', border: s.mine ? '#1f5fbf' : '#555' });
 }
+// 車庫の大きさ：[長さ, はば, 線からのあき, 留置線の数]（マス）。'T400x6' は線路をなぞったもの（400m・6本）
+function depDim(k, sz) {
+  const m = /^T(\d+)x(\d+)$/.exec(sz || '');
+  if (m && k === 'rail') { const l = Number(m[1]), n = Number(m[2]); return [l / 50, (n * 5 + 10) / 50, 0.25, n]; }
+  const s = (DEP_SIZE[k] || DEP_SIZE.rail)[sz] || [5, 2];
+  return [s[0], s[1], 0.9, Math.round(s[1] / 0.35)];
+}
 function depPoly(d) {
-  const sz = (DEP_SIZE[d.k] || DEP_SIZE.rail)[d.sz] || [5, 2], lt = sz[0], wt = sz[1];
+  const [lt, wt, gap] = depDim(d.k, d.sz);
   const c = Math.cos(d.a), s = Math.sin(d.a), nx = -s * d.side, ny = c * d.side;
   const pts = [];
-  for (const [a, b] of [[-lt / 2, 0.9], [lt / 2, 0.9], [lt / 2, 0.9 + wt], [-lt / 2, 0.9 + wt]]) pts.push([d.fx + c * a + nx * b, d.fy + s * a + ny * b]);
+  for (const [a, b] of [[-lt / 2, gap], [lt / 2, gap], [lt / 2, gap + wt], [-lt / 2, gap + wt]]) pts.push([d.fx + c * a + nx * b, d.fy + s * a + ny * b]);
   return pts;
 }
 function drawDepot(g, d, z) {
@@ -665,7 +675,7 @@ function drawDepot(g, d, z) {
   g.strokeStyle = d.mine ? '#1f5fbf' : '#555'; g.lineWidth = 1.5; g.stroke();
   if (z >= 6 && d.k === 'rail') {   // 留置線
     g.strokeStyle = 'rgba(60,60,60,.7)'; g.lineWidth = 1;
-    const sz = (DEP_SIZE.rail[d.sz] || [5, 2]), n = Math.round(sz[1] / 0.35);
+    const n = depDim('rail', d.sz)[3] + 1;
     for (let k = 1; k < n; k++) {
       const f = k / n, a = P[0], b = P[1], c2 = P[3], e2 = P[2];
       g.beginPath(); g.moveTo(sx(a[0] + (c2[0] - a[0]) * f), sy(a[1] + (c2[1] - a[1]) * f)); g.lineTo(sx(b[0] + (e2[0] - b[0]) * f), sy(b[1] + (e2[1] - b[1]) * f)); g.stroke();
@@ -858,13 +868,36 @@ function sheet(html, bind) {
   S.sheet.hidden = false; S.sheet.innerHTML = `<button class="mp-x" data-close>×</button>` + html;
   S.sheet.querySelector('[data-close]').onclick = () => { sheet(null); if (S.onSheetClose) { const f = S.onSheetClose; S.onSheetClose = null; f(); } };
   if (bind) bind(S.sheet);
+  busyGuard(S.sheet);
   return S.sheet;
+}
+// 押したボタンは、その仕事（サーバーへの送信など）が終わるまで押せない（2回押しで2つできないように）
+function busyGuard(root) {
+  root.querySelectorAll('button').forEach(b => {
+    const f = b.onclick; if (!f || f.guarded) return;
+    const g = function (ev) {
+      if (b.dataset.busy) return;
+      const r = f.call(this, ev);
+      if (r && typeof r.then === 'function') {
+        b.dataset.busy = '1'; b.disabled = true;
+        r.finally(() => { delete b.dataset.busy; if (b.isConnected) b.disabled = false; });
+      }
+      return r;
+    };
+    g.guarded = true; b.onclick = g;
+  });
 }
 const asLabel = a => String((a && a.name) || '').replace(/（自分）$/, '');   // 自分は 👤 で見分ける（名前だけ出す）
 const asName = () => asLabel(S.boot.as.find(a => a.as === S.as));
+// サーバーの「つくる・変える」。同じものがまだ送信中なら、もう一度は送らない（2回押し）
+const INFLIGHT = new Set();
 async function api(fn, args, okMsg) {
+  const key = args && args.p_dry !== true ? fn + JSON.stringify(args) : null;
+  if (key && INFLIGHT.has(key)) return null;
+  if (key) INFLIGHT.add(key);
   try { const r = await call(fn, args); if (okMsg) toast(okMsg); return r; }
   catch (e) { toast(e.message); return null; }
+  finally { if (key) INFLIGHT.delete(key); }
 }
 
 /* ---------- 指・マウス ---------- */
@@ -934,6 +967,17 @@ function nearSeg(x, y, rpx, pred) {
   }
   return best;
 }
+// 線 s の上で、(x, y) にいちばん近いところ
+function projSeg(s, x, y) {
+  const P = s.P; let acc = 0, best = null;
+  for (let i = 0; i + 1 < s.np; i++) {
+    const ax = P[2 * i], ay = P[2 * i + 1], bx = P[2 * i + 2], by = P[2 * i + 3], dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy, L = Math.sqrt(L2);
+    const t = L2 ? clamp(((x - ax) * dx + (y - ay) * dy) / L2, 0, 1) : 0, qx = ax + dx * t, qy = ay + dy * t, d = Math.hypot(x - qx, y - qy);
+    if (!best || d < best.d) best = { s, d, x: qx, y: qy, at: acc + L * t, ang: Math.atan2(dy, dx) };
+    acc += L;
+  }
+  return best;
+}
 function nearSta(x, y, rpx) {
   const it = S.vis; if (!it) return null; let best = null;
   for (const s of it.stas.values()) { const d = Math.hypot(s.fx - x, s.fy - y) * S.cam.z; if (d < rpx + (s.k === 'rail' ? s.pl / 100 * S.cam.z : 0) && (!best || d < best.d)) best = { s, d }; }
@@ -955,7 +999,7 @@ function nearNode(x, y, rpx, pred) {
 const TOOL_HINT = {
   look: '', land: '土地：2か所タップして四角くえらびます（区画は10m四方）',
   rail: '線路：タップして点をおきます。線路のはしから始めると延長、まん中から始めると分岐。点はドラッグで動かせます', road: '道路：タップして点をおきます。道路のはし・まん中から始めると、つながります。点はドラッグで動かせます',
-  sta: '駅：ホームの起点をタップ（自分の線路の上）。バス停は道路の上をタップ', dep: '車庫：自分の線路（バスは道路）の横をタップ', del: 'こわす：自分の線・駅・車庫・建物をタップ'
+  sta: '駅：ホームの起点をタップ（自分の線路の上）。バス停は道路の上をタップ', dep: '車両基地：自分の線路の上で起点をタップ（バスの営業所は道路の横をタップ）', del: 'こわす：自分の線・駅・車庫・建物をタップ'
 };
 function setTool(t) {
   if (S.toolEnd) { const f = S.toolEnd; S.toolEnd = null; f(); }
@@ -1564,13 +1608,33 @@ function pathPart(g, s, a0, a1) {
     acc += L;
   }
 }
-// 駅：ホームの起点と終点をタップ（同じ線路の上）。長さは20m単位。バス停は1か所
-function staTap(x, y) {
+// 起点と終点が、つなぎ目（分かれ道のない点）をはさんだ別々の線のとき：サーバーで1本にして、その線の上の位置にする
+//   近くないとき（えらびなおし）は 'far'、つなげないときは 'ng'（理由はサーバーのことばで出す）
+async function joinHits(a, b, maxTiles) {
+  if (a.s.id === b.s.id) return [a, b];
+  if (Math.hypot(a.x - b.x, a.y - b.y) > maxTiles) return 'far';
+  hint('線路をつないでいます…');
+  const r = await api('mp_seg_join', { p_a: a.s.id, p_b: b.s.id });
+  if (!r) return 'ng';
+  const s = prepSeg(r);
+  refreshBox(s.bb[0] - 2, s.bb[1] - 2, s.bb[2] + 2, s.bb[3] + 2);
+  return [projSeg(s, a.x, a.y), projSeg(s, b.x, b.y)];
+}
+// 駅：ホームの起点と終点をタップ（同じ線路の上。つなぎ目をはさむときは1本にする）。長さは20m単位。バス停は1か所
+async function staTap(x, y) {
   const st = S.toolState || (S.toolState = {});
+  if (st.busy) return;
   const hr = nearSeg(x, y, 14, s => s.k === 'rail' && s.mine);
   if (hr) {
+    let why = null;
+    if (st.a && !st.done && st.a.s.id !== hr.s.id) {
+      st.busy = true; const j = await joinHits(st.a, hr, 8.6); st.busy = false;
+      if (S.toolState !== st || S.tool !== 'sta') return;
+      if (Array.isArray(j)) { st.a = j[0]; st.b = j[1]; st.done = true; hint(''); return staSheet('rail', j[0], j[1]); }
+      why = j;
+    }
     if (!st.a || st.a.s.id !== hr.s.id || st.done) {
-      if (st.a && !st.done && st.a.s.id !== hr.s.id) toast(T('同じ線路の上で終点をタップしてください（起点をえらびなおしました）'));
+      if (why === 'far') toast(T('同じ線路の上で終点をタップしてください（起点をえらびなおしました）'));
       S.toolState = { a: hr }; sheet(null);
       hint('駅：ホームの終点をタップしてください（同じ線路の上・20m単位）');
       S.drawTool = (g, z) => { const t = S.toolState; if (!t || !t.a) return; const p = segPointAt(t.a.s, t.a.at); g.fillStyle = '#1f5fbf'; g.beginPath(); g.arc(sx(p.x), sy(p.y), 6, 0, 6.3); g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 2; g.stroke(); };
@@ -1628,11 +1692,32 @@ function staSheet(kind, hit, hit2) {
   draw(); quote();
 }
 
-function depTap(x, y) {
+// 車庫：車両基地は線路をなぞる（起点と終点をタップ・20m単位。つなぎ目をはさむときは1本にする）。バスの営業所は道路の横をタップ
+async function depTap(x, y) {
+  if (S.toolState && S.toolState.busy) return;
   const hr = nearSeg(x, y, 14, s => s.k === 'rail' && s.mine);
-  const hb = hr ? null : nearSeg(x, y, 12, s => s.k === 'road' && s.c !== 'exp');
-  const hit = hr || hb; if (!hit) return toast('自分の線路（バスは道路）の近くをタップしてください');
-  const kind = hr ? 'rail' : 'bus';
+  if (hr) {
+    const st = S.toolState || (S.toolState = {});
+    let why = null;
+    if (st.da && !st.ddone && st.da.s.id !== hr.s.id) {
+      st.busy = true; const j = await joinHits(st.da, hr, 20.6); st.busy = false;
+      if (S.toolState !== st || S.tool !== 'dep') return;
+      if (Array.isArray(j)) { st.da = j[0]; st.ddone = true; hint(''); return depSheetRail(j[0], j[1]); }
+      why = j;
+    }
+    if (!st.da || st.da.s.id !== hr.s.id || st.ddone) {
+      if (why === 'far') toast(T('同じ線路の上で終点をタップしてください（起点をえらびなおしました）'));
+      S.toolState = { da: hr }; sheet(null);
+      hint('車両基地：終点をタップしてください（同じ線路の上・20m単位）');
+      S.drawTool = (g, z) => { const t = S.toolState; if (!t || !t.da) return; const p = segPointAt(t.da.s, t.da.at); g.fillStyle = '#8a5a1f'; g.beginPath(); g.arc(sx(p.x), sy(p.y), 6, 0, 6.3); g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 2; g.stroke(); };
+      S.dirty = true; return;
+    }
+    st.ddone = true; hint('');
+    return depSheetRail(st.da, hr);
+  }
+  const hb = nearSeg(x, y, 12, s => s.k === 'road' && s.c !== 'exp');
+  const hit = hb; if (!hit) return toast('自分の線路（バスは道路）の近くをタップしてください');
+  const kind = 'bus';
   // タップした側
   const side = ((x - hit.x) * -Math.sin(hit.ang) + (y - hit.y) * Math.cos(hit.ang)) >= 0 ? 1 : -1;
   const st = { size: 'S', side, name: nearDist(x, y) + (kind === 'rail' ? '車両基地' : '営業所'), q: null, err: null };
@@ -1665,6 +1750,48 @@ function depTap(x, y) {
   draw(); quote();
 }
 
+// 車両基地（線路をなぞる）：長さ（20m単位）・留置線の数・どちら側か
+function depSheetRail(h1, h2) {
+  const seg = h1.s, span = Math.abs(h2.at - h1.at);
+  const st = { len: clamp(Math.round(span * 50 / 20) * 20, 40, 1000), mid: (h1.at + h2.at) / 2, n: 6, side: 1, name: nearDist(h1.x, h1.y) + '車両基地', q: null, err: null };
+  const sz = () => `T${st.len}x${st.n}`;
+  const at = () => { const p = segPointAt(seg, st.mid); return p; };
+  S.sel = { kind: 'seg', id: seg.id };
+  S.drawTool = (g, z) => {
+    const p = at(), P = depPoly({ fx: p.x, fy: p.y, a: p.ang, side: st.side, sz: sz(), k: 'rail' });
+    g.beginPath(); P.forEach((q, i) => i ? g.lineTo(sx(q[0]), sy(q[1])) : g.moveTo(sx(q[0]), sy(q[1]))); g.closePath();
+    g.fillStyle = st.err ? 'rgba(220,40,40,.35)' : 'rgba(150,110,60,.4)'; g.fill(); g.strokeStyle = '#8a5a1f'; g.lineWidth = 2; g.stroke();
+    g.lineCap = 'butt'; g.strokeStyle = 'rgba(138,90,31,.85)'; g.lineWidth = Math.max(5, 0.3 * z); pathPart(g, seg, st.mid - st.len / 100, st.mid + st.len / 100); g.stroke(); g.lineCap = 'round';
+  };
+  S.dirty = true;
+  const args = dry => { const p = at(); return { p_kind: 'rail', p_seg: seg.id, p_x: p.x, p_y: p.y, p_side: st.side, p_size: sz(), p_name: st.name || '仮', p_as: S.as, p_dry: dry }; };
+  const quote = async () => {
+    try { st.q = await call('mp_dep_build', args(true)); st.err = null; } catch (e) { st.q = null; st.err = e.message; }
+    draw(); S.dirty = true;
+  };
+  const step = (k, d, lo, hi) => `<button class="btn" data-${k}="${-d}" style="flex:none;padding:4px 12px">−</button><b style="min-width:4.2em;text-align:center">${k === 'len' ? st.len + 'm' : T(`${st.n}本`)}</b><button class="btn" data-${k}="${d}" style="flex:none;padding:4px 12px">＋</button>`;
+  const draw = () => sheet(`<h4>🏭 車両基地をつくる</h4>
+    <div class="mp-row"><input class="mp-inp" data-nm value="${esc(st.name)}" placeholder="車両基地の名前"></div>
+    <div class="mp-row"><span>長さ</span> ${step('len', 20)}</div>
+    <div class="mp-row"><span>留置線</span> ${step('n', 1)} <button class="btn" data-side>反対側にする</button></div>
+    <p class="small" style="margin:4px 0 0">20m の車両 ${Math.floor(st.len / 20) * st.n}両まで（${Math.floor(st.len / 20)}両 × ${st.n}本）</p>
+    <div class="mp-row">${st.q ? `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small">使用料 1日 ${X(st.q.lease)}・維持費 1日 ${X(st.q.up_day)}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : '<span class="muted small">見つもり中…</span>'}</div>
+    <div class="mp-row"><button class="btn main" data-ok ${st.q ? '' : 'disabled'}>つくる（${esc(asName())}）</button></div>
+    <p class="muted small" style="margin:4px 0 0">起点と終点のあいだに、線路にそって車両基地をつくります（20m単位）。もう一度タップすると、えらびなおせます</p>`, s => {
+    s.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
+    s.querySelectorAll('[data-len]').forEach(b => b.onclick = () => { st.len = clamp(st.len + Number(b.dataset.len), 40, 1000); quote(); });
+    s.querySelectorAll('[data-n]').forEach(b => b.onclick = () => { st.n = clamp(st.n + Number(b.dataset.n), 1, 20); quote(); });
+    s.querySelector('[data-side]').onclick = () => { st.side = -st.side; quote(); };
+    s.querySelector('[data-ok]').onclick = async () => {
+      st.name = s.querySelector('[data-nm]').value.trim(); if (!st.name) return toast('名前をつけてください');
+      const p = at();
+      if (await api('mp_dep_build', args(false), 'つくりました')) { refreshBox(p.x - 14, p.y - 14, p.x + 14, p.y + 14); sheet(null); S.drawTool = null; S.toolState = null; S.sel = null; hint(TOOL_HINT.dep); }
+    };
+  });
+  S.onSheetClose = () => { S.drawTool = null; S.toolState = null; S.dirty = true; if (S.tool === 'dep') hint(TOOL_HINT.dep); };
+  draw(); quote();
+}
+
 /* ---- こわす ---- */
 async function delTap(x, y) {
   const st = nearSta(x, y, 14); if (st && st.s.mine) return showSta(st.s);
@@ -1685,7 +1812,7 @@ function modal(html, bind, cls) {
   const body = m.querySelector('[data-body]');
   m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) close(); };
   const close = () => { m.remove(); if (m.onclose) m.onclose(); };
-  m.set = (title, h, b) => { m.querySelector('[data-title]').textContent = T(title); body.innerHTML = h; if (b) b(body); };
+  m.set = (title, h, b) => { m.querySelector('[data-title]').textContent = T(title); body.innerHTML = h; if (b) b(body); busyGuard(body); };
   m.close = close;
   document.body.appendChild(m);
   if (html) m.set(html[0], html[1], bind);
