@@ -19088,6 +19088,15 @@ language sql stable set search_path = public as $$
    where s.gov and s.bb && box(point(x0 / 5.0 - 1, y0 / 5.0 - 1), point((x1 + 1) / 5.0 + 1, (y1 + 1) / 5.0 + 1))
      and c.x between x0 and x1 and c.y between y0 and y1
 $$;
+-- 区画の一覧（[X0, Y0, X1, Y1, …]）のうち、公道（国の道路・線路）にかかるもの。区画のあるマスとそのまわりを通る国の線だけを見る（長い線でも速い）
+create or replace function public._mp_pub_of(cells int[]) returns table (x int, y int)
+language sql stable set search_path = public as $$
+  with c as materialized (select distinct cells[2 * i - 1] x, cells[2 * i] y from generate_series(1, coalesce(array_length(cells, 1), 0) / 2) i),
+       t as (select distinct _mp_t5(c.x) + d.dx tx, _mp_t5(c.y) + d.dy ty from c cross join (select a dx, b dy from generate_series(-1, 1) a, generate_series(-1, 1) b) d),
+       sg as materialized (select distinct o.ref from mp_occ o join t on o.x = t.tx and o.y = t.ty where o.what in ('road', 'rail')),
+       lc as materialized (select q.x, q.y from sg join mp_segs s on s.id = sg.ref and s.gov cross join lateral _mp_line_cells(s.pts, _mp_seg_r(s.kind, s.w, s.dbl)) q)
+  select distinct lc.x, lc.y from lc join c on c.x = lc.x and c.y = lc.y
+$$;
 -- 道路・線路・駅・車庫が使っている区画（区画の四角の中。建物を建てられない）
 create or replace function public._mp_busy_cells(x0 int, y0 int, x1 int, y1 int) returns table (x int, y int)
 language sql stable set search_path = public as $$
@@ -19396,17 +19405,21 @@ $$;
 -- 作ったもの（rk, rid）の区画の使用料を決める（1日あたりの合計を返す）
 create or replace function public._mp_lease_set(rk text, rid bigint, pu uuid, pc int, gv boolean) returns numeric
 language plpgsql set search_path = public as $$
-declare total numeric;
+declare total numeric; cells int[];
 begin
   delete from mp_leases where ref_kind = rk and ref = rid;
   if gv then return 0; end if;
-  with c as (select distinct x, y from _mp_struct_cells(rk, rid)),
-       bx as (select min(x) x0, min(y) y0, max(x) x1, max(y) y1 from c),
-       pub as (select q.x, q.y from bx, lateral _mp_pub_cells(bx.x0, bx.y0, bx.x1, bx.y1) q),
-       v as (select c.x, c.y, p.own_u lu, p.own_c lc, p.id pid,
-                    coalesce(_mp_cval(_mp_t5(c.x), _mp_t5(c.y)), 120) cv
-               from c left join mp_pcells pcl on pcl.x = c.x and pcl.y = c.y left join mp_parcels p on p.id = pcl.parcel
-              where not exists (select 1 from pub where pub.x = c.x and pub.y = c.y)),
+  cells := (select coalesce(array_agg(u.v order by z.n, u.o), '{}') from (select q.x, q.y, row_number() over () n from (select distinct x, y from _mp_struct_cells(rk, rid)) q) z,
+              lateral unnest(array[z.x, z.y]) with ordinality u(v, o));
+  -- 公道の区画は、まわりを通る国の線だけで見る。地価はマスごとに1回（同じマスの区画は同じ地価）
+  with c as (select distinct cells[2 * i - 1] x, cells[2 * i] y from generate_series(1, coalesce(array_length(cells, 1), 0) / 2) i),
+       pub as materialized (select * from _mp_pub_of(cells)),
+       tv as materialized (select z.tx, z.ty, coalesce(_mp_cval(z.tx, z.ty), 120) cv from (select distinct _mp_t5(c.x) tx, _mp_t5(c.y) ty from c) z),
+       v as (select c.x, c.y, p.own_u lu, p.own_c lc, p.id pid, tv.cv
+               from c left join pub on pub.x = c.x and pub.y = c.y
+                      join tv on tv.tx = _mp_t5(c.x) and tv.ty = _mp_t5(c.y)
+                      left join mp_pcells pcl on pcl.x = c.x and pcl.y = c.y left join mp_parcels p on p.id = pcl.parcel
+              where pub.x is null),
        ins as (insert into mp_leases(x, y, ref_kind, ref, pay_u, pay_c, fee)
                select v.x, v.y, rk, rid, pu, pc, round(v.cv * case when v.pid is null then _mp_rate('lease_gov') else _mp_rate('lease') end, 3)
                  from v where v.pid is null or not _mp_same(v.lu, v.lc, false, pu, pc, false)
@@ -19419,16 +19432,17 @@ language sql set search_path = public as $$ delete from mp_leases where ref_kind
 -- 使用料の見つもり（作る前）：区画の一覧 cells（[X0, Y0, X1, Y1, …]）。1日あたりの合計と、自分の土地・他人の土地・国の土地・公道の区画の数
 create or replace function public._mp_lease_quote(cells int[], pu uuid, pc int, gv boolean, out fee numeric, out own int, out other int, out state int, out pub int)
 language plpgsql stable set search_path = public as $$
-declare x0 int; y0 int; x1 int; y1 int;
 begin
   fee := 0; own := 0; other := 0; state := 0; pub := 0;
   if coalesce(array_length(cells, 1), 0) < 2 then return; end if;
-  select min(cells[2 * i - 1]), min(cells[2 * i]), max(cells[2 * i - 1]), max(cells[2 * i]) into x0, y0, x1, y1 from generate_series(1, array_length(cells, 1) / 2) i;
+  -- 公道の区画は、まわりを通る国の線だけで見る。地価はマスごとに1回
   with c as (select distinct cells[2 * i - 1] x, cells[2 * i] y from generate_series(1, array_length(cells, 1) / 2) i),
-       pb as (select * from _mp_pub_cells(x0, y0, x1, y1)),
-       v as (select c.x, c.y, exists (select 1 from pb where pb.x = c.x and pb.y = c.y) ispub, p.id pid, p.own_u lu, p.own_c lc,
-                    coalesce(_mp_cval(_mp_t5(c.x), _mp_t5(c.y)), 120) cv
-               from c left join mp_pcells pcl on pcl.x = c.x and pcl.y = c.y left join mp_parcels p on p.id = pcl.parcel)
+       pb as materialized (select * from _mp_pub_of(cells)),
+       tv as materialized (select z.tx, z.ty, coalesce(_mp_cval(z.tx, z.ty), 120) cv from (select distinct _mp_t5(c.x) tx, _mp_t5(c.y) ty from c) z),
+       v as (select c.x, c.y, pb.x is not null ispub, p.id pid, p.own_u lu, p.own_c lc, tv.cv
+               from c left join pb on pb.x = c.x and pb.y = c.y
+                      join tv on tv.tx = _mp_t5(c.x) and tv.ty = _mp_t5(c.y)
+                      left join mp_pcells pcl on pcl.x = c.x and pcl.y = c.y left join mp_parcels p on p.id = pcl.parcel)
   select coalesce(sum(case when gv or ispub or (pid is not null and _mp_same(lu, lc, false, pu, pc, false)) then 0
                            when pid is null then cv * _mp_rate('lease_gov') else cv * _mp_rate('lease') end), 0),
          count(*) filter (where not gv and not ispub and pid is not null and _mp_same(lu, lc, false, pu, pc, false)),
@@ -20356,19 +20370,19 @@ begin
             '_mp_g','_mp_geom_ok','_mp_hms','_mp_hourf','_mp_lease_del','_mp_lease_quote','_mp_lease_set','_mp_leg_from',
             '_mp_leg_time','_mp_len','_mp_line_cells','_mp_lock','_mp_mine','_mp_minr','_mp_npc_name','_mp_occ_set',
             '_mp_ok','_mp_okey','_mp_party','_mp_pay','_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_proj',
-            '_mp_pub_cells','_mp_rail_path','_mp_rate','_mp_renet','_mp_resched','_mp_rev','_mp_road_mul','_mp_road_v',
-            '_mp_road_w','_mp_room','_mp_route_catch','_mp_routes_fix','_mp_run','_mp_same','_mp_seg_cells_arr','_mp_seg_chain',
-            '_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_struct_cells','_mp_sub',
-            '_mp_t49_from_tiles','_mp_t5','_mp_ters','_mp_thin','_mp_tick','_mp_tick_day','_mp_tick_hour','_mp_tiles',
-            '_mp_tmul','_mp_train_calc','_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim','_mp_vruns','_mp_world',
-            '_mp_zname','_mp_zone_rule','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state',
-            'mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set',
-            'mp_boot','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_list','mp_cho_get','mp_chunk_get',
-            'mp_dep_build','mp_dep_edit','mp_dia','mp_form_del','mp_form_set','mp_land_buy','mp_ledger_page','mp_parcel_buy',
-            'mp_parcel_merge','mp_parcel_sell','mp_parcel_split','mp_poll','mp_route_del','mp_route_save','mp_routes_list','mp_seg_build',
-            'mp_seg_del','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_split','mp_spot','mp_sta_build','mp_sta_edit',
-            'mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market','mp_unit_mine',
-            'mp_unit_set') loop
+            '_mp_pub_cells','_mp_pub_of','_mp_rail_path','_mp_rate','_mp_renet','_mp_resched','_mp_rev','_mp_road_mul',
+            '_mp_road_v','_mp_road_w','_mp_room','_mp_route_catch','_mp_routes_fix','_mp_run','_mp_same','_mp_seg_cells_arr',
+            '_mp_seg_chain','_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_struct_cells',
+            '_mp_sub','_mp_t49_from_tiles','_mp_t5','_mp_ters','_mp_thin','_mp_tick','_mp_tick_day','_mp_tick_hour',
+            '_mp_tiles','_mp_tmul','_mp_train_calc','_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim','_mp_vruns',
+            '_mp_world','_mp_zname','_mp_zone_rule','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_place_at','mp_admin_rates','mp_admin_rename',
+            'mp_admin_state','mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote',
+            'mp_bld_set','mp_boot','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_list','mp_cho_get',
+            'mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia','mp_form_del','mp_form_set','mp_land_buy','mp_ledger_page',
+            'mp_parcel_buy','mp_parcel_merge','mp_parcel_sell','mp_parcel_split','mp_poll','mp_route_del','mp_route_save','mp_routes_list',
+            'mp_seg_build','mp_seg_del','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_split','mp_spot','mp_sta_build',
+            'mp_sta_edit','mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market',
+            'mp_unit_mine','mp_unit_set') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
       execute format('revoke all on function %s from authenticated', f.sig);

@@ -1100,19 +1100,29 @@ async function addrInto(x, y, still) {   // x, y：マス（50m）の座標。�
   S.addr.hidden = false; S.addr.textContent = d.addr.text;
 }
 function segOpts(s) {
-  const st = { dbl: s.dbl, el: s.el, l: s.l, name: s.n || '' };
-  const draw = async () => {
+  const st = { dbl: s.dbl, el: s.el, l: s.l, name: s.n || '', q: null, quoting: false, seq: 0 };
+  const same = () => st.dbl === s.dbl && st.el === s.el && st.l === s.l;   // 名前だけ
+  const quote = async () => {
+    const my = ++st.seq; st.quoting = true; draw();
     const q = await api('mp_seg_opts', { p_id: s.id, p_dbl: st.dbl, p_elec: st.el, p_name: st.name, p_dry: true, p_lanes: st.l });
+    if (st.seq !== my) return;
+    st.quoting = false; st.q = q; draw();
+  };
+  const changed = () => { st.seq++; st.quoting = false; st.q = null; draw(); };
+  const draw = () => {
+    const q = st.q;
     sheet(`<h4>${s.k === 'rail' ? '線路' : '道路'}の設定</h4>
       ${s.k === 'rail' ? `<div class="mp-row"><span class="mp-seg"><button data-d="0" class="${!st.dbl ? 'on' : ''}">単線</button><button data-d="1" class="${st.dbl ? 'on' : ''}">複線</button></span>
         <span class="mp-seg"><button data-e="0" class="${!st.el ? 'on' : ''}">非電化</button><button data-e="1" class="${st.el ? 'on' : ''}">電化</button></span></div>`
       : `<div class="mp-row">片側 <span class="mp-seg">${[0, 1, 2, 3].map(n => `<button data-l="${n}" class="${st.l === n ? 'on' : ''}">${n ? n + '車線' : '細い道'}</button>`).join('')}</span></div>`}
       <div class="mp-row"><input class="mp-inp" data-nm placeholder="名前（路線名など）" value="${esc(st.name)}"></div>
-      <p class="mp-cost">${q ? (q.cost > 0 ? '工事費 ' + X(q.cost) : '工事費なし') : ''}</p><p class="muted small">もとにもどしても（単線にする・車線をへらす）お金はもどりません</p>
-      <div class="mp-row"><button class="btn main" data-ok>この設定にする</button></div>`, sh => {
-      sh.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { st.dbl = b.dataset.d === '1'; draw(); });
-      sh.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { st.el = b.dataset.e === '1'; draw(); });
-      sh.querySelectorAll('[data-l]').forEach(b => b.onclick = () => { st.l = Number(b.dataset.l); draw(); });
+      <div class="mp-row">${same() ? '' : q ? `<span class="mp-cost">${q.cost > 0 ? '工事費 ' + X(q.cost) : '工事費なし'}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button><span class="muted small">工事費を出してから、変えられます</span>'}</div>
+      <p class="muted small">もとにもどしても（単線にする・車線をへらす）お金はもどりません</p>
+      <div class="mp-row"><button class="btn main" data-ok ${same() || q ? '' : 'disabled'}>この設定にする</button></div>`, sh => {
+      sh.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { st.dbl = b.dataset.d === '1'; changed(); });
+      sh.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { st.el = b.dataset.e === '1'; changed(); });
+      sh.querySelectorAll('[data-l]').forEach(b => b.onclick = () => { st.l = Number(b.dataset.l); changed(); });
+      { const es = sh.querySelector('[data-est]'); if (es) es.onclick = () => quote(); }
       sh.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
       sh.querySelector('[data-ok]').onclick = async () => {
         st.name = sh.querySelector('[data-nm]').value;
@@ -1472,16 +1482,20 @@ function drawUpdate(fast) {
     st.curve = st.ctrl.length >= 2 ? spline(st.ctrl, A, B) : []; st.geoBad = false;
   }
   st.rmin = st.curve.length > 6 ? minRadius(st.curve) : 1e9;
-  st.quote = null; st.err = null;
+  // 形が変わったら、見つもりはやりなおし（「見つもる」を押す）。送っている見つもりの答えはすてる
+  st.quote = null; st.err = null; st.qseq = (st.qseq || 0) + 1; st.quoting = false;
   S.dirty = true;
-  if (!fast) { clearTimeout(st.qt); st.qt = setTimeout(() => quoteDraw(st), 350); }
   drawSheet();
 }
+// 見つもり（「見つもる」を押したとき）
 async function quoteDraw(st) {
-  if (S.toolState !== st || st.curve.length < 3) return;
-  const args = drawArgs(st, true);
-  try { st.quote = await call(st.edit ? 'mp_seg_edit' : 'mp_seg_build', args); st.err = null; }
-  catch (e) { st.quote = null; st.err = e.message; }
+  if (S.toolState !== st || st.curve.length < 3 || st.quoting) return;
+  const my = st.qseq = (st.qseq || 0) + 1;
+  st.quoting = true; drawSheet();
+  let q = null, err = null;
+  try { q = await call(st.edit ? 'mp_seg_edit' : 'mp_seg_build', drawArgs(st, true)); } catch (e) { err = e.message; }
+  if (st.qseq !== my) return;
+  st.quoting = false; st.quote = q; st.err = err;
   if (S.toolState === st) drawSheet();
 }
 function drawArgs(st, dry) {
@@ -1507,7 +1521,8 @@ function drawSheet() {
         片側 <span class="mp-seg">${(gov ? [0, 1, 2, 3] : [0, 1, 2]).map(n => `<button data-l="${n}" class="${o.lanes === n ? 'on' : ''}">${n ? n + '車線' : '細い道'}</button>`).join('')}</span></div>`}
     ${st.edit ? '' : `<div class="mp-row"><input class="mp-inp" data-nm placeholder="${rail ? '路線名（なくてもよい）' : '道路の名前（なくてもよい）'}" value="${esc(o.name)}"></div>`}
     <div class="mp-row">${q ? `<span class="mp-cost">工事費 ${X(q.cost)}</span><span class="small"><span>使用料 1日 ${X(q.lease || 0)}</span>${q.tunnel ? `<span>・トンネル ${q.tunnel}マス</span>` : ''}${q.bridge ? `<span>・橋 ${q.bridge}マス</span>` : ''}<span>・最高 ${q.vlim} km/h</span></span>`
-      : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.curve.length > 2 ? '<span class="muted small">見つもり中…</span>' : st.mode === 'arc' ? '<span class="muted small">地図をタップして角の点をおいてください（2つ以上）。角には、えらんだ半径のカーブが入ります。線路のはしから始めると延長、まん中から始めると分岐です</span>' : '<span class="muted small">地図をタップして点をおいてください（2つ以上）。はしを線の近くにおくと、つながります</span>'}</div>
+      : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>'
+      : st.curve.length > 2 ? `<button class="btn" data-est ${tight || st.geoBad ? 'disabled' : ''}>見つもる</button><span class="muted small">工事費を出してから、つくれます</span>` : st.mode === 'arc' ? '<span class="muted small">地図をタップして角の点をおいてください（2つ以上）。角には、えらんだ半径のカーブが入ります。線路のはしから始めると延長、まん中から始めると分岐です</span>' : '<span class="muted small">地図をタップして点をおいてください（2つ以上）。はしを線の近くにおくと、つながります</span>'}</div>
     <div class="mp-row"><button class="btn" data-undo ${st.ctrl.length ? '' : 'disabled'}>1つもどす</button><button class="btn" data-cancel>キャンセル</button>
       <button class="btn main" data-ok ${q && !tight && !st.geoBad ? '' : 'disabled'}>${st.edit ? 'この形にする' : `つくる（${esc(asName())}）`}</button></div>
     <p class="muted small" style="margin:6px 0 0">点はドラッグで動かせます。長押しで消せます</p>`, s => {
@@ -1520,6 +1535,7 @@ function drawSheet() {
     const nm = s.querySelector('[data-nm]'); if (nm) nm.onchange = () => { o.name = nm.value; };
     s.querySelector('[data-undo]').onclick = () => { if (st.edit && st.ctrl.length <= 2) return; st.ctrl.pop(); if (!st.edit) st.B = null; if (!st.ctrl.length) st.A = null; drawUpdate(); };
     s.querySelector('[data-cancel]').onclick = () => setTool(st.edit ? 'look' : st.kind);
+    { const es = s.querySelector('[data-est]'); if (es) es.onclick = () => quoteDraw(st); }
     s.querySelector('[data-ok]').onclick = async () => {
       if (nm) o.name = nm.value;
       const r = await api(st.edit ? 'mp_seg_edit' : 'mp_seg_build', drawArgs(st, false));
@@ -1662,23 +1678,28 @@ function staSheet(kind, hit, hit2) {
       g.strokeStyle = '#fff'; g.lineWidth = Math.max(4, (0.22 * st.tracks + 0.18) * z); pathPart(g, hit.s, a0, a1); g.stroke(); g.lineCap = 'round';
     };
   }
+  // 見つもりは「見つもる」を押してから。大きさを変えたら、やりなおし
   const quote = async () => {
-    const p = pt();
-    try { st.q = await call('mp_sta_build', { p_kind: kind, p_seg: hit.s.id, p_x: p.x, p_y: p.y, p_plat: st.plat, p_tracks: st.tracks, p_name: st.name || '仮', p_as: S.as, p_dry: true }); st.err = null; }
-    catch (e) { st.q = null; st.err = e.message; }
+    const p = pt(), my = st.seq = (st.seq || 0) + 1; st.quoting = true; draw();
+    let q = null, err = null;
+    try { q = await call('mp_sta_build', { p_kind: kind, p_seg: hit.s.id, p_x: p.x, p_y: p.y, p_plat: st.plat, p_tracks: st.tracks, p_name: st.name || '仮', p_as: S.as, p_dry: true }); } catch (e) { err = e.message; }
+    if (st.seq !== my) return;
+    st.quoting = false; st.q = q; st.err = err;
     draw(); S.dirty = true;
   };
+  const changed = () => { st.seq = (st.seq || 0) + 1; st.quoting = false; st.q = null; st.err = null; draw(); S.dirty = true; };
   const draw = () => sheet(`<h4>${kind === 'rail' ? '🚉 駅をつくる' : '🚏 バス停をつくる'}</h4>
     <div class="mp-row"><input class="mp-inp" data-nm placeholder="${kind === 'rail' ? '駅の名前（「駅」はつけない）' : 'バス停の名前'}" value="${esc(st.name)}"></div>
     ${kind === 'rail' ? `<div class="mp-row"><span>ホーム</span> <button class="btn" data-pm="-20" style="flex:none;padding:4px 12px">−</button><b style="min-width:4.2em;text-align:center">${st.plat}m</b><button class="btn" data-pm="20" style="flex:none;padding:4px 12px">＋</button>
         <span class="muted small">20m の車両 ${Math.floor(st.plat / 20)}両まで</span></div>
       <div class="mp-row">番線 <span class="mp-seg">${[1, 2, 3, 4, 6].map(n => `<button data-t="${n}" class="${st.tracks === n ? 'on' : ''}">${n}</button>`).join('')}</span></div>
       <p class="muted small" style="margin:4px 0 0">起点と終点のあいだが、ホームになります（20m単位）。もう一度タップすると、えらびなおせます</p>` : ''}
-    <div class="mp-row">${st.q ? `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small">維持費 1日 ${X(st.q.up_day)}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : '<span class="muted small">見つもり中…</span>'}</div>
+    <div class="mp-row">${st.q ? `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small">維持費 1日 ${X(st.q.up_day)}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button><span class="muted small">工事費を出してから、つくれます</span>'}</div>
     <div class="mp-row"><button class="btn main" data-ok ${st.q ? '' : 'disabled'}>つくる（${esc(asName())}）</button></div>`, s => {
     s.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
-    s.querySelectorAll('[data-pm]').forEach(b => b.onclick = () => { st.plat = clamp(st.plat + Number(b.dataset.pm), 20, 400); quote(); });
-    s.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { st.tracks = Number(b.dataset.t); quote(); });
+    s.querySelectorAll('[data-pm]').forEach(b => b.onclick = () => { st.plat = clamp(st.plat + Number(b.dataset.pm), 20, 400); changed(); });
+    s.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { st.tracks = Number(b.dataset.t); changed(); });
+    { const es = s.querySelector('[data-est]'); if (es) es.onclick = () => quote(); }
     s.querySelector('[data-ok]').onclick = async () => {
       st.name = s.querySelector('[data-nm]').value.trim(); if (!st.name) return toast('名前をつけてください');
       const p = pt();
@@ -1689,7 +1710,7 @@ function staSheet(kind, hit, hit2) {
     };
   });
   S.onSheetClose = () => { S.toolState = null; S.drawTool = null; S.dirty = true; if (S.tool === 'sta') hint('駅：ホームの起点をタップ（自分の線路の上）。バス停は道路の上をタップ'); };
-  draw(); quote();
+  draw();
 }
 
 // 車庫：車両基地は線路をなぞる（起点と終点をタップ・20m単位。つなぎ目をはさむときは1本にする）。バスの営業所は道路の横をタップ
@@ -1725,20 +1746,25 @@ async function depTap(x, y) {
   S.drawTool = (g, z) => { const P = depPoly(prev()); g.beginPath(); P.forEach((p, i) => i ? g.lineTo(sx(p[0]), sy(p[1])) : g.moveTo(sx(p[0]), sy(p[1]))); g.closePath(); g.fillStyle = st.err ? 'rgba(220,40,40,.35)' : 'rgba(30,110,230,.3)'; g.fill(); g.strokeStyle = '#1f5fbf'; g.lineWidth = 2; g.stroke(); };
   S.dirty = true;
   const quote = async () => {
-    try { st.q = await call('mp_dep_build', { p_kind: kind, p_seg: hit.s.id, p_x: hit.x, p_y: hit.y, p_side: st.side, p_size: st.size, p_name: st.name || '仮', p_as: S.as, p_dry: true }); st.err = null; }
-    catch (e) { st.q = null; st.err = e.message; }
+    const my = st.seq = (st.seq || 0) + 1; st.quoting = true; draw();
+    let q = null, err = null;
+    try { q = await call('mp_dep_build', { p_kind: kind, p_seg: hit.s.id, p_x: hit.x, p_y: hit.y, p_side: st.side, p_size: st.size, p_name: st.name || '仮', p_as: S.as, p_dry: true }); } catch (e) { err = e.message; }
+    if (st.seq !== my) return;
+    st.quoting = false; st.q = q; st.err = err;
     draw(); S.dirty = true;
   };
+  const changed = () => { st.seq = (st.seq || 0) + 1; st.quoting = false; st.q = null; st.err = null; draw(); S.dirty = true; };
   const sizes = kind === 'rail' ? [['S', '小（16両）'], ['M', '中（48両）'], ['L', '大（120両）']] : [['S', '小（20台）'], ['M', '中（60台）']];
   const draw = () => sheet(`<h4>${kind === 'rail' ? '🏭 車両基地をつくる' : '🏭 バスの営業所をつくる'}</h4>
     <div class="mp-row"><input class="mp-inp" data-nm value="${esc(st.name)}"></div>
     <div class="mp-row"><span class="mp-seg">${sizes.map(s => `<button data-s="${s[0]}" class="${st.size === s[0] ? 'on' : ''}">${s[1]}</button>`).join('')}</span>
       <button class="btn" data-side>反対側にする</button></div>
-    <div class="mp-row">${st.q ? `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small">使用料 1日 ${X(st.q.lease)}・維持費 1日 ${X(st.q.up_day)}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : '<span class="muted small">見つもり中…</span>'}</div>
+    <div class="mp-row">${st.q ? `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small">使用料 1日 ${X(st.q.lease)}・維持費 1日 ${X(st.q.up_day)}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button><span class="muted small">工事費を出してから、つくれます</span>'}</div>
     <div class="mp-row"><button class="btn main" data-ok ${st.q ? '' : 'disabled'}>つくる（${esc(asName())}）</button></div>`, s => {
     s.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
-    s.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { st.size = b.dataset.s; quote(); });
-    s.querySelector('[data-side]').onclick = () => { st.side = -st.side; quote(); };
+    s.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { st.size = b.dataset.s; changed(); });
+    s.querySelector('[data-side]').onclick = () => { st.side = -st.side; changed(); };
+    { const es = s.querySelector('[data-est]'); if (es) es.onclick = () => quote(); }
     s.querySelector('[data-ok]').onclick = async () => {
       st.name = s.querySelector('[data-nm]').value.trim();
       if (await api('mp_dep_build', { p_kind: kind, p_seg: hit.s.id, p_x: hit.x, p_y: hit.y, p_side: st.side, p_size: st.size, p_name: st.name, p_as: S.as, p_dry: false }, 'つくりました')) {
@@ -1747,7 +1773,7 @@ async function depTap(x, y) {
     };
   });
   S.onSheetClose = () => { S.drawTool = null; S.dirty = true; };
-  draw(); quote();
+  draw();
 }
 
 // 車両基地（線路をなぞる）：長さ（20m単位）・留置線の数・どちら側か
@@ -1766,22 +1792,28 @@ function depSheetRail(h1, h2) {
   S.dirty = true;
   const args = dry => { const p = at(); return { p_kind: 'rail', p_seg: seg.id, p_x: p.x, p_y: p.y, p_side: st.side, p_size: sz(), p_name: st.name || '仮', p_as: S.as, p_dry: dry }; };
   const quote = async () => {
-    try { st.q = await call('mp_dep_build', args(true)); st.err = null; } catch (e) { st.q = null; st.err = e.message; }
+    const my = st.seq = (st.seq || 0) + 1; st.quoting = true; draw();
+    let q = null, err = null;
+    try { q = await call('mp_dep_build', args(true)); } catch (e) { err = e.message; }
+    if (st.seq !== my) return;
+    st.quoting = false; st.q = q; st.err = err;
     draw(); S.dirty = true;
   };
+  const changed = () => { st.seq = (st.seq || 0) + 1; st.quoting = false; st.q = null; st.err = null; draw(); S.dirty = true; };
   const step = (k, d, lo, hi) => `<button class="btn" data-${k}="${-d}" style="flex:none;padding:4px 12px">−</button><b style="min-width:4.2em;text-align:center">${k === 'len' ? st.len + 'm' : T(`${st.n}本`)}</b><button class="btn" data-${k}="${d}" style="flex:none;padding:4px 12px">＋</button>`;
   const draw = () => sheet(`<h4>🏭 車両基地をつくる</h4>
     <div class="mp-row"><input class="mp-inp" data-nm value="${esc(st.name)}" placeholder="車両基地の名前"></div>
     <div class="mp-row"><span>長さ</span> ${step('len', 20)}</div>
     <div class="mp-row"><span>留置線</span> ${step('n', 1)} <button class="btn" data-side>反対側にする</button></div>
     <p class="small" style="margin:4px 0 0">20m の車両 ${Math.floor(st.len / 20) * st.n}両まで（${Math.floor(st.len / 20)}両 × ${st.n}本）</p>
-    <div class="mp-row">${st.q ? `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small">使用料 1日 ${X(st.q.lease)}・維持費 1日 ${X(st.q.up_day)}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : '<span class="muted small">見つもり中…</span>'}</div>
+    <div class="mp-row">${st.q ? `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small">使用料 1日 ${X(st.q.lease)}・維持費 1日 ${X(st.q.up_day)}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button><span class="muted small">工事費を出してから、つくれます</span>'}</div>
     <div class="mp-row"><button class="btn main" data-ok ${st.q ? '' : 'disabled'}>つくる（${esc(asName())}）</button></div>
     <p class="muted small" style="margin:4px 0 0">起点と終点のあいだに、線路にそって車両基地をつくります（20m単位）。もう一度タップすると、えらびなおせます</p>`, s => {
     s.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
-    s.querySelectorAll('[data-len]').forEach(b => b.onclick = () => { st.len = clamp(st.len + Number(b.dataset.len), 40, 1000); quote(); });
-    s.querySelectorAll('[data-n]').forEach(b => b.onclick = () => { st.n = clamp(st.n + Number(b.dataset.n), 1, 20); quote(); });
-    s.querySelector('[data-side]').onclick = () => { st.side = -st.side; quote(); };
+    s.querySelectorAll('[data-len]').forEach(b => b.onclick = () => { st.len = clamp(st.len + Number(b.dataset.len), 40, 1000); changed(); });
+    s.querySelectorAll('[data-n]').forEach(b => b.onclick = () => { st.n = clamp(st.n + Number(b.dataset.n), 1, 20); changed(); });
+    s.querySelector('[data-side]').onclick = () => { st.side = -st.side; changed(); };
+    { const es = s.querySelector('[data-est]'); if (es) es.onclick = () => quote(); }
     s.querySelector('[data-ok]').onclick = async () => {
       st.name = s.querySelector('[data-nm]').value.trim(); if (!st.name) return toast('名前をつけてください');
       const p = at();
@@ -1789,7 +1821,7 @@ function depSheetRail(h1, h2) {
     };
   });
   S.onSheetClose = () => { S.drawTool = null; S.toolState = null; S.dirty = true; if (S.tool === 'dep') hint(TOOL_HINT.dep); };
-  draw(); quote();
+  draw();
 }
 
 /* ---- こわす ---- */
@@ -2469,9 +2501,9 @@ async function bldDesign(P, pr, o) {
       <div class="mp-row"><b style="white-space:nowrap">階数</b><input type="range" class="mp-fl" style="flex:1" min="${pr.f0}" max="${pr.f1}" value="${st.floors}"><b class="mp-fln" style="min-width:3.5em;text-align:right"></b></div>`}
     ${(pr.opt || []).includes('shop1') ? `<label class="mp-row small" style="gap:6px"><input type="checkbox" class="mp-opt"> <span>1階を店舗にする</span></label>` : ''}
     <div class="mp-row"><input class="mp-inp" maxlength="30" placeholder="名前（空ならおまかせ）"></div>
-    <div class="mp-kv" data-q><b>見つもり</b><span>…</span></div>
-    <div class="mp-row"><button class="btn main" data-go disabled>建てる</button></div>`, b => {
-    const cv = b.querySelector('.mp-bprev'), fl = b.querySelector('.mp-fl'), fln = b.querySelector('.mp-fln'), qv = b.querySelector('[data-q]'), go = b.querySelector('[data-go]');
+    <div class="mp-kv" data-q></div>
+    <div class="mp-row"><button class="btn" data-est>見つもる</button><button class="btn main" data-go disabled>建てる</button></div>`, b => {
+    const cv = b.querySelector('.mp-bprev'), fl = b.querySelector('.mp-fl'), fln = b.querySelector('.mp-fln'), qv = b.querySelector('[data-q]'), go = b.querySelector('[data-go]'), es = b.querySelector('[data-est]');
     let seq = 0, last = null, tmr = 0;
     const draw = q => {
       const g = cv.getContext('2d'), W = cv.width, H = cv.height; g.clearRect(0, 0, W, H);
@@ -2489,8 +2521,10 @@ async function bldDesign(P, pr, o) {
         if (q.floors > 0) g.fillText(T(`${q.floors}階`), W / 2, H - 9 > oy + (y1 - y0) * sc ? H - 9 : 10);
       }
     };
+    // 見つもりは「見つもる」を押してから。形・階数を変えたら、やりなおし
+    const changed = () => { ++seq; last = null; go.disabled = true; qv.innerHTML = '<b>見つもり</b><span class="muted small">「見つもる」を押すと、工事費と部屋が出ます</span>'; draw(null); };
     const quote = async () => {
-      const my = ++seq; go.disabled = true;
+      const my = ++seq; go.disabled = true; qv.innerHTML = '<b>見つもり</b><span class="muted small">見つもり中…</span>';
       const q = await api('mp_bld_quote', { p_parcel: P.id, p_kind: pr.k, p_shape: st.shape, p_floors: st.floors, p_opt: st.opt, p_as: S.as });
       if (my !== seq) return;
       last = q; draw(q);
@@ -2505,9 +2539,10 @@ async function bldDesign(P, pr, o) {
       go.disabled = false;
     };
     const sync = () => { b.querySelectorAll('[data-sh]').forEach(x => x.classList.toggle('main', x.dataset.sh === st.shape)); };
-    b.querySelectorAll('[data-sh]').forEach(x => x.onclick = () => { st.shape = x.dataset.sh; st.floors = 999; sync(); quote(); });
-    if (fl) fl.oninput = () => { st.floors = Number(fl.value); if (fln) fln.textContent = T(`${st.floors}階`); clearTimeout(tmr); tmr = setTimeout(quote, 180); };
-    const op = b.querySelector('.mp-opt'); if (op) op.onchange = () => { st.opt = op.checked ? 'shop1' : ''; quote(); };
+    b.querySelectorAll('[data-sh]').forEach(x => x.onclick = () => { st.shape = x.dataset.sh; st.floors = 999; sync(); changed(); });
+    if (fl) fl.oninput = () => { st.floors = Number(fl.value); if (fln) fln.textContent = T(`${st.floors}階`); changed(); };
+    const op = b.querySelector('.mp-opt'); if (op) op.onchange = () => { st.opt = op.checked ? 'shop1' : ''; changed(); };
+    es.onclick = () => quote();
     b.querySelector('.mp-inp').oninput = e => { st.name = e.target.value; };
     go.onclick = async () => {
       if (!last) return;
@@ -2519,7 +2554,7 @@ async function bldDesign(P, pr, o) {
       go.disabled = false;
       if (r) { m.close(); refreshP(P); sheet(null); openBld(r.id); }
     };
-    sync(); quote();
+    sync(); changed(); if (fln) fln.textContent = T(`${st.floors}階`);
   });
 }
 
