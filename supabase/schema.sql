@@ -17626,7 +17626,7 @@ begin
   if nm = '' then raise exception '名前をつけてください'; end if;
   if p_kind = 'rail' then
     if sg.kind <> 'rail' or not _mp_same(sg.own_u, sg.own_c, sg.gov, pa.pu, pa.pc, false) then raise exception '駅は自分（この名義）の線路の上に作ります'; end if;
-    if p_plat < 40 or p_plat > 400 then raise exception 'ホームの長さは40〜400mです'; end if;
+    if p_plat < 20 or p_plat > 400 or p_plat % 20 <> 0 then raise exception 'ホームの長さは20m単位で、20〜400mです'; end if;
     if p_tracks < 1 or p_tracks > 8 then raise exception '番線の数は1〜8です'; end if;
     span := p_plat / 50.0;
     if s - span / 2 < 0.3 or s + span / 2 > sg.len - 0.3 then raise exception 'ホームが線路からはみ出します（線路のはしから離すか、ホームを短くしてください）'; end if;

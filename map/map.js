@@ -955,11 +955,11 @@ function nearNode(x, y, rpx, pred) {
 const TOOL_HINT = {
   look: '', land: '土地：2か所タップして四角くえらびます（区画は10m四方）',
   rail: '線路：タップして点をおくと、なめらかな線になります。点はドラッグで動かせます', road: '道路：タップして点をおくと、なめらかな線になります。点はドラッグで動かせます',
-  sta: '駅：自分の線路の上をタップ（バス停：道路の上をタップ）', dep: '車庫：自分の線路（バスは道路）の横をタップ', del: 'こわす：自分の線・駅・車庫・建物をタップ'
+  sta: '駅：ホームの起点をタップ（自分の線路の上）。バス停は道路の上をタップ', dep: '車庫：自分の線路（バスは道路）の横をタップ', del: 'こわす：自分の線・駅・車庫・建物をタップ'
 };
 function setTool(t) {
   if (S.toolEnd) { const f = S.toolEnd; S.toolEnd = null; f(); }
-  S.tool = t; S.drawTool = null; S.addr.hidden = true; S.grab = S.grabMove = S.grabEnd = null; S.onLong = null; S.sel = null; S.routeHi = S.routeHi && S.keepRoute ? S.routeHi : null;
+  S.tool = t; S.drawTool = null; S.toolState = null; S.addr.hidden = true; S.grab = S.grabMove = S.grabEnd = null; S.onLong = null; S.sel = null; S.routeHi = S.routeHi && S.keepRoute ? S.routeHi : null;
   S.wrap.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
   hint(TOOL_HINT[t] || ''); sheet(null);
   if (t === 'rail' || t === 'road') startDraw(t);
@@ -1436,81 +1436,100 @@ function startEdit(s) {
 }
 
 /* ---- 駅・バス停 ---- */
+// 駅・バス停のはじめの名前：近くの町・大字の名前（「町」はとる）
 function nearDist(x, y) {
   let best = null, bd = Infinity;
-  for (const p of (S.vis ? S.vis.places.values() : [])) { if (p.k !== 'dist') continue; const d = (p.x - x) ** 2 + (p.y - y) ** 2; if (d < bd) { bd = d; best = p; } }
-  return best ? best.n : '';
+  for (const c of (S.vis ? S.vis.chos.values() : [])) { if (c[1] !== 'cho' && c[1] !== 'oaza') continue; const d = (c[3] + 0.5 - x) ** 2 + (c[4] + 0.5 - y) ** 2; if (d < bd) { bd = d; best = c; } }
+  if (!best) return '';
+  const n = String(best[2] || '');
+  return n.length > 1 && n.endsWith('町') ? n.slice(0, -1) : n;
 }
+// 線の上の、はじめからの長さ at（マス）のところ
+function segPointAt(s, at) {
+  const P = s.P; let acc = 0;
+  for (let i = 0; i + 1 < s.np; i++) {
+    const ax = P[2 * i], ay = P[2 * i + 1], bx = P[2 * i + 2], by = P[2 * i + 3], L = Math.hypot(bx - ax, by - ay);
+    if (acc + L >= at || i + 2 === s.np) { const t = L ? clamp((at - acc) / L, 0, 1) : 0; return { x: ax + (bx - ax) * t, y: ay + (by - ay) * t, ang: Math.atan2(by - ay, bx - ax) }; }
+    acc += L;
+  }
+  return { x: P[0], y: P[1], ang: 0 };
+}
+// 線の a0〜a1 の部分（画面の座標で）
+function pathPart(g, s, a0, a1) {
+  const P = s.P; let acc = 0, started = false;
+  g.beginPath();
+  for (let i = 0; i + 1 < s.np; i++) {
+    const ax = P[2 * i], ay = P[2 * i + 1], bx = P[2 * i + 2], by = P[2 * i + 3], L = Math.hypot(bx - ax, by - ay);
+    const t0 = L ? (a0 - acc) / L : 0, t1 = L ? (a1 - acc) / L : 0;
+    if (t1 >= 0 && t0 <= 1) {
+      const u0 = clamp(t0, 0, 1), u1 = clamp(t1, 0, 1);
+      if (!started) { g.moveTo(sx(ax + (bx - ax) * u0), sy(ay + (by - ay) * u0)); started = true; }
+      g.lineTo(sx(ax + (bx - ax) * u1), sy(ay + (by - ay) * u1));
+    }
+    acc += L;
+  }
+}
+// 駅：ホームの起点と終点をタップ（同じ線路の上）。長さは20m単位。バス停は1か所
 function staTap(x, y) {
+  const st = S.toolState || (S.toolState = {});
   const hr = nearSeg(x, y, 14, s => s.k === 'rail' && s.mine);
-  if (hr) return staSheet('rail', hr, x, y);
+  if (hr) {
+    if (!st.a || st.a.s.id !== hr.s.id || st.done) {
+      if (st.a && !st.done && st.a.s.id !== hr.s.id) toast(T('同じ線路の上で終点をタップしてください（起点をえらびなおしました）'));
+      S.toolState = { a: hr }; sheet(null);
+      hint('駅：ホームの終点をタップしてください（同じ線路の上・20m単位）');
+      S.drawTool = (g, z) => { const t = S.toolState; if (!t || !t.a) return; const p = segPointAt(t.a.s, t.a.at); g.fillStyle = '#1f5fbf'; g.beginPath(); g.arc(sx(p.x), sy(p.y), 6, 0, 6.3); g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 2; g.stroke(); };
+      S.dirty = true; return;
+    }
+    st.b = hr; st.done = true; hint('');
+    return staSheet('rail', st.a, st.b);
+  }
   const hb = nearSeg(x, y, 12, s => s.k === 'road' && s.c !== 'exp');
-  if (hb) return staSheet('bus', hb, x, y);
+  if (hb) return staSheet('bus', hb);
   toast('自分の線路か、道路の上をタップしてください');
 }
-function staSheet(kind, hit, x, y) {
-  const st = { plat: 160, tracks: 2, name: nearDist(x, y), q: null, err: null };
+function staSheet(kind, hit, hit2) {
+  const segLenMax = kind === 'rail' ? hit.s.len / 50 : 0;
+  // 起点と終点のまん中・長さ（20m単位）
+  const span = kind === 'rail' ? Math.abs(hit2.at - hit.at) : 0;
+  const st = { plat: kind === 'rail' ? clamp(Math.round(span * 50 / 20) * 20, 20, 400) : 0, mid: kind === 'rail' ? (hit.at + hit2.at) / 2 : hit.at,
+               tracks: 2, name: nearDist(hit.x, hit.y), q: null, err: null };
+  const pt = () => segPointAt(hit.s, st.mid);
   S.sel = { kind: 'seg', id: hit.s.id }; S.dirty = true;
-  const quote = async () => {
-    try { st.q = await call('mp_sta_build', { p_kind: kind, p_seg: hit.s.id, p_x: hit.x, p_y: hit.y, p_plat: st.plat, p_tracks: st.tracks, p_name: st.name || '仮', p_as: S.as, p_dry: true }); st.err = null; }
-    catch (e) { st.q = null; st.err = e.message; }
-    draw();
-  };
-  const draw = () => sheet(`<h4>${kind === 'rail' ? '🚉 駅をつくる' : '🚏 バス停をつくる'}</h4>
-    <div class="mp-row"><input class="mp-inp" data-nm placeholder="${kind === 'rail' ? '駅の名前（「駅」はつけない）' : 'バス停の名前'}" value="${esc(st.name)}"></div>
-    ${kind === 'rail' ? `<div class="mp-row">ホーム <span class="mp-seg">${[80, 120, 160, 200, 240, 320].map(m => `<button data-p="${m}" class="${st.plat === m ? 'on' : ''}">${m}m</button>`).join('')}</span></div>
-      <div class="mp-row">番線 <span class="mp-seg">${[1, 2, 3, 4, 6].map(n => `<button data-t="${n}" class="${st.tracks === n ? 'on' : ''}">${n}</button>`).join('')}</span>
-      <span class="muted small">20m の車両 ${Math.floor(st.plat / 20)}両まで</span></div>` : ''}
-    <div class="mp-row">${st.q ? `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small">維持費 1日 ${X(st.q.up_day)}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : '<span class="muted small">見つもり中…</span>'}</div>
-    <div class="mp-row"><button class="btn main" data-ok ${st.q ? '' : 'disabled'}>つくる（${esc(asName())}）</button></div>`, s => {
-    s.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
-    s.querySelectorAll('[data-p]').forEach(b => b.onclick = () => { st.plat = Number(b.dataset.p); quote(); });
-    s.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { st.tracks = Number(b.dataset.t); quote(); });
-    s.querySelector('[data-ok]').onclick = async () => {
-      st.name = s.querySelector('[data-nm]').value.trim(); if (!st.name) return toast('名前をつけてください');
-      if (await api('mp_sta_build', { p_kind: kind, p_seg: hit.s.id, p_x: hit.x, p_y: hit.y, p_plat: st.plat, p_tracks: st.tracks, p_name: st.name, p_as: S.as, p_dry: false }, 'つくりました')) {
-        refreshBox(hit.x - 6, hit.y - 6, hit.x + 6, hit.y + 6); sheet(null); S.sel = null;
-      }
+  if (kind === 'rail') {
+    S.drawTool = (g, z) => {
+      const a0 = st.mid - st.plat / 100, a1 = st.mid + st.plat / 100;
+      g.lineCap = 'butt'; g.strokeStyle = 'rgba(31,95,191,.9)'; g.lineWidth = Math.max(8, (0.22 * st.tracks + 0.3) * z); pathPart(g, hit.s, a0, a1); g.stroke();
+      g.strokeStyle = '#fff'; g.lineWidth = Math.max(4, (0.22 * st.tracks + 0.18) * z); pathPart(g, hit.s, a0, a1); g.stroke(); g.lineCap = 'round';
     };
-  });
-  draw(); quote();
-}
-
-/* ---- 車庫 ---- */
-function depTap(x, y) {
-  const hr = nearSeg(x, y, 14, s => s.k === 'rail' && s.mine);
-  const hb = hr ? null : nearSeg(x, y, 12, s => s.k === 'road' && s.c !== 'exp');
-  const hit = hr || hb; if (!hit) return toast('自分の線路（バスは道路）の近くをタップしてください');
-  const kind = hr ? 'rail' : 'bus';
-  // タップした側
-  const side = ((x - hit.x) * -Math.sin(hit.ang) + (y - hit.y) * Math.cos(hit.ang)) >= 0 ? 1 : -1;
-  const st = { size: 'S', side, name: nearDist(x, y) + (kind === 'rail' ? '車両基地' : '営業所'), q: null, err: null };
-  const prev = () => ({ fx: hit.x, fy: hit.y, a: hit.ang, side: st.side, sz: st.size, k: kind });
-  S.drawTool = (g, z) => { const P = depPoly(prev()); g.beginPath(); P.forEach((p, i) => i ? g.lineTo(sx(p[0]), sy(p[1])) : g.moveTo(sx(p[0]), sy(p[1]))); g.closePath(); g.fillStyle = st.err ? 'rgba(220,40,40,.35)' : 'rgba(30,110,230,.3)'; g.fill(); g.strokeStyle = '#1f5fbf'; g.lineWidth = 2; g.stroke(); };
-  S.dirty = true;
+  }
   const quote = async () => {
-    try { st.q = await call('mp_dep_build', { p_kind: kind, p_seg: hit.s.id, p_x: hit.x, p_y: hit.y, p_side: st.side, p_size: st.size, p_name: st.name || '仮', p_as: S.as, p_dry: true }); st.err = null; }
+    const p = pt();
+    try { st.q = await call('mp_sta_build', { p_kind: kind, p_seg: hit.s.id, p_x: p.x, p_y: p.y, p_plat: st.plat, p_tracks: st.tracks, p_name: st.name || '仮', p_as: S.as, p_dry: true }); st.err = null; }
     catch (e) { st.q = null; st.err = e.message; }
     draw(); S.dirty = true;
   };
-  const sizes = kind === 'rail' ? [['S', '小（16両）'], ['M', '中（48両）'], ['L', '大（120両）']] : [['S', '小（20台）'], ['M', '中（60台）']];
-  const draw = () => sheet(`<h4>${kind === 'rail' ? '🏭 車両基地をつくる' : '🏭 バスの営業所をつくる'}</h4>
-    <div class="mp-row"><input class="mp-inp" data-nm value="${esc(st.name)}"></div>
-    <div class="mp-row"><span class="mp-seg">${sizes.map(s => `<button data-s="${s[0]}" class="${st.size === s[0] ? 'on' : ''}">${s[1]}</button>`).join('')}</span>
-      <button class="btn" data-side>反対側にする</button></div>
-    <div class="mp-row">${st.q ? `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small">使用料 1日 ${X(st.q.lease)}・維持費 1日 ${X(st.q.up_day)}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : '<span class="muted small">見つもり中…</span>'}</div>
+  const draw = () => sheet(`<h4>${kind === 'rail' ? '🚉 駅をつくる' : '🚏 バス停をつくる'}</h4>
+    <div class="mp-row"><input class="mp-inp" data-nm placeholder="${kind === 'rail' ? '駅の名前（「駅」はつけない）' : 'バス停の名前'}" value="${esc(st.name)}"></div>
+    ${kind === 'rail' ? `<div class="mp-row"><span>ホーム</span> <button class="btn" data-pm="-20" style="flex:none;padding:4px 12px">−</button><b style="min-width:4.2em;text-align:center">${st.plat}m</b><button class="btn" data-pm="20" style="flex:none;padding:4px 12px">＋</button>
+        <span class="muted small">20m の車両 ${Math.floor(st.plat / 20)}両まで</span></div>
+      <div class="mp-row">番線 <span class="mp-seg">${[1, 2, 3, 4, 6].map(n => `<button data-t="${n}" class="${st.tracks === n ? 'on' : ''}">${n}</button>`).join('')}</span></div>
+      <p class="muted small" style="margin:4px 0 0">起点と終点のあいだが、ホームになります（20m単位）。もう一度タップすると、えらびなおせます</p>` : ''}
+    <div class="mp-row">${st.q ? `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small">維持費 1日 ${X(st.q.up_day)}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : '<span class="muted small">見つもり中…</span>'}</div>
     <div class="mp-row"><button class="btn main" data-ok ${st.q ? '' : 'disabled'}>つくる（${esc(asName())}）</button></div>`, s => {
     s.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
-    s.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { st.size = b.dataset.s; quote(); });
-    s.querySelector('[data-side]').onclick = () => { st.side = -st.side; quote(); };
+    s.querySelectorAll('[data-pm]').forEach(b => b.onclick = () => { st.plat = clamp(st.plat + Number(b.dataset.pm), 20, 400); quote(); });
+    s.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { st.tracks = Number(b.dataset.t); quote(); });
     s.querySelector('[data-ok]').onclick = async () => {
-      st.name = s.querySelector('[data-nm]').value.trim();
-      if (await api('mp_dep_build', { p_kind: kind, p_seg: hit.s.id, p_x: hit.x, p_y: hit.y, p_side: st.side, p_size: st.size, p_name: st.name, p_as: S.as, p_dry: false }, 'つくりました')) {
-        refreshBox(hit.x - 12, hit.y - 12, hit.x + 12, hit.y + 12); sheet(null); S.drawTool = null;
+      st.name = s.querySelector('[data-nm]').value.trim(); if (!st.name) return toast('名前をつけてください');
+      const p = pt();
+      if (await api('mp_sta_build', { p_kind: kind, p_seg: hit.s.id, p_x: p.x, p_y: p.y, p_plat: st.plat, p_tracks: st.tracks, p_name: st.name, p_as: S.as, p_dry: false }, 'つくりました')) {
+        refreshBox(p.x - 6, p.y - 6, p.x + 6, p.y + 6); sheet(null); S.sel = null; S.toolState = null; S.drawTool = null; S.dirty = true;
+        if (kind === 'rail') hint('駅：ホームの起点をタップ（自分の線路の上）。バス停は道路の上をタップ');
       }
     };
   });
-  S.onSheetClose = () => { S.drawTool = null; S.dirty = true; };
+  S.onSheetClose = () => { S.toolState = null; S.drawTool = null; S.dirty = true; if (S.tool === 'sta') hint('駅：ホームの起点をタップ（自分の線路の上）。バス停は道路の上をタップ'); };
   draw(); quote();
 }
 
@@ -1559,7 +1578,7 @@ function openHelp() {
     <p><b>建物</b>：自分の筆に、プリセット（一戸建て・アパート・マンション・タワーマンション・店舗つき住宅・雑居ビル・オフィスビル・超高層ビル・ショッピングセンター・工場・倉庫・港湾施設・田畑・駐車場・立体駐車場）から、形と階数をえらんで建てます。広さと高さは用途地域の建ぺい率・容積率まで。細い形（塔状・板状）ほど高くできます。</p>
     <p><b>部屋とテナント</b>：部屋ごとに「入居募集」（町の人やお店が入って家賃）・「テナント募集」（会社に貸す。会社が借りると、1時間ごとに会社から家賃）・「自分で使う」（店・事務所などは売上が入る）をえらびます。家賃の水準を上げると、入りにくく出ていきやすくなります。人が多いところ・乗り降りの多い駅の近くは入りやすく、店の売上も多くなります。会社は ≡ →「テナント募集」から部屋を借りられます。</p>
     <p><b>線路・道路</b>：点をおくと、なめらかな線になります。他人の土地や国の土地の上につくると、毎日使用料がかかります（国・県・市の道路の上はかかりません）。まちの中は工事費が高くなります。</p>
-    <p><b>駅と車庫</b>：駅はホームの長さと番線の数を決めます（20mの車両がホームに入る両数まで）。車両は車庫に車籍をおきます。</p>
+    <p><b>駅と車庫</b>：駅はホームの長さ（20m単位）と番線の数を決めます（20mの車両がホームに入る両数まで）。車両は車庫に車籍をおきます。</p>
     <p><b>車両</b>：122系0番台は国鉄103系とほぼ同じ性能（最高100km/h）。1両ずつ注文して、両はしに運転台つきの Tc（奇数向き・偶数向き）、まん中に Mp（パンタグラフつき）と M をはさんで編成にします。</p>
     <p><b>系統とダイヤ</b>：止まる駅を順にえらんで系統をつくり、列車を入れます。時刻を決めるのは、会社が決めた採時駅だけ（着・発・番線）。ほかの駅は走る時間から自動で決まります。「運用を自動で組む」で、編成を列車にわりあてられます。</p>
     <p><b>お金</b>：1時間ごとに運賃（駅のまわりの人・本数・速さ・冷暖房で決まる）が入り、維持費・使用料をはらいます。</p></div>`]);
