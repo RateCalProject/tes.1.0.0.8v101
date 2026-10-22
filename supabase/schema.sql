@@ -17397,6 +17397,25 @@ begin
   perform _mp_chg('seg', bid, 'set', sg.bb);
   return nid;
 end $$;
+-- 線（マス tiles・区画 cells）が、駅のホーム・車庫・バス停にかかるか。かかるものの名前（なければ null）
+--   マス（50m）で近くのものをさがし、区画（10m）でホーム・車庫の形にかかるかを見る（同じマスでも、かからなければ通れる）
+create or replace function public._mp_seg_blocked(tiles int[], cells int[]) returns text
+language sql stable set search_path = public as $$
+  with t as (select tiles[2 * i - 1] x, tiles[2 * i] y from generate_series(1, coalesce(array_length(tiles, 1), 0) / 2) i),
+       cand as materialized (select distinct o.what, o.ref from mp_occ o join t on o.x = t.x and o.y = t.y where o.what in ('sta', 'dep', 'stop')),
+       c as materialized (select distinct cells[2 * i - 1] x, cells[2 * i] y from generate_series(1, coalesce(array_length(cells, 1), 0) / 2) i),
+       hit as (
+         select '駅「' || st.name || '」' w, 1 o from cand join mp_stations st on cand.what = 'sta' and st.id = cand.ref
+          where exists (select 1 from _mp_sta_cells(st.id) sc join c on c.x = sc.x and c.y = sc.y)
+         union
+         select '車庫「' || d.name || '」', 2 from cand join mp_depots d on cand.what = 'dep' and d.id = cand.ref
+          where exists (select 1 from _mp_dep_cells((d.x / 100.0)::real, (d.y / 100.0)::real, d.ang, d.side, d.kind, d.size) dc join c on c.x = dc.x and c.y = dc.y)
+         union
+         select 'バス停「' || st.name || '」', 3 from cand join mp_stations st on cand.what = 'stop' and st.id = cand.ref
+          where exists (select 1 from c where abs(c.x - floor(st.x / 20.0)) <= 1 and abs(c.y - floor(st.y / 20.0)) <= 1)
+       )
+  select string_agg(w, '・' order by o, w) from hit
+$$;
 -- 線の点を逆向きに
 create or replace function public._mp_rev(p int[]) returns int[]
 language sql immutable as $$
@@ -17525,13 +17544,12 @@ begin
   if '?' = any(ters) then raise exception '地図のないところには作れません'; end if;
   if 'D' = any(ters) then raise exception '深い海には作れません'; end if;
   mul := _mp_cmuls(tiles, ters);
-  -- 駅・車庫のあるマスは通れない。建物のある筆（区画）も通れない
-  select string_agg(distinct o.x || ',' || o.y, ' ') into bad from mp_occ o
-    join (select tiles[2 * i - 1] x, tiles[2 * i] y from generate_series(1, array_length(tiles, 1) / 2) i) t on t.x = o.x and t.y = o.y
-   where o.what in ('sta', 'dep', 'stop');
-  if bad is not null then raise exception '建物・駅・車庫のあるマスは通れません（%）', left(bad, 60); end if;
   sw := case when p_kind = 'rail' then case when dbl then 0.5 else 0.36 end else _mp_road_w(cls, ln_) end;
   cells := _mp_seg_cells_arr(p_pts, p_kind, sw, dbl);
+  -- 駅のホーム・車庫・バス停にかかるところは通れない（区画で見る。つなぐはしの 20m はのぞく）。建物のある筆（区画）も通れない
+  bad := _mp_seg_blocked(tiles, case when p_from is null and p_to is null then cells
+           else _mp_seg_cells_arr(_mp_sub(p_pts, case when p_from is null then 0 else least(0.4, ln / 3) end, case when p_to is null then ln else ln - least(0.4, ln / 3) end), p_kind, sw, dbl) end);
+  if bad is not null then raise exception '%にかかるので、通れません（線をずらしてください）', left(bad, 80); end if;
   bad := _mp_bld_hit(cells);
   if bad is not null then raise exception '建物のある土地（%）は通れません', left(bad, 60); end if;
   base := case when p_kind = 'rail' then _mp_rate('rail') else _mp_rate('road') * _mp_road_mul(cls, ln_) end;
@@ -17590,10 +17608,8 @@ begin
   if '?' = any(ters) then raise exception '地図のないところには作れません'; end if;
   if 'D' = any(ters) then raise exception '深い海には作れません'; end if;
   mul := _mp_cmuls(newt, ters);
-  select string_agg(distinct o.x || ',' || o.y, ' ') into bad from mp_occ o
-    join (select newt[2 * i - 1] x, newt[2 * i] y from generate_series(1, coalesce(array_length(newt, 1), 0) / 2) i) t on t.x = o.x and t.y = o.y
-   where o.what in ('sta', 'dep', 'stop');
-  if bad is not null then raise exception '建物・駅・車庫のあるマスは通れません（%）', left(bad, 60); end if;
+  bad := _mp_seg_blocked(tiles, _mp_seg_cells_arr(_mp_sub(p_pts, least(0.4, ln / 3), ln - least(0.4, ln / 3)), sg.kind, sg.w, sg.dbl));
+  if bad is not null then raise exception '%にかかるので、通れません（線をずらしてください）', left(bad, 80); end if;
   bad := _mp_bld_hit(_mp_seg_cells_arr(p_pts, sg.kind, sg.w, sg.dbl));
   if bad is not null then raise exception '建物のある土地（%）は通れません', left(bad, 60); end if;
   base := case when sg.kind = 'rail' then _mp_rate('rail') else _mp_rate('road') * _mp_road_mul(sg.cls, sg.lanes) end;
@@ -20371,18 +20387,18 @@ begin
             '_mp_leg_time','_mp_len','_mp_line_cells','_mp_lock','_mp_mine','_mp_minr','_mp_npc_name','_mp_occ_set',
             '_mp_ok','_mp_okey','_mp_party','_mp_pay','_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_proj',
             '_mp_pub_cells','_mp_pub_of','_mp_rail_path','_mp_rate','_mp_renet','_mp_resched','_mp_rev','_mp_road_mul',
-            '_mp_road_v','_mp_road_w','_mp_room','_mp_route_catch','_mp_routes_fix','_mp_run','_mp_same','_mp_seg_cells_arr',
-            '_mp_seg_chain','_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_struct_cells',
-            '_mp_sub','_mp_t49_from_tiles','_mp_t5','_mp_ters','_mp_thin','_mp_tick','_mp_tick_day','_mp_tick_hour',
-            '_mp_tiles','_mp_tmul','_mp_train_calc','_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim','_mp_vruns',
-            '_mp_world','_mp_zname','_mp_zone_rule','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_place_at','mp_admin_rates','mp_admin_rename',
-            'mp_admin_state','mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote',
-            'mp_bld_set','mp_boot','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_list','mp_cho_get',
-            'mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia','mp_form_del','mp_form_set','mp_land_buy','mp_ledger_page',
-            'mp_parcel_buy','mp_parcel_merge','mp_parcel_sell','mp_parcel_split','mp_poll','mp_route_del','mp_route_save','mp_routes_list',
-            'mp_seg_build','mp_seg_del','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_split','mp_spot','mp_sta_build',
-            'mp_sta_edit','mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market',
-            'mp_unit_mine','mp_unit_set') loop
+            '_mp_road_v','_mp_road_w','_mp_room','_mp_route_catch','_mp_routes_fix','_mp_run','_mp_same','_mp_seg_blocked',
+            '_mp_seg_cells_arr','_mp_seg_chain','_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells',
+            '_mp_struct_cells','_mp_sub','_mp_t49_from_tiles','_mp_t5','_mp_ters','_mp_thin','_mp_tick','_mp_tick_day',
+            '_mp_tick_hour','_mp_tiles','_mp_tmul','_mp_train_calc','_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim',
+            '_mp_vruns','_mp_world','_mp_zname','_mp_zone_rule','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_place_at','mp_admin_rates',
+            'mp_admin_rename','mp_admin_state','mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options',
+            'mp_bld_quote','mp_bld_set','mp_boot','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_list',
+            'mp_cho_get','mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia','mp_form_del','mp_form_set','mp_land_buy',
+            'mp_ledger_page','mp_parcel_buy','mp_parcel_merge','mp_parcel_sell','mp_parcel_split','mp_poll','mp_route_del','mp_route_save',
+            'mp_routes_list','mp_seg_build','mp_seg_del','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_split','mp_spot',
+            'mp_sta_build','mp_sta_edit','mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave',
+            'mp_unit_market','mp_unit_mine','mp_unit_set') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
       execute format('revoke all on function %s from authenticated', f.sig);
