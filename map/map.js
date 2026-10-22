@@ -342,6 +342,7 @@ function prepArea(d) {
   for (const s of d.deps) { s.fx = s.x / 100; s.fy = s.y / 100; }
   for (const n of d.nodes) { n.fx = n.x / 100; n.fy = n.y / 100; }
   d.parcels = (d.parcels || []).map(prepParcel);
+  d.blds = (d.blds || []).map(prepBld);
   d.chos = d.chos || [];
 }
 // 筆：[id, [y, x0, x1, …], 1 他人・2 自分, 売り出し, 建物, 地番, 持ち主] → 区画の塗りと外まわり（マスの単位の Path2D）・まん中・大きさ
@@ -372,13 +373,14 @@ function prepParcel(a) {
 function visibleItems() {
   const [lod, cs] = lodOf(S.cam.z), v = view();
   const i0 = Math.floor(v.x0 / cs), j0 = Math.floor(v.y0 / cs), i1 = Math.floor(v.x1 / cs), j1 = Math.floor(v.y1 / cs);
-  const segs = new Map(), stas = new Map(), deps = new Map(), nodes = new Map(), parcels = new Map(), places = new Map(), chos = new Map(), names = {};
+  const segs = new Map(), stas = new Map(), deps = new Map(), nodes = new Map(), parcels = new Map(), places = new Map(), chos = new Map(), blds = new Map(), names = {};
   const take = d => {
     for (const s of d.segs) segs.set(s.id, s);
     for (const s of d.stas) stas.set(s.id, s);
     for (const s of d.deps) deps.set(s.id, s);
     for (const n of d.nodes) nodes.set(n.id, n);
     for (const p of d.parcels) parcels.set(p.id, p);
+    for (const b of (d.blds || [])) blds.set(b.id, b);
     for (const p of d.places) places.set(p.id, p);
     for (const c of d.chos) chos.set(c[0], c);
     Object.assign(names, d.names);
@@ -395,7 +397,7 @@ function visibleItems() {
       if (any) break;
     }
   }
-  return { segs, stas, deps, nodes, parcels, places, chos, names };
+  return { segs, stas, deps, nodes, parcels, places, chos, blds, names };
 }
 // 変わったもの（ほかの人の工事など）。15秒ごと
 async function poll() {
@@ -525,6 +527,8 @@ function render() {
     g.strokeStyle = pass ? (asph ? '#7b7f86' : st.fill) : st.edge; g.lineWidth = pass ? w : w + 2; pathSeg(g, s); g.stroke();
   }
   if (asph) for (const s of roads) if (s.c === 'exp' && s.l) laneMarks(g, s, z);
+  // 建物（形・高さ）
+  if (z >= 4) drawBlds(g, it, z, v);
   // 境界線（県・市区町村・町字）
   if (z >= 1.2) drawBounds(g, z, v);
   // 系統（めだたせる）
@@ -553,7 +557,6 @@ function render() {
   // 方位と縮尺
   drawScale(g, z);
 }
-const BLD_COL = { house: '#c98b5a', apt: '#a3765a', shop: '#e07a7a', office: '#7a8fe0', factory: '#8a8a8a', warehouse: '#b0a080', port: '#5a8ab0', farm: '#9cc06a', parking: '#c8c8c8' };
 // 地図の座標（マス）で描くとき・画面にもどすとき
 function worldT(g) { const z = S.cam.z; g.setTransform(S.dpr * z, 0, 0, S.dpr * z, S.dpr * (S.W / 2 - S.cam.x * z), S.dpr * (S.H / 2 - S.cam.y * z)); }
 function screenT(g) { g.setTransform(S.dpr, 0, 0, S.dpr, 0, 0); }
@@ -563,13 +566,13 @@ function drawParcels(g, it, z, v) {
   worldT(g);
   const mark = S.toolState && S.toolState.marks;   // 合筆でえらんでいる筆
   for (const p of vis) {
-    g.fillStyle = p.bld ? (BLD_COL[p.bld] || '#999') : p.own === 2 ? 'rgba(40,110,220,.30)' : 'rgba(230,120,30,.24)';
+    g.fillStyle = p.own === 2 ? 'rgba(40,110,220,.24)' : 'rgba(230,120,30,.2)';
     g.fill(p.fill);
   }
   if (z >= 12) {
     for (const p of vis) {
-      g.strokeStyle = p.bld ? 'rgba(255,255,255,.9)' : p.own === 2 ? 'rgba(30,80,170,.85)' : 'rgba(180,90,20,.75)';
-      g.lineWidth = (p.bld ? 2.2 : 1.2) / z; g.stroke(p.edge);
+      g.strokeStyle = p.own === 2 ? 'rgba(30,80,170,.85)' : 'rgba(180,90,20,.75)';
+      g.lineWidth = 1.2 / z; g.stroke(p.edge);
       if (p.sale != null) { g.strokeStyle = '#d23'; g.setLineDash([4 / z, 3 / z]); g.lineWidth = 2 / z; g.stroke(p.edge); g.setLineDash([]); }
     }
   }
@@ -800,6 +803,12 @@ const CSS = `
 .mp-scroll{overflow-x:auto}
 .mp-inp{width:100%;box-sizing:border-box;font-size:15px;padding:8px 10px;border:1px solid var(--line,#ccc);border-radius:9px;background:var(--bg,#fff);color:inherit}
 .mp-num{width:90px}
+.mp-floor{border-top:1px solid var(--line,#ddd);padding:2px 0}
+.mp-floor summary{cursor:pointer;padding:5px 0;font-size:13px}
+.mp-urow{display:flex;flex-wrap:wrap;gap:3px 10px;align-items:center;font-size:12.5px;padding:5px 0;border-top:1px dashed var(--line,#e6e6e6)}
+.mp-urow .st{flex:1 1 120px}
+.mp-urow .rt{font-variant-numeric:tabular-nums;font-weight:700}
+.mp-urow .btn{padding:3px 9px;font-size:12px}
 `;
 function el(html) { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstChild; }
 function build(root) {
@@ -972,6 +981,8 @@ async function lookAt(x, y) {
   if (st) return showSta(st.s);
   const dp = nearDep(x, y);
   if (dp) return showDep(dp);
+  const hb = hitBld(x, y);
+  if (hb) { const [bx, by] = hb.cell.split(',').map(Number); return showSpot(bx, by); }
   const sg = nearSeg(x, y, 8);
   if (sg && (S.cam.z >= 3 || sg.s.k === 'rail' || ['exp', 'nat'].includes(sg.s.c))) return showSeg(sg.s, sg);
   return showSpot(Math.floor(x * 5), Math.floor(y * 5));
@@ -1000,26 +1011,27 @@ async function showSpot(cx, cy) {
       <b>持ち主</b><span>${P ? `<span>${esc(P.owner)}</span>${P.mine ? '<small>（あなた）</small>' : ''}` : d.pub ? '公衆用道路' : '国'}</span>
       ${P ? `<b>筆</b><span>${esc(P.ban)}・${fmt(P.n * 100)}㎡・地価 ${X(P.val)}</span>` : ''}
       ${P && P.sale != null ? `<b>売り出し</b><span>${X(P.sale)}</span>` : ''}
-      ${P && P.bld ? `<b>建物</b><span><span>${esc(BLD_NAME[P.bld] || P.bld)}</span>${P.rent ? `<small>（家賃 1日 ${X(P.rent)}）</small>` : ''}</span>` : ''}
+      ${P && P.b ? bldRow(P.b, P.mine) : ''}
       ${on ? `<b>あるもの</b><span>${on}</span>` : ''}
       ${(d.leases || []).length ? `<b>使用料</b><span>${d.leases.map(l => `<span>${esc(l.who)}</span>：<span>1日 ${X(l.fee)}</span>`).join('<br>')}</span>` : ''}
     </div>
     <div class="mp-row">${!P && d.buy ? `<button class="btn main" data-buyhere>ここの土地を買う</button>` : ''}
       ${P && !P.mine && P.sale != null ? `<button class="btn main" data-pbuy>この筆を買う（${X(Math.ceil(P.sale * 1.03))}）</button>` : ''}
       ${!P && !d.buy && d.why ? `<span class="muted small">${esc(d.why)}</span>` : ''}
+      ${P && P.b ? `<button class="btn main" data-bopen>部屋・テナント</button>` : ''}
       ${P && P.mine ? `<button class="btn" data-sell>${P.sale != null ? '売り出しをやめる' : '売りに出す'}</button>
-        <button class="btn" data-bld>${P.bld ? '建物をこわす' : '建物を建てる'}</button><button class="btn" data-split>分筆</button><button class="btn" data-merge>合筆</button>` : ''}</div>`, s => {
+        ${P.b ? '' : '<button class="btn" data-bld>建物を建てる</button>'}<button class="btn" data-split>分筆</button><button class="btn" data-merge>合筆</button>` : ''}</div>`, s => {
     const q = k => s.querySelector(k);
     if (q('[data-buyhere]')) q('[data-buyhere]').onclick = () => { setTool('land'); S.toolState.a = [cx, cy]; landSheet(); S.dirty = true; };
     if (q('[data-pbuy]')) q('[data-pbuy]').onclick = () => parcelBuy(P);
     if (q('[data-sell]')) q('[data-sell]').onclick = () => parcelSell(P);
-    if (q('[data-bld]')) q('[data-bld]').onclick = () => P.bld ? bldRemove(P) : bldPick(P);
+    if (q('[data-bld]')) q('[data-bld]').onclick = () => bldStart(P);
+    if (q('[data-bopen]')) q('[data-bopen]').onclick = () => openBld(P.b.id);
     if (q('[data-split]')) q('[data-split]').onclick = () => startSplit(P);
     if (q('[data-merge]')) q('[data-merge]').onclick = () => startMerge(P);
   });
   S.addr.hidden = false; S.addr.textContent = d.addr.text + (d.addr.ban ? ' ' + d.addr.ban : '');
 }
-const BLD_NAME = { house: '住宅', apt: 'マンション', shop: '商店', office: 'オフィスビル', factory: '工場', warehouse: '倉庫', port: '港湾施設', farm: '田畑', parking: '駐車場' };
 function showSeg(s, hit) {
   S.sel = { kind: 'seg', id: s.id }; S.dirty = true;
   const own = s.o === 'gov' ? '国' : (S.vis.names[s.o] || '');
@@ -1201,25 +1213,6 @@ function startMerge(P) {
   S.toolEnd = () => { S.tapHook = null; S.toolState = null; };
   S.onSheetClose = () => setTool('look');
   draw(); S.dirty = true;
-}
-// 建物：筆の大きさ・用途地域に合うもの
-async function bldPick(P) {
-  const types = S.boot.bld;
-  sheet(`<h4>建物を建てる（${esc(P.ban)}・${fmt(P.n * 100)}㎡）</h4><div class="mp-list">${types.map(b => {
-      const ok = P.n >= b.min && P.n <= b.max;
-      return `<button class="mp-item" style="text-align:left${ok ? '' : ';opacity:.5'}" data-b="${b.k}"><b>${esc(b.n)}</b> <span class="mp-cost">${X(b.cost * P.n)}</span>
-        <small><br><span>1区画 ${X(b.cost)}・家賃 1日 建てた額の約${(b.rate * 100).toFixed(1)}%（地価で上下）</span><br><span>${fmt(b.min * 100)}〜${fmt(b.max * 100)}㎡</span>・<span>建てられる用途地域</span>：${b.z.split('').map(z => `<span>${PAL.ZN[z]}</span>`).join('・')}</small></button>`; }).join('')}</div>`, s => {
-    s.querySelectorAll('[data-b]').forEach(b => b.onclick = async () => {
-      const k = b.dataset.b;
-      const q = await api('mp_bld', { p_parcel: P.id, p_type: k, p_as: S.as, p_dry: true }); if (!q) return;
-      if (!confirm(T(`${q.name}を建てます（${fmt(q.cost)} X）。よろしいですか？`))) return;
-      if (await api('mp_bld', { p_parcel: P.id, p_type: k, p_as: S.as, p_dry: false }, '建てました')) { refreshP(P); sheet(null); }
-    });
-  });
-}
-async function bldRemove(P) {
-  if (!confirm(T('この建物をこわしますか？'))) return;
-  if (await api('mp_bld', { p_parcel: P.id, p_type: null, p_as: S.as, p_dry: false }, 'こわしました')) { refreshP(P); sheet(null); }
 }
 
 /* ---- 線をひく（線路・道路）：点をおくと、なめらかな曲線（セントリペタル・キャットムル–ロム）になる ---- */
@@ -1528,7 +1521,9 @@ async function delTap(x, y) {
   const sg = nearSeg(x, y, 10, s => s.mine); if (sg) return segDel(sg.s);
   const [cx, cy] = cellAt(x, y), key = cx + ',' + cy;
   const P = S.vis && [...S.vis.parcels.values()].find(q => q.cells.has(key));
-  if (P && P.own === 2 && P.bld) return bldRemove(P);
+  const hb = hitBld(x, y);
+  if (hb && hb.b.own === 2) return openBld(hb.b.id);
+  if (P && P.own === 2 && P.bld) return showSpot(cx, cy);
   toast('こわせるもの（自分の線・駅・車庫・建物）がありません');
 }
 
@@ -1549,16 +1544,20 @@ function openMenu() {
   const m = modal(['国土のメニュー', `<div class="mp-list">
     <button class="mp-item" style="text-align:left" data-k="cars"><b>🚃 車両と編成</b><br><small>注文（1両から）・編成を組む・改造・検査・更新・転属・廃車</small></button>
     <button class="mp-item" style="text-align:left" data-k="routes"><b>🗺 系統とダイヤ</b><br><small>止まる駅の順番・列車の時刻（採時駅）・ダイヤグラム・運用</small></button>
+    <button class="mp-item" style="text-align:left" data-k="blds"><b>🏢 自分の建物</b><br><small>部屋の入居・家賃の水準・テナント（${esc(asName())}）</small></button>
+    <button class="mp-item" style="text-align:left" data-k="tenants"><b>🔑 テナント募集</b><br><small>会社で部屋を借りる・借りている部屋</small></button>
     <button class="mp-item" style="text-align:left" data-k="ledger"><b>💴 お金の記録</b><br><small>運賃・家賃・維持費・使用料・工事費（${esc(asName())}）</small></button>
     ${S.admin ? `<button class="mp-item" style="text-align:left" data-k="admin"><b>🛠 管理</b><br><small>値段の設定・用途地域・ようす</small></button>` : ''}
     <button class="mp-item" style="text-align:left" data-k="help"><b>❓ あそびかた</b></button></div>`], b => {
-    b.querySelectorAll('[data-k]').forEach(x => x.onclick = () => { m.close(); ({ cars: () => openCars(), routes: openRoutes, ledger: openLedger, admin: openAdmin, help: openHelp })[x.dataset.k](); });
+    b.querySelectorAll('[data-k]').forEach(x => x.onclick = () => { m.close(); ({ cars: () => openCars(), routes: openRoutes, blds: openMyBlds, tenants: openTenants, ledger: openLedger, admin: openAdmin, help: openHelp })[x.dataset.k](); });
   });
 }
 function openHelp() {
   modal(['国土のあそびかた', `<div class="small" style="line-height:1.8">
     <p><b>地図</b>：瑠璃市中里区がまん中。北西が山、南東が海です。指2本で拡大・縮小、ドラッグで動かします。タップすると住所（町字・地番）・地目・用途地域・地価がわかります。線は県・市区町村・町字の境界です。</p>
-    <p><b>土地</b>：国の土地は区画（10m四方・100㎡）でえらんで買えます。道路の部分は国の土地（公衆用道路）なので買えません。買った土地は「筆」になり、地番がつきます（住所は町字＋地番）。となりあう自分の筆は合筆、筆の一部は分筆できます。売りに出ている筆は、その値段（＋取得税3%）。毎日、地価の0.01%の固定資産税。筆の大きさと用途地域に合う建物を建てると、毎時間家賃が入ります。</p>
+    <p><b>土地</b>：国の土地は区画（10m四方・100㎡）でえらんで買えます。道路の部分は国の土地（公衆用道路）なので買えません。買った土地は「筆」になり、地番がつきます（住所は町字＋地番）。となりあう自分の筆は合筆、筆の一部は分筆できます。売りに出ている筆は、その値段（＋取得税3%）。毎日、地価の0.01%の固定資産税。</p>
+    <p><b>建物</b>：自分の筆に、プリセット（一戸建て・アパート・マンション・タワーマンション・店舗つき住宅・雑居ビル・オフィスビル・超高層ビル・ショッピングセンター・工場・倉庫・港湾施設・田畑・駐車場・立体駐車場）から、形と階数をえらんで建てます。広さと高さは用途地域の建ぺい率・容積率まで。細い形（塔状・板状）ほど高くできます。</p>
+    <p><b>部屋とテナント</b>：部屋ごとに「入居募集」（町の人やお店が入って家賃）・「テナント募集」（会社に貸す。会社が借りると、1時間ごとに会社から家賃）・「自分で使う」（店・事務所などは売上が入る）をえらびます。家賃の水準を上げると、入りにくく出ていきやすくなります。人が多いところ・乗り降りの多い駅の近くは入りやすく、店の売上も多くなります。会社は ≡ →「テナント募集」から部屋を借りられます。</p>
     <p><b>線路・道路</b>：点をおくと、なめらかな線になります。他人の土地や国の土地の上につくると、毎日使用料がかかります（国・県・市の道路の上はかかりません）。まちの中は工事費が高くなります。</p>
     <p><b>駅と車庫</b>：駅はホームの長さと番線の数を決めます（20mの車両がホームに入る両数まで）。車両は車庫に車籍をおきます。</p>
     <p><b>車両</b>：122系0番台は国鉄103系とほぼ同じ性能（最高100km/h）。1両ずつ注文して、両はしに運転台つきの Tc（奇数向き・偶数向き）、まん中に Mp（パンタグラフつき）と M をはさんで編成にします。</p>
@@ -1919,7 +1918,7 @@ async function autoForm(D, reload) {
 }
 
 /* ---- お金の記録 ---- */
-const LK = { fare: '運賃', rent: '家賃', lease: '使用料（はらう）', lease_in: '使用料（受けとり）', upkeep: '維持費', tax: '固定資産税', land: '土地', bld: '建物', car: '車両', rail: '線路の工事', road: '道路の工事', sta: '駅', dep: '車庫', owed: '未払い' };
+const LK = { fare: '運賃', rent: '家賃', sales: '売上', tenant: 'テナントの家賃（はらう）', lease: '使用料（はらう）', lease_in: '使用料（受けとり）', upkeep: '維持費', tax: '固定資産税', land: '土地', bld: '建物', car: '車両', rail: '線路の工事', road: '道路の工事', sta: '駅', dep: '車庫', owed: '未払い' };
 async function openLedger() {
   const m = modal(['お金の記録', '<p class="muted small">読みこんでいます…</p>']);
   let rows = [], before = null, head = null;
@@ -1949,7 +1948,7 @@ const RATE_NAME = { land_P: '地価のもと：平地', land_F: '地価のもと
 async function openAdmin() {
   const m = modal(['国土の管理', '<p class="muted small">読みこんでいます…</p>']);
   const st = await api('mp_admin_state', {}); const rates = await api('mp_admin_rates', { p_set: null }); if (!st || !rates) return;
-  m.set('国土の管理', `<div class="mp-kv"><b>チャンク</b><span>${fmt(st.chunks)}</span><b>道路・線路</b><span>${fmt(st.segs)}（国 ${fmt(st.gov_segs)}・線路 ${fmt(st.rail_segs)}）</span><b>土地</b><span>${fmt(st.land)}筆</span>
+  m.set('国土の管理', `<div class="mp-kv"><b>チャンク</b><span>${fmt(st.chunks)}</span><b>道路・線路</b><span>${fmt(st.segs)}（国 ${fmt(st.gov_segs)}・線路 ${fmt(st.rail_segs)}）</span><b>土地</b><span>${fmt(st.land)}筆</span><b>建物</b><span><span>${fmt(st.blds || 0)}棟</span>・<span>入居 ${fmt(st.occ || 0)}/${fmt(st.units || 0)}室</span></span>
       <b>駅</b><span>${fmt(st.stations)}</span><b>車両</b><span>${fmt(st.cars)}</span><b>系統・列車</b><span>${fmt(st.routes)}・${fmt(st.trains)}</span><b>時計</b><span>${st.last_tick ? new Date(st.last_tick).toLocaleString('ja-JP') : '—'}</span>
       <b>未払いの合計</b><span>${X(st.owed)}</span></div>
     <h4 style="margin:10px 0 4px">この24時間（ぜんぶ）</h4><div class="mp-kv">${Object.entries(st.day || {}).map(([k, v]) => `<b>${esc(LK[k] || k)}</b><span>${fmt(v)} X</span>`).join('')}</div>
@@ -2074,5 +2073,306 @@ async function open(root) {
 }
 function resume() { if (!S.wrap) return; S.open = true; S.dirty = true; resize(); requestAnimationFrame(frame); clearInterval(S.pollT); S.pollT = setInterval(poll, 15000); }
 function pause() { if (!S.open) return; S.open = false; clearInterval(S.pollT); if (S.wrap) S.wrap.classList.remove('mp-full'); }
+
+/* ---------- 建物（t50）：プリセット・形・階数・部屋（入居募集・テナント募集・自分で使う） ---------- */
+// 色：[屋根, 南の壁, 東の壁]
+const BK = {
+  house: ['#c47b4e', '#efe6da', '#d6c8b6'], apart: ['#9aa7b3', '#efe9e1', '#d3cbc0'], mansion: ['#d9d4cc', '#f4f1ec', '#d2cbc0'],
+  tower: ['#cfd6de', '#e8edf2', '#b8c3ce'], shop: ['#e6a06e', '#f3e6d6', '#d9c6ae'], zakkyo: ['#c9b8a6', '#eee6dc', '#cdbfae'],
+  office: ['#aebdd0', '#e1e8f0', '#a7b6c7'], sky: ['#9fb3cc', '#d3dfeb', '#8ea4bc'], mall: ['#e8d2b0', '#f6ecdc', '#dcc9aa'],
+  factory: ['#b8b8b0', '#e4e4dc', '#c4c4ba'], warehouse: ['#c2b59b', '#ece4d2', '#cfc2a6'], port: ['#9ab3c0', '#dde8ee', '#a9bcc6'],
+  farm: ['#a9cf73'], parking: ['#bdbdbd'], pkbld: ['#b0b0b0', '#e2e2e2', '#c2c2c2']
+};
+const USE_NAME = { home: '住居', shop: '店舗', office: '事務所', factory: '工場', warehouse: '倉庫', port: '港湾', farm: '田畑', parking: '駐車場' };
+const SHAPE_NAME = { full: 'ぜんぶ', slab: '板状', tower: '塔状', L: 'L字', ko: 'コの字', ro: 'ロの字' };
+const MODE_NAME = { npc: '入居募集', corp: 'テナント募集', self: '自分で使う' };
+const kindName = k => { const p = (S.boot.bld || []).find(b => b.k === k); return p ? p.n : k; };
+// 高さで屋根をずらす（北西へ。見下ろしている感じ）
+const bldShift = f => { const h = Math.max(0, f) * 3.5; return [-h * 0.25 / 50, -h * 0.45 / 50]; };
+// 建物：[id, 筆, 種類, 階, 区画 [X0, Y0, …], 名前, 入っている%, 1 他人・2 自分]
+function prepBld(a) {
+  const b = { id: a[0], parcel: a[1], kind: a[2], floors: a[3], name: a[5] || '', occ: a[6], own: a[7], set: new Set() };
+  const c = a[4] || [];
+  for (let i = 0; i + 1 < c.length; i += 2) b.set.add(c[i] + ',' + c[i + 1]);
+  const [dx, dy] = bldShift(b.floors); b.dx = dx; b.dy = dy;
+  const base = new Path2D(), baseEdge = new Path2D(), roof = new Path2D(), edge = new Path2D(), wallS = new Path2D(), wallE = new Path2D();
+  let n = 0, mx = 0, my = 0, x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const k of b.set) {
+    const [x, y] = k.split(',').map(Number); n++; mx += x; my += y;
+    x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+    const X0 = x / 5, Y0 = y / 5, X1 = (x + 1) / 5, Y1 = (y + 1) / 5;
+    base.rect(X0, Y0, 0.2, 0.2); roof.rect(X0 + dx, Y0 + dy, 0.2, 0.2);
+    const W = !b.set.has((x - 1) + ',' + y), E = !b.set.has((x + 1) + ',' + y), N = !b.set.has(x + ',' + (y - 1)), Sd = !b.set.has(x + ',' + (y + 1));
+    if (Sd) { wallS.moveTo(X0, Y1); wallS.lineTo(X1, Y1); wallS.lineTo(X1 + dx, Y1 + dy); wallS.lineTo(X0 + dx, Y1 + dy); wallS.closePath(); }
+    if (E) { wallE.moveTo(X1, Y0); wallE.lineTo(X1, Y1); wallE.lineTo(X1 + dx, Y1 + dy); wallE.lineTo(X1 + dx, Y0 + dy); wallE.closePath(); }
+    for (const [on, ax, ay, bx, by] of [[W, X0, Y0, X0, Y1], [E, X1, Y0, X1, Y1], [N, X0, Y0, X1, Y0], [Sd, X0, Y1, X1, Y1]]) {
+      if (!on) continue;
+      baseEdge.moveTo(ax, ay); baseEdge.lineTo(bx, by);
+      edge.moveTo(ax + dx, ay + dy); edge.lineTo(bx + dx, by + dy);
+    }
+  }
+  Object.assign(b, { base, baseEdge, roof, edge, wallS, wallE, n });
+  b.cx = (mx / Math.max(n, 1) + 0.5) / 5; b.cy = (my / Math.max(n, 1) + 0.5) / 5;
+  b.lx = b.cx + dx; b.ly = b.cy + dy;
+  b.bb = [Math.min(x0 / 5, x0 / 5 + dx), Math.min(y0 / 5, y0 / 5 + dy), (x1 + 1) / 5, (y1 + 1) / 5];
+  return b;
+}
+function drawBlds(g, it, z, v) {
+  const bs = [...it.blds.values()].filter(b => b.bb[2] >= v.x0 && b.bb[0] <= v.x1 && b.bb[3] >= v.y0 && b.bb[1] <= v.y1);
+  if (!bs.length) return;
+  bs.sort((a, b) => (a.cy + a.cx * 0.3) - (b.cy + b.cx * 0.3));   // 北西から（手前のものをあとで）
+  const walls = z >= 9, selP = S.sel && S.sel.kind === 'cell' ? S.sel.parcel : null;
+  worldT(g);
+  for (const b of bs) {
+    const col = BK[b.kind] || ['#bbb', '#eee', '#ccc'];
+    if (b.floors <= 0) {   // 田畑・駐車場（平ら）
+      g.fillStyle = col[0]; g.fill(b.base);
+      if (z >= 14) {
+        g.save(); g.clip(b.base); g.strokeStyle = b.kind === 'farm' ? 'rgba(90,130,40,.55)' : 'rgba(255,255,255,.85)'; g.lineWidth = (b.kind === 'farm' ? 1 : 1.2) / z;
+        g.beginPath(); const step = b.kind === 'farm' ? 0.04 : 0.05;
+        for (let x = Math.floor(b.bb[0] / step) * step; x <= b.bb[2]; x += step) { g.moveTo(x, b.bb[1]); g.lineTo(x, b.bb[3]); }
+        g.stroke(); g.restore();
+      }
+      g.strokeStyle = b.own === 2 ? '#1f5bd6' : 'rgba(60,60,60,.55)'; g.lineWidth = (b.own === 2 ? 1.6 : 1) / z; g.stroke(b.baseEdge);
+    } else if (walls) {
+      g.fillStyle = col[1]; g.fill(b.wallS); g.fillStyle = col[2]; g.fill(b.wallE);
+      g.strokeStyle = 'rgba(60,60,60,.35)'; g.lineWidth = 0.8 / z; g.stroke(b.wallS); g.stroke(b.wallE);
+      g.fillStyle = col[0]; g.fill(b.roof);
+      g.strokeStyle = b.own === 2 ? '#1f5bd6' : 'rgba(50,50,50,.6)'; g.lineWidth = (b.own === 2 ? 1.8 : 1) / z; g.stroke(b.edge);
+    } else {
+      g.fillStyle = col[0]; g.fill(b.base);
+      g.strokeStyle = b.own === 2 ? '#1f5bd6' : 'rgba(50,50,50,.6)'; g.lineWidth = 1 / z; g.stroke(b.baseEdge);
+    }
+    if (selP && b.parcel === selP) { g.strokeStyle = '#d23'; g.lineWidth = 3 / z; g.stroke(walls && b.floors > 0 ? b.edge : b.baseEdge); }
+  }
+  screenT(g);
+  if (z >= 24) for (const b of bs.slice().reverse()) {
+    if (!b.name && b.floors <= 0) continue;
+    const t = (b.name || '') + (b.floors > 0 ? (b.name ? ' ' : '') + b.floors + 'F' : '');
+    label(g, t, sx(b.lx), sy(b.ly), { size: 10, color: b.own === 2 ? '#123c8c' : '#333', bg: 'rgba(255,255,255,.82)' });
+  }
+}
+// タップしたところの建物（屋根を押しても）
+function hitBld(x, y) {
+  if (!S.vis || !S.vis.blds) return null;
+  const bs = [...S.vis.blds.values()].sort((a, b) => (b.cy + b.cx * 0.3) - (a.cy + a.cx * 0.3));
+  for (const b of bs) {
+    const g0 = Math.floor(x * 5) + ',' + Math.floor(y * 5);
+    if (b.set.has(g0)) return { b, cell: g0 };
+    if (b.floors > 0 && S.cam.z >= 9) { const k = Math.floor((x - b.dx) * 5) + ',' + Math.floor((y - b.dy) * 5); if (b.set.has(k)) return { b, cell: k }; }
+  }
+  return null;
+}
+// 区画をしらべたときの建物の行
+function bldRow(B, mine) {
+  return `<b>建物</b><span><span>${esc(B.name || kindName(B.kind))}</span><small>（<span>${esc(kindName(B.kind))}</span>${B.floors > 0 ? `・<span>${B.floors}階</span>` : ''}・<span>入居 ${B.occ}/${B.n}</span>）</small>${mine ? `<br><small>家賃 1日 ${X(B.rent)}</small>` : ''}</span>`;
+}
+
+/* ---- 建てる：プリセットをえらぶ ---- */
+async function bldStart(P) {
+  const m = modal(['建物を建てる', '<p class="muted small">読みこんでいます…</p>']);
+  const ops = await api('mp_bld_options', { p_parcel: P.id, p_as: S.as }); if (!ops) return m.close();
+  const pr = k => S.boot.bld.find(b => b.k === k) || {};
+  m.set('建物を建てる', `<p class="small" style="margin:0 0 6px"><span>${esc(P.ban)}</span>・<span>${fmt(P.n * 100)}㎡</span></p>
+    <div class="mp-list">${ops.map(o => { const p = pr(o.k); return `<button class="mp-item" style="text-align:left${o.ok ? '' : ';opacity:.55'}" data-k="${o.k}" ${o.ok ? '' : 'disabled'}>
+      <b>${esc(p.n || o.k)}</b> ${o.ok ? `<span class="mp-cost">${X(o.cost)}</span>` : ''}
+      <small><br>${o.ok ? `<span>${p.f1 > 0 ? `${p.f0}〜${o.f1}階` : '平ら'}</span>・<span>部屋 ${fmt(o.units)}</span>・<span>家賃の目安 1日 ${X(o.rent_day)}</span>` : `<span>${esc(o.why || '')}</span>`}</small></button>`; }).join('')}</div>
+    <p class="muted small">工事費は床1㎡ごと。家賃の目安は満室・相場のとき。用途地域の建ぺい率・容積率で、建てられる広さと高さが決まります</p>`, b => {
+    b.querySelectorAll('[data-k]').forEach(x => x.onclick = () => { m.close(); bldDesign(P, pr(x.dataset.k), ops.find(o => o.k === x.dataset.k)); });
+  });
+}
+/* ---- 建てる：形・階数・名前 ---- */
+async function bldDesign(P, pr, o) {
+  const st = { shape: o.shape || pr.sh[0], floors: o.f1 || pr.f0, opt: '', name: '' };
+  const m = modal([pr.n, '']);
+  const flat = pr.f1 === 0;
+  m.set(pr.n, `<canvas class="mp-bprev" width="300" height="200" style="width:100%;max-width:300px;height:auto;display:block;margin:0 auto 6px;border:1px solid var(--line,#ddd);border-radius:10px;background:#eef0ea"></canvas>
+    ${flat ? '' : `<div class="mp-row" data-shapes>${pr.sh.map(s => `<button class="btn" data-sh="${s}">${SHAPE_NAME[s] || s}</button>`).join('')}</div>
+      <div class="mp-row"><b style="white-space:nowrap">階数</b><input type="range" class="mp-fl" style="flex:1" min="${pr.f0}" max="${pr.f1}" value="${st.floors}"><b class="mp-fln" style="min-width:3.5em;text-align:right"></b></div>`}
+    ${(pr.opt || []).includes('shop1') ? `<label class="mp-row small" style="gap:6px"><input type="checkbox" class="mp-opt"> <span>1階を店舗にする</span></label>` : ''}
+    <div class="mp-row"><input class="mp-inp" maxlength="30" placeholder="名前（空ならおまかせ）"></div>
+    <div class="mp-kv" data-q><b>見つもり</b><span>…</span></div>
+    <div class="mp-row"><button class="btn main" data-go disabled>建てる</button></div>`, b => {
+    const cv = b.querySelector('.mp-bprev'), fl = b.querySelector('.mp-fl'), fln = b.querySelector('.mp-fln'), qv = b.querySelector('[data-q]'), go = b.querySelector('[data-go]');
+    let seq = 0, last = null, tmr = 0;
+    const draw = q => {
+      const g = cv.getContext('2d'), W = cv.width, H = cv.height; g.clearRect(0, 0, W, H);
+      const cells = [...(S.vis && S.vis.parcels.get(P.id) ? S.vis.parcels.get(P.id).cells : [])].map(k => k.split(',').map(Number));
+      if (!cells.length) return;
+      const xs = cells.map(c => c[0]), ys = cells.map(c => c[1]);
+      const x0 = Math.min(...xs), y0 = Math.min(...ys), x1 = Math.max(...xs) + 1, y1 = Math.max(...ys) + 1;
+      const sc = Math.min((W - 30) / (x1 - x0), (H - 30) / (y1 - y0)), ox = (W - (x1 - x0) * sc) / 2, oy = (H - (y1 - y0) * sc) / 2;
+      g.fillStyle = 'rgba(40,110,220,.18)'; g.strokeStyle = 'rgba(30,80,170,.5)'; g.lineWidth = 1;
+      for (const [x, y] of cells) { g.fillRect(ox + (x - x0) * sc, oy + (y - y0) * sc, sc, sc); g.strokeRect(ox + (x - x0) * sc + 0.5, oy + (y - y0) * sc + 0.5, sc - 1, sc - 1); }
+      if (q && q.cells) {
+        g.fillStyle = flat ? '#7a9a4a' : '#3f5f8f';
+        for (let i = 0; i + 1 < q.cells.length; i += 2) { const x = q.cells[i], y = q.cells[i + 1]; g.fillRect(ox + (x - x0) * sc + 1, oy + (y - y0) * sc + 1, sc - 2, sc - 2); }
+        g.fillStyle = '#fff'; g.font = 'bold 12px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+        if (q.floors > 0) g.fillText(T(`${q.floors}階`), W / 2, H - 9 > oy + (y1 - y0) * sc ? H - 9 : 10);
+      }
+    };
+    const quote = async () => {
+      const my = ++seq; go.disabled = true;
+      const q = await api('mp_bld_quote', { p_parcel: P.id, p_kind: pr.k, p_shape: st.shape, p_floors: st.floors, p_opt: st.opt, p_as: S.as });
+      if (my !== seq) return;
+      last = q; draw(q);
+      if (!q) { qv.innerHTML = '<b>見つもり</b><span class="mp-warn">建てられません</span>'; return; }
+      if (fl) { fl.min = q.f0; fl.max = q.f1; if (Number(fl.value) !== q.floors) fl.value = q.floors; st.floors = q.floors; }
+      if (fln) fln.textContent = T(`${q.floors}階`);
+      const uses = Object.entries(q.uses || {}).map(([u, n]) => `<span>${USE_NAME[u] || u}</span> <span>${n}</span>`).join('・');
+      qv.innerHTML = `<b>延床面積</b><span>${fmt(q.total_m2)}㎡${q.floors > 0 ? `<small>（1階 ${fmt(q.fm2)}㎡）</small>` : ''}</span>
+        <b>部屋</b><span><span>${fmt(q.units)}</span>${uses ? `<small>（${uses}）</small>` : ''}</span>
+        <b>工事費</b><span class="mp-cost">${X(q.cost)}</span>
+        <b>家賃の目安</b><span>1日 ${X(q.rent_day)}<small>（満室・相場）</small></span>`;
+      go.disabled = false;
+    };
+    const sync = () => { b.querySelectorAll('[data-sh]').forEach(x => x.classList.toggle('main', x.dataset.sh === st.shape)); };
+    b.querySelectorAll('[data-sh]').forEach(x => x.onclick = () => { st.shape = x.dataset.sh; st.floors = 999; sync(); quote(); });
+    if (fl) fl.oninput = () => { st.floors = Number(fl.value); if (fln) fln.textContent = T(`${st.floors}階`); clearTimeout(tmr); tmr = setTimeout(quote, 180); };
+    const op = b.querySelector('.mp-opt'); if (op) op.onchange = () => { st.opt = op.checked ? 'shop1' : ''; quote(); };
+    b.querySelector('.mp-inp').oninput = e => { st.name = e.target.value; };
+    go.onclick = async () => {
+      if (!last) return;
+      const msg = last.floors > 0 ? T(`${pr.n}（${last.floors}階・${fmt(last.total_m2)}㎡）を建てます（${fmt(last.cost)} X）。よろしいですか？`)
+        : T(`${pr.n}（${fmt(last.total_m2)}㎡）を建てます（${fmt(last.cost)} X）。よろしいですか？`);
+      if (!confirm(msg)) return;
+      go.disabled = true;
+      const r = await api('mp_bld_build', { p_parcel: P.id, p_kind: pr.k, p_shape: st.shape, p_floors: st.floors, p_opt: st.opt, p_name: st.name, p_as: S.as }, '建てました');
+      go.disabled = false;
+      if (r) { m.close(); refreshP(P); sheet(null); openBld(r.id); }
+    };
+    sync(); quote();
+  });
+}
+
+/* ---- 建物を見る：部屋・テナント・家賃の水準 ---- */
+async function openBld(bid) {
+  const m = modal(['建物', '<p class="muted small">読みこんでいます…</p>'], null, 'mp-wide');
+  const sel = new Set();
+  const load = async () => {
+    const d = await api('mp_bld_get', { p_bld: bid }); if (!d) return m.close();
+    const floors = [...new Set(d.units.map(u => u.f))];
+    const stat = u => u.tk === 'corp' ? `<span>${esc(u.tn || '')}</span><small>（テナント）</small>` : u.tk === 'npc' ? `<span>${esc(u.tn || '')}</span>`
+      : u.mode === 'self' ? '<span>自分で使う</span>' : u.mode === 'corp' ? `<span class="mp-warn">テナント募集中</span>` : '<span class="muted">空き</span>';
+    const row = u => `<div class="mp-urow" data-u="${u.id}">
+        ${d.mine ? `<input type="checkbox" data-c="${u.id}" ${sel.has(u.id) ? 'checked' : ''}>` : ''}
+        <b>${esc(u.room)}</b><span><span>${USE_NAME[u.use] || u.use}</span>・<span>${fmt(u.m2)}㎡</span>${d.mine ? `・<small>${MODE_NAME[u.mode]}</small>` : ''}</span>
+        <span class="st">${stat(u)}</span>
+        <span class="rt">${u.tk ? `1日 ${X(u.rent)}` : u.mode === 'corp' ? `1日 ${X(u.ask)}` : ''}</span>
+        ${d.mine && u.tk === 'corp' ? `<button class="btn" data-out="${u.id}">退去してもらう</button>` : ''}
+        ${!d.mine && u.mode === 'corp' && !u.tk ? `<button class="btn main" data-lease="${u.id}">借りる</button>` : ''}
+        ${!d.mine && u.tk === 'corp' && u.tmine ? `<button class="btn" data-leave="${u.id}">退去する</button>` : ''}</div>`;
+    const dm = d.dem || {}, star = v => '★'.repeat(Math.max(1, Math.min(5, Math.round((v || 0) * 2.5))));
+    const mainUses = [...new Set(d.units.map(u => u.use))];
+    m.set(d.name || kindName(d.kind), `<div class="mp-kv">
+        <b>種類</b><span><span>${esc(d.kname)}</span>${d.floors > 0 ? `・<span>${d.floors}階</span>・<span>${SHAPE_NAME[d.shape] || d.shape}</span>` : ''}</span>
+        <b>住所</b><span translate="no">${esc(d.addr)}</span>
+        <b>持ち主</b><span><span>${esc(d.owner)}</span>${d.mine ? '<small>（あなた）</small>' : ''}</span>
+        <b>入りやすさ</b><span>${mainUses.map(u => `<span>${USE_NAME[u] || u}</span> <span style="color:#d89a00">${star(dm[u])}</span>`).join('・')}</span>
+        ${d.mine ? `<b>入居</b><span>${d.day.occ} / ${d.day.n}</span><b>家賃</b><span>1日 ${X(d.day.rent)}</span>
+          <b>家賃の水準</b><span><input type="range" min="50" max="200" step="5" value="${Math.round(d.rent_lv * 100)}" class="mp-lv" style="width:55%;vertical-align:middle"> <b class="mp-lvn">${Math.round(d.rent_lv * 100)}%</b> <button class="btn" data-lvset style="padding:2px 8px">決める</button></span>` : ''}
+      </div>
+      ${d.mine ? `<p class="muted small" style="margin:2px 0 6px">家賃の水準は入居募集の部屋の家賃（相場の何%か）。高いと入りにくく、出ていきやすくなります。店・事務所などを自分で使うか会社が借りると、売上が入ります</p>
+        <div class="mp-row" data-bulk><small data-n>${sel.size}室えらんでいます</small>
+          <button class="btn" data-all>ぜんぶえらぶ</button><button class="btn" data-none>えらばない</button></div>
+        <div class="mp-row"><button class="btn" data-mode="npc">入居募集にする</button><button class="btn" data-mode="self">自分で使う</button>
+          <button class="btn" data-mode="corp">テナント募集にする</button><input class="mp-inp mp-num" data-ask inputmode="numeric" placeholder="家賃/日" style="width:110px"></div>` : ''}
+      <div data-units>${floors.map((f, i) => { const us = d.units.filter(u => u.f === f); return `<details ${i < 3 || floors.length <= 6 ? 'open' : ''} class="mp-floor">
+        <summary><b>${f > 0 ? T(`${f}階`) : T('地上')}</b> <small><span>${us.length}室</span>・<span>入居 ${us.filter(u => u.tk || u.mode === 'self').length}</span></small></summary>
+        ${us.map(row).join('')}</details>`; }).join('')}</div>
+      ${d.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button><button class="btn" data-del style="color:#c33">こわす</button></div>` : ''}`, b => {
+      const nEl = b.querySelector('[data-n]');
+      const upd = () => { if (nEl) nEl.textContent = T(`${sel.size}室えらんでいます`); };
+      b.querySelectorAll('[data-c]').forEach(x => x.onchange = () => { const id = Number(x.dataset.c); if (x.checked) sel.add(id); else sel.delete(id); upd(); });
+      const q = k => b.querySelector(k);
+      if (q('[data-all]')) q('[data-all]').onclick = () => { d.units.forEach(u => sel.add(u.id)); b.querySelectorAll('[data-c]').forEach(x => x.checked = true); upd(); };
+      if (q('[data-none]')) q('[data-none]').onclick = () => { sel.clear(); b.querySelectorAll('[data-c]').forEach(x => x.checked = false); upd(); };
+      b.querySelectorAll('[data-mode]').forEach(x => x.onclick = async () => {
+        if (!sel.size) return toast(T('部屋をえらんでください'));
+        const mode = x.dataset.mode, ask = q('[data-ask]') && q('[data-ask]').value.replace(/[^\d]/g, '');
+        if (await api('mp_unit_set', { p_units: [...sel], p_mode: mode, p_ask: mode === 'corp' && ask ? Number(ask) : null, p_as: S.as }, '変えました')) { sel.clear(); load(); }
+      });
+      const lv = q('.mp-lv'); if (lv) { lv.oninput = () => { q('.mp-lvn').textContent = lv.value + '%'; }; q('[data-lvset]').onclick = async () => { if (await api('mp_bld_set', { p_bld: bid, p_name: null, p_rent_lv: Number(lv.value) / 100, p_as: S.as }, '家賃の水準を変えました')) load(); }; }
+      b.querySelectorAll('[data-out]').forEach(x => x.onclick = async () => { if (!confirm(T('テナントの会社に退去してもらいます。よろしいですか？'))) return; if (await api('mp_unit_leave', { p_unit: Number(x.dataset.out), p_as: S.as }, '退去してもらいました')) load(); });
+      b.querySelectorAll('[data-lease]').forEach(x => x.onclick = () => leaseUnit(Number(x.dataset.lease), d.units.find(u => u.id === Number(x.dataset.lease)), load));
+      b.querySelectorAll('[data-leave]').forEach(x => x.onclick = async () => { if (!confirm(T('この部屋から退去します。よろしいですか？'))) return; const u = d.units.find(z => z.id === Number(x.dataset.leave)); if (await api('mp_unit_leave', { p_unit: u.id, p_as: corpOf(u) }, '退去しました')) load(); });
+      if (q('[data-ren]')) q('[data-ren]').onclick = async () => { const nm = prompt(T('建物の名前（30文字まで）'), d.name); if (nm == null) return; if (await api('mp_bld_set', { p_bld: bid, p_name: nm, p_rent_lv: null, p_as: S.as }, '名前を変えました')) { load(); refreshBld(d); } };
+      if (q('[data-del]')) q('[data-del]').onclick = async () => {
+        if (!confirm(T(`「${d.name || d.kname}」をこわします（工事費はもどりません。テナントの会社には知らせます）。よろしいですか？`))) return;
+        if (await api('mp_bld_demolish', { p_bld: bid, p_as: S.as }, 'こわしました')) { m.close(); refreshBld(d); sheet(null); }
+      };
+    });
+  };
+  load();
+}
+function refreshBld(d) { const P = S.vis && S.vis.parcels.get(d.parcel); if (P) refreshP(P); else { for (const c of S.cells.values()) c.stale = true; S.dirty = true; } }
+// 自分の会社のうち、この部屋を借りている会社（名義）
+function corpOf(u) { const a = (S.boot.as || []).find(x => x.as !== 'me' && x.as !== 'gov' && x.name === u.tn); return a ? a.as : S.as; }
+// 会社で借りる（名義が会社でなければ、えらぶ）
+async function leaseUnit(id, u, after) {
+  const corps = (S.boot.as || []).filter(a => a.as !== 'me' && a.as !== 'gov');
+  if (!corps.length) return toast(T('テナントとして借りられるのは会社だけです（会社をつくると借りられます）'));
+  let as = corps.some(a => a.as === S.as) ? S.as : null;
+  if (!as) {
+    if (corps.length === 1) as = corps[0].as;
+    else {
+      const k = prompt(T('借りる会社の番号：') + '\n' + corps.map((a, i) => `${i + 1}. ${asLabel(a)}`).join('\n'), '1'); if (k == null) return;
+      const a = corps[Number(k) - 1]; if (!a) return toast(T('番号がちがいます')); as = a.as;
+    }
+  }
+  const nm = asLabel(corps.find(a => a.as === as));
+  if (!confirm(T(`${nm}が借ります（家賃 1日 ${fmt(u ? u.ask : 0)} X・1時間ごとに会社から払います）。よろしいですか？`))) return;
+  if (await api('mp_unit_lease', { p_unit: id, p_as: as }, '借りました')) { if (after) after(); }
+}
+
+/* ---- テナント募集（会社で借りる）・借りている部屋 ---- */
+async function openTenants() {
+  const m = modal(['テナント募集', '<p class="muted small">読みこんでいます…</p>'], null, 'mp-wide');
+  let use = '', tab = 'find';
+  const v = view(), box = [Math.floor(v.x0) - 20, Math.floor(v.y0) - 20, Math.ceil(v.x1) + 20, Math.ceil(v.y1) + 20];
+  const load = async () => {
+    const corps = (S.boot.as || []).filter(a => a.as !== 'me' && a.as !== 'gov');
+    const head = `<div class="mp-row"><div class="mp-seg"><button data-tab="find" class="${tab === 'find' ? 'on' : ''}">さがす</button><button data-tab="mine" class="${tab === 'mine' ? 'on' : ''}">借りている部屋</button></div></div>`;
+    if (tab === 'find') {
+      const near = await api('mp_unit_market', { p_box: box, p_use: use || null }) || [];
+      const all = near.length ? near : await api('mp_unit_market', { p_box: null, p_use: use || null }) || [];
+      m.set('テナント募集', `${head}
+        <div class="mp-row"><select class="mp-inp" data-use style="width:auto">${['', 'shop', 'office', 'factory', 'warehouse', 'port', 'parking', 'farm'].map(u => `<option value="${u}" ${u === use ? 'selected' : ''}>${u ? USE_NAME[u] : T('ぜんぶの用途')}</option>`).join('')}</select>
+          <small class="muted">${near.length ? T('いま見ているあたり') : T('ぜんぶの地域')}</small></div>
+        ${corps.length ? '' : '<p class="mp-warn">テナントとして借りられるのは会社だけです</p>'}
+        <div class="mp-list">${all.map(x => `<div class="mp-item"><b>${esc(x.bname || x.kname)}</b> <span>${esc(x.room)}</span>
+            <small><br><span>${USE_NAME[x.use] || x.use}</span>・<span>${fmt(x.m2)}㎡</span>・<span>家賃 1日 ${X(x.ask)}</span><small>（相場の${Math.round(100 * x.ask / Math.max(1, x.mr))}%）</small>・<span>入りやすさ</span> <span style="color:#d89a00">${'★'.repeat(Math.max(1, Math.min(5, Math.round((x.dem || 0) * 2.5))))}</span>
+            <br><span translate="no">${esc(x.addr || '')}</span>・<span>${esc(x.owner)}</span></small>
+            <div class="mp-row"><button class="btn" data-go="${x.id}">地図で見る</button>${corps.length ? `<button class="btn main" data-lease="${x.id}">借りる</button>` : ''}</div></div>`).join('') || '<p class="muted small">いまテナント募集をしている部屋はありません</p>'}</div>`, b => bind(b, all));
+    } else {
+      const lists = await Promise.all(corps.map(a => api('mp_unit_mine', { p_as: a.as }).then(r => (r ? r.leases : []).map(l => ({ ...l, as: a.as, cn: asLabel(a) })))));
+      const ls = lists.flat();
+      m.set('テナント募集', `${head}<div class="mp-list">${ls.map(l => `<div class="mp-item"><b>${esc(l.bname)}</b> <span>${esc(l.room)}</span>
+          <small><br><span>${esc(l.cn)}</span>・<span>${USE_NAME[l.use] || l.use}</span>・<span>${fmt(l.m2)}㎡</span>・<span>家賃 1日 ${X(l.rent)}</span>・<span>${esc(l.owner)}</span></small>
+          <div class="mp-row"><button class="btn" data-go2="${l.x},${l.y}">地図で見る</button><button class="btn" data-out="${l.id}" data-as="${l.as}">退去する</button></div></div>`).join('') || '<p class="muted small">借りている部屋はありません</p>'}</div>`, b => {
+        b.querySelectorAll('[data-tab]').forEach(x => x.onclick = () => { tab = x.dataset.tab; load(); });
+        b.querySelectorAll('[data-go2]').forEach(x => x.onclick = () => { const [cx, cy] = x.dataset.go2.split(',').map(Number); m.close(); setCam((cx + 0.5) / 5, (cy + 0.5) / 5, Math.max(S.cam.z, 30)); });
+        b.querySelectorAll('[data-out]').forEach(x => x.onclick = async () => { if (!confirm(T('この部屋から退去します。よろしいですか？'))) return; if (await api('mp_unit_leave', { p_unit: Number(x.dataset.out), p_as: x.dataset.as }, '退去しました')) load(); });
+      });
+    }
+  };
+  const bind = (b, all) => {
+    b.querySelectorAll('[data-tab]').forEach(x => x.onclick = () => { tab = x.dataset.tab; load(); });
+    const us = b.querySelector('[data-use]'); if (us) us.onchange = () => { use = us.value; load(); };
+    b.querySelectorAll('[data-go]').forEach(x => x.onclick = () => { const u = all.find(z => z.id === Number(x.dataset.go)); m.close(); setCam((u.x + 0.5) / 5, (u.y + 0.5) / 5, Math.max(S.cam.z, 30)); openBld(u.bld); });
+    b.querySelectorAll('[data-lease]').forEach(x => x.onclick = () => leaseUnit(Number(x.dataset.lease), all.find(z => z.id === Number(x.dataset.lease)), load));
+  };
+  load();
+}
+/* ---- 自分（名義）の建物 ---- */
+async function openMyBlds() {
+  const m = modal(['自分の建物', '<p class="muted small">読みこんでいます…</p>']);
+  const d = await api('mp_unit_mine', { p_as: S.as }); if (!d) return m.close();
+  m.set('自分の建物', `<p class="small" style="margin:0 0 6px">${esc(asName())}</p><div class="mp-list">${d.blds.map(b => `<button class="mp-item" style="text-align:left" data-b="${b.id}" data-xy="${b.x},${b.y}">
+      <b>${esc(b.name || kindName(b.kind))}</b> <small><span>${esc(kindName(b.kind))}</span>${b.floors > 0 ? `・<span>${b.floors}階</span>` : ''}<br><span>入居 ${b.occ}/${b.n}</span>・<span>家賃 1日 ${X(b.rent)}</span></small></button>`).join('')
+      || '<p class="muted small">建物はまだありません。自分の筆をタップして「建物を建てる」から建てられます</p>'}</div>`, b => {
+    b.querySelectorAll('[data-b]').forEach(x => x.onclick = () => { const [cx, cy] = x.dataset.xy.split(',').map(Number); m.close(); setCam((cx + 0.5) / 5, (cy + 0.5) / 5, Math.max(S.cam.z, 30)); openBld(Number(x.dataset.b)); });
+  });
+}
 window.MapApp = { open, pause, state: S, spline, setCam };
 })();
