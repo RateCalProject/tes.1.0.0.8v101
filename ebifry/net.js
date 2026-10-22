@@ -5,7 +5,8 @@
    - 自分のエビは、どの端末でも World の中では 'p1'（ゲームの画面が 'p1' を「自分」として描くので）。ほかは 'f<番号>'
    - 自分の入力は D ステップ後の入力として全員に送り、全員が同じステップで使う。ホストが全員の入力をまとめて「フレーム」にして配る
    - 0.5秒ごとに状態のハッシュをくらべ、ずれたらホストの値で直す
-   つなぎ方：PeerJS（端末どうしを直接）＋ 公開MQTTサーバー（中継）。部屋コード（4けた）とランダム */
+   つなぎ方：PeerJS（端末どうしを直接）＋ 近くの中継（Supabase Realtime）＋ 公開MQTTサーバー（遠い中継）。部屋コード（4けた）とランダム
+   - ホストが人ごとに、道ごとの往復の時間をはかって、いちばん速い道を選んで相手に知らせる（試合の通信だけ。ほかはいつもの道） */
 (() => {
 'use strict';
 if (window.ENET || typeof World !== 'function' || typeof G !== 'object' || typeof R !== 'object') return;
@@ -201,7 +202,12 @@ const DMATH = /* 決まった計算の Math（どの端末・ブラウザでも�
 })();
 if (!DMATH) return;
 const PROTO = 1, TICK = 1000 / 60, PFX = 'ebf1', MAXP = 6;
+// 通信の道：dc＝直接（PeerJS）、rt＝近くの中継（Supabase Realtime）、mq＝遠い中継（公開MQTTサーバー）
+const PATHS = ['dc', 'rt', 'mq'], PNAME = { dc: '直接', rt: '中継', mq: '遠い中継' };
+const FAST = new Set(['f', 'i', 'snap', 'dd', 'quit', 'start', 'go']);   // 試合の通信（いちばん速い道で送る）
+const RT_STEP = 80;   // 近くの中継で試合の通信を送る間隔（ms）。中継を使う人が多いときは、人数ぶんのばす（通数の上限を守るため）
 const Q = new URLSearchParams(location.search);
+const FORCE = PATHS.includes(Q.get('enetpath')) ? Q.get('enetpath') : '';   // ためし用：ホストが ?enetpath=rt などで道を決める（使えるときだけ）
 const PNOW = Performance.prototype.now;
 const realNow = () => PNOW.call(performance);
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -244,7 +250,7 @@ const loInfo = code => { const d = decodeLoadout(code || ''); return d ? BODIES[
 
 /* ---------- ロックステップ ---------- */
 const LS = {
-  on: false, host: false, n: 0, slot: 0, meK: 0, list: [], hk: [], ctrls: [], D: 6, D0: 6, lastTgt: 5, lastInp: 0, dT: 0, dWait: 0, dLow: 0, tick: 0, mid: '',
+  on: false, host: false, n: 0, slot: 0, meK: 0, list: [], hk: [], ctrls: [], D: 6, D0: 6, lastTgt: 5, lastInp: 0, dT: 0, dWait: 0, dLow: 0, dFast: false, tick: 0, mid: '',
   frames: new Map(), snaps: new Map(), inb: [], nf: 0, ackIn: [], gs: new Map(), gone: [], qs: [],
   myIn: new Map(), myTop: 0, sentIn: -1, hostAck: -1, lf: -1, lastSendIn: 0, lastResendIn: 0, rlt: 0,
   budget: 0, lastReal: 0, lastStep: 0, lastFrameAt: 0, hh: new Map(), gh: new Map(),
@@ -287,6 +293,7 @@ function sampleLocal() {
   const me = G.world && G.world.get('p1');
   if (!me || me.dead) return 0;
   const p = packInput(inp);
+  p[0] = p[0] || 0; p[1] = p[1] || 0;   // -0 を 0 に（ほかの端末には JSON で 0 として届くので、自分も同じに）
   return (!p[0] && !p[1] && !p[2]) ? 0 : p;
 }
 function stepOnce() {
@@ -335,17 +342,21 @@ function produceInput(T) {
   LS.lastTgt = tgt; LS.lastInp = inp;
   if (LS.host) hostFinalize(); else sendInputs(false);
 }
-// ホスト：2秒ごとに、通信の速さ（往復の時間）と、入力を待って止まった回数から D を決めなおして、全員に知らせる。大きくするのはすぐ、小さくするのはゆっくり
+// ホスト：2秒ごとに、通信の速さ（往復の時間＋まとめて送る待ち）と、入力を待って止まった回数から D を決めなおして、全員に知らせる。
+// 大きくするのはすぐ、小さくするのはゆっくり（ただし、速い道に乗りかえたときは、ちがいの半分ずつ早めに）
 function adaptD(now) {
   if (!LS.on || !LS.host || now - LS.dT < 2000) return;
   LS.dT = now;
-  const R0 = KN.room, rt = Math.max(0, ...(R0 ? R0.mem.filter(m => m.id !== MYID && LS.gs.has(m.id)).map(m => m.rtt || 0) : [0]));
+  const R0 = KN.room, rt = Math.max(0, ...(R0 ? R0.mem.filter(m => m.id !== MYID && LS.gs.has(m.id)).map(m => m.eff || m.rtt || 0) : [0]));
   let want = Math.max(4, Math.min(40, Math.ceil((rt + 50) / TICK)));
   const waits = LS.stats.wait - LS.dWait; LS.dWait = LS.stats.wait;
   if (waits > 20) want = Math.max(want, LS.D + 3);
-  if (want > LS.D) { LS.dLow = 0; setD(Math.min(40, want)); }
-  else if (want < LS.D - 2 && waits < 3) { if (++LS.dLow >= 3) { LS.dLow = 0; setD(LS.D - 2); } }
-  else LS.dLow = 0;
+  if (want > LS.D) { LS.dLow = 0; LS.dFast = false; setD(Math.min(40, want)); }
+  else if (want < LS.D - 2 && waits < 3) {
+    if (LS.dFast) { LS.dLow = 0; setD(Math.max(want, LS.D - Math.max(2, Math.ceil((LS.D - want) / 2)))); }
+    else if (++LS.dLow >= 3) { LS.dLow = 0; setD(LS.D - 2); }
+  }
+  else { LS.dLow = 0; LS.dFast = false; }
 }
 function setD(d) { if (d === LS.D) return; LS.D = d; net.send({ y: 'dd', D: d, mid: LS.mid }); }
 function hostFinalize() {
@@ -369,24 +380,29 @@ function framePack(a, b) {
   for (let T = a; T <= b; T++) { const f = LS.frames.get(T); if (!f) break; d.push(f.i); if (f.z) z.push(T); if (f.q) { q[T] = f.q; anyQ = true; } }
   return { d, z: z.length ? z : undefined, q: anyQ ? q : undefined };
 }
-// フレームを送る：直接つながっている人には1人ずつ、中継の人にはまとめて1つ（だれがどこまで受けとったかをそえる）
+// フレームを送る：直接・近くの中継の人には1人ずつ、遠い中継の人にはまとめて1つ（だれがどこまで受けとったかをそえる）
+// 近くの中継は、通数をへらすため少しまとめて送る（その人の入力が届いたときは、すぐ返す）
 function sendFrames(force) {
-  const now = realNow(), top = LS.nf - 1;
+  const now = realNow(), top = LS.nf - 1, gap = rtGap();
   let rFrom = Infinity;
   const relay = [];
   for (const g of LS.gs.values()) {
+    const p = net.path(g.id), hold = p === 'rt' && !force && !g.kick && now - g.lt < gap - 8;
     let from;
-    if (top > g.sent) from = g.sent + 1;
-    else if (g.ack < g.sent && (force || now - g.rs > 300)) { from = g.ack + 1; g.rs = now; }
+    if (top > g.sent) { if (hold) continue; from = g.sent + 1; }
+    else if (g.ack < g.sent && (force || now - Math.max(g.rs, g.lt) > 300)) { if (hold) continue; from = g.ack + 1; g.rs = now; }   // 送ってから0.3秒たっても届いたと返事がないとき、もう一度
     else continue;
-    if (net.direct(g.id)) {
+    if (p !== 'mq') {
       const pk = framePack(from, Math.min(top, from + 59)); if (!pk.d.length) continue;
-      net.send({ y: 'f', a: from, d: pk.d, z: pk.z, q: pk.q, k: LS.ackIn[g.slot], D: LS.D }, g.id);
-      g.sent = Math.max(g.sent, from + pk.d.length - 1); g.lt = now;
-    } else { relay.push(g); if (from < rFrom) rFrom = from; }
+      if (net.via(p, { y: 'f', a: from, d: pk.d, z: pk.z, q: pk.q, k: LS.ackIn[g.slot], D: LS.D }, g.id)) {
+        g.sent = Math.max(g.sent, from + pk.d.length - 1); g.lt = now; g.kick = false;
+        continue;
+      }
+    }
+    relay.push(g); if (from < rFrom) rFrom = from;
   }
   if (!relay.length) return;
-  if (!force && top - rFrom < 2 && now - LS.rlt < 50) return;   // 中継のときは少しまとめる
+  if (!force && top - rFrom < 2 && now - LS.rlt < 50) return;   // 遠い中継のときは少しまとめる
   const pk = framePack(rFrom, Math.min(top, rFrom + 59)); if (!pk.d.length) return;
   const ks = {}; for (const g of LS.gs.values()) ks[g.slot] = LS.ackIn[g.slot];
   net.relay({ y: 'f', a: rFrom, d: pk.d, z: pk.z, q: pk.q, ks, D: LS.D });
@@ -400,7 +416,11 @@ function sendInputs(force) {
   else if (LS.hostAck < LS.sentIn && (force || now - LS.lastResendIn > 300)) { from = LS.hostAck + 1; LS.lastResendIn = now; }
   else return;
   from = Math.max(from, LS.D0);
-  if (!net.direct() && !force && top - from < 2 && now - LS.lastSendIn < 50) return;
+  if (!force) {   // 中継のときは少しまとめる（近くの中継はホストが決めた間隔で）
+    const p = net.path();
+    if (p === 'rt' && now - LS.lastSendIn < ((net.L && net.L.gap) || RT_STEP) - 8) return;
+    if (p === 'mq' && top - from < 2 && now - LS.lastSendIn < 50) return;
+  }
   const d = [];
   for (let T = from; T <= top && d.length < 60; T++) d.push(LS.myIn.has(T) ? LS.myIn.get(T) : 0);
   if (!d.length) return;
@@ -420,7 +440,7 @@ function onInputs(m, from) {
   for (let j = 0; j < m.d.length && j < 120; j++) { const T = m.a + j; if (T >= LS.nf && !box.has(T)) box.set(T, cleanInp(m.d[j])); }
   let x = LS.ackIn[g.slot]; while (x + 1 < LS.nf || box.has(x + 1)) x++; LS.ackIn[g.slot] = x;
   if (typeof m.k === 'number' && m.k > g.ack) g.ack = Math.min(m.k, g.sent);
-  g.lastIn = realNow();
+  g.lastIn = realNow(); g.kick = true;
   hostFinalize();
 }
 function onFrames(m) {
@@ -665,6 +685,119 @@ const MQ = (() => {
   };
 })();
 
+/* ---------- 近くの中継（Supabase Realtime の broadcast。風の芽経済組と同じプロジェクト） ----------
+   世界のあちこちにあるサーバーのうち近いところを通るので、公開MQTTサーバー（ヨーロッパ・アメリカ）より速い。
+   ただし通数に上限がある（無料プランは1秒に100通・1か月200万通。送った1通と、受けとった人の数をかぞえる）ので、
+   直接（PeerJS）でよくつながっているときは使わず、使うときも少しまとめて送る。上限をこえて切られたら、しばらく使わない。
+   部屋の参加者ごとに1つのチャンネル（その人とホストだけが入る）。../config.js の url・anonKey を使う */
+const RT = (() => {
+  const C = window.AILINAX_CONFIG || {};
+  let url = '';
+  if (typeof window.__rtUrl === 'string') url = window.__rtUrl;
+  else if (typeof C.url === 'string' && /^https:\/\/[\w.-]+$/.test(C.url.replace(/\/+$/, '')) && typeof C.anonKey === 'string' && C.anonKey)
+    url = C.url.replace(/\/+$/, '').replace(/^https:/, 'wss:') + '/realtime/v1/websocket?apikey=' + encodeURIComponent(C.anonKey) + '&vsn=1.0.0';
+  const ON = !!url && C.ebiRelay !== false && Q.get('enetrt') !== '0' && Q.get('enet') !== 'bc' && typeof WebSocket === 'function';
+  const COOL = typeof window.__rtCool === 'number' ? window.__rtCool : 60000;   // 上限で切られたら、この間は使わない
+  const MAXPS = 40;   // この端末から1秒に送るのはここまで
+  const chans = new Map(), watch = new Set();   // チャンネル名 → { hs: 受けとる関数, st: 0 まだ・1 入るところ・2 入った・-1 入れない, jref, nf: 入れなかった回数 }
+  const S = { tx: 0, rx: 0, drop: 0, cuts: 0, lim: 0 };
+  let ws = null, ok = false, ref = 0, hb = 0, hbRef = '', fails = 0, reT = 0, idleT = 0, cool = 0, winT = 0, winN = 0;
+  const tp = n => 'realtime:' + n;
+  const nx = () => String(ref = ref % 1e9 + 1);
+  function changed() { watch.forEach(f => { try { f(); } catch (e) { console.error(e); } }); }
+  function raw(o) { if (!ws || !ok || ws.readyState !== 1) return false; try { ws.send(JSON.stringify(o)); return true; } catch (e) { return false; } }
+  function join(n, ch) {
+    ch.st = 1; ch.jref = nx();
+    raw({ topic: tp(n), event: 'phx_join', payload: { config: { broadcast: { self: false, ack: false }, presence: { key: '' }, private: false } }, ref: ch.jref, join_ref: ch.jref });
+  }
+  function rejoin(n) { const ch = chans.get(n); if (ch && ch.st === 0 && ok) join(n, ch); }
+  function later() { clearTimeout(reT); if (!chans.size) return; reT = setTimeout(open, Math.max(cool - Date.now(), Math.min(30000, 1000 * Math.pow(2, Math.min(fails, 5))))); }
+  function drop(s, why) {
+    if (ws !== s) return;
+    ws = null; const was = ok; ok = false; clearInterval(hb); hbRef = '';
+    for (const ch of chans.values()) if (ch.st > 0) ch.st = 0;
+    if (why === 'limit') { cool = Date.now() + COOL; S.lim++; } else if (was) S.cuts++;
+    fails++;
+    try { s.close(); } catch (e) {}
+    later();
+    if (was) changed();
+  }
+  function beat() {
+    if (!ws || !ok) return;
+    if (hbRef) { drop(ws, 'hb'); return; }   // 前の返事がまだ来ない
+    hbRef = nx(); raw({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: hbRef });
+  }
+  function open() {
+    clearTimeout(reT);
+    if (!ON || ws || !chans.size) return;
+    if (Date.now() < cool) { later(); return; }
+    let s; try { s = new WebSocket(url); } catch (e) { fails++; later(); return; }
+    ws = s; ok = false;
+    const to = setTimeout(() => { if (ws === s && !ok) drop(s, ''); }, 10000);
+    s.onopen = () => {
+      if (ws !== s) return;
+      clearTimeout(to); ok = true; fails = 0;
+      for (const [n, ch] of chans) if (ch.st >= 0) join(n, ch);
+      clearInterval(hb); hb = setInterval(beat, 25000);
+    };
+    s.onmessage = e => { if (ws === s && typeof e.data === 'string') onMsg(s, e.data); };
+    s.onclose = () => { clearTimeout(to); drop(s, ''); };
+    s.onerror = () => { clearTimeout(to); drop(s, ''); };
+  }
+  function onMsg(s, data) {
+    S.rx++;
+    let m; try { m = JSON.parse(data); } catch (e) { return; }
+    if (!m || typeof m !== 'object') return;
+    const ev = m.event, n = typeof m.topic === 'string' && m.topic.slice(0, 9) === 'realtime:' ? m.topic.slice(9) : '';
+    const ch = n ? chans.get(n) : null;
+    if (ev === 'broadcast') {
+      const p = m.payload && m.payload.payload;
+      if (ch && ch.st === 2 && p && typeof p === 'object') ch.hs.forEach(f => { try { f(p); } catch (e) { console.error(e); } });
+      return;
+    }
+    if (data.length < 4000 && /too many|tenant_events|rate.?limit/i.test(data)) { drop(s, 'limit'); return; }
+    if (ev === 'phx_reply') {
+      if (m.topic === 'phoenix') { if (m.ref === hbRef) hbRef = ''; return; }
+      if (!ch || ch.st !== 1 || m.ref !== ch.jref) return;
+      if (m.payload && m.payload.status === 'ok') { ch.st = 2; ch.nf = 0; changed(); }
+      else { ch.nf++; ch.st = ch.nf < 4 ? 0 : -1; if (!ch.st) setTimeout(() => rejoin(n), 3000 * ch.nf); }
+      return;
+    }
+    if ((ev === 'phx_error' || ev === 'phx_close') && ch && ch.st > 0) { const was = ch.st === 2; ch.st = 0; setTimeout(() => rejoin(n), 2000); if (was) changed(); }
+  }
+  return {
+    on: ON,
+    // チャンネルに入って受けとる（もどり値の関数でぬける。だれも使わなくなったら、しばらくしてつなぐのをやめる）
+    sub(n, f) {
+      if (!ON) return () => {};
+      let ch = chans.get(n);
+      if (!ch) { ch = { hs: new Set(), st: 0, jref: '', nf: 0 }; chans.set(n, ch); }
+      ch.hs.add(f); clearTimeout(idleT);
+      if (!ws) open(); else if (ok && ch.st === 0) join(n, ch);
+      return () => {
+        const c = chans.get(n); if (!c || !c.hs.delete(f) || c.hs.size) return;
+        chans.delete(n);
+        if (c.st > 0) raw({ topic: tp(n), event: 'phx_leave', payload: {}, ref: nx(), join_ref: c.jref });
+        if (!chans.size) {
+          clearTimeout(idleT);
+          idleT = setTimeout(() => { if (chans.size || !ws) return; const s = ws; ws = null; ok = false; clearInterval(hb); clearTimeout(reT); try { s.close(); } catch (e) {} }, 20000);
+        }
+      };
+    },
+    ready(n) { const ch = chans.get(n); return !!(ok && ch && ch.st === 2 && Date.now() >= cool); },
+    pub(n, env) {
+      const ch = chans.get(n), now = Date.now();
+      if (!ok || !ch || ch.st !== 2 || now < cool) return false;
+      if (now - winT >= 1000) { winT = now; winN = 0; }
+      if (winN >= MAXPS) { S.drop++; return false; }
+      if (!raw({ topic: tp(n), event: 'broadcast', payload: { type: 'broadcast', event: 'm', payload: env }, ref: nx(), join_ref: ch.jref })) return false;
+      winN++; S.tx++; return true;
+    },
+    onChange(f) { watch.add(f); return () => watch.delete(f); },
+    stat() { return Object.assign({ on: ON, ok, cool: Math.max(0, cool - Date.now()), ch: [...chans].map(([n, c]) => n.slice(-6) + ':' + c.st) }, S); }
+  };
+})();
+
 /* ---------- PeerJS（使うときだけ読みこむ） ---------- */
 const PEEROPT = Object.assign({ debug: 0 }, window.__peerOpt || {});
 let peerP = null;
@@ -702,26 +835,32 @@ function mkDedup() {
     return false;
   };
 }
+// テスト用（同じブラウザの BroadcastChannel）：道は1つだけ（ふつうは「直接」、?enetrelay=1 なら「遠い中継」とみなす）
+function linkBC(L, code, recv, mine, theirs) {
+  const ch = new BroadcastChannel('enet-' + code), P = Q.has('enetrelay') ? 'mq' : 'dc';
+  ch.onmessage = e => { const env = e.data; if (env && env.k === theirs) recv(env.e, P); };
+  L.send = (m, to) => { ch.postMessage({ k: mine, e: { g: MYID, n: ++L.seq, to, m } }); };
+  L.sendVia = (p, m, to) => { if (p !== P) return false; L.send(m, to); return true; };
+  L.relay = m => L.send(m);
+  L.direct = () => P === 'dc';
+  L.path = () => P; L.has = p => p === P; L.setWant = () => {};
+  L.close = () => { L.closed = true; ch.close(); };
+  return L;
+}
 async function linkHost(code, onMsg) {
   const L = { role: 'host', code, peer: null, gs: new Map(), closed: false, seq: 0 };
   const dup = mkDedup(), tH = `${PFX}/r/${code}/h`, tG = `${PFX}/r/${code}/g`;
+  const rtn = id => `${PFX}-${code}-${id}`;   // 近くの中継：参加者ごとのチャンネル
+  const gOf = id => { let g = L.gs.get(id); if (!g) { g = { dc: null, want: '', rtUn: null }; L.gs.set(id, g); } return g; };
   function recv(env, via, dc) {
     if (L.closed || !env || typeof env !== 'object' || env.g === MYID || typeof env.g !== 'string') return;
     if (env.to && env.to !== MYID) return;
-    let g = L.gs.get(env.g); if (!g) { g = { dc: null }; L.gs.set(env.g, g); }
+    const g = gOf(env.g);
     if (dc) g.dc = dc;
     if (dup(env)) return;
     onMsg(env.m, env.g, via);
   }
-  if (Q.get('enet') === 'bc') {
-    const ch = new BroadcastChannel('enet-' + code);
-    ch.onmessage = e => { const env = e.data; if (env && env.k === 'h') recv(env.e, 'bc'); };
-    L.send = (m, to) => { ch.postMessage({ k: 'g', e: { g: MYID, n: ++L.seq, to, m } }); };
-    L.relay = m => L.send(m);
-    L.direct = () => !Q.has('enetrelay');
-    L.close = () => { L.closed = true; ch.close(); };
-    return L;
-  }
+  if (Q.get('enet') === 'bc') return linkBC(L, code, recv, 'g', 'h');
   L.unsub = MQ.sub(tH, env => recv(env, 'mq'));
   let taken = false;
   if (await loadPeerJS()) {
@@ -744,40 +883,59 @@ async function linkHost(code, onMsg) {
     MQ.pub(tH, { g: MYID, n: 0, m: { y: 'who' } }); await wait(1500); un();
     if (other) { if (L.unsub) L.unsub(); throw { code: 'taken' }; }
   }
-  L.direct = to => { if (!to) return [...L.gs.values()].every(g => g.dc && g.dc.open); const g = L.gs.get(to); return !!(g && g.dc && g.dc.open); };
+  const dcOk = g => !!(g && g.dc && g.dc.open);
+  L.direct = to => { if (!to) return [...L.gs.values()].every(dcOk); return dcOk(L.gs.get(to)); };
+  L.has = (p, id) => p === 'dc' ? dcOk(L.gs.get(id)) : p === 'rt' ? RT.ready(rtn(id)) : p === 'mq' ? MQ.count() > 0 : false;
+  // その人に試合の通信を送る道（ホストが決めた道。使えないときは、直接か遠い中継）
+  L.path = id => {
+    const g = L.gs.get(id), w = g ? g.want : '';
+    if (w === 'dc' && dcOk(g)) return 'dc';
+    if (w === 'rt' && RT.ready(rtn(id))) return 'rt';
+    if (w === 'mq') return 'mq';
+    return dcOk(g) ? 'dc' : 'mq';
+  };
+  L.setWant = (id, p) => { const g = L.gs.get(id); if (g) g.want = p; };
+  function put(p, id, env) {
+    if (p === 'dc') { const g = L.gs.get(id); if (!dcOk(g)) return false; try { g.dc.send(env); return true; } catch (e) { return false; } }
+    if (p === 'rt') return RT.pub(rtn(id), env);
+    return false;
+  }
+  L.sendVia = (p, m, to) => { const env = { g: MYID, n: ++L.seq, to, m }; return p === 'mq' ? MQ.pub(tG, env) > 0 : put(p, to, env); };
   L.send = (m, to) => {
-    const env = { g: MYID, n: ++L.seq, to, m };
+    const env = { g: MYID, n: ++L.seq, to, m }, fast = FAST.has(m.y);
     let needMq = false, any = false;
     for (const [id, g] of L.gs) {
       if (to && id !== to) continue;
       any = true;
-      if (g.dc && g.dc.open) { try { g.dc.send(env); } catch (e) { needMq = true; } } else needMq = true;
+      const p = fast ? L.path(id) : dcOk(g) ? 'dc' : 'mq';
+      if (p !== 'mq' && put(p, id, env)) continue;
+      if (p !== 'dc' && dcOk(g) && put('dc', id, env)) continue;
+      needMq = true;
     }
     if (needMq || !any) MQ.pub(tG, env);
   };
-  L.relay = m => MQ.pub(tG, { g: MYID, n: ++L.seq, m });   // 中継だけで、全員に
-  L.forget = id => L.gs.delete(id);
-  L.close = () => { L.closed = true; if (L.unsub) L.unsub(); const p = L.peer; if (p) setTimeout(() => { try { p.destroy(); } catch (e) {} }, 300); };
+  L.relay = m => MQ.pub(tG, { g: MYID, n: ++L.seq, m });   // 遠い中継だけで、全員に
+  L.rtAdd = id => { const g = gOf(id); if (!g.rtUn && RT.on) g.rtUn = RT.sub(rtn(id), env => { if (env && env.g === id) recv(env, 'rt'); }); };
+  L.forget = id => { const g = L.gs.get(id); if (g && g.rtUn) g.rtUn(); L.gs.delete(id); };
+  L.close = () => {
+    L.closed = true; if (L.unsub) L.unsub();
+    for (const g of L.gs.values()) if (g.rtUn) { g.rtUn(); g.rtUn = null; }
+    const p = L.peer; if (p) setTimeout(() => { try { p.destroy(); } catch (e) {} }, 300);
+  };
   return L;
 }
 async function linkGuest(code, onMsg) {
-  const L = { role: 'guest', code, peer: null, dc: null, closed: false, seq: 0, fails: 0, rt: 0 };
-  const dup = mkDedup(), tH = `${PFX}/r/${code}/h`, tG = `${PFX}/r/${code}/g`;
+  const L = { role: 'guest', code, peer: null, dc: null, closed: false, seq: 0, fails: 0, rt: 0, want: '', gap: RT_STEP };
+  const dup = mkDedup(), tH = `${PFX}/r/${code}/h`, tG = `${PFX}/r/${code}/g`, rtName = `${PFX}-${code}-${MYID}`;
   function recv(env, via) {
     if (L.closed || !env || typeof env !== 'object' || env.g === MYID || typeof env.g !== 'string') return;
     if (env.to && env.to !== MYID) return;
     if (dup(env)) return;
     onMsg(env.m, env.g, via);
   }
-  if (Q.get('enet') === 'bc') {
-    const ch = new BroadcastChannel('enet-' + code);
-    ch.onmessage = e => { const env = e.data; if (env && env.k === 'g') recv(env.e, 'bc'); };
-    L.send = m => { ch.postMessage({ k: 'h', e: { g: MYID, n: ++L.seq, m } }); };
-    L.direct = () => !Q.has('enetrelay');
-    L.close = () => { L.closed = true; ch.close(); };
-    return L;
-  }
+  if (Q.get('enet') === 'bc') return linkBC(L, code, recv, 'h', 'g');
   L.unsub = MQ.sub(tG, env => recv(env, 'mq'));
+  L.rtUn = RT.sub(rtName, env => recv(env, 'rt'));   // 近くの中継：自分のチャンネル（ホストも入る）
   function connect() {
     if (L.closed || !L.peer || L.peer.destroyed) return;
     clearTimeout(L.rt);
@@ -799,26 +957,45 @@ async function linkGuest(code, onMsg) {
       connect();
     }, () => {});
   });
-  L.direct = () => !!(L.dc && L.dc.open);
+  const dcOk = () => !!(L.dc && L.dc.open);
+  L.direct = dcOk;
+  L.has = p => p === 'dc' ? dcOk() : p === 'rt' ? RT.ready(rtName) : p === 'mq' ? MQ.count() > 0 : false;
+  // 試合の通信を送る道（ホストが知らせてきた道。使えないときは、直接か遠い中継）
+  L.path = () => { const w = L.want; if (w === 'dc' && dcOk()) return 'dc'; if (w === 'rt' && RT.ready(rtName)) return 'rt'; if (w === 'mq') return 'mq'; return dcOk() ? 'dc' : 'mq'; };
+  function put(p, env) {
+    if (p === 'dc') { if (!dcOk()) return false; try { L.dc.send(env); return true; } catch (e) { return false; } }
+    if (p === 'rt') return RT.pub(rtName, env);
+    if (p === 'mq') return MQ.pub(tH, env) > 0;
+    return false;
+  }
+  L.sendVia = (p, m) => put(p, { g: MYID, n: ++L.seq, m });
   L.send = m => {
-    const env = { g: MYID, n: ++L.seq, m };
-    if (L.dc && L.dc.open) { try { L.dc.send(env); return; } catch (e) {} }
+    const env = { g: MYID, n: ++L.seq, m }, p = FAST.has(m.y) ? L.path() : dcOk() ? 'dc' : 'mq';
+    if (p !== 'mq' && put(p, env)) return;
+    if (p !== 'dc' && put('dc', env)) return;
     MQ.pub(tH, env);
   };
-  L.close = () => { L.closed = true; clearTimeout(L.rt); if (L.unsub) L.unsub(); const p = L.peer; if (p) setTimeout(() => { try { p.destroy(); } catch (e) {} }, 300); };
+  L.rtLost = () => L.want === 'rt' && !RT.ready(rtName);
+  L.close = () => {
+    L.closed = true; clearTimeout(L.rt); if (L.unsub) L.unsub(); if (L.rtUn) { L.rtUn(); L.rtUn = null; }
+    const p = L.peer; if (p) setTimeout(() => { try { p.destroy(); } catch (e) {} }, 300);
+  };
   return L;
 }
 const net = {
   L: null,
   send(m, to) { if (this.L) this.L.send(m, to); },
   relay(m) { if (this.L && this.L.relay) this.L.relay(m); },
-  direct(to) { return !!(this.L && this.L.direct(to)); }
+  direct(to) { return !!(this.L && this.L.direct(to)); },
+  path(to) { return this.L ? this.L.path(to) : 'mq'; },        // 試合の通信を送る道
+  via(p, m, to) { return !!(this.L && this.L.sendVia(p, m, to)); },   // 決まった道で送る（送れなかったら false）
+  has(p, to) { return !!(this.L && this.L.has(p, to)); }
 };
 
 /* ---------- 部屋 ---------- */
 const KN = {
   ui: 'off', room: null, host: false, code: '', rand: false, me: { id: MYID, nm: '' },
-  rtt: 0, rtts: [], lastHost: 0, busy: false, msg: '', adT: 0, startMsg: null, startSent: 0, lastRes: null, doneMid: '', lastPub: 0
+  rtt: 0, lastHost: 0, busy: false, msg: '', adT: 0, startMsg: null, startSent: 0, lastRes: null, doneMid: '', lastPub: 0
 };
 function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
@@ -826,10 +1003,56 @@ function myName() { const v = ($k('enetName') && $k('enetName').value || '').tri
 KN.me.nm = lsGet('ebifry_name') || '';
 const median = a => { const b = a.slice().sort((x, y) => x - y); return b[b.length >> 1] || 0; };
 // ---- ホスト側の部屋 ----
+// 部屋の人（ホストだけが持つ）：rtt＝使っている道の往復の時間、eff＝まとめて送る待ちも足したもの、path＝使っている道、
+// pr＝道ごとの往復の時間（最近5回）、pt＝それをはかった時刻、vt＝その道で最後に何か届いた時刻
+function newMem(id, nm, lo, via) {
+  return { id, nm, lo, rtt: 0, eff: 0, path: '', last: realNow(), via, pr: { dc: [], rt: [], mq: [] }, pt: { dc: 0, rt: 0, mq: 0 }, vt: {}, pc: 0 };
+}
 function roomNew(code, rand) {
-  return { code, rand: !!rand, ph: 'lobby', mem: [{ id: MYID, nm: KN.me.nm, lo: myCode(), rtt: 0, last: realNow() }],
+  return { code, rand: !!rand, ph: 'lobby', mem: [newMem(MYID, KN.me.nm, myCode(), '')],
     cpu: 0, lv: G.level in LVN ? G.level : 'normal', mid: '', res: null, resT: '', ver: 1, t0: Date.now(), autoAt: 0 };
 }
+// ---- 通信の道を選ぶ（ホストが1秒ごとに、人ごとに）----
+// 道ごとに 'pp' を送って、返事（'pq'）までの時間をはかる。直接は無料で待ちもないので、よほど遅くなければ直接。
+// 近くの中継は、直接がない・遅い（90ms より）ときだけはかる（通数をへらすため）。選んだ道は 'pp' で相手に知らせる
+function rtCount() { const R0 = KN.room; let n = 0; if (R0) for (const m of R0.mem) if (m.id !== MYID && m.path === 'rt') n++; return n; }
+function rtGap() { return RT_STEP * Math.max(1, rtCount()); }   // 近くの中継で試合の通信を送る間隔。中継を使う人が多いほどのばす
+function est(m, p, now) { const a = m.pr[p]; return a.length && now - m.pt[p] < 6000 ? median(a) : Infinity; }
+function rtWanted(m, now) { return RT.on && (FORCE === 'rt' || !(net.has('dc', m.id) && est(m, 'dc', now) <= 90)); }
+function choosePath(m, now) {
+  const n = rtCount(), g2 = RT_STEP * Math.max(1, m.path === 'rt' ? n : n + 1);   // この人も中継にしたときの間隔
+  const c = {
+    dc: net.has('dc', m.id) ? est(m, 'dc', now) : Infinity,
+    rt: net.has('rt', m.id) && now - (m.vt.rt || 0) < (LS.on ? 2500 : 5000) ? est(m, 'rt', now) + g2 : Infinity,
+    mq: net.has('mq', m.id) ? est(m, 'mq', now) + 30 : Infinity
+  };
+  let best = m.path && c[m.path] < Infinity ? m.path : '';
+  for (const p of PATHS) if (c[p] < Infinity && (!best || c[p] + 20 < c[best])) best = p;   // 20ms 以上速いときだけ乗りかえる
+  if (FORCE && c[FORCE] < Infinity) best = FORCE;
+  if (!best) best = net.has('dc', m.id) ? 'dc' : 'mq';
+  if (best !== m.path) { m.path = best; if (net.L && net.L.setWant) net.L.setWant(m.id, best); if (LS.on) LS.dFast = true; }
+  const r = est(m, best, now);
+  if (r < Infinity) m.rtt = r;
+  m.eff = c[best] < Infinity ? c[best] : (m.rtt || 0) + (best === 'rt' ? g2 : best === 'mq' ? 30 : 0);
+}
+function probeOne(m, now) {
+  choosePath(m, now);
+  m.pc++;
+  const gap = rtGap(), pp = q => ({ y: 'pp', t: now, p: m.path, r: Math.round(m.rtt || 0), gp: gap, q });
+  if (net.has('dc', m.id)) net.via('dc', pp('dc'), m.id);
+  if (net.has('mq', m.id) && (m.pc % 2 === 0 || m.path !== 'dc')) net.via('mq', pp('mq'), m.id);
+  if (net.has('rt', m.id) && (m.path === 'rt' || rtWanted(m, now))) net.via('rt', pp('rt'), m.id);
+}
+function probeAll(now) {
+  const R0 = KN.room; if (!R0 || !KN.host || !net.L) return;
+  for (const m of R0.mem) if (m.id !== MYID) probeOne(m, now);
+}
+// 近くの中継が切れた・つながった：その道を使っている人には、すぐ道を変えて知らせる
+RT.onChange(() => {
+  if (!net.L) return;
+  if (KN.host) { const R0 = KN.room; if (R0) { const now = realNow(); for (const m of R0.mem) if (m.id !== MYID && m.path === 'rt' && !net.has('rt', m.id)) probeOne(m, now); } }
+  else if (net.L.rtLost && net.L.rtLost()) net.send({ y: 'rtx' });
+});
 function roomPub(to) {
   const R0 = KN.room; if (!R0 || !KN.host) return;
   R0.ver++; KN.lastPub = realNow();
@@ -849,21 +1072,24 @@ function hostOnMsg(m, from, via) {
   if (!m || typeof m !== 'object') return;
   const R0 = KN.room; if (!R0) return;
   const mem = R0.mem.find(x => x.id === from);
-  if (mem) { mem.last = realNow(); mem.via = via; }
+  if (mem) { mem.last = realNow(); mem.via = via; mem.vt[via] = mem.last; }
   switch (m.y) {
     case 'hello': {
       const deny = w => { net.send({ y: 'deny', w }, from); setTimeout(() => { if (net.L && net.L.forget && !(KN.room && KN.room.mem.some(x => x.id === from))) net.L.forget(from); }, 3000); };
       if (m.p !== PROTO || m.b !== BUILD) { deny('ver'); return; }
       if (mem) { if (typeof m.nm === 'string') mem.nm = m.nm.slice(0, 12) || mem.nm; if (typeof m.lo === 'string') mem.lo = m.lo.slice(0, 80); roomPub(); return; }
       if (R0.mem.length >= MAXP) { deny('full'); return; }   // 試合中でも部屋には入れる（つぎの試合から）
-      R0.mem.push({ id: from, nm: String(m.nm || '').slice(0, 12) || 'エビ', lo: typeof m.lo === 'string' ? m.lo.slice(0, 80) : '', rtt: 0, last: realNow(), via });
+      R0.mem.push(newMem(from, String(m.nm || '').slice(0, 12) || 'エビ', typeof m.lo === 'string' ? m.lo.slice(0, 80) : '', via));
+      if (net.L && net.L.rtAdd) net.L.rtAdd(from);   // 近くの中継：その人のチャンネルに入っておく
       if (R0.cpu > MAXP - R0.mem.length) R0.cpu = Math.max(0, MAXP - R0.mem.length);
       autoCheck(); roomPub(); uiRender(); return;
     }
     case 'lo': if (mem && typeof m.lo === 'string') { mem.lo = m.lo.slice(0, 80); roomPub(); uiRender(); } return;
     case 'bye': if (mem) memberGone(mem, 'left'); return;
-    case 'ping': net.send({ y: 'pong', t: m.t }, from); return;
-    case 'pong': if (mem && typeof m.t === 'number') { const r = realNow() - m.t; mem.rtts = (mem.rtts || []).concat(r).slice(-7); mem.rtt = median(mem.rtts); } return;
+    case 'pq':   // 道ごとの往復の時間（ホストが送った 'pp' の返事。来た道の分としてかぞえる）
+      if (mem && typeof m.t === 'number' && mem.pr[via]) { const t = realNow(), r = t - m.t; if (r >= 0 && r < 20000) { mem.pr[via] = mem.pr[via].concat(r).slice(-5); mem.pt[via] = t; } }
+      return;
+    case 'rtx': if (mem) { mem.vt.rt = 0; probeOne(mem, realNow()); } return;   // 相手の近くの中継が切れた
     case 'go': if (mem) mem.go = m.mid; return;
     case 'quit': if (mem && LS.on && LS.host && m.mid === LS.mid) quitSlot(mem.id); return;   // 試合だけやめた（部屋にはいる）
     case 'i': onInputs(m, from); return;
@@ -891,7 +1117,7 @@ function hostStart() {
   const lv = R0.lv in LVN ? R0.lv : 'normal', ncpu = clampN(R0.cpu | 0, 0, MAXP - R0.mem.length);
   const list = R0.mem.map(m => ({ h: 1, id: m.id, nm: m.nm, code: m.id === MYID ? myCode() : (decodeLoadout(m.lo || '') ? m.lo : '') }));
   for (let i = 0; i < ncpu; i++) list.push({ h: 0, nm: 'CPU ' + CPUN[i % CPUN.length] });
-  const maxRtt = Math.max(0, ...R0.mem.filter(m => m.id !== MYID).map(m => m.rtt || 0));
+  const maxRtt = Math.max(0, ...R0.mem.filter(m => m.id !== MYID).map(m => m.eff || m.rtt || 0));
   const D = Math.max(4, Math.min(40, Math.ceil((maxRtt + 50) / TICK)));
   R0.mid = rid(); R0.ph = 'play'; R0.autoAt = 0; R0.res = null; R0.resT = '';
   const S = { y: 'start', mid: R0.mid, seed: (Math.random() * 4294967296) >>> 0, D, lv, list };
@@ -925,8 +1151,12 @@ function guestOnMsg(m, from, via) {
     case 'dd': if (LS.on && m.mid === LS.mid && Number.isInteger(m.D)) LS.D = clampN(m.D, 2, 40); return;
     case 'f': onFrames(m); return;
     case 'snap': onSnap(m); return;
-    case 'ping': net.send({ y: 'pong', t: m.t }); return;
-    case 'pong': if (typeof m.t === 'number') { KN.rtts = KN.rtts.concat(realNow() - m.t).slice(-7); KN.rtt = median(KN.rtts); } return;
+    case 'pp':   // ホストからの道しらべ：来た道で返事をする。ホストが選んだ道・往復の時間・中継で送る間隔も入っている
+      if (typeof m.t === 'number' && PATHS.includes(via)) net.via(via, { y: 'pq', t: m.t });
+      if (net.L && PATHS.includes(m.p)) net.L.want = m.p;
+      if (typeof m.r === 'number' && m.r >= 0 && m.r < 60000) KN.rtt = m.r;
+      if (net.L && Number.isInteger(m.gp)) net.L.gap = clampN(m.gp, 30, 2000);
+      return;
     case 'bye': KN.leave('ホストが部屋をとじました'); return;
   }
 }
@@ -956,7 +1186,7 @@ KN.beginLockstep = function (S) {
   G.world = w; G.ctrl = {}; G.acc = 0; G.endT = null; G.camPos = null;
   const L = G.local; L.clearEdges(); L.fireHeld = false; L.tsx = L.tsy = 0; L.keys = {};
   Object.assign(LS, {
-    host: KN.host, n: hk.length, slot: hk.indexOf(meK), meK, list, hk, ctrls, D, D0: D, lastTgt: D - 1, lastInp: 0, dT: realNow(), dWait: 0, dLow: 0, tick: 0, mid: S.mid,
+    host: KN.host, n: hk.length, slot: hk.indexOf(meK), meK, list, hk, ctrls, D, D0: D, lastTgt: D - 1, lastInp: 0, dT: realNow(), dWait: 0, dLow: 0, dFast: false, tick: 0, mid: S.mid,
     frames: new Map(), snaps: new Map(), inb: hk.map(() => new Map()), nf: D, ackIn: hk.map(() => D - 1), gs: new Map(), gone: hk.map(() => false), qs: [],
     myIn: new Map(), myTop: D - 1, sentIn: D - 1, hostAck: D - 1, lf: D - 1, lastSendIn: 0, lastResendIn: 0, rlt: 0,
     budget: 0, lastReal: realNow(), lastStep: realNow(), lastFrameAt: realNow(), hh: new Map(), gh: new Map(),
@@ -1056,7 +1286,7 @@ function specCam(f, dt, alpha) {
   if (!G.camPos || G.specFor !== f.id) { G.camPos = want.clone(); G.specFor = f.id; } else G.camPos.lerp(want, 1 - Math.exp(-9 * dt));
   cam.position.copy(G.camPos);
   cam.lookAt(x + F.x * 10, y + F.y * 10 + 1.5, z + F.z * 10);
-  cam.fov += (68 - cam.fov) * Math.min(1, dt * 6); cam.updateProjectionMatrix();
+  cam.fov += ((G.fov || 68) - cam.fov) * Math.min(1, dt * 6); cam.updateProjectionMatrix();
 }
 function specNext() {
   const w = G.world; if (!LS.on || !w) return;
@@ -1067,8 +1297,10 @@ function specNext() {
 function uiPlay(now) {
   const w = G.world, me = w && w.get('p1');
   const stall = now - LS.lastStep > 400;
-  const rtt = LS.host ? Math.max(0, ...(KN.room ? KN.room.mem.filter(m => m.id !== MYID).map(m => m.rtt || 0) : [0])) : KN.rtt;
-  const txt = stall ? '🌐 <b>通信待ち…</b>' : `🌐 ${Math.round(rtt)}ms`;
+  let rtt = 0, pth = '';   // ホストは、いちばん遅い人の分を出す
+  if (LS.host) { let w = null; if (KN.room) for (const m of KN.room.mem) if (m.id !== MYID && LS.gs.has(m.id) && (!w || (m.rtt || 0) > (w.rtt || 0))) w = m; if (w) { rtt = w.rtt || 0; pth = w.path; } }
+  else { rtt = KN.rtt; pth = net.path(); }
+  const txt = stall ? '🌐 <b>通信待ち…</b>' : `🌐 ${Math.round(rtt)}ms${PNAME[pth] ? '・' + PNAME[pth] : ''}`;
   if (badge._t !== txt) { badge._t = txt; badge.innerHTML = txt; }
   let sp = '', win = false;
   if (LS.endT >= 0 && LS.rank) { const r = LS.rank[0]; win = true; sp = r ? (r.me ? 'あなたの勝ち！' : esc(r.cpu ? r.nm : r.nm + ' さん') + ' の勝ち') : ''; }
@@ -1077,12 +1309,12 @@ function uiPlay(now) {
   document.documentElement.classList.toggle('enet-dead', !!(me && me.dead));
 }
 
-/* ---------- 定期の仕事（1秒ごと：ping・いなくなった人・ランダムの募集・自動スタート） ---------- */
+/* ---------- 定期の仕事（1秒ごと：道しらべ・いなくなった人・ランダムの募集・自動スタート） ---------- */
 setInterval(() => {
   if (!net.L) return;
   const now = realNow(), R0 = KN.room;
-  net.send({ y: 'ping', t: now });
   if (KN.host && R0) {
+    probeAll(now);
     for (const m of R0.mem.slice()) if (m.id !== MYID && now - m.last > (LS.on ? 9000 : 15000)) memberGone(m, 'lost');
     // 試合の入力が12秒とどかない人（画面を切りかえて止まっているなど）は、この試合からだけ外す（部屋にはのこる）
     if (LS.on && LS.host) for (const g of [...LS.gs.values()]) if (now - g.lastIn > 12000) { net.send({ y: 'drop', mid: LS.mid }, g.id); quitSlot(g.id); LS.gs.delete(g.id); }
@@ -1241,7 +1473,7 @@ function memRows(R0) {
   const mem = R0.mem || [];
   let h = '';
   mem.forEach((m, i) => {
-    const r = m.id === MYID ? '' : KN.host ? (m.rtt ? Math.round(m.rtt) + 'ms' : '') : (i === 0 && KN.rtt ? Math.round(KN.rtt) + 'ms' : '');
+    const r = m.id === MYID ? '' : KN.host ? (m.rtt ? Math.round(m.rtt) + 'ms' + (PNAME[m.path] ? '・' + PNAME[m.path] : '') : '') : (i === 0 && KN.rtt ? Math.round(KN.rtt) + 'ms・' + PNAME[net.path()] : '');
     h += `<li class="${m.id === MYID ? 'me' : ''}"><span><i class="dot" style="background:${PAL[i % PAL.length]}"></i><b>${esc(m.nm)}</b>${m.id === MYID ? ' <small>（あなた）</small>' : ''}${i === 0 ? ' <small>ホスト</small>' : ''}<br><small>${esc(loInfo(m.lo) || '（機体を待っています）')}</small></span><small>${r}</small></li>`;
   });
   const nc = Math.min(R0.cpu | 0, MAXP - mem.length);
@@ -1267,7 +1499,7 @@ function uiRender(soft) {
     h = `<div class="er"><label><span class="lbl">なまえ</span><input id="enetName" maxlength="12" value="${esc(KN.me.nm)}" placeholder="エビ" autocomplete="off"></label></div>
       <div class="er"><button class="big go2" type="button" data-k="create">部屋をつくる</button><button class="big" type="button" data-k="random">ランダム</button></div>
       <div class="er"><input id="enetCode" inputmode="numeric" maxlength="4" placeholder="1234" autocomplete="off"><button type="button" data-k="join">コードで入る</button></div>
-      <p class="en">最大6人の乱戦（全員が敵）。最後まで飛んでいた人の勝ちです。ホストは CPU を足せます。<br>「部屋をつくる」と4けたの部屋コードが出ます。友だちは「コードで入る」にそのコードを入れます。「ランダム」は、相手をさがしている人と組みます。<br>それぞれ自分の格納庫の機体・衣・装備で出撃します（所持金は使いません）。通信が遅いと、操作が少しおくれて届きます。</p>`;
+      <p class="en">最大6人の乱戦（全員が敵）。最後まで飛んでいた人の勝ちです。ホストは CPU を足せます。<br>「部屋をつくる」と4けたの部屋コードが出ます。友だちは「コードで入る」にそのコードを入れます。「ランダム」は、相手をさがしている人と組みます。<br>それぞれ自分の格納庫の機体・衣・装備で出撃します（所持金は使いません）。<br>通信は、いちばん速い道を自動で選びます（直接 → 中継 → 遠い中継）。通信が遅いと、操作が少しおくれて届きます。</p>`;
   } else if (KN.ui === 'wait') {
     h = `<p>${esc(KN.waitText || 'つないでいます…')}</p><div class="er"><button type="button" data-k="cancel">やめる</button></div>`;
   } else if (KN.ui === 'room' && KN.room) {
@@ -1318,5 +1550,5 @@ addEventListener('click', e => {
   else if (net.L && !LS.on && (t.closest('#go') || t.closest('#again'))) { e.stopImmediatePropagation(); e.preventDefault(); KN.open(); }
 }, true);
 
-window.ENET = { KN, LS, MQ, net, BUILD, MYID, stateHash, capSnap, applySnap, DMATH, ranking, mb32, setD };
+window.ENET = { KN, LS, MQ, RT, net, BUILD, MYID, stateHash, capSnap, applySnap, DMATH, ranking, mb32, setD, rtGap, PNAME };
 })();

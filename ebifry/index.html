@@ -1,4 +1,4 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
 <title>空飛ぶエビフライ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -186,6 +186,26 @@ details.code summary{font-weight:900;font-size:13px;color:var(--tartar-dim);curs
 </style>
 
 <style>/* ===== 風の芽経済組で足したところ：もどるリンク（格納庫の画面の右上） ===== */
+/* iPad・スマホ：ダブルタップで拡大しない（スクロールはできる）。入力欄をさわっても拡大しないよう 16px */
+html,body{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+*{touch-action:manipulation}
+.code-row input{font-size:16px}
+/* マイプリセット（自分のエビを保存） */
+.presets{display:flex;gap:8px;overflow-x:auto;touch-action:pan-x pan-y;padding:8px 2px 4px;margin-top:-8px;scrollbar-width:thin}
+.ps{position:relative;flex:none}
+.ps-b{display:grid;justify-items:center;gap:3px;width:96px;padding:8px 5px 7px;border-radius:12px;background:var(--soy);border:2px solid transparent;font-size:11.5px;font-weight:900;line-height:1.2;text-align:center}
+.ps-b svg{width:62px;height:auto}
+.ps-b b{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ps-b small{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--tartar-dim);font-weight:700;white-space:nowrap}
+.ps-b small i{width:12px;height:12px;border-radius:50%;background-size:40px;background-position:center;flex:none}
+.ps-b[aria-pressed="true"]{border-color:var(--fry);background:var(--soy-3)}
+.ps-x{position:absolute;top:-7px;right:-5px;width:26px;height:26px;border-radius:50%;background:var(--soy-3);border:1px solid var(--line);font-size:14px;font-weight:900;line-height:1;display:grid;place-items:center;color:var(--tartar-dim)}
+.ps-empty{margin:0;font-size:12px;color:var(--tartar-dim);line-height:1.5}
+.ps-row{margin-top:0}
+/* 視野角のスライダー */
+.seg.fovr{align-items:center;gap:10px;flex-wrap:nowrap}
+.fovr input{flex:1;min-width:0;height:30px;margin:0;accent-color:var(--fry)}
+.fovr b{flex:none;min-width:2.6em;text-align:right;font-family:var(--display);font-weight:400;font-size:16px;font-variant-numeric:tabular-nums}
 .h-head{position:relative}
 #axBack{position:absolute;top:12px;right:16px;z-index:2;color:var(--tartar);text-decoration:none;font:700 13px var(--body);border:2px solid var(--line);border-radius:999px;padding:5px 12px;background:rgba(0,0,0,.28);white-space:nowrap}
 #axBack:hover,#axBack:focus-visible{border-color:var(--fry);outline:none}
@@ -212,6 +232,9 @@ details.code summary{font-weight:900;font-size:13px;color:var(--tartar-dim);curs
     </div>
   </div>
   <section class="panel" id="panel">
+    <p class="sec-l">マイプリセット <span id="psNote"></span></p>
+    <div class="presets" id="psSel"></div>
+    <div class="code-row ps-row"><input id="psName" maxlength="12" placeholder="名前（なくてもOK）" aria-label="プリセットの名前" autocomplete="off"><button id="psSave">今のエビを保存</button></div>
     <p class="sec-l">機体</p>
     <div class="bodies" id="bodySel"></div>
     <p class="sec-l">衣 <span id="coatDesc"></span></p>
@@ -244,6 +267,15 @@ details.code summary{font-weight:900;font-size:13px;color:var(--tartar-dim);curs
           <button id="l-normal" data-v="normal">ふつう</button>
           <button id="l-hard" data-v="hard">つよい</button>
         </div>
+      </div>
+      <div class="opt"><span class="opt-l">上下</span>
+        <div class="seg" id="segInv">
+          <button id="v-n" data-v="n">ふつう<small>上に倒すと上へ</small></button>
+          <button id="v-r" data-v="r">反転<small>上に倒すと下へ</small></button>
+        </div>
+      </div>
+      <div class="opt"><span class="opt-l">視野角</span>
+        <div class="seg fovr"><input type="range" id="fovIn" min="50" max="100" step="2" value="68" aria-label="視野角（広いほど、まわりがよく見える）"><b id="fovNum">68°</b></div>
       </div>
     </div>
     <details class="code">
@@ -697,7 +729,7 @@ class LocalController{
   getInput(){
     const k=this.keys;let sx=this.tsx,sy=this.tsy;
     if(k.ArrowLeft||k.KeyA)sx-=1;if(k.ArrowRight||k.KeyD)sx+=1;if(k.ArrowUp||k.KeyW)sy+=1;if(k.ArrowDown||k.KeyS)sy-=1;
-    return{sx:clamp(sx,-1,1),sy:clamp(sy,-1,1),fire:this.fireHeld||!!k.Space,sw:this.sw,dash:this.dash,waza:this.waza.slice()};
+    return{sx:clamp(sx,-1,1),sy:G.inv?(-clamp(sy,-1,1)||0):clamp(sy,-1,1),fire:this.fireHeld||!!k.Space,sw:this.sw,dash:this.dash,waza:this.waza.slice()};
   }
   clearEdges(){this.sw=false;this.dash=false;this.waza=[false,false,false,false]}
 }
@@ -945,7 +977,7 @@ const FIRE_SND={wasabi:'rail',curry:'rail'};
 function setSound(on,quiet){G.sound=on;Snd.on=on;const b=$('bSound');if(b)b.textContent=on?'音 入':'音 切';if(!quiet){save();if(on){Snd.init();Snd.play('click')}}}
 
 /* ===== [6] 画面・HUD・操作 ========================================= */
-const G={state:'loading',world:null,ctrl:{},local:new LocalController(),acc:0,endT:null,won:false,mode:'duel',level:'normal',
+const G={state:'loading',world:null,ctrl:{},local:new LocalController(),acc:0,endT:null,won:false,mode:'duel',level:'normal',inv:false,fov:68,
   body:'magari',tab:'weapon',camPos:null,last:0,playerId:'p1',sound:true,
   loadouts:{hoso:['edamame','shippo','salt','lettuce','ebizori','warp'],futo:['tartar','ketchup','butter','foil','barrier','koromo'],magari:['ketchup','karashi','shichimi','toothpick','spin','shippo']},
   coats:{hoso:'tempura',futo:'corn',magari:'panko'}};
@@ -960,13 +992,14 @@ const BODY_SVG={
   magari:'<path d="M9 15C18 4 40 1 54 7C57 9 57 12 54 13C40 8 22 10 12 17Z" fill="#e3a64a"/><path d="M10 16L2 12L5 16L3 20Z" fill="#e2522c"/>',
 };
 
-function save(){try{localStorage.setItem('ebifry-v3',JSON.stringify({body:G.body,loadouts:G.loadouts,coats:G.coats,mode:G.mode,level:G.level,sound:G.sound}))}catch(e){}}
+function save(){try{localStorage.setItem('ebifry-v3',JSON.stringify({body:G.body,loadouts:G.loadouts,coats:G.coats,mode:G.mode,level:G.level,sound:G.sound,inv:G.inv,fov:G.fov}))}catch(e){}}
 function restore(){try{
   const d3=JSON.parse(localStorage.getItem('ebifry-v3')||'null');
   const fits=(b,lo)=>Array.isArray(lo)&&lo.every(id=>ITEMS[id])&&loadOf(lo)<=BODIES[b].cap&&lo.filter(id=>ITEMS[id].kind==='waza').length<=MAX_WAZA;
   if(d3){if(BODIES[d3.body])G.body=d3.body;
     for(const b of BODY_ORDER){if(d3.loadouts&&fits(b,d3.loadouts[b]))G.loadouts[b]=d3.loadouts[b];if(d3.coats&&COATS[d3.coats[b]])G.coats[b]=d3.coats[b]}
-    if(d3.mode)G.mode=d3.mode;if(d3.level)G.level=d3.level;if(typeof d3.sound==='boolean')G.sound=d3.sound;return}
+    if(d3.mode)G.mode=d3.mode;if(d3.level)G.level=d3.level;if(typeof d3.sound==='boolean')G.sound=d3.sound;
+    if(typeof d3.inv==='boolean')G.inv=d3.inv;if(Number.isFinite(d3.fov))G.fov=Math.max(50,Math.min(100,Math.round(d3.fov)));return}
   const d=JSON.parse(localStorage.getItem('ebifry-v2')||'null');if(!d)return;
   if(BODIES[d.body]){G.body=d.body;if(fits(d.body,d.lo))G.loadouts[d.body]=d.lo}
   if(d.mode)G.mode=d.mode;if(d.level)G.level=d.level}catch(e){}}
@@ -997,9 +1030,36 @@ function renderHangar(){
   document.querySelectorAll('#segMode button[data-v]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===G.mode)));
   document.querySelectorAll('#segLevel button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===G.level)));
   document.querySelectorAll('#segSound button').forEach(b=>b.setAttribute('aria-pressed',String((b.dataset.v==='on')===G.sound)));
+  document.querySelectorAll('#segInv button').forEach(b=>b.setAttribute('aria-pressed',String((b.dataset.v==='r')===G.inv)));
+  $('fovIn').value=G.fov;$('fovNum').textContent=G.fov+'°';
   $('codeOut').value=encodeLoadout(G.body,G.coat,lo);
+  renderPresets();
   rebuildPreview();
 }
+/* ---- マイプリセット（自分のエビを名前つきで保存。中身は装備コード）：風の芽経済組で足したもの ---- */
+const PS_KEY='ebifry-presets',PS_MAX=12;
+const psEsc=t=>String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function psList(){try{const a=JSON.parse(localStorage.getItem(PS_KEY)||'[]');return Array.isArray(a)?a.filter(p=>p&&typeof p.nm==='string'&&typeof p.code==='string'&&decodeLoadout(p.code)).slice(0,PS_MAX):[]}catch(e){return[]}}
+function psPut(a){try{localStorage.setItem(PS_KEY,JSON.stringify(a));return true}catch(e){toast('保存できませんでした（このブラウザでは保存が止められています）');return false}}
+function renderPresets(){
+  const a=psList(),cur=encodeLoadout(G.body,G.coat,G.loadout);
+  $('psNote').textContent=a.length?`${a.length}/${PS_MAX}・さわると呼び出します`:'';
+  $('psSel').innerHTML=a.length?a.map((p,i)=>{const d=decodeLoadout(p.code),nm=psEsc(p.nm);
+    return`<div class="ps"><button class="ps-b" data-i="${i}" aria-pressed="${p.code===cur}"><svg viewBox="0 0 60 22" aria-hidden="true">${BODY_SVG[d.body]}</svg><b>${nm}</b><small><i style="background-image:url(${coatSwatch(d.coat)})"></i>${COATS[d.coat].name}・${loadOf(d.lo)}g</small></button><button class="ps-x" data-x="${i}" aria-label="「${nm}」を消す">×</button></div>`}).join(''):'<p class="ps-empty">まだありません。今のエビ（機体・衣・装備）に名前をつけて保存すると、ここからすぐ呼び出せます</p>';
+}
+function psSaveCur(){
+  const inp=$('psName'),a=psList(),code=encodeLoadout(G.body,G.coat,G.loadout);
+  let nm=(inp.value||'').trim().slice(0,12);
+  if(!nm)for(let k=1;;k++){const t='マイエビ'+k;if(!a.some(p=>p.nm===t)){nm=t;break}}
+  const i=a.findIndex(p=>p.nm===nm);
+  if(i>=0)a[i]={nm,code};
+  else{if(a.length>=PS_MAX){toast(`いっぱいです（${PS_MAX}こまで）。いらないものを × で消してください`);Snd.play('deny');return}a.push({nm,code})}
+  if(!psPut(a))return;
+  inp.value='';inp.blur();Snd.play('equip');toast(i>=0?`「${nm}」を上書きしました`:`「${nm}」を保存しました`);renderPresets();
+}
+function psUse(i){const p=psList()[i],d=p&&decodeLoadout(p.code);if(!d)return;
+  G.body=d.body;G.coat=d.coat;G.loadout=d.lo.slice();Snd.play('equip');save();renderHangar();toast(`「${p.nm}」を呼び出しました`)}
+function psDel(i){const a=psList(),p=a[i];if(!p||!confirm(`マイプリセット「${p.nm}」を消しますか？`))return;a.splice(i,1);if(psPut(a)){Snd.play('unequip');renderPresets()}}
 const SWATCH={};
 function coatSwatch(c){return SWATCH[c]||(SWATCH[c]=coatCanvas(c).toDataURL())}
 function rebuildPreview(){
@@ -1166,7 +1226,7 @@ function updateCamera(w,dt,alpha){
   cam.position.copy(G.camPos);
   if(R.shake>0){cam.position.x+=(Math.random()-.5)*R.shake*1.2;cam.position.y+=(Math.random()-.5)*R.shake*1.2;R.shake=Math.max(0,R.shake-dt*2.5)}
   cam.lookAt(x+F.x*(rear?28:10)*k,y+F.y*10*k+(rear?3:1.5),z+F.z*(rear?28:10)*k);
-  const fov=68+(me.dashT>0&&!rear?14:0)+(w.act(me,'boost')?6:0);cam.fov+=(fov-cam.fov)*Math.min(1,dt*6);cam.updateProjectionMatrix();
+  const fov=G.fov+(me.dashT>0&&!rear?14:0)+(w.act(me,'boost')?6:0);cam.fov+=(fov-cam.fov)*Math.min(1,dt*6);cam.updateProjectionMatrix();
 }
 function drawMinimap(w){
   const cv=$('mini'),g=cv.getContext('2d'),S=cv.width,C=S/2,me=w.get('p1'),range=280,sc=(C-8)/range;
@@ -1292,6 +1352,12 @@ function bindHangar(){
   document.querySelectorAll('.tabs button').forEach(b=>b.addEventListener('click',()=>{G.tab=b.dataset.tab;Snd.play('click');renderHangar()}));
   document.querySelectorAll('#segMode button[data-v]').forEach(b=>b.addEventListener('click',()=>{G.mode=b.dataset.v;save();renderHangar()}));
   document.querySelectorAll('#segLevel button').forEach(b=>b.addEventListener('click',()=>{G.level=b.dataset.v;save();renderHangar()}));
+  document.querySelectorAll('#segInv button').forEach(b=>b.addEventListener('click',()=>{G.inv=b.dataset.v==='r';Snd.play('click');save();renderHangar()}));
+  $('fovIn').addEventListener('input',e=>{G.fov=Math.max(50,Math.min(100,Math.round(+e.target.value)||68));$('fovNum').textContent=G.fov+'°'});
+  $('fovIn').addEventListener('change',()=>save());
+  $('psSave').addEventListener('click',psSaveCur);
+  $('psName').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();psSaveCur()}});
+  $('psSel').addEventListener('click',e=>{const x=e.target.closest('.ps-x');if(x){psDel(+x.dataset.x);return}const b=e.target.closest('.ps-b');if(b)psUse(+b.dataset.i)});
   $('copyCode').addEventListener('click',()=>{const inp=$('codeOut');
     try{navigator.clipboard.writeText(inp.value).then(()=>$('codeMsg').textContent='コピーしました',()=>{inp.select();$('codeMsg').textContent='選択したので手動でコピーしてください'})}
     catch(e){inp.select();$('codeMsg').textContent='選択したので手動でコピーしてください'}});
@@ -1303,6 +1369,9 @@ function bindHangar(){
   $('again').addEventListener('click',startBattle);
   $('toHangar').addEventListener('click',()=>setState('hangar'));
 }
+// iPad・iPhone：ダブルタップやピンチで画面が拡大しないように（風の芽経済組で足したもの）
+document.addEventListener('dblclick',e=>e.preventDefault(),{passive:false});
+for(const t of ['gesturestart','gesturechange','gestureend'])document.addEventListener(t,e=>e.preventDefault(),{passive:false});
 function resize(){R.renderer.setSize(innerWidth,innerHeight);R.camera.aspect=innerWidth/innerHeight;R.camera.updateProjectionMatrix()}
 
 function boot(){
@@ -1317,6 +1386,7 @@ function boot(){
 }
 boot();
 </script>
-<script src="net.js?v=6b261bc8"></script>
+<script src="../config.js"></script>
+<script src="net.js?v=49776a76"></script>
 
 </body></html>
