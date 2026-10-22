@@ -1172,6 +1172,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   </div>
   <div class="card" data-sub="stock"><h3 style="margin-top:0">持ち株</h3><div id="stList"></div>
     <p class="muted small" style="margin:8px 0 0">株（有限会社・合同会社は出資）を持っていると、会社が配当を出したとき、持ち分に合わせてもらえます。「ゆずる・売る」で代金をつけると、相手が払ったときに株が動きます（手数料1%は買う人。代金つきもできる）。</p></div>
+  <div class="card" data-sub="map" style="padding:8px"><div id="mpRoot"></div></div>
   <p class="muted small" data-sub="search pin" style="margin:8px 4px">ブロックなどゲーム内アイテムは、会社の商品として売り買いできます。今後：Discord連携の送金・借入も企業から使えるようにする予定です。</p>
 </section>
 
@@ -1952,13 +1953,13 @@ const MENU = [
   ['vWork', '仕事', '✎', [['jobs', '仕事をえらぶ'], ['stat', '給料'], ['corp', '企業ページ'], ['mywork', '勤め先']]],
   ['vGame', '遊戯', '♠', [['vGameList', '≡ 一覧'], ['vTask', '★ タスク'], ['vRace', '🏇 競馬'], ['vBoat', '🚤 競艇'], ['vBike', '🚲 競輪'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
   ['vHome', 'メイン', '◉', [['menu', 'メニュー'], ['horses', '所持馬'], ['friend', 'フレンド'], ['msg', '連絡']]],
-  ['vCorp', '企業', LANG !== 'ja' ? '🏢' : '社', [['search', '会社検索'], ['review', '評価（500 X）'], ['pin', 'ピン留め'], ['desk', '相談'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所']]],
+  ['vCorp', '企業', LANG !== 'ja' ? '🏢' : '社', [['search', '会社検索'], ['review', '評価（500 X）'], ['pin', 'ピン留め'], ['desk', '相談'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所'], ['map', '国土']]],
   ['vTax', '役所', LANG !== 'ja' ? '🏛' : '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['court', '訴え'], ['kokko', '国庫・番付']]],
   ['vMore', '設定', '⚙', [['prof', 'プロフィール'], ['style', 'スタイル'], ['hist', '記録'], ['rule', '規約']]],
 ];
 const MENU_OF = Object.fromEntries(MENU.map(m => [m[0], m]));
 // まだ公開していないゲーム（サーバーの ME.beta にあるもの）は、一覧では準備中・タブにも出さない（ログインの前は全部かくす）
-const BETA = { vBoat: 'boat', vBike: 'bike', auction: 'auction', koikoi: 'koikoi', vFish: 'fishing', vOwner: 'owner' };
+const BETA = { vBoat: 'boat', vBike: 'bike', auction: 'auction', koikoi: 'koikoi', vFish: 'fishing', vOwner: 'owner', map: 'map' };
 const betaHidden = id => !!BETA[id] && (!ME.beta || ME.beta.includes(BETA[id]));
 $('#tabs .wrap').innerHTML = MENU.map(m => `<button data-v="${m[0]}" class="${m[0] === 'vHome' ? 'tb-mid' : ''}"><b>${m[2]}</b>${m[1]}${m[0] === 'vHome' ? '<i class="tb-n hidden" id="msgN"></i>' : ''}</button>`).join('');
 function go(v, sub) {
@@ -1969,6 +1970,7 @@ function go(v, sub) {
   sub = sub || sessionStorageGet('sub:' + main);
   if (!subs.some(x => x[0] === sub) && !HIDDEN_SUBS.includes(sub)) sub = subs[0][0];
   if (sub !== 'vRoom') roomStop();
+  if (window.MapApp && !(main === 'vCorp' && sub === 'map')) MapApp.pause();
   try { sessionStorage.setItem('view', main); sessionStorage.setItem('sub:' + main, sub); } catch (e) {}
   const sec = main === 'vGame' ? sub : main;
   view = sec;
@@ -4858,6 +4860,16 @@ const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>
   ${c.rating && c.rating.n ? `<small>${ratingH(c.rating)}</small>` : ''}</span>${c.pinned ? '📌' : ''}</div>`;
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
+// 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
+const MAPV = '47a';
+let mapLoading = null;
+function mapScripts() {
+  if (window.MapApp) return Promise.resolve();
+  if (mapLoading) return mapLoading;
+  const add = src => new Promise((ok, ng) => { const e = document.createElement('script'); e.src = src; e.onload = ok; e.onerror = () => { mapLoading = null; ng(new Error('地図を読みこめませんでした')); }; document.head.appendChild(e); });
+  return (mapLoading = Promise.all([add('map/palette.js?v=' + MAPV), add('map/worldgen.js?v=' + MAPV)]).then(() => add('map/map.js?v=' + MAPV)));
+}
+async function mapOpen() { await mapScripts(); await MapApp.open($('#mpRoot')); }
 async function corpLoad(sub) {
   try {
     if (sub === 'search') await coSearch();
@@ -4881,6 +4893,7 @@ async function corpLoad(sub) {
     }
     if (sub === 'stock') await stockLoad();
     if (sub === 'invest') await Promise.all([fxLoad(), stkListLoad()]);
+    if (sub === 'map') await mapOpen();
     if (sub === 'order') {
       const d = await call('my_orders');
       $('#odList').innerHTML = d.length ? d.map(o => `<div class="co-row" data-cid="${o.cid}"><span class="nm"><b>${esc(o.item)}</b>
@@ -5893,7 +5906,7 @@ function homeLoad(sub) {
 // よく使うメニュー：えらべるもの（メニューのサブメニューと、対戦ゲーム）
 const HM_IC = { 'vInfo:today': '📰', 'vInfo:cur': '💱', 'vInfo:pub': '📚', 'vInfo:mkt': '📈', 'vInfo:tl': '💬', 'vInfo:people': '🔍', 'vInfo:jack': '🏆',
   'vWork:jobs': '🛠️', 'vWork:stat': '💴', 'vWork:corp': '🏢', 'vWork:mywork': '👔', 'vCorp:search': '🔎', 'vCorp:review': '⭐', 'vCorp:pin': '📌',
-  'vCorp:desk': '🗨️', 'vCorp:job': '📋', 'vCorp:bank': '🏦', 'vCorp:order': '🛍️', 'vCorp:stock': '📊', 'vCorp:invest': '💹', 'vTax:tax': '🧾',
+  'vCorp:desk': '🗨️', 'vCorp:job': '📋', 'vCorp:bank': '🏦', 'vCorp:order': '🛍️', 'vCorp:stock': '📊', 'vCorp:invest': '💹', 'vCorp:map': '🗾', 'vTax:tax': '🧾',
   'vTax:xfer': '💸', 'vTax:bill': '📨', 'vTax:court': '⚖️', 'vTax:kokko': '🏛️', 'vMore:prof': '👤', 'vMore:hist': '📜', 'vMore:rule': '📖',
   'vMore:admin': '🛡️', 'vMore:users': '🗂️', 'vHome:friend': '👥', 'vHome:msg': '✉️', 'vHome:horses': '🐴', 'vGame:vGameList': '🎮' };
 const HM_DEF = ['vGame:vTask', 'vGame:vRace', 'vInfo:today', 'vHome:msg', 'vWork:jobs', 'vTax:xfer', 'vCorp:invest'];
@@ -7833,7 +7846,7 @@ $('#rvSend').onclick = async () => {
 };
 
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て', guest_rest: 'ゲストの残り（上限をこえた分・消えたゲスト）', lottery: '風の芽ジャンボ', auction: '競り市', boat: '競艇', keirin: '競輪', fishing: '釣り', review: '評価のお礼', gov_share: '国から株', owner: '馬主', owner_hold: 'せり（あずかり）', owner_back: 'せり（あずかりを返した）', task: 'タスクのごほうび' };
+const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て', guest_rest: 'ゲストの残り（上限をこえた分・消えたゲスト）', lottery: '風の芽ジャンボ', auction: '競り市', boat: '競艇', keirin: '競輪', fishing: '釣り', review: '評価のお礼', gov_share: '国から株', owner: '馬主', owner_hold: 'せり（あずかり）', owner_back: 'せり（あずかりを返した）', task: 'タスクのごほうび', map: '国土（工事・土地・車両）', map_in: '国土（運賃・家賃・維持費・使用料）' };
 // 記録のない所持金の動き（あずかり・返金など）は、呼ばれた操作から
 const MH_SRC = { room_move: '競り市・対戦（あずかり・返金）', room_state: '競り市・対戦（返金など）', room_list: '競り市・対戦（返金など）', room_join: '対戦の賭け金',
   room_start: '対戦の賭け金', room_leave: '対戦の賭け金（返金）', room_quit: '対戦の賭け金', stock_order: '株の注文（代金をあずかる）', stock_cancel: '株の注文の取り消し（返金）',
