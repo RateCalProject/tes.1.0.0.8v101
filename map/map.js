@@ -14,6 +14,7 @@ const EDEC = Float32Array.from({ length: 64 }, (_, i) => edec(i));
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const now = () => performance.now();
 const T = s => (typeof tr === 'function' ? tr(s) : s);
+const SEP = () => (window.I18N && !/^zh/.test(I18N.lang) ? ' ' : '');   // 訳した文をつなぐとき（日本語・中国語は空白なし）
 const X = n => fmt(n) + ' X';
 
 /* ---------- 状態 ---------- */
@@ -821,22 +822,31 @@ async function lookAt(x, y) {
   if (sg && (S.cam.z >= 3 || sg.s.k === 'rail' || ['exp', 'nat'].includes(sg.s.c))) return showSeg(sg.s, sg);
   return showTile(Math.floor(x), Math.floor(y));
 }
+// マスの上にあるもの（「駅：名前」「線路（路線名）・持ち主」など）：種類と名前を分けて出す（種類のことばだけ訳せるように）
+function onH(n) {
+  n = String(n || '');
+  let m = /^(駅|バス停|車庫)：(.*)$/.exec(n);
+  if (m) return `<span>${esc(m[1])}</span>：<span>${esc(m[2])}</span>`;
+  m = /^(高速道路|国道|県道|市道|私道|線路)(?:（(.*?)）)?(?:・(.*))?$/.exec(n);
+  if (m) return `<span>${esc(m[1])}</span>${m[2] ? `（<span>${esc(m[2])}</span>）` : ''}${m[3] ? `・<span>${esc(m[3])}</span>` : ''}`;
+  return esc(n);
+}
 const CLS_NAME = { exp: '高速道路', nat: '国道', pref: '県道', city: '市道', lane: '市道（細い道）', priv: '私道', rail: '線路' };
 async function showTile(tx, ty) {
   S.sel = { kind: 'tile', x: tx, y: ty }; S.dirty = true;
   const sh = sheet(`<h4>${tx}, ${ty}</h4><p class="muted small">しらべています…</p>`);
   const d = await api('mp_tile', { p_x: tx, p_y: ty }); if (!d || S.sheet !== sh || !S.sel || S.sel.x !== tx || S.sel.y !== ty) return;
   if (d.none) return sheet(`<h4>地図の外です</h4>`);
-  const on = (d.on || []).map(o => esc(o.name)).join('<br>');
+  const on = (d.on || []).map(o => onH(o.name)).join('<br>');
   sheet(`<h4>${esc(d.addr.text)}</h4>
-    <div class="mp-kv"><b>地形</b><span>${esc(d.ter)}${d.elev ? `（標高 約${d.elev}m）` : ''}</span><b>地目</b><span>${esc(d.chimoku)}</span>
+    <div class="mp-kv"><b>地形</b><span><span>${esc(d.ter)}</span>${d.elev ? `<small>（標高 約${d.elev}m）</small>` : ''}</span><b>地目</b><span>${esc(d.chimoku)}</span>
       <b>用途地域</b><span>${esc(d.zname)}</span><b>人の多さ</b><span>${fmt(d.dens)} 人/km²</span>
       ${d.value != null ? `<b>地価</b><span>${X(d.value)}（1マス・約2,500m²）</span>` : ''}
-      <b>持ち主</b><span>${d.owner ? esc(d.owner) + (d.mine ? '（あなた）' : '') : '国'}</span>
+      <b>持ち主</b><span>${d.owner ? `<span>${esc(d.owner)}</span>${d.mine ? '<small>（あなた）</small>' : ''}` : '国'}</span>
       ${d.sale != null ? `<b>売り出し</b><span>${X(d.sale)}</span>` : ''}
-      ${d.bld ? `<b>建物</b><span>${esc(BLD_NAME[d.bld] || d.bld)}${d.rent ? `（家賃 1日 ${X(d.rent)}）` : ''}</span>` : ''}
+      ${d.bld ? `<b>建物</b><span><span>${esc(BLD_NAME[d.bld] || d.bld)}</span>${d.rent ? `<small>（家賃 1日 ${X(d.rent)}）</small>` : ''}</span>` : ''}
       ${on ? `<b>あるもの</b><span>${on}</span>` : ''}
-      ${(d.leases || []).length ? `<b>使用料</b><span>${d.leases.map(l => `${esc(l.who)}：1日 ${X(l.fee)}`).join('<br>')}</span>` : ''}
+      ${(d.leases || []).length ? `<b>使用料</b><span>${d.leases.map(l => `<span>${esc(l.who)}</span>：<span>1日 ${X(l.fee)}</span>`).join('<br>')}</span>` : ''}
     </div>
     <div class="mp-row">${d.buy ? `<button class="btn main" data-buy>この土地を買う（${X(d.sale != null ? Math.ceil(d.sale * 1.03) : d.value)}）</button>` : (d.why ? `<span class="muted small">${esc(d.why)}</span>` : '')}
       ${d.mine ? `<button class="btn" data-sell>${d.sale != null ? '売り出しをやめる' : '売りに出す'}</button><button class="btn" data-bld>建物</button>` : ''}</div>`, s => {
@@ -850,8 +860,8 @@ const BLD_NAME = { house: '住宅', apt: 'マンション', shop: '商店', offi
 function showSeg(s, hit) {
   S.sel = { kind: 'seg', id: s.id }; S.dirty = true;
   const own = s.o === 'gov' ? '国' : (S.vis.names[s.o] || '');
-  sheet(`<h4>${esc(CLS_NAME[s.c] || s.c)}${s.n ? '・' + esc(s.n) : ''}</h4><p class="small muted" data-addr style="margin:0"></p>
-    <div class="mp-kv"><b>持ち主</b><span>${esc(own)}${s.mine && s.o !== 'gov' ? '（あなた）' : ''}</span>
+  sheet(`<h4><span>${esc(CLS_NAME[s.c] || s.c)}</span>${s.n ? `・<span>${esc(s.n)}</span>` : ''}</h4><p class="small muted" data-addr style="margin:0"></p>
+    <div class="mp-kv"><b>持ち主</b><span><span>${esc(own)}</span>${s.mine && s.o !== 'gov' ? '<small>（あなた）</small>' : ''}</span>
       <b>長さ</b><span>${fmt(Math.round(s.len * 50))} m</span>
       ${s.k === 'road' ? `<b>車線</b><span>${s.l ? '片側' + s.l + '車線' : '中央線なし'}</span>` : `<b>線路</b><span>${s.dbl ? '複線' : '単線'}・${s.el ? '電化' : '非電化'}</span>`}
       <b>制限速度</b><span>${s.v} km/h</span></div>
@@ -887,7 +897,7 @@ function segOpts(s) {
       sh.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
       sh.querySelector('[data-ok]').onclick = async () => {
         st.name = sh.querySelector('[data-nm]').value;
-        if (await api('mp_seg_opts', { p_id: s.id, p_dbl: st.dbl, p_elec: st.el, p_name: st.name, p_dry: false, p_lanes: st.l }, '変えました')) { refreshBox(...s.bb); sheet(null); }
+        if (await api('mp_seg_opts', { p_id: s.id, p_dbl: st.dbl, p_elec: st.el, p_name: st.name, p_dry: false, p_lanes: st.l }, '設定を変えました')) { refreshBox(...s.bb); sheet(null); }
       };
     });
   };
@@ -899,23 +909,23 @@ async function segDel(s) {
 }
 function showSta(s) {
   S.sel = { kind: 'sta', id: s.id }; S.dirty = true;
-  sheet(`<h4>${s.k === 'rail' ? '🚉 ' : '🚏 '}${esc(s.n)}${s.k === 'rail' ? '駅' : ''}</h4><p class="small muted" data-addr style="margin:0"></p>
-    <div class="mp-kv"><b>持ち主</b><span>${esc(S.vis.names[s.o] || '')}${s.mine ? '（あなた）' : ''}</span>
+  sheet(`<h4>${s.k === 'rail' ? '🚉 ' : '🚏 '}<span>${esc(s.n)}</span>${s.k === 'rail' ? '<span>駅</span>' : ''}</h4><p class="small muted" data-addr style="margin:0"></p>
+    <div class="mp-kv"><b>持ち主</b><span><span>${esc(S.vis.names[s.o] || '')}</span>${s.mine ? '<small>（あなた）</small>' : ''}</span>
       ${s.k === 'rail' ? `<b>ホーム</b><span>${s.pl} m・${s.tr}番線まで</span>` : ''}
       <b>系統</b><span>${(s.rt || []).map(r => `<a href="#" data-rt="${r.id}" style="color:${esc(r.c)};font-weight:800">■ ${esc(r.n)}</a>`).join('<br>') || 'なし'}</span></div>
     ${s.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button><button class="btn" data-del>こわす</button></div>` : ''}`, sh => {
     sh.querySelectorAll('[data-rt]').forEach(a => a.onclick = ev => { ev.preventDefault(); openDia(Number(a.dataset.rt)); });
-    const r = sh.querySelector('[data-ren]'); if (r) r.onclick = async () => { const nm = prompt(T('新しい名前'), s.n); if (nm && await api('mp_sta_edit', { p_id: s.id, p_name: nm, p_del: false }, '変えました')) refreshBox(s.fx - 3, s.fy - 3, s.fx + 3, s.fy + 3); };
+    const r = sh.querySelector('[data-ren]'); if (r) r.onclick = async () => { const nm = prompt(T('新しい名前'), s.n); if (nm && await api('mp_sta_edit', { p_id: s.id, p_name: nm, p_del: false }, '名前を変えました')) refreshBox(s.fx - 3, s.fy - 3, s.fx + 3, s.fy + 3); };
     const d = sh.querySelector('[data-del]'); if (d) d.onclick = async () => { if (confirm(T('こわしますか？（工事費はもどりません）')) && await api('mp_sta_edit', { p_id: s.id, p_name: null, p_del: true }, 'こわしました')) { refreshBox(s.fx - 3, s.fy - 3, s.fx + 3, s.fy + 3); sheet(null); } };
   });
   addrInto(Math.floor(s.fx), Math.floor(s.fy), () => S.sel && S.sel.kind === 'sta' && S.sel.id === s.id);
 }
 function showDep(d) {
   S.sel = { kind: 'dep', id: d.id }; S.dirty = true;
-  sheet(`<h4>🏭 ${esc(d.n)}</h4><div class="mp-kv"><b>種類</b><span>${d.k === 'rail' ? '車両基地' : 'バスの営業所'}（${d.sz}）</span><b>入る数</b><span>${d.cap}${d.k === 'rail' ? '両' : '台'}</span></div>
+  sheet(`<h4>🏭 ${esc(d.n)}</h4><div class="mp-kv"><b>種類</b><span>${d.k === 'rail' ? '車両基地' : 'バスの営業所'}（${d.sz}）</span><b>入る数</b><span>${d.k === 'rail' ? `${d.cap}両` : `${d.cap}台`}</span></div>
     ${d.mine ? `<div class="mp-row"><button class="btn" data-cars>車両を見る</button><button class="btn" data-ren>名前を変える</button><button class="btn" data-del>こわす</button></div>` : ''}`, sh => {
     const c = sh.querySelector('[data-cars]'); if (c) c.onclick = () => openCars(d.id);
-    const r = sh.querySelector('[data-ren]'); if (r) r.onclick = async () => { const nm = prompt(T('新しい名前'), d.n); if (nm && await api('mp_dep_edit', { p_id: d.id, p_name: nm, p_del: false }, '変えました')) refreshBox(d.fx - 8, d.fy - 8, d.fx + 8, d.fy + 8); };
+    const r = sh.querySelector('[data-ren]'); if (r) r.onclick = async () => { const nm = prompt(T('新しい名前'), d.n); if (nm && await api('mp_dep_edit', { p_id: d.id, p_name: nm, p_del: false }, '名前を変えました')) refreshBox(d.fx - 8, d.fy - 8, d.fx + 8, d.fy + 8); };
     const x = sh.querySelector('[data-del]'); if (x) x.onclick = async () => { if (confirm(T('こわしますか？（工事費はもどりません）')) && await api('mp_dep_edit', { p_id: d.id, p_name: null, p_del: true }, 'こわしました')) { refreshBox(d.fx - 8, d.fy - 8, d.fx + 8, d.fy + 8); sheet(null); } };
   });
 }
@@ -949,10 +959,10 @@ async function landSheet() {
   sheet(`<h4>${n}マス えらびました</h4><p class="muted small">見つもっています…</p>`);
   const q = await api('mp_land_buy', { p_tiles: tiles, p_as: S.as, p_dry: true });
   if (!q || landTiles().length / 2 !== n) return;
-  const why = q.why || {}, sk = [why.water && `水 ${why.water}`, why.park && `公園 ${why.park}`, why.road && `公道 ${why.road}`, why.owned && `持ち主がいる ${why.owned}`].filter(Boolean).join('・');
+  const why = q.why || {}, sk = [why.water && `水の上 ${why.water}`, why.park && `公園 ${why.park}`, why.road && `公道 ${why.road}`, why.owned && `持ち主がいる ${why.owned}`].filter(Boolean).map(t => `<span>${esc(t)}</span>`).join('・');
   const mine = (S.vis ? [...S.vis.land.values()] : []).filter(l => l[2] === 2 && tiles.some((v, i) => i % 2 === 0 && v === l[0] && tiles[i + 1] === l[1]));
   sheet(`<h4>${n}マス えらびました</h4>
-    <div class="mp-kv"><b>買える</b><span>${q.n}マス・<span class="mp-cost">${X(q.total)}</span>（${esc(asName())}）</span>${sk ? `<b>買えない</b><span>${esc(sk)}</span>` : ''}
+    <div class="mp-kv"><b>買える</b><span>${q.n}マス・<span class="mp-cost">${X(q.total)}</span>（${esc(asName())}）</span>${sk ? `<b>買えない</b><span>${sk}</span>` : ''}
     <b>固定資産税</b><span>1日 約${X(q.tax_day)}</span></div>
     <div class="mp-row">${q.n ? `<button class="btn main" data-buy>買う</button>` : ''}${mine.length ? `<button class="btn" data-sell>売りに出す（${mine.length}マス）</button><button class="btn" data-bld>建物を建てる</button>` : ''}</div>
     <p class="muted small">もう一度2か所タップすると、えらびなおせます</p>`, s => {
@@ -979,7 +989,7 @@ async function bldPick(tiles) {
     s.querySelectorAll('[data-b]').forEach(b => b.onclick = async () => {
       const k = b.dataset.b || null;
       const q = await api('mp_bld', { p_tiles: tiles, p_type: k, p_as: S.as, p_dry: true }); if (!q) return;
-      if (!confirm(T(`${q.n}マス${k ? 'に建てます：' + fmt(q.cost) + ' X' : 'の建物をこわします'}${q.skip ? '（できないマスあり）' : ''}。よろしいですか？`))) return;
+      if (!confirm(T((k ? `${q.n}マスに建てます（${fmt(q.cost)} X）。よろしいですか？` : `${q.n}マスの建物をこわします。よろしいですか？`) + (q.skip ? '\nできないマスがあります' : '')))) return;
       if (await api('mp_bld', { p_tiles: tiles, p_type: k, p_as: S.as, p_dry: false }, k ? '建てました' : 'こわしました')) { boxOf(tiles); sheet(null); }
     });
   });
@@ -1132,18 +1142,17 @@ function drawSheet() {
   const rminM = Math.round(st.rmin * 50), tight = rail ? st.rmin < 3 : st.rmin < 0.7;
   const q = st.quote;
   sheet(`<h4>${st.edit ? (rail ? '線路の形を直す' : '道路の形を直す') : rail ? '線路をひく' : '道路をひく'}</h4>
-    <p class="small" style="margin:0 0 4px">点 ${st.ctrl.length}・長さ 約${fmt(lenM)} m${st.curve.length > 6 ? `・いちばんきついカーブ 半径 ${rminM >= 50000 ? '—' : fmt(rminM) + ' m'}` : ''}
-      ${st.A ? '・はじめ：つなぐ' : ''}${st.B ? '・おわり：つなぐ' : ''}</p>
+    <p class="small" style="margin:0 0 4px"><span>点 ${st.ctrl.length}・長さ 約${fmt(lenM)} m</span>${st.curve.length > 6 ? `<span>・いちばんきついカーブ 半径 ${rminM >= 50000 ? '—' : fmt(rminM) + ' m'}</span>` : ''}${st.A ? '<span>・はじめ：つなぐ</span>' : ''}${st.B ? '<span>・おわり：つなぐ</span>' : ''}</p>
     ${tight ? `<p class="mp-warn">${rail ? 'カーブがきつすぎます（線路は半径150m以上）' : 'カーブがきつすぎます'}</p>` : ''}
     ${st.edit ? '' : rail ? `<div class="mp-row"><span class="mp-seg"><button data-d="0" class="${!o.dbl ? 'on' : ''}">単線</button><button data-d="1" class="${o.dbl ? 'on' : ''}">複線</button></span>
         <span class="mp-seg"><button data-e="0" class="${!o.elec ? 'on' : ''}">非電化</button><button data-e="1" class="${o.elec ? 'on' : ''}">電化</button></span></div>`
       : `<div class="mp-row">${gov ? `<select class="mp-inp" style="width:auto" data-cls>${[['exp', '高速道路'], ['nat', '国道'], ['pref', '県道'], ['city', '市道'], ['lane', '細い道']].map(c => `<option value="${c[0]}" ${o.cls === c[0] ? 'selected' : ''}>${c[1]}</option>`).join('')}</select>` : ''}
         片側 <span class="mp-seg">${(gov ? [0, 1, 2, 3] : [0, 1, 2]).map(n => `<button data-l="${n}" class="${o.lanes === n ? 'on' : ''}">${n ? n + '車線' : '細い道'}</button>`).join('')}</span></div>`}
     ${st.edit ? '' : `<div class="mp-row"><input class="mp-inp" data-nm placeholder="${rail ? '路線名（なくてもよい）' : '道路の名前（なくてもよい）'}" value="${esc(o.name)}"></div>`}
-    <div class="mp-row">${q ? `<span class="mp-cost">工事費 ${X(q.cost)}</span><span class="small">使用料 1日 ${X(q.lease || 0)}${q.tunnel ? `・トンネル ${q.tunnel}マス` : ''}${q.bridge ? `・橋 ${q.bridge}マス` : ''}・最高 ${q.vlim} km/h</span>`
+    <div class="mp-row">${q ? `<span class="mp-cost">工事費 ${X(q.cost)}</span><span class="small"><span>使用料 1日 ${X(q.lease || 0)}</span>${q.tunnel ? `<span>・トンネル ${q.tunnel}マス</span>` : ''}${q.bridge ? `<span>・橋 ${q.bridge}マス</span>` : ''}<span>・最高 ${q.vlim} km/h</span></span>`
       : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.curve.length > 2 ? '<span class="muted small">見つもり中…</span>' : '<span class="muted small">地図をタップして点をおいてください（2つ以上）。はしを線の近くにおくと、つながります</span>'}</div>
-    <div class="mp-row"><button class="btn" data-undo ${st.ctrl.length ? '' : 'disabled'}>1つもどす</button><button class="btn" data-cancel>やめる</button>
-      <button class="btn main" data-ok ${q && !tight ? '' : 'disabled'}>${st.edit ? 'この形にする' : 'つくる'}（${esc(st.edit ? '' : asName())}）</button></div>
+    <div class="mp-row"><button class="btn" data-undo ${st.ctrl.length ? '' : 'disabled'}>1つもどす</button><button class="btn" data-cancel>キャンセル</button>
+      <button class="btn main" data-ok ${q && !tight ? '' : 'disabled'}>${st.edit ? 'この形にする' : `つくる（${esc(asName())}）`}</button></div>
     <p class="muted small" style="margin:6px 0 0">点はドラッグで動かせます。長押しで消せます</p>`, s => {
     s.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { o.dbl = b.dataset.d === '1'; drawUpdate(); });
     s.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { o.elec = b.dataset.e === '1'; drawUpdate(); });
@@ -1339,7 +1348,7 @@ async function openCars(depFocus) {
     if (!st.dep || !d.depots.some(x => x.id === st.dep)) st.dep = d.depots.length ? d.depots[0].id : null;
     draw();
   };
-  const carChip = (c, on) => `<span class="mp-car ${on ? 'on' : ''} ${c.busy ? 'busy' : ''}" data-car="${c.id}">${esc(c.num)}<span class="n">${c.busy ? esc({ deliver: '納車まち', move: '転属中', ac: '冷房工事', heat: '暖房工事', toilet: 'トイレ工事', inspect: '検査中', renew: '更新工事' }[c.busy] || c.busy) : `状態${c.cond}${c.ac ? '・冷' : ''}${c.toilet ? '・ト' : ''}`}</span></span>`;
+  const carChip = (c, on) => `<span class="mp-car ${on ? 'on' : ''} ${c.busy ? 'busy' : ''}" data-car="${c.id}">${esc(c.num)}<span class="n">${c.busy ? esc({ deliver: '納車まち', move: '転属中', ac: '冷房工事', heat: '暖房工事', toilet: 'トイレ工事', inspect: '検査中', renew: '更新工事' }[c.busy] || c.busy) : `<span>状態${c.cond}</span>${c.ac ? '❄' : ''}${c.toilet ? '🚻' : ''}`}</span></span>`;
   const draw = () => {
     const d = st.d, deps = d.depots, dep = deps.find(x => x.id === st.dep);
     if (!deps.length) return m.set('車両と編成', `<p class="small">まず地図で車庫（🏭）をつくってください。車両は車庫に車籍をおきます（${esc(asName())}）。</p>`);
@@ -1349,7 +1358,7 @@ async function openCars(depFocus) {
       <div class="tabs-s">${deps.map(x => `<button data-dep="${x.id}" class="${x.id === st.dep ? 'on' : ''}">${esc(x.name)} ${x.n}/${x.cap}</button>`).join('')}</div>
       <h4 style="margin:12px 0 4px">編成（${forms.length}）</h4>
       ${forms.map(f => { const p = f.perf || {}; const fc = cars.filter(c => c.form === f.id).sort((a, b) => a.pos - b.pos); return `<div class="mp-item">
-        <b>${esc(f.name)}</b> <small>${p.n}両・${p.len}m・定員${fmt(p.cap)}人・加速 ${p.acc}km/h/s・最高${p.vmax}km/h${p.ac ? '・冷房' : ''}${p.toilet ? '・トイレ' : ''}・状態${p.cond}・列車 ${f.trains}本</small>
+        <b>${esc(f.name)}</b> <small><span>${p.n}両・${p.len}m・定員${fmt(p.cap)}人・加速 ${p.acc}km/h/s・最高${p.vmax}km/h</span>${p.ac ? '<span>・冷房</span>' : ''}${p.toilet ? '<span>・トイレ</span>' : ''}<span>・状態${p.cond}・列車 ${f.trains}本</span></small>
         <div class="mp-cars">${fc.map(c => carChip(c, st.pick.includes(c.id))).join('')}</div>
         ${dep.kind === 'rail' ? `<div class="mp-row"><button class="btn" data-reform="${f.id}">組みかえる</button><button class="btn" data-split="${f.id}">ばらす</button></div>` : ''}</div>`; }).join('') || '<p class="muted small">まだありません</p>'}
       ${dep.kind === 'rail' ? `<h4 style="margin:12px 0 4px">編成に入っていない車両（${loose.length}）</h4><div class="mp-cars">${loose.map(c => carChip(c, st.pick.includes(c.id))).join('') || '<span class="muted small">なし</span>'}</div>` : ''}
@@ -1359,12 +1368,12 @@ async function openCars(depFocus) {
             <button class="btn" data-w="inspect">検査</button><button class="btn" data-w="renew">更新工事</button><button class="btn" data-move>転属</button><button class="btn" data-scrap>廃車</button><button class="btn" data-clear>えらびなおす</button></div>`
         : '<small class="muted">車両をタップしてえらぶと、編成・改造・検査・転属・廃車ができます。編成は、えらんだ順（先頭から）になります</small>'}</div>
       <h4 style="margin:14px 0 4px">注文する（1両から）</h4>
-      <select class="mp-inp" data-type>${typeOpts.map(t => `<option value="${t.code}">${esc(t.label)}${t.face ? '（' + esc(t.face) + '）' : ''}・${X(t.price)}</option>`).join('')}</select>
+      <select class="mp-inp" data-type>${typeOpts.map(t => `<option value="${t.code}">${esc(t.label)}${t.face ? '（' + esc(T(t.face)) + '）' : ''}・${X(t.price)}</option>`).join('')}</select>
       <p class="small muted" data-tnote style="margin:4px 0"></p>
-      <div class="mp-row"><input class="mp-inp mp-num" type="number" min="1" max="20" value="1" data-n> 両 <button class="btn main" data-order>見つもって注文</button></div>
+      <div class="mp-row">${dep.kind === 'bus' ? '台数' : '両数'} <input class="mp-inp mp-num" type="number" min="1" max="20" value="1" data-n> <button class="btn main" data-order>見つもって注文</button></div>
       <p class="muted small">${esc(asName())}・納車まで電車は6時間、バスは3時間。車番は形式ごとに順番につきます</p>`, b => {
       const tnote = () => { const t = d.types.find(x => x.code === b.querySelector('[data-type]').value); if (!t) return; const s = (S.boot.series || []).find(x => x.code === t.series);
-        b.querySelector('[data-tnote]').textContent = `${s ? s.name + '：' : ''}${t.note}。長さ${t.len}m・定員${t.cap}人（座席${t.seats}）・${t.mass}t${t.power ? '・' + t.power + 'kW' : ''}・最高${t.vmax}km/h・維持費 1日 ${fmt(t.upkeep)} X`; };
+        b.querySelector('[data-tnote]').innerHTML = `${s ? `<span>${esc(s.name)}</span>：` : ''}<span>${esc(t.note)}</span><br><span>長さ${t.len}m・定員${t.cap}人（座席${t.seats}）・${t.mass}t</span>${t.power ? `<span>・${t.power}kW</span>` : ''}<span>・最高${t.vmax}km/h・維持費 1日 ${fmt(t.upkeep)} X</span>`; };
       tnote(); b.querySelector('[data-type]').onchange = tnote;
       b.querySelectorAll('[data-dep]').forEach(x => x.onclick = () => { st.dep = Number(x.dataset.dep); st.pick = []; st.form = null; draw(); });
       b.querySelectorAll('[data-car]').forEach(x => x.onclick = () => { const id = Number(x.dataset.car); const i = st.pick.indexOf(id); if (i >= 0) st.pick.splice(i, 1); else st.pick.push(id); draw(); });
@@ -1374,7 +1383,7 @@ async function openCars(depFocus) {
       if (q('[data-clear]')) q('[data-clear]').onclick = () => { st.pick = []; st.form = null; draw(); };
       if (q('[data-mkform]')) q('[data-mkform]').onclick = async () => {
         const r = await api('mp_form_set', { p_form: st.form, p_cars: st.pick, p_name: q('[data-fname]').value, p_as: S.as });
-        if (r) { toast(`編成にしました（加速 ${r.perf.acc}km/h/s・定員 ${fmt(r.perf.cap)}人）${r.fee ? '・組みかえ ' + fmt(r.fee) + ' X' : ''}`); st.pick = []; st.form = null; load(); }
+        if (r) { toast(T(`編成にしました（加速 ${r.perf.acc}km/h/s・定員 ${fmt(r.perf.cap)}人）`) + (r.fee ? SEP() + T(`・組みかえ ${fmt(r.fee)} X`) : '')); st.pick = []; st.form = null; load(); }
       };
       b.querySelectorAll('[data-w]').forEach(x => x.onclick = async () => {
         const k = x.dataset.w, r = await api('mp_car_work', { p_cars: st.pick, p_kind: k, p_as: S.as, p_dry: true }); if (!r) return;
@@ -1408,8 +1417,8 @@ async function openRoutes() {
   const m = modal(['系統とダイヤ', '<p class="muted small">読みこんでいます…</p>']);
   const d = await api('mp_routes_list', { p_as: S.as }); if (!d) return;
   m.set('系統とダイヤ', `<div class="mp-list">${d.map(r => `<button class="mp-item" style="text-align:left" data-r="${r.id}">
-      <b style="color:${esc(r.color)}">■</b> <b>${esc(r.name)}</b> <small>${r.kind === 'rail' ? '鉄道' : 'バス'}・${r.km}km・列車${r.trains}本${r.warn ? `・<span class="mp-warn">注意 ${r.warn}本</span>` : ''}${r.ok ? '' : '・<span class="mp-warn">走れません</span>'}</small><br>
-      <small>${esc((r.stops || []).join(' → '))}</small>${r.last && r.last.revenue != null ? `<br><small>さいきんの1時間：${fmt(r.last.served || 0)}人・${X(r.last.revenue || 0)}・${r.last.tph || 0}本${r.last.load != null ? '・混み具合' + r.last.load + '%' : ''}</small>` : ''}</button>`).join('')
+      <b style="color:${esc(r.color)}">■</b> <b>${esc(r.name)}</b> <small><span>${r.kind === 'rail' ? '鉄道' : 'バス'}・${r.km}km・列車${r.trains}本</span>${r.warn ? `<span class="mp-warn">・注意 ${r.warn}本</span>` : ''}${r.ok ? '' : '<span class="mp-warn">・走れません</span>'}</small><br>
+      <small>${esc((r.stops || []).join(' → '))}</small>${r.last && r.last.revenue != null ? `<br><small><span>さいきんの1時間：${fmt(r.last.served || 0)}人・${X(r.last.revenue || 0)}・${r.last.tph || 0}本</span>${r.last.load != null ? `<span>・混み具合${r.last.load}%</span>` : ''}</small>` : ''}</button>`).join('')
       || '<p class="muted small">まだありません</p>'}</div>
     <div class="mp-row"><button class="btn main" data-new="rail">＋ 鉄道の系統</button><button class="btn main" data-new="bus">＋ バスの系統</button></div>
     <p class="muted small">系統は、止まる駅（バス停）を順にえらんでつくります。下りはその順、上りは逆の順に走ります</p>`, b => {
@@ -1440,7 +1449,7 @@ function routeBuild(kind, edit) {
       <div class="mp-list">${st.stops.map((s, i) => `<div class="mp-item" style="display:flex;align-items:center;gap:6px"><b>${i + 1}.</b> ${esc(s.n)}
           <label class="small" style="margin-left:auto"><input type="checkbox" data-tm="${s.id}" ${st.timing.has(s.id) ? 'checked' : ''}> 採時駅</label><button class="btn" data-rm="${i}">×</button></div>`).join('') || '<p class="muted small">まだ駅がありません</p>'}</div>
       <div class="mp-row">停車時間 <input class="mp-inp mp-num" type="number" min="10" max="300" value="${st.dwell}" data-dw> 秒</div>
-      <div class="mp-row"><button class="btn" data-cancel>やめる</button><button class="btn main" data-ok ${st.stops.length >= 2 ? '' : 'disabled'}>${edit ? 'この順に直す' : '系統をつくる'}（${esc(asName())}）</button></div>
+      <div class="mp-row"><button class="btn" data-cancel>キャンセル</button><button class="btn main" data-ok ${st.stops.length >= 2 ? '' : 'disabled'}>${edit ? 'この順に直す' : '系統をつくる'}（${esc(asName())}）</button></div>
       <p class="muted small">採時駅：時刻表に時刻を決めて出す駅（はじめ・終わりなど）。ほかの駅は、走る時間から自動で決まります</p>`, s => {
       s.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
       s.querySelector('[data-col]').oninput = e => { st.color = e.target.value; S.dirty = true; };
@@ -1504,9 +1513,11 @@ async function busPaths(ids) {
 }
 
 /* ---- ダイヤ ---- */
+const warnH = w => String(w || '').split(' / ').filter(Boolean).map(x => `<span>${esc(x)}</span>`).join('<br>');
 const hms = s => { if (s == null) return ''; s = ((s % 86400) + 86400) % 86400; return String(Math.floor(s / 3600)).padStart(2, '0') + ':' + String(Math.floor(s / 60) % 60).padStart(2, '0'); };
 const parseHM = t => { const m = String(t || '').trim().match(/^(\d{1,2})[:：]?(\d{2})(?:[:：](\d{2}))?$/); if (!m) return null; return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3] || 0); };
 const KIND_COL = { 普通: '#222', 各停: '#222', 快速: '#e07020', 急行: '#d42', 特急: '#c0186a', 回送: '#999' };
+const kindL = k => k === '普通' ? '各停' : k;   // 種別の見せ方（データは「普通」のまま）
 async function openDia(rid) {
   const m = modal(['系統', '<p class="muted small">読みこんでいます…</p>'], null, 'mp-wide');
   let D = null, tab = 'dia';
@@ -1514,8 +1525,8 @@ async function openDia(rid) {
   m.onclose = () => { S.routeHi = null; S.dirty = true; };
   const draw = () => {
     const idx = new Map(D.stops.map((s, i) => [s.id, i]));
-    m.set(D.name, `<p class="small" style="margin:0"><b style="color:${esc(D.color)}">■</b> ${D.kind === 'rail' ? '鉄道' : 'バス'}・${esc(D.owner)}・${D.km[D.km.length - 1]}km・停車 ${D.dwell}秒
-        ${D.ok ? '' : `<br><span class="mp-warn">走れません：${esc(D.why || '')}</span>`}${D.last && D.last.revenue != null ? `<br>さいきんの1時間：${fmt(D.last.served || 0)}人・${X(D.last.revenue || 0)}・${D.last.tph}本・混み具合${D.last.load}%・平均${D.last.speed}km/h` : ''}</p>
+    m.set(D.name, `<p class="small" style="margin:0"><b style="color:${esc(D.color)}">■</b> <span>${D.kind === 'rail' ? '鉄道' : 'バス'}</span>・<span>${esc(D.owner)}</span>・<span>${D.km[D.km.length - 1]}km・停車 ${D.dwell}秒</span>
+        ${D.ok ? '' : `<br><span class="mp-warn"><span>走れません：</span> <span>${esc(D.why || '')}</span></span>`}${D.last && D.last.revenue != null ? `<br>さいきんの1時間：${fmt(D.last.served || 0)}人・${X(D.last.revenue || 0)}・${D.last.tph}本・混み具合${D.last.load}%・平均${D.last.speed}km/h` : ''}</p>
       <div class="tabs-s" style="margin-top:8px">${[['dia', 'ダイヤグラム'], ['tt1', '時刻表（下り）'], ['tt2', '時刻表（上り）'], ['list', '列車']].map(t => `<button data-tab="${t[0]}" class="${tab === t[0] ? 'on' : ''}">${t[1]}</button>`).join('')}</div>
       <div data-pane style="margin-top:8px"></div>
       ${D.mine ? `<div class="mp-row"><button class="btn main" data-add>＋ 列車</button><button class="btn" data-bulk>＋ まとめて</button><button class="btn" data-auto>運用を自動で組む</button>
@@ -1525,8 +1536,7 @@ async function openDia(rid) {
       if (tab === 'dia') diaCanvas(pane, D, t => trainEdit(D, t, load));
       if (tab === 'tt1' || tab === 'tt2') pane.innerHTML = ttTable(D, tab === 'tt1' ? 1 : -1, idx);
       if (tab === 'list') {
-        pane.innerHTML = `<div class="mp-list">${D.trains.map(t => `<button class="mp-item" style="text-align:left" data-t="${t.id}"><b>${esc(t.num)}</b> ${esc(t.kind)}・${t.dir === 1 ? '下り' : '上り'}・${hms(t.dep)}発
-            ・${t.fname ? esc(t.fname) : '<span class="mp-warn">編成なし</span>'}${t.warn ? `<br><small class="mp-warn">${esc(t.warn)}</small>` : ''}</button>`).join('') || '<p class="muted small">列車はまだありません</p>'}</div>`;
+        pane.innerHTML = `<div class="mp-list">${D.trains.map(t => `<button class="mp-item" style="text-align:left" data-t="${t.id}"><b>${esc(t.num)}</b> <span>${esc(kindL(t.kind))}・${t.dir === 1 ? '下り' : '上り'}・${hms(t.dep)}発</span>・${t.fname ? `<span>${esc(t.fname)}</span>` : '<span class="mp-warn">編成なし</span>'}${t.warn ? `<br><small class="mp-warn">${warnH(t.warn)}</small>` : ''}</button>`).join('') || '<p class="muted small">列車はまだありません</p>'}</div>`;
         pane.querySelectorAll('[data-t]').forEach(x => x.onclick = () => trainEdit(D, D.trains.find(t => t.id === Number(x.dataset.t)), load));
       }
       const q = k => b.querySelector(k);
@@ -1550,7 +1560,7 @@ function ttTable(D, dir, idx) {
     const tm = D.timing.includes(s.id);
     return `<span style="${tm ? 'font-weight:800' : ''}">${e[2] != null ? hms(e[2]) : hms(e[1]) + '着'}</span>${tm && e[3] ? `<br><small class="muted">${e[3]}番</small>` : ''}`;
   };
-  return `<div class="mp-scroll"><table class="mp-tt"><tr><th></th>${trs.map(t => `<th style="color:${KIND_COL[t.kind] || '#222'}">${esc(t.num)}<br>${esc(t.kind)}</th>`).join('')}</tr>
+  return `<div class="mp-scroll"><table class="mp-tt"><tr><th></th>${trs.map(t => `<th style="color:${KIND_COL[t.kind] || '#222'}">${esc(t.num)}<br>${esc(kindL(t.kind))}</th>`).join('')}</tr>
     ${ord.map(s => `<tr><td class="st">${esc(s.name)}${D.timing.includes(s.id) ? ' ◎' : ''}</td>${trs.map(t => `<td>${cell(t, s)}</td>`).join('')}</tr>`).join('')}
     <tr><td class="st">編成</td>${trs.map(t => `<td><small>${t.fname ? esc(t.fname) : '—'}</small></td>`).join('')}</tr></table></div><p class="muted small">◎ 採時駅（太字の時刻）・レ 通過</p>`;
 }
@@ -1570,7 +1580,7 @@ function diaCanvas(pane, D, onTrain) {
     const stepM = V.sec > 12 * 3600 ? 60 : V.sec > 4 * 3600 ? 30 : V.sec > 3600 ? 10 : 2;
     for (let t = Math.ceil(V.t0 / (stepM * 60)) * stepM * 60; t <= V.t0 + V.sec; t += stepM * 60) {
       const x = X(t); g.strokeStyle = t % 3600 === 0 ? '#bbb' : '#eee'; g.lineWidth = 1; g.beginPath(); g.moveTo(x, MT); g.lineTo(x, H - MB); g.stroke();
-      if (t % 3600 === 0 || stepM <= 10) { g.fillStyle = '#666'; g.textAlign = 'center'; g.fillText(t % 3600 === 0 ? String(Math.floor(t / 3600) % 24) + '時' : String(Math.floor(t / 60) % 60), x, H - 9); }
+      if (t % 3600 === 0 || stepM <= 10) { g.fillStyle = '#666'; g.textAlign = 'center'; g.fillText(t % 3600 === 0 ? T(String(Math.floor(t / 3600) % 24) + '時') : String(Math.floor(t / 60) % 60), x, H - 9); }
     }
     // 駅
     D.stops.forEach((s, i) => { const y = Y(km[i]); g.strokeStyle = D.timing.includes(s.id) ? '#888' : '#ddd'; g.beginPath(); g.moveTo(ML, y); g.lineTo(W - 8, y); g.stroke();
@@ -1617,18 +1627,18 @@ async function trainEdit(D, t, reload) {
     const ord = st.dir === 1 ? D.stops : D.stops.slice().reverse();
     m.set(t ? `列車 ${t.num}` : '列車をつくる', `
       <div class="mp-row"><input class="mp-inp" style="flex:1 1 90px" data-num placeholder="列車番号" value="${esc(st.num)}">
-        <select class="mp-inp" style="flex:1 1 90px" data-kind>${['普通', '快速', '急行', '特急', '回送'].map(k => `<option ${st.kind === k ? 'selected' : ''}>${k}</option>`).join('')}</select>
+        <select class="mp-inp" style="flex:1 1 90px" data-kind>${['普通', '快速', '急行', '特急', '回送'].map(k => `<option value="${k}" ${st.kind === k ? 'selected' : ''}>${kindL(k)}</option>`).join('')}</select>
         <span class="mp-seg"><button data-dir="1" class="${st.dir === 1 ? 'on' : ''}">下り</button><button data-dir="-1" class="${st.dir === -1 ? 'on' : ''}">上り</button></span></div>
-      <div class="mp-row">始発（${esc(ord[0].name)}）を <input class="mp-inp mp-num" data-dep value="${hms(st.dep)}"> に出る</div>
+      <div class="mp-row">始発（${esc(ord[0].name)}）の発車 <input class="mp-inp mp-num" data-dep value="${hms(st.dep)}"></div>
       <div class="mp-row">編成 <select class="mp-inp" style="flex:1" data-form><option value="">（決めない）</option>${forms.map(f => `<option value="${f.id}" ${st.form === f.id ? 'selected' : ''}>${esc(f.name)}（${f.perf.n}両・${f.perf.len}m）</option>`).join('')}</select></div>
       <h4 style="margin:10px 0 4px">採時駅の時刻・番線</h4>
-      ${tm.map(s => { const v = st.tt[s.id] || {}; return `<div class="mp-row"><b style="min-width:5em">${esc(s.name)}</b>着<input class="mp-inp mp-num" data-a="${s.id}" value="${v.a != null ? hms(v.a) : ''}" placeholder="—">
-          発<input class="mp-inp mp-num" data-d="${s.id}" value="${v.d != null ? hms(v.d) : ''}" placeholder="—">
+      ${tm.map(s => { const v = st.tt[s.id] || {}; return `<div class="mp-row"><b style="min-width:5em">${esc(s.name)}</b>到着<input class="mp-inp mp-num" data-a="${s.id}" value="${v.a != null ? hms(v.a) : ''}" placeholder="—">
+          発車<input class="mp-inp mp-num" data-d="${s.id}" value="${v.d != null ? hms(v.d) : ''}" placeholder="—">
           <select class="mp-inp" style="width:auto" data-tr="${s.id}"><option value="">番線</option>${Array.from({ length: s.tracks }, (_, i) => `<option ${v.t === i + 1 ? 'selected' : ''} value="${i + 1}">${i + 1}番線</option>`).join('')}</select></div>`; }).join('')}
       <p class="muted small">空のところは、走る時間から自動で決まります（いちばん早い時刻）。遅くするときだけ入れます</p>
       ${ord.length > 2 ? `<h4 style="margin:10px 0 4px">止まる駅</h4><div class="mp-cars">${ord.slice(1, -1).map(s => `<span class="mp-car ${st.skip.has(s.id) ? '' : 'on'}" data-sk="${s.id}">${esc(s.name)}<span class="n">${st.skip.has(s.id) ? '通過' : '停車'}</span></span>`).join('')}</div>` : ''}
-      ${t && t.warn ? `<p class="mp-warn">${esc(t.warn)}</p>` : ''}
-      <div class="mp-row">${t ? '<button class="btn" data-del>消す</button>' : ''}<button class="btn main" data-ok>${t ? '直す' : 'つくる'}</button></div>`, b => {
+      ${t && t.warn ? `<p class="mp-warn">${warnH(t.warn)}</p>` : ''}
+      <div class="mp-row">${t ? '<button class="btn" data-del>消す</button>' : ''}<button class="btn main" data-ok>${t ? '保存' : 'つくる'}</button></div>`, b => {
       const q = k => b.querySelector(k);
       const keep = () => {
         st.num = q('[data-num]').value; st.kind = q('[data-kind]').value; st.dep = parseHM(q('[data-dep]').value) ?? st.dep; st.form = q('[data-form]').value ? Number(q('[data-form]').value) : null;
@@ -1650,8 +1660,8 @@ async function trainEdit(D, t, reload) {
 function trainBulk(D, reload) {
   const m = modal(['まとめて列車をつくる', `
     <div class="mp-row"><span class="mp-seg"><button data-dir="1" class="on">下り</button><button data-dir="-1">上り</button></span>
-      <select class="mp-inp" style="width:auto" data-kind>${['普通', '快速', '急行', '特急'].map(k => `<option>${k}</option>`).join('')}</select></div>
-    <div class="mp-row"><input class="mp-inp mp-num" data-from value="06:00"> から <input class="mp-inp mp-num" data-to value="23:00"> まで <input class="mp-inp mp-num" type="number" data-ev value="10" min="2" max="240"> 分おき</div>
+      <select class="mp-inp" style="width:auto" data-kind>${['普通', '快速', '急行', '特急'].map(k => `<option value="${k}">${kindL(k)}</option>`).join('')}</select></div>
+    <div class="mp-row"><label class="small">はじめの列車 <input class="mp-inp mp-num" data-from value="06:00"></label> <label class="small">さいごの列車 <input class="mp-inp mp-num" data-to value="23:00"></label> <label class="small">何分おき <input class="mp-inp mp-num" type="number" data-ev value="10" min="2" max="240"></label></div>
     <div class="mp-row"><input class="mp-inp" data-pre placeholder="列車番号の頭（例：A。なくてもよい）"></div>
     <div class="mp-row"><button class="btn main" data-ok>つくる</button></div>
     <p class="muted small">編成はあとで「運用を自動で組む」でわりあてられます</p>`], b => {
@@ -1675,7 +1685,7 @@ async function autoForm(D, reload) {
     b.querySelectorAll('[data-f]').forEach(x => x.onclick = () => { const id = Number(x.dataset.f); if (pick.has(id)) pick.delete(id); else pick.add(id); x.classList.toggle('on'); });
     b.querySelector('[data-ok]').onclick = async () => {
       const r = await api('mp_train_autoform', { p_route: D.id, p_forms: [...pick], p_as: S.as });
-      if (r) { toast(`${r.ok}本にわりあてました（${r.used}編成）${r.none ? `・${r.none}本は編成が足りません` : ''}`); m.close(); reload(); }
+      if (r) { toast(T(`${r.ok}本にわりあてました（${r.used}編成）`) + (r.none ? SEP() + T(`・${r.none}本は編成が足りません`) : '')); m.close(); reload(); }
     };
   });
 }
@@ -1736,7 +1746,7 @@ function zonePaint(z) {
     tap0(x, y);
     const st = S.toolState; if (!st || !st.b) return;
     const tiles = landTiles(); if (tiles.length / 2 > 2000) return sheet('<p class="mp-warn">2000マスまでです</p>');
-    sheet(`<h4>${tiles.length / 2}マスを「${z ? PAL.ZN[z] || 'なし' : 'もと'}」に</h4><div class="mp-row"><button class="btn main" data-ok>ぬる</button></div>`, s => {
+    sheet(`<h4>${z ? `${tiles.length / 2}マスを「${PAL.ZN[z] || 'なし'}」に` : `${tiles.length / 2}マスを、もとの用途地域に`}</h4><div class="mp-row"><button class="btn main" data-ok>ぬる</button></div>`, s => {
       s.querySelector('[data-ok]').onclick = async () => {
         if (await api('mp_admin_zone', { p_tiles: tiles, p_z: z }, 'ぬりました')) {
           let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (let i = 0; i < tiles.length; i += 2) { x0 = Math.min(x0, tiles[i]); y0 = Math.min(y0, tiles[i + 1]); x1 = Math.max(x1, tiles[i]); y1 = Math.max(y1, tiles[i + 1]); }
