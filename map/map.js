@@ -23,6 +23,7 @@ const S = {
   cam: { x: 0, y: 0, z: 3 }, dirty: true,
   boot: null, as: 'me', admin: false,
   chunks: new Map(), pend: new Set(), chunkQ: [], chunkBusy: 0,
+  cho: new Map(), choPend: new Set(), choQ: [], choBusy: 0,   // 町字（チャンクごと：k・kp・kq）
   cells: new Map(), cellBusy: 0, ver: 0, pollT: 0,
   ov: null, ovInfo: null,
   layer: { zone: false, own: true, label: true },
@@ -82,18 +83,92 @@ async function pumpChunks() {
       const got = new Set();
       for (const c of rows) {
         const k = ckey(c.cx, c.cy); got.add(k);
-        S.chunks.set(k, { cx: c.cx, cy: c.cy, t: c.t, e: c.e, z: c.z, a: c.a, ap: c.ap, zo: zoMap(c), lo: null, hi: null, zc: null, used: now() });
+        S.chunks.set(k, { cx: c.cx, cy: c.cy, t: c.t, e: c.e, z: c.z, a: c.a, ap: c.ap, apx: c.apx || [], zo: zoMap(c), lo: null, hi: null, zc: null, bnd: null, used: now() });
       }
       for (const [cx, cy] of batch) {
         const k = ckey(cx, cy); S.pend.delete(k);
         if (!got.has(k)) S.chunks.set(k, { cx, cy, sea: true, used: now() });
-        // となりの絵をつくりなおす（境目をなめらかに）
-        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) { const n = S.chunks.get(ckey(cx + dx, cy + dy)); if (n && !n.sea) { n.hi = null; } }
+        // となりの絵をつくりなおす（境目をなめらかに）。境界線も
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) { const n = S.chunks.get(ckey(cx + dx, cy + dy)); if (n && !n.sea) { n.hi = null; n.bnd = null; } }
       }
       S.dirty = true;
     }).catch(e => { for (const [cx, cy] of batch) S.pend.delete(ckey(cx, cy)); console.warn(e); })
       .finally(() => { S.chunkBusy--; pumpChunks(); });
   }
+}
+/* ---------- 町字（境界線と名前）：近いときだけ読む ---------- */
+function needCho() {
+  if (S.cam.z < 2.5) return;
+  const v = view(), cx0 = Math.floor(v.x0 / CS), cy0 = Math.floor(v.y0 / CS), cx1 = Math.floor(v.x1 / CS), cy1 = Math.floor(v.y1 / CS);
+  const want = [];
+  for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
+    const k = ckey(cx, cy), c = S.chunks.get(k);
+    if (!c || c.sea || S.cho.has(k) || S.choPend.has(k)) continue;
+    want.push([cx, cy, (cx * CS + 32 - S.cam.x) ** 2 + (cy * CS + 32 - S.cam.y) ** 2]);
+  }
+  want.sort((a, b) => a[2] - b[2]);
+  for (const [cx, cy] of want) { S.choPend.add(ckey(cx, cy)); S.choQ.push([cx, cy]); }
+  pumpCho();
+}
+function pumpCho() {
+  while (S.choBusy < 2 && S.choQ.length) {
+    const batch = S.choQ.splice(0, 16), keys = [];
+    for (const [cx, cy] of batch) keys.push(cx, cy);
+    S.choBusy++;
+    call('mp_cho_get', { p_keys: keys }).then(rows => {
+      const got = new Set();
+      for (const c of rows) { const k = ckey(c.cx, c.cy); got.add(k); S.cho.set(k, { k: c.k, kp: c.kp, kq: c.kq }); }
+      for (const [cx, cy] of batch) {
+        const k = ckey(cx, cy); S.choPend.delete(k);
+        if (!got.has(k)) S.cho.set(k, { none: true });
+        for (const [dx, dy] of [[0, 0], [-1, 0], [0, -1]]) { const n = S.chunks.get(ckey(cx + dx, cy + dy)); if (n) n.bnd = null; }
+      }
+      S.dirty = true;
+    }).catch(e => { for (const [cx, cy] of batch) S.choPend.delete(ckey(cx, cy)); console.warn(e); })
+      .finally(() => { S.choBusy--; pumpCho(); });
+  }
+}
+// マスの区域・町字（境界線用）。i, j はチャンクの中（はみ出したらとなりのチャンク）
+function bndTile(c, i, j) {
+  let cc = c, ii = i, jj = j;
+  if (i >= CS || j >= CS) { cc = S.chunks.get(ckey(c.cx + (i >= CS ? 1 : 0), c.cy + (j >= CS ? 1 : 0))); ii = i % CS; jj = j % CS; if (!cc) return null; }
+  if (cc.sea) return { sea: true };
+  const k = jj * CS + ii, ai = B64I[cc.a.charCodeAt(k)], t = cc.t[k];
+  const ch = S.cho.get(ckey(cc.cx, cc.cy));
+  let cho = null, dist = null;
+  if (ch && !ch.none) { const ix = B64I[ch.k.charCodeAt(2 * k)] * 64 + B64I[ch.k.charCodeAt(2 * k + 1)]; cho = ch.kp[ix] || null; dist = ch.kq[ix] || null; }
+  const ax = cc.apx[ai] || [];
+  return { sea: t === 'S' || t === 'D', area: cc.ap[ai], muni: ax[0] || '', pref: ax[1] || '', cho, dist, choOk: !!ch };
+}
+// 境界線（チャンクごと）：県・市町村・区・町（大字）・丁目（字）。マスの辺で、ちがうところに線
+const BND_LV = ['pref', 'muni', 'ward', 'dist', 'sub'];
+function chunkBnd(c) {
+  const out = { pref: [], muni: [], ward: [], dist: [], sub: [] };
+  const lv = (a, b) => {
+    if (!a || !b || (a.sea && b.sea)) return null;
+    if (a.sea || b.sea) return null;
+    if (a.area !== b.area) return a.pref !== b.pref ? 'pref' : a.muni !== b.muni ? 'muni' : 'ward';
+    if (!a.choOk || !b.choOk || !a.cho || !b.cho || a.cho === b.cho) return null;
+    return a.dist !== b.dist ? 'dist' : 'sub';
+  };
+  const x0 = c.cx * CS, y0 = c.cy * CS;
+  // たての辺（i と i+1 のあいだ）：同じ種類が続くところはつなぐ
+  for (let i = 0; i < CS; i++) {
+    let run = null, rs = 0;
+    for (let j = 0; j <= CS; j++) {
+      const l = j < CS ? lv(bndTile(c, i, j), bndTile(c, i + 1, j)) : null;
+      if (l !== run) { if (run) out[run].push(x0 + i + 1, y0 + rs, x0 + i + 1, y0 + j); run = l; rs = j; }
+    }
+  }
+  // よこの辺（j と j+1 のあいだ）
+  for (let j = 0; j < CS; j++) {
+    let run = null, rs = 0;
+    for (let i = 0; i <= CS; i++) {
+      const l = i < CS ? lv(bndTile(c, i, j), bndTile(c, i, j + 1)) : null;
+      if (l !== run) { if (run) out[run].push(x0 + rs, y0 + j + 1, x0 + i, y0 + j + 1); run = l; rs = i; }
+    }
+  }
+  return out;
 }
 function zoMap(c) {
   if (!c.zo || !c.zo.length) return null;
@@ -109,6 +184,7 @@ function trimChunks() {
     const all = [...S.chunks.entries()].sort((a, b) => a[1].used - b[1].used);
     for (const [k] of all.slice(0, S.chunks.size - 2200)) S.chunks.delete(k);
   }
+  if (S.cho.size > 900) for (const k of [...S.cho.keys()]) if (!S.chunks.has(k)) S.cho.delete(k);
 }
 // 1マス1点の絵（遠いとき）
 function chunkLo(c) {
@@ -265,19 +341,46 @@ function prepArea(d) {
   for (const s of d.stas) { s.fx = s.x / 100; s.fy = s.y / 100; }
   for (const s of d.deps) { s.fx = s.x / 100; s.fy = s.y / 100; }
   for (const n of d.nodes) { n.fx = n.x / 100; n.fy = n.y / 100; }
+  d.parcels = (d.parcels || []).map(prepParcel);
+  d.chos = d.chos || [];
+}
+// 筆：[id, [y, x0, x1, …], 1 他人・2 自分, 売り出し, 建物, 地番, 持ち主] → 区画の塗りと外まわり（マスの単位の Path2D）・まん中・大きさ
+function prepParcel(a) {
+  const p = { id: a[0], own: a[2], sale: a[3], bld: a[4], ban: a[5], okey: a[6], n: 0, cells: new Set(), x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity, sx: 0, sy: 0 };
+  const r = a[1] || [], fill = new Path2D(), edge = new Path2D();
+  for (let i = 0; i + 2 < r.length; i += 3) {
+    const y = r[i], xa = r[i + 1], xb = r[i + 2];
+    fill.rect(xa / 5, y / 5, (xb - xa + 1) / 5, 0.2);
+    for (let x = xa; x <= xb; x++) { p.cells.add(x + ',' + y); p.n++; p.sx += x; p.sy += y; }
+    p.x0 = Math.min(p.x0, xa); p.x1 = Math.max(p.x1, xb); p.y0 = Math.min(p.y0, y); p.y1 = Math.max(p.y1, y);
+  }
+  for (const key of p.cells) {
+    const [x, y] = key.split(',').map(Number);
+    if (!p.cells.has((x - 1) + ',' + y)) { edge.moveTo(x / 5, y / 5); edge.lineTo(x / 5, (y + 1) / 5); }
+    if (!p.cells.has((x + 1) + ',' + y)) { edge.moveTo((x + 1) / 5, y / 5); edge.lineTo((x + 1) / 5, (y + 1) / 5); }
+    if (!p.cells.has(x + ',' + (y - 1))) { edge.moveTo(x / 5, y / 5); edge.lineTo((x + 1) / 5, y / 5); }
+    if (!p.cells.has(x + ',' + (y + 1))) { edge.moveTo(x / 5, (y + 1) / 5); edge.lineTo((x + 1) / 5, (y + 1) / 5); }
+  }
+  p.fill = fill; p.edge = edge;
+  // 地番を書くところ：まん中にいちばん近い区画
+  const mx = p.sx / Math.max(1, p.n), my = p.sy / Math.max(1, p.n); let bd = Infinity;
+  for (const key of p.cells) { const [x, y] = key.split(',').map(Number), d = (x - mx) ** 2 + (y - my) ** 2; if (d < bd) { bd = d; p.lx = (x + 0.5) / 5; p.ly = (y + 0.5) / 5; } }
+  p.bb = [p.x0 / 5, p.y0 / 5, (p.x1 + 1) / 5, (p.y1 + 1) / 5];
+  return p;
 }
 // 見えているセルのもの（id でまとめる）
 function visibleItems() {
   const [lod, cs] = lodOf(S.cam.z), v = view();
   const i0 = Math.floor(v.x0 / cs), j0 = Math.floor(v.y0 / cs), i1 = Math.floor(v.x1 / cs), j1 = Math.floor(v.y1 / cs);
-  const segs = new Map(), stas = new Map(), deps = new Map(), nodes = new Map(), land = new Map(), places = new Map(), names = {};
+  const segs = new Map(), stas = new Map(), deps = new Map(), nodes = new Map(), parcels = new Map(), places = new Map(), chos = new Map(), names = {};
   const take = d => {
     for (const s of d.segs) segs.set(s.id, s);
     for (const s of d.stas) stas.set(s.id, s);
     for (const s of d.deps) deps.set(s.id, s);
     for (const n of d.nodes) nodes.set(n.id, n);
-    for (const l of d.land) land.set(l[0] + ',' + l[1], l);
+    for (const p of d.parcels) parcels.set(p.id, p);
     for (const p of d.places) places.set(p.id, p);
+    for (const c of d.chos) chos.set(c[0], c);
     Object.assign(names, d.names);
   };
   for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
@@ -292,7 +395,7 @@ function visibleItems() {
       if (any) break;
     }
   }
-  return { segs, stas, deps, nodes, land, places, names };
+  return { segs, stas, deps, nodes, parcels, places, chos, names };
 }
 // 変わったもの（ほかの人の工事など）。15秒ごと
 async function poll() {
@@ -305,6 +408,9 @@ async function poll() {
         if (ch.b) for (let cy = Math.floor(ch.b[1] / CS); cy <= Math.floor(ch.b[3] / CS); cy++) for (let cx = Math.floor(ch.b[0] / CS); cx <= Math.floor(ch.b[2] / CS); cx++) S.chunks.delete(ckey(cx, cy));
       }
       if (ch.k === 'route') { if (S.onRoute) S.onRoute(); continue; }
+      if (ch.k === 'cho') {   // 町字の合併・分割：町字のデータを読みなおす
+        if (ch.b) for (let cy = Math.floor(ch.b[1] / CS) - 1; cy <= Math.floor(ch.b[3] / CS) + 1; cy++) for (let cx = Math.floor(ch.b[0] / CS) - 1; cx <= Math.floor(ch.b[2] / CS) + 1; cx++) { S.cho.delete(ckey(cx, cy)); const n = S.chunks.get(ckey(cx, cy)); if (n) n.bnd = null; }
+      }
       const b = ch.b;
       for (const c of S.cells.values()) {
         if (!b) { c.stale = true; continue; }
@@ -389,17 +495,8 @@ function render() {
     }
   }
   const it = visibleItems(); S.vis = it;
-  // 土地（持ち主）
-  if (S.layer.own && z >= 5) {
-    for (const l of it.land.values()) {
-      const x = sx(l[0]), y = sy(l[1]);
-      if (x > S.W || y > S.H || x + z < 0 || y + z < 0) continue;
-      g.fillStyle = l[2] === 2 ? 'rgba(40,110,220,.30)' : 'rgba(230,120,30,.22)';
-      g.fillRect(x, y, z, z);
-      if (l[3] != null && z >= 10) { g.strokeStyle = '#d23'; g.lineWidth = 1.5; g.strokeRect(x + 1, y + 1, z - 2, z - 2); }
-      if (l[4] && z >= 8) { g.fillStyle = BLD_COL[l[4]] || '#999'; const m = z * 0.18; g.fillRect(x + m, y + m, z - 2 * m, z - 2 * m); }
-    }
-  }
+  // 土地（筆）：持ち主の色・建物・売り出し・地番
+  if (S.layer.own && z >= 4) drawParcels(g, it, z, v);
   // 道路（ふち → なか）
   const segs = [...it.segs.values()].filter(s => segVisible(s, v));
   const roads = segs.filter(s => s.k === 'road'), rails = segs.filter(s => s.k === 'rail');
@@ -428,6 +525,8 @@ function render() {
     g.strokeStyle = pass ? (asph ? '#7b7f86' : st.fill) : st.edge; g.lineWidth = pass ? w : w + 2; pathSeg(g, s); g.stroke();
   }
   if (asph) for (const s of roads) if (s.c === 'exp' && s.l) laneMarks(g, s, z);
+  // 境界線（県・市区町村・町字）
+  if (z >= 1.2) drawBounds(g, z, v);
   // 系統（めだたせる）
   if (S.routeHi) drawRouteHi(g, z, it);
   // 車庫・駅
@@ -435,7 +534,11 @@ function render() {
   for (const s of it.stas.values()) drawStation(g, s, z);
   // えらんだもの
   if (S.sel && S.sel.kind === 'seg') { const s = it.segs.get(S.sel.id); if (s) { g.strokeStyle = 'rgba(220,40,60,.75)'; g.lineWidth = Math.max(4, s.w * z + 4); pathSeg(g, s); g.stroke(); } }
-  if (S.sel && S.sel.kind === 'tile') { g.strokeStyle = '#d23'; g.lineWidth = 2; g.strokeRect(sx(S.sel.x), sy(S.sel.y), z, z); }
+  if (S.sel && S.sel.kind === 'cell') {
+    const p = S.sel.parcel && it.parcels.get(S.sel.parcel);
+    if (p) { worldT(g); g.strokeStyle = '#d23'; g.lineWidth = 3 / z; g.stroke(p.edge); screenT(g); }
+    else { const w = z / 5; g.strokeStyle = '#d23'; g.lineWidth = 2; g.strokeRect(sx(S.sel.x / 5), sy(S.sel.y / 5), Math.max(3, w), Math.max(3, w)); }
+  }
   // IC・JCT
   if (z >= 2.2) for (const n of it.nodes.values()) {
     if (!n.n || (n.nk !== 'ic' && n.nk !== 'jct')) continue;
@@ -451,6 +554,46 @@ function render() {
   drawScale(g, z);
 }
 const BLD_COL = { house: '#c98b5a', apt: '#a3765a', shop: '#e07a7a', office: '#7a8fe0', factory: '#8a8a8a', warehouse: '#b0a080', port: '#5a8ab0', farm: '#9cc06a', parking: '#c8c8c8' };
+// 地図の座標（マス）で描くとき・画面にもどすとき
+function worldT(g) { const z = S.cam.z; g.setTransform(S.dpr * z, 0, 0, S.dpr * z, S.dpr * (S.W / 2 - S.cam.x * z), S.dpr * (S.H / 2 - S.cam.y * z)); }
+function screenT(g) { g.setTransform(S.dpr, 0, 0, S.dpr, 0, 0); }
+function drawParcels(g, it, z, v) {
+  const vis = [...it.parcels.values()].filter(p => p.bb[2] >= v.x0 && p.bb[0] <= v.x1 && p.bb[3] >= v.y0 && p.bb[1] <= v.y1);
+  if (!vis.length) return;
+  worldT(g);
+  const mark = S.toolState && S.toolState.marks;   // 合筆でえらんでいる筆
+  for (const p of vis) {
+    g.fillStyle = p.bld ? (BLD_COL[p.bld] || '#999') : p.own === 2 ? 'rgba(40,110,220,.30)' : 'rgba(230,120,30,.24)';
+    g.fill(p.fill);
+  }
+  if (z >= 12) {
+    for (const p of vis) {
+      g.strokeStyle = p.bld ? 'rgba(255,255,255,.9)' : p.own === 2 ? 'rgba(30,80,170,.85)' : 'rgba(180,90,20,.75)';
+      g.lineWidth = (p.bld ? 2.2 : 1.2) / z; g.stroke(p.edge);
+      if (p.sale != null) { g.strokeStyle = '#d23'; g.setLineDash([4 / z, 3 / z]); g.lineWidth = 2 / z; g.stroke(p.edge); g.setLineDash([]); }
+    }
+  }
+  if (mark && mark.size) for (const p of vis) if (mark.has(p.id)) { g.strokeStyle = '#ff9800'; g.lineWidth = 3.5 / z; g.stroke(p.edge); }
+  screenT(g);
+  if (z >= 36) for (const p of vis) label(g, p.ban, sx(p.lx), sy(p.ly), { size: 10, color: p.own === 2 ? '#1a3f8a' : '#7a4416' });
+}
+// 境界線：県（太い一点鎖線）・市区町村（鎖線）・区（破線）・町／大字（点線）・丁目／字（細い点線）
+const BND_ST = { pref: { w: 3.2, c: 'rgba(80,40,110,.85)', d: [12, 4, 2, 4], z: 1.2 }, muni: { w: 2.2, c: 'rgba(90,50,120,.75)', d: [9, 4], z: 1.2 },
+                 ward: { w: 1.6, c: 'rgba(90,50,120,.6)', d: [5, 4], z: 2 }, dist: { w: 1.1, c: 'rgba(100,70,130,.5)', d: [3, 3], z: 4 }, sub: { w: 0.9, c: 'rgba(100,70,130,.38)', d: [2, 3], z: 10 } };
+function drawBounds(g, z, v) {
+  const cx0 = Math.floor(v.x0 / CS), cy0 = Math.floor(v.y0 / CS), cx1 = Math.floor(v.x1 / CS), cy1 = Math.floor(v.y1 / CS);
+  const chs = [];
+  for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) { const c = S.chunks.get(ckey(cx, cy)); if (c && !c.sea) { if (!c.bnd) c.bnd = chunkBnd(c); chs.push(c); } }
+  worldT(g); g.lineCap = 'butt';
+  for (const lv of ['sub', 'dist', 'ward', 'muni', 'pref']) {
+    const st = BND_ST[lv]; if (z < st.z) continue;
+    g.beginPath();
+    for (const c of chs) { const a = c.bnd[lv]; for (let i = 0; i < a.length; i += 4) { g.moveTo(a[i], a[i + 1]); g.lineTo(a[i + 2], a[i + 3]); } }
+    if (lv === 'pref' || lv === 'muni') { g.strokeStyle = 'rgba(255,255,255,.55)'; g.lineWidth = (st.w + 2) / z; g.setLineDash([]); g.stroke(); }
+    g.strokeStyle = st.c; g.lineWidth = st.w / z; g.setLineDash(st.d.map(d => d / z)); g.stroke();
+  }
+  g.setLineDash([]); g.lineCap = 'round'; screenT(g);
+}
 function laneMarks(g, s, z) {
   const w = s.w * z; if (w < 9) return;
   const lanes = s.l, cw = Math.max(0.1, s.w - 0.1), lw = cw / (2 * lanes);
@@ -568,8 +711,19 @@ function label(g, text, x, y, o) {
 }
 function roundRect(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
 function drawPlaces(g, it, z) {
+  // 町字（町・大字は近いとき、丁目・字はもっと近いとき）
+  if (z >= 5) {
+    const cs = [...it.chos.values()].filter(c => (c[1] === 'cho' || c[1] === 'oaza') ? z >= 5 && z < 40 : z >= 14);
+    cs.sort((a, b) => (a[1] === 'cho' || a[1] === 'oaza' ? 0 : 1) - (b[1] === 'cho' || b[1] === 'oaza' ? 0 : 1));
+    for (const c of cs) {
+      const x = sx(c[3] + 0.5), y = sy(c[4] + 0.5);
+      if (x < -60 || y < -30 || x > S.W + 60 || y > S.H + 30) continue;
+      if (c[1] === 'cho' || c[1] === 'oaza') label(g, c[2], x, y, { size: 12, bold: true, color: '#5a4a6a' });
+      else label(g, c[1] === 'aza' ? '字' + c[2] : c[2], x, y, { size: 10, color: '#6a5a7a' });
+    }
+  }
   const ps = [...it.places.values()];
-  const show = p => p.k === 'pref' ? z < 0.45 : p.k === 'muni' ? (z >= 0.3 && z < 12 && (z > 1.2 || (p.pop || 0) > 150000 || p.t === '市')) : p.k === 'ward' ? z >= 1.2 && z < 14 : p.k === 'dist' ? z >= 7 : p.k === 'river' ? z >= 2.5 : false;
+  const show = p => p.k === 'pref' ? z < 0.6 : p.k === 'muni' ? (z >= 0.3 && z < 12 && (z > 1.2 || (p.pop || 0) > 150000 || p.t === '市')) : p.k === 'ward' ? z >= 1.2 && z < 14 : p.k === 'river' ? z >= 2.5 : false;
   const rank = p => p.k === 'pref' ? 0 : p.k === 'muni' ? 1 + (p.pop > 500000 ? 0 : 1) : p.k === 'ward' ? 3 : p.k === 'river' ? 4 : 5;
   ps.filter(show).sort((a, b) => rank(a) - rank(b) || (b.pop || 0) - (a.pop || 0)).forEach(p => {
     const x = sx(p.x + 0.5), y = sy(p.y + 0.5);
@@ -596,7 +750,7 @@ function frame() {
   if (S.dirty) {
     S.dirty = false; LBL = [];
     try { render(); } catch (e) { console.error(e); }
-    needChunks(); needCells(); trimChunks();
+    needChunks(); needCells(); needCho(); trimChunks();
   }
   requestAnimationFrame(frame);
 }
@@ -655,7 +809,7 @@ function build(root) {
     <div class="mp-top">
       <select class="mp-as" title="だれの名前で"></select>
       <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button>
-      <span class="mp-addr" hidden></span>
+      <span class="mp-addr" translate="no" hidden></span>
     </div>
     <div class="mp-zoom"><button data-full title="大きく">⤢</button><button data-zin>＋</button><button data-zout>－</button><button data-home title="瑠璃市役所">⌂</button></div>
     <div class="mp-hint" hidden></div>
@@ -790,7 +944,7 @@ function nearNode(x, y, rpx, pred) {
 
 /* ---------- 道具 ---------- */
 const TOOL_HINT = {
-  look: '', land: '土地：2か所タップして四角くえらびます（1か所なら1マス）',
+  look: '', land: '土地：2か所タップして四角くえらびます（区画は10m四方）',
   rail: '線路：タップして点をおくと、なめらかな線になります。点はドラッグで動かせます', road: '道路：タップして点をおくと、なめらかな線になります。点はドラッグで動かせます',
   sta: '駅：自分の線路の上をタップ（バス停：道路の上をタップ）', dep: '車庫：自分の線路（バスは道路）の横をタップ', del: 'こわす：自分の線・駅・車庫・建物をタップ'
 };
@@ -820,7 +974,7 @@ async function lookAt(x, y) {
   if (dp) return showDep(dp);
   const sg = nearSeg(x, y, 8);
   if (sg && (S.cam.z >= 3 || sg.s.k === 'rail' || ['exp', 'nat'].includes(sg.s.c))) return showSeg(sg.s, sg);
-  return showTile(Math.floor(x), Math.floor(y));
+  return showSpot(Math.floor(x * 5), Math.floor(y * 5));
 }
 // マスの上にあるもの（「駅：名前」「線路（路線名）・持ち主」など）：種類と名前を分けて出す（種類のことばだけ訳せるように）
 function onH(n) {
@@ -832,35 +986,44 @@ function onH(n) {
   return esc(n);
 }
 const CLS_NAME = { exp: '高速道路', nat: '国道', pref: '県道', city: '市道', lane: '市道（細い道）', priv: '私道', rail: '線路' };
-async function showTile(tx, ty) {
-  S.sel = { kind: 'tile', x: tx, y: ty }; S.dirty = true;
-  const sh = sheet(`<h4>${tx}, ${ty}</h4><p class="muted small">しらべています…</p>`);
-  const d = await api('mp_tile', { p_x: tx, p_y: ty }); if (!d || S.sheet !== sh || !S.sel || S.sel.x !== tx || S.sel.y !== ty) return;
+async function showSpot(cx, cy) {
+  S.sel = { kind: 'cell', x: cx, y: cy }; S.dirty = true;
+  const sh = sheet(`<h4>${Math.floor(cx / 5)}, ${Math.floor(cy / 5)}</h4><p class="muted small">しらべています…</p>`);
+  const d = await api('mp_spot', { p_x: cx, p_y: cy }); if (!d || S.sheet !== sh || !S.sel || S.sel.x !== cx || S.sel.y !== cy) return;
   if (d.none) return sheet(`<h4>地図の外です</h4>`);
+  const P = d.parcel; S.sel.parcel = P ? P.id : null; S.dirty = true;
   const on = (d.on || []).map(o => onH(o.name)).join('<br>');
-  sheet(`<h4>${esc(d.addr.text)}</h4>
+  sheet(`<h4><span translate="no">${esc(d.addr.text)}</span>${d.addr.ban ? ` <span>${esc(d.addr.ban)}</span>` : ''}</h4>
     <div class="mp-kv"><b>地形</b><span><span>${esc(d.ter)}</span>${d.elev ? `<small>（標高 約${d.elev}m）</small>` : ''}</span><b>地目</b><span>${esc(d.chimoku)}</span>
       <b>用途地域</b><span>${esc(d.zname)}</span><b>人の多さ</b><span>${fmt(d.dens)} 人/km²</span>
-      ${d.value != null ? `<b>地価</b><span>${X(d.value)}（1マス・約2,500m²）</span>` : ''}
-      <b>持ち主</b><span>${d.owner ? `<span>${esc(d.owner)}</span>${d.mine ? '<small>（あなた）</small>' : ''}` : '国'}</span>
-      ${d.sale != null ? `<b>売り出し</b><span>${X(d.sale)}</span>` : ''}
-      ${d.bld ? `<b>建物</b><span><span>${esc(BLD_NAME[d.bld] || d.bld)}</span>${d.rent ? `<small>（家賃 1日 ${X(d.rent)}）</small>` : ''}</span>` : ''}
+      ${d.cval != null ? `<b>地価</b><span>${X(d.cval)}（1区画・100㎡）</span>` : ''}
+      <b>持ち主</b><span>${P ? `<span>${esc(P.owner)}</span>${P.mine ? '<small>（あなた）</small>' : ''}` : d.pub ? '公衆用道路' : '国'}</span>
+      ${P ? `<b>筆</b><span>${esc(P.ban)}・${fmt(P.n * 100)}㎡・地価 ${X(P.val)}</span>` : ''}
+      ${P && P.sale != null ? `<b>売り出し</b><span>${X(P.sale)}</span>` : ''}
+      ${P && P.bld ? `<b>建物</b><span><span>${esc(BLD_NAME[P.bld] || P.bld)}</span>${P.rent ? `<small>（家賃 1日 ${X(P.rent)}）</small>` : ''}</span>` : ''}
       ${on ? `<b>あるもの</b><span>${on}</span>` : ''}
       ${(d.leases || []).length ? `<b>使用料</b><span>${d.leases.map(l => `<span>${esc(l.who)}</span>：<span>1日 ${X(l.fee)}</span>`).join('<br>')}</span>` : ''}
     </div>
-    <div class="mp-row">${d.buy ? `<button class="btn main" data-buy>この土地を買う（${X(d.sale != null ? Math.ceil(d.sale * 1.03) : d.value)}）</button>` : (d.why ? `<span class="muted small">${esc(d.why)}</span>` : '')}
-      ${d.mine ? `<button class="btn" data-sell>${d.sale != null ? '売り出しをやめる' : '売りに出す'}</button><button class="btn" data-bld>建物</button>` : ''}</div>`, s => {
-    const b = s.querySelector('[data-buy]'); if (b) b.onclick = () => landBuy([tx, ty]);
-    const se = s.querySelector('[data-sell]'); if (se) se.onclick = () => landSell([tx, ty], d.sale != null);
-    const bl = s.querySelector('[data-bld]'); if (bl) bl.onclick = () => bldPick([tx, ty]);
+    <div class="mp-row">${!P && d.buy ? `<button class="btn main" data-buyhere>ここの土地を買う</button>` : ''}
+      ${P && !P.mine && P.sale != null ? `<button class="btn main" data-pbuy>この筆を買う（${X(Math.ceil(P.sale * 1.03))}）</button>` : ''}
+      ${!P && !d.buy && d.why ? `<span class="muted small">${esc(d.why)}</span>` : ''}
+      ${P && P.mine ? `<button class="btn" data-sell>${P.sale != null ? '売り出しをやめる' : '売りに出す'}</button>
+        <button class="btn" data-bld>${P.bld ? '建物をこわす' : '建物を建てる'}</button><button class="btn" data-split>分筆</button><button class="btn" data-merge>合筆</button>` : ''}</div>`, s => {
+    const q = k => s.querySelector(k);
+    if (q('[data-buyhere]')) q('[data-buyhere]').onclick = () => { setTool('land'); S.toolState.a = [cx, cy]; landSheet(); S.dirty = true; };
+    if (q('[data-pbuy]')) q('[data-pbuy]').onclick = () => parcelBuy(P);
+    if (q('[data-sell]')) q('[data-sell]').onclick = () => parcelSell(P);
+    if (q('[data-bld]')) q('[data-bld]').onclick = () => P.bld ? bldRemove(P) : bldPick(P);
+    if (q('[data-split]')) q('[data-split]').onclick = () => startSplit(P);
+    if (q('[data-merge]')) q('[data-merge]').onclick = () => startMerge(P);
   });
-  S.addr.hidden = false; S.addr.textContent = d.addr.text;
+  S.addr.hidden = false; S.addr.textContent = d.addr.text + (d.addr.ban ? ' ' + d.addr.ban : '');
 }
 const BLD_NAME = { house: '住宅', apt: 'マンション', shop: '商店', office: 'オフィスビル', factory: '工場', warehouse: '倉庫', port: '港湾施設', farm: '田畑', parking: '駐車場' };
 function showSeg(s, hit) {
   S.sel = { kind: 'seg', id: s.id }; S.dirty = true;
   const own = s.o === 'gov' ? '国' : (S.vis.names[s.o] || '');
-  sheet(`<h4><span>${esc(CLS_NAME[s.c] || s.c)}</span>${s.n ? `・<span>${esc(s.n)}</span>` : ''}</h4><p class="small muted" data-addr style="margin:0"></p>
+  sheet(`<h4><span>${esc(CLS_NAME[s.c] || s.c)}</span>${s.n ? `・<span>${esc(s.n)}</span>` : ''}</h4><p class="small muted" data-addr translate="no" style="margin:0"></p>
     <div class="mp-kv"><b>持ち主</b><span><span>${esc(own)}</span>${s.mine && s.o !== 'gov' ? '<small>（あなた）</small>' : ''}</span>
       <b>長さ</b><span>${fmt(Math.round(s.len * 50))} m</span>
       ${s.k === 'road' ? `<b>車線</b><span>${s.l ? '片側' + s.l + '車線' : '中央線なし'}</span>` : `<b>線路</b><span>${s.dbl ? '複線' : '単線'}・${s.el ? '電化' : '非電化'}</span>`}
@@ -872,11 +1035,11 @@ function showSeg(s, hit) {
     if (q('[data-opt]')) q('[data-opt]').onclick = () => segOpts(s);
     if (q('[data-del]')) q('[data-del]').onclick = () => segDel(s);
   });
-  if (hit) addrInto(Math.floor(hit.x), Math.floor(hit.y), () => S.sel && S.sel.kind === 'seg' && S.sel.id === s.id);
+  if (hit) addrInto(hit.x, hit.y, () => S.sel && S.sel.kind === 'seg' && S.sel.id === s.id);
 }
 // 住所をシートと上の帯に
-async function addrInto(tx, ty, still) {
-  const d = await api('mp_tile', { p_x: tx, p_y: ty }); if (!d || !d.addr || !still()) return;
+async function addrInto(x, y, still) {   // x, y：マス（50m）の座標。その場所の区画（10m）の住所
+  const d = await api('mp_spot', { p_x: Math.floor(x * 5), p_y: Math.floor(y * 5) }); if (!d || !d.addr || !still()) return;
   const e = S.sheet.querySelector('[data-addr]'); if (e) e.textContent = d.addr.text;
   S.addr.hidden = false; S.addr.textContent = d.addr.text;
 }
@@ -909,7 +1072,7 @@ async function segDel(s) {
 }
 function showSta(s) {
   S.sel = { kind: 'sta', id: s.id }; S.dirty = true;
-  sheet(`<h4>${s.k === 'rail' ? '🚉 ' : '🚏 '}<span>${esc(s.n)}</span>${s.k === 'rail' ? '<span>駅</span>' : ''}</h4><p class="small muted" data-addr style="margin:0"></p>
+  sheet(`<h4>${s.k === 'rail' ? '🚉 ' : '🚏 '}<span>${esc(s.n)}</span>${s.k === 'rail' ? '<span>駅</span>' : ''}</h4><p class="small muted" data-addr translate="no" style="margin:0"></p>
     <div class="mp-kv"><b>持ち主</b><span><span>${esc(S.vis.names[s.o] || '')}</span>${s.mine ? '<small>（あなた）</small>' : ''}</span>
       ${s.k === 'rail' ? `<b>ホーム</b><span>${s.pl} m・${s.tr}番線まで</span>` : ''}
       <b>系統</b><span>${(s.rt || []).map(r => `<a href="#" data-rt="${r.id}" style="color:${esc(r.c)};font-weight:800">■ ${esc(r.n)}</a>`).join('<br>') || 'なし'}</span></div>
@@ -918,7 +1081,7 @@ function showSta(s) {
     const r = sh.querySelector('[data-ren]'); if (r) r.onclick = async () => { const nm = prompt(T('新しい名前'), s.n); if (nm && await api('mp_sta_edit', { p_id: s.id, p_name: nm, p_del: false }, '名前を変えました')) refreshBox(s.fx - 3, s.fy - 3, s.fx + 3, s.fy + 3); };
     const d = sh.querySelector('[data-del]'); if (d) d.onclick = async () => { if (confirm(T('こわしますか？（工事費はもどりません）')) && await api('mp_sta_edit', { p_id: s.id, p_name: null, p_del: true }, 'こわしました')) { refreshBox(s.fx - 3, s.fy - 3, s.fx + 3, s.fy + 3); sheet(null); } };
   });
-  addrInto(Math.floor(s.fx), Math.floor(s.fy), () => S.sel && S.sel.kind === 'sta' && S.sel.id === s.id);
+  addrInto(s.fx, s.fy, () => S.sel && S.sel.kind === 'sta' && S.sel.id === s.id);
 }
 function showDep(d) {
   S.sel = { kind: 'dep', id: d.id }; S.dirty = true;
@@ -930,69 +1093,133 @@ function showDep(d) {
   });
 }
 
-/* ---- 土地 ---- */
+/* ---- 土地（区画：10m四方。マスの 1/5） ---- */
+const cellAt = (x, y) => [Math.floor(x * 5), Math.floor(y * 5)];
 function startLand() {
   S.toolState = { a: null, b: null };
   S.drawTool = (g, z) => {
     const st = S.toolState; if (!st || !st.a) return;
-    const b = st.b || st.a, x0 = Math.min(st.a[0], b[0]), y0 = Math.min(st.a[1], b[1]), x1 = Math.max(st.a[0], b[0]) + 1, y1 = Math.max(st.a[1], b[1]) + 1;
+    const b = st.b || st.a, x0 = Math.min(st.a[0], b[0]) / 5, y0 = Math.min(st.a[1], b[1]) / 5, x1 = (Math.max(st.a[0], b[0]) + 1) / 5, y1 = (Math.max(st.a[1], b[1]) + 1) / 5;
     g.fillStyle = 'rgba(30,110,230,.18)'; g.fillRect(sx(x0), sy(y0), (x1 - x0) * z, (y1 - y0) * z);
     g.strokeStyle = '#1f5fbf'; g.lineWidth = 2; g.setLineDash([6, 4]); g.strokeRect(sx(x0), sy(y0), (x1 - x0) * z, (y1 - y0) * z); g.setLineDash([]);
   };
   S.tapHook = (x, y) => {
-    const st = S.toolState, t = [Math.floor(x), Math.floor(y)];
+    if (S.cam.z < 12) { setCam(x, y, 30); hint('区画は10m四方です。近づいてからえらびます'); return; }
+    const st = S.toolState, t = cellAt(x, y);
     if (!st.a || st.b) { st.a = t; st.b = null; landSheet(); }
     else { st.b = t; landSheet(); }
     S.dirty = true;
   };
   S.toolEnd = () => { S.tapHook = null; S.toolState = null; };
 }
-function landTiles() {
-  const st = S.toolState; if (!st || !st.a) return [];
-  const b = st.b || st.a, out = [];
-  for (let y = Math.min(st.a[1], b[1]); y <= Math.max(st.a[1], b[1]); y++) for (let x = Math.min(st.a[0], b[0]); x <= Math.max(st.a[0], b[0]); x++) out.push(x, y);
-  return out;
+function landRect() {
+  const st = S.toolState; if (!st || !st.a) return null;
+  const b = st.b || st.a;
+  return [Math.min(st.a[0], b[0]), Math.min(st.a[1], b[1]), Math.max(st.a[0], b[0]), Math.max(st.a[1], b[1])];
 }
 async function landSheet() {
-  const tiles = landTiles(), n = tiles.length / 2;
-  if (n > 400) return sheet(`<h4>${n}マス</h4><p class="mp-warn">一度にえらべるのは400マス（20×20）までです</p>`);
-  sheet(`<h4>${n}マス えらびました</h4><p class="muted small">見つもっています…</p>`);
-  const q = await api('mp_land_buy', { p_tiles: tiles, p_as: S.as, p_dry: true });
-  if (!q || landTiles().length / 2 !== n) return;
-  const why = q.why || {}, sk = [why.water && `水の上 ${why.water}`, why.park && `公園 ${why.park}`, why.road && `公道 ${why.road}`, why.owned && `持ち主がいる ${why.owned}`].filter(Boolean).map(t => `<span>${esc(t)}</span>`).join('・');
-  const mine = (S.vis ? [...S.vis.land.values()] : []).filter(l => l[2] === 2 && tiles.some((v, i) => i % 2 === 0 && v === l[0] && tiles[i + 1] === l[1]));
-  sheet(`<h4>${n}マス えらびました</h4>
-    <div class="mp-kv"><b>買える</b><span>${q.n}マス・<span class="mp-cost">${X(q.total)}</span>（${esc(asName())}）</span>${sk ? `<b>買えない</b><span>${sk}</span>` : ''}
-    <b>固定資産税</b><span>1日 約${X(q.tax_day)}</span></div>
-    <div class="mp-row">${q.n ? `<button class="btn main" data-buy>買う</button>` : ''}${mine.length ? `<button class="btn" data-sell>売りに出す（${mine.length}マス）</button><button class="btn" data-bld>建物を建てる</button>` : ''}</div>
-    <p class="muted small">もう一度2か所タップすると、えらびなおせます</p>`, s => {
-    const b = s.querySelector('[data-buy]'); if (b) b.onclick = () => landBuy(tiles);
-    const se = s.querySelector('[data-sell]'); if (se) se.onclick = () => landSell(mine.flatMap(l => [l[0], l[1]]), false);
-    const bl = s.querySelector('[data-bld]'); if (bl) bl.onclick = () => bldPick(mine.flatMap(l => [l[0], l[1]]));
+  const r = landRect(); if (!r) return;
+  const n = (r[2] - r[0] + 1) * (r[3] - r[1] + 1);
+  if (n > 1600) return sheet(`<h4>${fmt(n)}区画</h4><p class="mp-warn">一度にえらべるのは1600区画（400m×400m）までです</p>`);
+  sheet(`<h4>${fmt(n)}区画 えらびました</h4><p class="muted small">見つもっています…</p>`);
+  const q = await api('mp_land_buy', { p_rect: r, p_as: S.as, p_dry: true });
+  const r2 = landRect(); if (!q || !r2 || r2.join() !== r.join()) return;
+  const why = q.why || {}, sk = [why.road && `道路 ${why.road}`, why.water && `水の上 ${why.water}`, why.park && `公園 ${why.park}`, why.owned && `持ち主がいる ${why.owned}`, why.other && `そのほか ${why.other}`].filter(Boolean).map(t => `<span>${esc(t)}</span>`).join('・');
+  sheet(`<h4>${fmt(n)}区画 えらびました</h4>
+    <div class="mp-kv"><b>買える</b><span><span>${fmt(q.n)}区画（${fmt(q.n * 100)}㎡）</span>・<span class="mp-cost">${X(q.total)}</span></span>
+      ${q.parcels > 1 ? `<b>筆</b><span>${q.parcels}筆にわかれます（道路・町字でわける）</span>` : ''}
+      ${sk ? `<b>買えない</b><span>${sk}</span>` : ''}
+      <b>固定資産税</b><span>1日 約${X(q.tax_day)}</span></div>
+    <div class="mp-row">${q.n ? `<button class="btn main" data-buy>${esc(asName())}の名義で買う</button>` : ''}</div>
+    <p class="muted small">もう一度2か所タップすると、えらびなおせます。道路の部分は国の土地（公衆用道路）なので買えません</p>`, s => {
+    const b = s.querySelector('[data-buy]'); if (b) b.onclick = async () => {
+      const x = await api('mp_land_buy', { p_rect: r, p_as: S.as, p_dry: false });
+      if (x) { toast(T(`${fmt(x.n)}区画（${x.parcels}筆）を買いました（${fmt(x.total)} X）`)); refreshBox(r[0] / 5 - 1, r[1] / 5 - 1, r[2] / 5 + 2, r[3] / 5 + 2); sheet(null); S.toolState.a = S.toolState.b = null; S.dirty = true; }
+    };
   });
 }
-async function landBuy(tiles) {
-  const r = await api('mp_land_buy', { p_tiles: tiles, p_as: S.as, p_dry: false });
-  if (r) { toast(`${r.n}マス買いました（${fmt(r.total)} X）`); boxOf(tiles); sheet(null); }
+const pBox = P => P.bb ? [P.bb[0] / 5 - 1, P.bb[1] / 5 - 1, P.bb[2] / 5 + 1, P.bb[3] / 5 + 1] : null;
+function refreshP(P) { const b = pBox(P); if (b) refreshBox(...b); else for (const c of S.cells.values()) c.stale = true; S.dirty = true; }
+async function parcelBuy(P) {
+  const q = await api('mp_parcel_buy', { p_id: P.id, p_as: S.as, p_dry: true }); if (!q) return;
+  if (!confirm(T(`${P.ban}（${fmt(P.n * 100)}㎡）を ${fmt(q.price)} X ＋ 取得税 ${fmt(q.tax)} X で買います。よろしいですか？`))) return;
+  if (await api('mp_parcel_buy', { p_id: P.id, p_as: S.as, p_dry: false }, '買いました')) { refreshP(P); sheet(null); }
 }
-async function landSell(tiles, stop) {
+async function parcelSell(P) {
   let price = null;
-  if (!stop) { const v = prompt(T('1マスの値段（X）'), ''); if (!v) return; price = Number(String(v).replace(/[^\d]/g, '')); if (!price) return; }
-  if (await api('mp_land_sell', { p_tiles: tiles, p_price: price, p_as: S.as }, stop ? '売り出しをやめました' : '売りに出しました')) { boxOf(tiles); sheet(null); }
+  if (P.sale == null) { const v = prompt(T(`${P.ban}（${fmt(P.n * 100)}㎡）の値段（X）`), String(P.val || '')); if (!v) return; price = Number(String(v).replace(/[^\d]/g, '')); if (!price) return; }
+  if (await api('mp_parcel_sell', { p_ids: [P.id], p_price: price, p_as: S.as }, price == null ? '売り出しをやめました' : '売りに出しました')) { refreshP(P); sheet(null); }
 }
-function boxOf(tiles) { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (let i = 0; i < tiles.length; i += 2) { x0 = Math.min(x0, tiles[i]); y0 = Math.min(y0, tiles[i + 1]); x1 = Math.max(x1, tiles[i]); y1 = Math.max(y1, tiles[i + 1]); } refreshBox(x0, y0, x1 + 1, y1 + 1); }
-async function bldPick(tiles) {
+// 分筆：筆の中で2か所タップして四角をえらぶ
+function startSplit(P) {
+  setTool('look'); S.sel = { kind: 'cell', x: P.bb[0], y: P.bb[1], parcel: P.id };
+  S.toolState = { a: null, b: null, split: P };
+  hint('分筆：分ける部分を、2か所タップして四角くえらびます');
+  S.drawTool = (g, z) => {
+    const st = S.toolState; if (!st || !st.a) return;
+    const b = st.b || st.a, x0 = Math.min(st.a[0], b[0]) / 5, y0 = Math.min(st.a[1], b[1]) / 5, x1 = (Math.max(st.a[0], b[0]) + 1) / 5, y1 = (Math.max(st.a[1], b[1]) + 1) / 5;
+    g.fillStyle = 'rgba(255,152,0,.25)'; g.fillRect(sx(x0), sy(y0), (x1 - x0) * z, (y1 - y0) * z);
+    g.strokeStyle = '#e67e00'; g.lineWidth = 2; g.setLineDash([6, 4]); g.strokeRect(sx(x0), sy(y0), (x1 - x0) * z, (y1 - y0) * z); g.setLineDash([]);
+  };
+  S.tapHook = async (x, y) => {
+    const st = S.toolState, t = cellAt(x, y);
+    if (!st.a || st.b) { st.a = t; st.b = null; } else st.b = t;
+    S.dirty = true;
+    const r = landRect(); if (!r) return;
+    const q = await api('mp_parcel_split', { p_id: P.id, p_rect: r, p_as: S.as, p_dry: true });
+    if (!q) return;
+    sheet(`<h4>分筆：${esc(P.ban)}</h4><div class="mp-kv"><b>分ける部分</b><span>${fmt(q.n * 100)}㎡ → ${esc(q.ban)}</span><b>のこる部分</b><span>${fmt(q.rest * 100)}㎡</span></div>
+      <div class="mp-row"><button class="btn main" data-ok>分筆する</button></div>`, s => {
+      s.querySelector('[data-ok]').onclick = async () => { if (await api('mp_parcel_split', { p_id: P.id, p_rect: r, p_as: S.as, p_dry: false }, '分筆しました')) { refreshP(P); setTool('look'); } };
+    });
+  };
+  S.toolEnd = () => { S.tapHook = null; S.toolState = null; };
+  sheet(`<h4>分筆：${esc(P.ban)}</h4><p class="small">分ける部分を、地図で2か所タップしてえらんでください</p>`);
+  S.onSheetClose = () => setTool('look');
+  S.dirty = true;
+}
+// 合筆：となりあう自分の筆をタップしてえらぶ
+function startMerge(P) {
+  setTool('look');
+  const marks = new Map([[P.id, P]]);
+  S.toolState = { marks };
+  hint('合筆：となりの自分の筆をタップしてえらびます（同じ町字・建物なし）');
+  const draw = () => sheet(`<h4>合筆</h4><p class="small">${[...marks.values()].map(p => esc(p.ban)).join('・')}（<span>${marks.size}筆</span>）</p>
+    <div class="mp-row"><button class="btn main" data-ok ${marks.size >= 2 ? '' : 'disabled'}>合筆する</button></div>`, s => {
+    s.querySelector('[data-ok]').onclick = async () => {
+      const r = await api('mp_parcel_merge', { p_ids: [...marks.keys()], p_as: S.as, p_dry: false });
+      if (r) { toast(T(`合筆しました（${r.ban}・${fmt(r.n * 100)}㎡）`)); for (const p of marks.values()) refreshP(p); setTool('look'); }
+    };
+  });
+  S.tapHook = (x, y) => {
+    const [cx, cy] = cellAt(x, y), key = cx + ',' + cy;
+    const p = [...(S.vis ? S.vis.parcels.values() : [])].find(q => q.cells.has(key));
+    if (!p || p.own !== 2) return toast('自分の筆をタップしてください');
+    if (marks.has(p.id) && marks.size > 1) marks.delete(p.id); else marks.set(p.id, p);
+    S.dirty = true; draw();
+  };
+  S.toolEnd = () => { S.tapHook = null; S.toolState = null; };
+  S.onSheetClose = () => setTool('look');
+  draw(); S.dirty = true;
+}
+// 建物：筆の大きさ・用途地域に合うもの
+async function bldPick(P) {
   const types = S.boot.bld;
-  sheet(`<h4>建物を建てる（${tiles.length / 2}マス）</h4><div class="mp-list">${types.map(b => `<button class="mp-item" style="text-align:left" data-b="${b.k}"><b>${esc(b.n)}</b>
-      <small>　1マス ${X(b.cost)}・家賃 1日 建てた額の約${(b.rate * 100).toFixed(1)}%（地価で上下）・建てられる用途地域：${b.z.split('').map(z => PAL.ZN[z]).join('・')}</small></button>`).join('')}
-    <button class="mp-item" style="text-align:left" data-b=""><b>こわす（更地にする）</b></button></div>`, s => {
+  sheet(`<h4>建物を建てる（${esc(P.ban)}・${fmt(P.n * 100)}㎡）</h4><div class="mp-list">${types.map(b => {
+      const ok = P.n >= b.min && P.n <= b.max;
+      return `<button class="mp-item" style="text-align:left${ok ? '' : ';opacity:.5'}" data-b="${b.k}"><b>${esc(b.n)}</b> <span class="mp-cost">${X(b.cost * P.n)}</span>
+        <small><br><span>1区画 ${X(b.cost)}・家賃 1日 建てた額の約${(b.rate * 100).toFixed(1)}%（地価で上下）</span><br><span>${fmt(b.min * 100)}〜${fmt(b.max * 100)}㎡</span>・<span>建てられる用途地域</span>：${b.z.split('').map(z => `<span>${PAL.ZN[z]}</span>`).join('・')}</small></button>`; }).join('')}</div>`, s => {
     s.querySelectorAll('[data-b]').forEach(b => b.onclick = async () => {
-      const k = b.dataset.b || null;
-      const q = await api('mp_bld', { p_tiles: tiles, p_type: k, p_as: S.as, p_dry: true }); if (!q) return;
-      if (!confirm(T((k ? `${q.n}マスに建てます（${fmt(q.cost)} X）。よろしいですか？` : `${q.n}マスの建物をこわします。よろしいですか？`) + (q.skip ? '\nできないマスがあります' : '')))) return;
-      if (await api('mp_bld', { p_tiles: tiles, p_type: k, p_as: S.as, p_dry: false }, k ? '建てました' : 'こわしました')) { boxOf(tiles); sheet(null); }
+      const k = b.dataset.b;
+      const q = await api('mp_bld', { p_parcel: P.id, p_type: k, p_as: S.as, p_dry: true }); if (!q) return;
+      if (!confirm(T(`${q.name}を建てます（${fmt(q.cost)} X）。よろしいですか？`))) return;
+      if (await api('mp_bld', { p_parcel: P.id, p_type: k, p_as: S.as, p_dry: false }, '建てました')) { refreshP(P); sheet(null); }
     });
   });
+}
+async function bldRemove(P) {
+  if (!confirm(T('この建物をこわしますか？'))) return;
+  if (await api('mp_bld', { p_parcel: P.id, p_type: null, p_as: S.as, p_dry: false }, 'こわしました')) { refreshP(P); sheet(null); }
 }
 
 /* ---- 線をひく（線路・道路）：点をおくと、なめらかな曲線（セントリペタル・キャットムル–ロム）になる ---- */
@@ -1299,8 +1526,9 @@ async function delTap(x, y) {
   const st = nearSta(x, y, 14); if (st && st.s.mine) return showSta(st.s);
   const dp = nearDep(x, y); if (dp && dp.mine) return showDep(dp);
   const sg = nearSeg(x, y, 10, s => s.mine); if (sg) return segDel(sg.s);
-  const l = S.vis && S.vis.land.get(Math.floor(x) + ',' + Math.floor(y));
-  if (l && l[2] === 2 && l[4]) { if (confirm(T('この建物をこわしますか？'))) { if (await api('mp_bld', { p_tiles: [l[0], l[1]], p_type: null, p_as: S.as, p_dry: false }, 'こわしました')) refreshBox(l[0], l[1], l[0] + 1, l[1] + 1); } return; }
+  const [cx, cy] = cellAt(x, y), key = cx + ',' + cy;
+  const P = S.vis && [...S.vis.parcels.values()].find(q => q.cells.has(key));
+  if (P && P.own === 2 && P.bld) return bldRemove(P);
   toast('こわせるもの（自分の線・駅・車庫・建物）がありません');
 }
 
@@ -1329,8 +1557,8 @@ function openMenu() {
 }
 function openHelp() {
   modal(['国土のあそびかた', `<div class="small" style="line-height:1.8">
-    <p><b>地図</b>：瑠璃市中里区がまん中。北西が山、南東が海です。指2本で拡大・縮小、ドラッグで動かします。タップすると住所・地目・用途地域・地価がわかります。</p>
-    <p><b>土地</b>：国の土地は地価で買えます。売りに出ている土地は、その値段（＋取得税3%）。毎日、地価の0.01%の固定資産税。建物を建てると毎時間家賃が入ります。</p>
+    <p><b>地図</b>：瑠璃市中里区がまん中。北西が山、南東が海です。指2本で拡大・縮小、ドラッグで動かします。タップすると住所（町字・地番）・地目・用途地域・地価がわかります。線は県・市区町村・町字の境界です。</p>
+    <p><b>土地</b>：国の土地は区画（10m四方・100㎡）でえらんで買えます。道路の部分は国の土地（公衆用道路）なので買えません。買った土地は「筆」になり、地番がつきます（住所は町字＋地番）。となりあう自分の筆は合筆、筆の一部は分筆できます。売りに出ている筆は、その値段（＋取得税3%）。毎日、地価の0.01%の固定資産税。筆の大きさと用途地域に合う建物を建てると、毎時間家賃が入ります。</p>
     <p><b>線路・道路</b>：点をおくと、なめらかな線になります。他人の土地や国の土地の上につくると、毎日使用料がかかります（国・県・市の道路の上はかかりません）。まちの中は工事費が高くなります。</p>
     <p><b>駅と車庫</b>：駅はホームの長さと番線の数を決めます（20mの車両がホームに入る両数まで）。車両は車庫に車籍をおきます。</p>
     <p><b>車両</b>：122系0番台は国鉄103系とほぼ同じ性能（最高100km/h）。1両ずつ注文して、両はしに運転台つきの Tc（奇数向き・偶数向き）、まん中に Mp（パンタグラフつき）と M をはさんで編成にします。</p>
@@ -1700,7 +1928,7 @@ async function openLedger() {
     if (!head) head = d; rows = rows.concat(d.rows); before = d.rows.length ? d.rows[d.rows.length - 1].id : before;
     const day = head.day || {}, a = head.assets;
     m.set('お金の記録', `<p class="small" style="margin:0">${esc(asName())}</p>
-      <div class="mp-kv"><b>土地</b><span>${a.land}マス（地価 ${X(a.land_val)}）</span><b>線路</b><span>${a.rail_km} km</span><b>駅・バス停</b><span>${a.stations}</span><b>車両</b><span>${a.cars}両（台）</span>
+      <div class="mp-kv"><b>土地</b><span>${a.land}筆・${fmt(a.land_m2 || 0)}㎡（地価 ${X(a.land_val)}）</span><b>線路</b><span>${a.rail_km} km</span><b>駅・バス停</b><span>${a.stations}</span><b>車両</b><span>${a.cars}両（台）</span>
         ${head.owed ? `<b>未払い</b><span class="mp-warn">${X(head.owed)}（運賃などから先に引かれます）</span>` : ''}</div>
       <h4 style="margin:10px 0 4px">この24時間</h4><div class="mp-kv">${Object.entries(day).map(([k, v]) => `<b>${esc(LK[k] || k)}</b><span style="color:${v >= 0 ? '#1a7f37' : '#c33'}">${v >= 0 ? '+' : ''}${fmt(v)} X</span>`).join('') || '<span class="muted small">なし</span>'}</div>
       <h4 style="margin:10px 0 4px">記録</h4><div class="mp-list">${rows.map(r => `<div class="mp-item"><small>${new Date(r.at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}・${esc(LK[r.k] || r.k)}</small><br>
@@ -1721,10 +1949,11 @@ const RATE_NAME = { land_P: '地価のもと：平地', land_F: '地価のもと
 async function openAdmin() {
   const m = modal(['国土の管理', '<p class="muted small">読みこんでいます…</p>']);
   const st = await api('mp_admin_state', {}); const rates = await api('mp_admin_rates', { p_set: null }); if (!st || !rates) return;
-  m.set('国土の管理', `<div class="mp-kv"><b>チャンク</b><span>${fmt(st.chunks)}</span><b>道路・線路</b><span>${fmt(st.segs)}（国 ${fmt(st.gov_segs)}・線路 ${fmt(st.rail_segs)}）</span><b>土地</b><span>${fmt(st.land)}マス</span>
+  m.set('国土の管理', `<div class="mp-kv"><b>チャンク</b><span>${fmt(st.chunks)}</span><b>道路・線路</b><span>${fmt(st.segs)}（国 ${fmt(st.gov_segs)}・線路 ${fmt(st.rail_segs)}）</span><b>土地</b><span>${fmt(st.land)}筆</span>
       <b>駅</b><span>${fmt(st.stations)}</span><b>車両</b><span>${fmt(st.cars)}</span><b>系統・列車</b><span>${fmt(st.routes)}・${fmt(st.trains)}</span><b>時計</b><span>${st.last_tick ? new Date(st.last_tick).toLocaleString('ja-JP') : '—'}</span>
       <b>未払いの合計</b><span>${X(st.owed)}</span></div>
     <h4 style="margin:10px 0 4px">この24時間（ぜんぶ）</h4><div class="mp-kv">${Object.entries(st.day || {}).map(([k, v]) => `<b>${esc(LK[k] || k)}</b><span>${fmt(v)} X</span>`).join('')}</div>
+    <h4 style="margin:10px 0 4px">名前・町字</h4><div class="mp-row"><button class="btn" data-names>地図で名前・町字をなおす</button></div>
     <h4 style="margin:10px 0 4px">用途地域をぬる</h4><div class="mp-row"><select class="mp-inp" style="width:auto" data-z>${Object.entries(PAL.ZN).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}<option value="-">なし</option><option value="">もとにもどす</option></select>
       <button class="btn" data-paint>地図でぬる</button></div>
     <h4 style="margin:10px 0 4px">値段・設定</h4>
@@ -1736,26 +1965,91 @@ async function openAdmin() {
       if (await api('mp_admin_rates', { p_set: set }, '保存しました')) m.close();
     };
     b.querySelector('[data-paint]').onclick = () => { const z = b.querySelector('[data-z]').value; m.close(); zonePaint(z || null); };
+    b.querySelector('[data-names]').onclick = () => { m.close(); namesTool(); };
   });
 }
-function zonePaint(z) {
-  setTool('land');
-  hint(`用途地域（${z ? PAL.ZN[z] || 'なし' : 'もとにもどす'}）：2か所タップして四角くえらびます`);
-  const tap0 = S.tapHook;
+// マスの四角をえらぶ（管理：用途地域・町字の分割）。2か所タップ → onPick([x0, y0, x1, y1])
+function tileRect(msg, onPick) {
+  setTool('look');
+  const st = S.toolState = { a: null, b: null };
+  hint(msg);
+  S.drawTool = (g, z) => {
+    if (!st.a) return;
+    const b = st.b || st.a, x0 = Math.min(st.a[0], b[0]), y0 = Math.min(st.a[1], b[1]), x1 = Math.max(st.a[0], b[0]) + 1, y1 = Math.max(st.a[1], b[1]) + 1;
+    g.fillStyle = 'rgba(160,40,200,.16)'; g.fillRect(sx(x0), sy(y0), (x1 - x0) * z, (y1 - y0) * z);
+    g.strokeStyle = '#8a2fb8'; g.lineWidth = 2; g.setLineDash([6, 4]); g.strokeRect(sx(x0), sy(y0), (x1 - x0) * z, (y1 - y0) * z); g.setLineDash([]);
+  };
   S.tapHook = (x, y) => {
-    tap0(x, y);
-    const st = S.toolState; if (!st || !st.b) return;
-    const tiles = landTiles(); if (tiles.length / 2 > 2000) return sheet('<p class="mp-warn">2000マスまでです</p>');
+    const t = [Math.floor(x), Math.floor(y)];
+    if (!st.a || st.b) { st.a = t; st.b = null; } else { st.b = t; onPick([Math.min(st.a[0], st.b[0]), Math.min(st.a[1], st.b[1]), Math.max(st.a[0], st.b[0]), Math.max(st.a[1], st.b[1])], st.a); }
+    S.dirty = true;
+  };
+  S.toolEnd = () => { S.tapHook = null; S.toolState = null; S.drawTool = null; };
+  S.dirty = true;
+}
+const rectTiles = (r, first) => { const out = first ? [first[0], first[1]] : []; for (let y = r[1]; y <= r[3]; y++) for (let x = r[0]; x <= r[2]; x++) if (!first || x !== first[0] || y !== first[1]) out.push(x, y); return out; };
+function zonePaint(z) {
+  tileRect(`用途地域（${z ? PAL.ZN[z] || 'なし' : 'もとにもどす'}）：2か所タップして四角くえらびます`, r => {
+    const tiles = rectTiles(r); if (tiles.length / 2 > 2000) return sheet('<p class="mp-warn">2000マスまでです</p>');
     sheet(`<h4>${z ? `${tiles.length / 2}マスを「${PAL.ZN[z] || 'なし'}」に` : `${tiles.length / 2}マスを、もとの用途地域に`}</h4><div class="mp-row"><button class="btn main" data-ok>ぬる</button></div>`, s => {
       s.querySelector('[data-ok]').onclick = async () => {
         if (await api('mp_admin_zone', { p_tiles: tiles, p_z: z }, 'ぬりました')) {
-          let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (let i = 0; i < tiles.length; i += 2) { x0 = Math.min(x0, tiles[i]); y0 = Math.min(y0, tiles[i + 1]); x1 = Math.max(x1, tiles[i]); y1 = Math.max(y1, tiles[i + 1]); }
-          for (let cy = Math.floor(y0 / CS); cy <= Math.floor(y1 / CS); cy++) for (let cx = Math.floor(x0 / CS); cx <= Math.floor(x1 / CS); cx++) S.chunks.delete(ckey(cx, cy));
+          for (let cy = Math.floor(r[1] / CS); cy <= Math.floor(r[3] / CS); cy++) for (let cx = Math.floor(r[0] / CS); cx <= Math.floor(r[2] / CS); cx++) S.chunks.delete(ckey(cx, cy));
           S.dirty = true; sheet(null);
         }
       };
     });
+  });
+}
+// 管理：名前・町字（地図をタップ → 県・郡・市区町村・区・町・丁目／大字・字。名前を変える・町字を分ける・合併する）
+function namesTool() {
+  setTool('look');
+  hint('名前・町字：地図をタップすると、その場所の名前が出ます');
+  const show = async (tx, ty) => {
+    S.sel = { kind: 'cell', x: tx * 5 + 2, y: ty * 5 + 2 }; S.dirty = true;
+    const d = await api('mp_admin_place_at', { p_x: tx, p_y: ty }); if (!d) return;
+    const subName = d.sub ? (d.sub.kind === 'aza' ? '字' : '丁目') : null, choName = d.cho ? (d.cho.kind === 'oaza' ? '大字' : '町') : null;
+    const rows = [['県', d.pref, 'place', '県'], ['郡', d.gun, 'gun', '郡'], ['市区町村', d.muni, 'place', d.muni && d.muni.type], ['区', d.ward, 'place', '区'],
+                  [choName || '町', d.cho, 'cho', ''], [subName || '丁目', d.sub, 'cho', '']].filter(r => r[1]);
+    sheet(`<h4>${esc(d.text || '')}</h4><div class="mp-kv">${rows.map((r, i) => `<b>${esc(r[0])}</b><span><b>${esc(r[1].name + (r[0] === '郡' ? '郡' : r[3] || ''))}</b>
+        ${r[1].gen ? `<small class="muted">（もとは ${esc(r[1].gen)}）</small>` : ''} <button class="btn" style="padding:2px 8px" data-ren="${i}">名前を変える</button></span>`).join('')}</div>
+      ${d.cho ? `<div class="mp-row"><button class="btn" data-split>この${esc(subName || choName)}を分ける</button>
+        ${d.sub ? `<button class="btn" data-merge="sub">${esc(subName)}をとなりと合併</button>` : ''}<button class="btn" data-merge="cho">${esc(choName)}をとなりと合併</button></div>` : ''}`, s => {
+      s.querySelectorAll('[data-ren]').forEach(b => b.onclick = async () => {
+        const r = rows[Number(b.dataset.ren)];
+        const nm = prompt(T('新しい名前（「県」「市」「区」「郡」などはつけない）'), r[1].name); if (!nm) return;
+        if (await api('mp_admin_rename', { p_kind: r[2], p_id: r[1].id, p_name: nm }, '名前を変えました')) { for (const c of S.cells.values()) c.stale = true; show(tx, ty); }
+      });
+      const sp = s.querySelector('[data-split]'); if (sp) sp.onclick = () => {
+        tileRect(`分ける：新しい町字にするマスを、2か所タップして四角くえらびます（${d.sub ? d.sub.name : d.cho.name}のところだけ）`, async r => {
+          const tiles = rectTiles(r, [tx, ty]);
+          const nm = prompt(T('新しい町字の名前（丁目なら空でもよい）'), ''); if (nm == null) return;
+          const x = await api('mp_admin_cho_split', { p_tiles: tiles, p_name: nm });
+          if (x) { toast(T(`「${x.name}」をつくりました（${x.tiles}マス・筆 ${x.parcels}）`)); dropCho(r); namesTool(); }
+        });
+      };
+      s.querySelectorAll('[data-merge]').forEach(b => b.onclick = () => {
+        const lv = b.dataset.merge, from = lv === 'sub' ? d.sub : d.cho;
+        hint('合併：入れる先の町字のマスをタップしてください');
+        S.tapHook = async (x2, y2) => {
+          const e = await api('mp_admin_place_at', { p_x: Math.floor(x2), p_y: Math.floor(y2) }); if (!e) return;
+          const into = lv === 'sub' ? e.sub : e.cho;
+          if (!into || into.id === from.id) return toast('ちがう町字をタップしてください');
+          if (!confirm(T(`「${from.name}」を「${into.name}」に合併します。よろしいですか？`))) return;
+          const x = await api('mp_admin_cho_merge', { p_from: from.id, p_into: into.id });
+          if (x) { toast(T(`合併しました（筆 ${x.parcels}）`)); dropCho([Math.min(tx, Math.floor(x2)) - 64, Math.min(ty, Math.floor(y2)) - 64, Math.max(tx, Math.floor(x2)) + 64, Math.max(ty, Math.floor(y2)) + 64]); namesTool(); }
+        };
+      });
+    });
   };
+  S.tapHook = (x, y) => show(Math.floor(x), Math.floor(y));
+  S.toolEnd = () => { S.tapHook = null; };
+}
+// 町字のデータを読みなおす（まわりのチャンク）
+function dropCho(r) {
+  for (let cy = Math.floor(r[1] / CS) - 1; cy <= Math.floor(r[3] / CS) + 1; cy++) for (let cx = Math.floor(r[0] / CS) - 1; cx <= Math.floor(r[2] / CS) + 1; cx++) { S.cho.delete(ckey(cx, cy)); const n = S.chunks.get(ckey(cx, cy)); if (n) n.bnd = null; }
+  for (const c of S.cells.values()) c.stale = true;
+  S.dirty = true;
 }
 
 /* ---------- ひらく・とじる ---------- */
