@@ -469,6 +469,12 @@ h3{font-size:15px;margin:16px 0 8px}
 .rbar{font-size:10px;font-weight:800;color:#fff;background:#E2A90C;border-radius:4px;padding:1px 5px}
 .bell{margin-left:auto;position:relative;border:1px solid var(--line);background:var(--panel);border-radius:999px;width:38px;height:34px;display:flex;align-items:center;justify-content:center;padding:0;color:var(--ink)}
 .bell + .bal{margin-left:8px}
+.world{margin-left:auto;display:flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--panel);border-radius:999px;height:34px;padding:0 12px 0 10px;color:var(--ink);font-weight:700;font-size:13px;white-space:nowrap}
+.world.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.world:not(.hidden) + .bell{margin-left:8px}
+@media (max-width:520px){header .wrap{gap:8px}.world{padding:0;width:36px;justify-content:center}.world span{display:none}.bell{width:36px}.world:not(.hidden) + .bell,.bell + .bal{margin-left:6px}.logo{white-space:nowrap}}
+@media (max-width:420px){.logo{font-size:15px}.logo small{font-size:11px;margin-left:2px}.logo .logo-rm{display:none}.bal{padding:4px 9px;font-size:14px}}
+@media (max-width:350px){.logo small{display:none}.bal{font-size:13px}}
 .bell .bn{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;border-radius:9px;background:var(--red);color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;padding:0 4px}
 .nt-row{display:flex;gap:8px;padding:10px 2px;border-top:1px solid var(--line);cursor:pointer;align-items:flex-start}
 .nt-row:first-child{border-top:0}
@@ -649,7 +655,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 /* 角を小さく（パステルはそのまま） */
 :root:not([data-theme="pastel"]):not([data-theme="citypop"]){--radius:4px}
 :root:not([data-theme="pastel"]):not([data-theme="citypop"]) :is(.btn,.seg,.seg2,.inp,.item,.kb-row,.hm-tile,.hm-w,.th-tile,.toast,.okbox,.warnbox,.td-sum div,.ip-list,.mj-row,.pl,.kk-side,.oc-pick button,.picks button,.bet input,.mailform input,.wk-q input,.slots div,.nt-row.new,.mj-res,.kb-stage,.reel,.game-row .ic,.srv-ic){border-radius:4px}
-:root:not([data-theme="pastel"]):not([data-theme="citypop"]) :is(.bal,.bell,.chips button,.tabs-s button,.men-box button,.tag,.chip,.ind){border-radius:4px}
+:root:not([data-theme="pastel"]):not([data-theme="citypop"]) :is(.bal,.bell,.world,.chips button,.tabs-s button,.men-box button,.tag,.chip,.ind){border-radius:4px}
 :root:not([data-theme="pastel"]):not([data-theme="citypop"]) .modal .sheet{border-radius:8px 8px 0 0}
 :root:not([data-theme="pastel"]):not([data-theme="citypop"]) .dk-m{border-radius:6px}
 /* メニューのウィジェット */
@@ -691,14 +697,14 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 :root[data-theme="net2000"] .men{color:#0033CC;text-decoration:underline}
 :root[data-theme="net2000"] .inp{background:#fff;border-radius:2px}
 :root[data-theme="net2000"] .modal .sheet{border-radius:4px 4px 0 0;border:2px solid #2E66C4;border-bottom:0}
-:root[data-theme="net2000"] .bal,:root[data-theme="net2000"] .bell{border-radius:3px}
+:root[data-theme="net2000"] .bal,:root[data-theme="net2000"] .bell,:root[data-theme="net2000"] .world{border-radius:3px}
 /* ---- ファミコン風 ---- */
 :root[data-theme="famicom"]{--bg:#000000;--panel:#000000;--ink:#FCFCFC;--muted:#BCBCBC;--line:#FCFCFC;--accent:#E40058;--accent-ink:#FCFCFC;--soft:#2A0016;
   --red:#F83800;--black:#000000;--win:#58D854;--lose:#F83800;--up:#58D854;--down:#F83800;--night:#6888FC;--noon:#FCA044;--radius:0px;
   --font:"DotGothic16","Courier New",monospace}
 :root[data-theme="famicom"] .card,:root[data-theme="famicom"] .item{border:3px solid #FCFCFC;border-radius:0;box-shadow:4px 4px 0 #6844FC}
 :root[data-theme="famicom"] .btn,:root[data-theme="famicom"] .seg,:root[data-theme="famicom"] .tabs-s button,:root[data-theme="famicom"] .chips button,
-:root[data-theme="famicom"] .inp,:root[data-theme="famicom"] .bal,:root[data-theme="famicom"] .bell,:root[data-theme="famicom"] .chip,:root[data-theme="famicom"] .tag,
+:root[data-theme="famicom"] .inp,:root[data-theme="famicom"] .bal,:root[data-theme="famicom"] .bell,:root[data-theme="famicom"] .world,:root[data-theme="famicom"] .chip,:root[data-theme="famicom"] .tag,
 :root[data-theme="famicom"] .hm-tile,:root[data-theme="famicom"] .kindtag{border-radius:0!important}
 :root[data-theme="famicom"] .btn{border:2px solid #FCFCFC;background:#000}
 :root[data-theme="famicom"] .btn.main{background:#E40058;border-color:#FCFCFC}
@@ -795,7 +801,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 :root[data-theme="win95"] .card,:root[data-theme="win95"] .modal .sheet{background:#C0C0C0;border:2px solid;border-color:#FFFFFF #404040 #404040 #FFFFFF;box-shadow:inset -1px -1px 0 #808080,inset 1px 1px 0 #DFDFDF;border-radius:0}
 :root[data-theme="win95"] .card>h3:first-child{background:linear-gradient(90deg,#000080,#1084D0);color:#FFFFFF;margin:-14px -14px 10px!important;padding:3px 8px;font-size:13px}
 :root[data-theme="win95"] .card>h3:first-child :is(small,.muted){color:#DDE6FF!important}
-:root[data-theme="win95"] :is(.btn,.seg button,.seg2 button,.chips button,.tabs-s button,.hm-tile,.bal,.bell){background:#C0C0C0;color:#000000;border:2px solid;border-color:#FFFFFF #404040 #404040 #FFFFFF;box-shadow:inset -1px -1px 0 #808080,inset 1px 1px 0 #DFDFDF;border-radius:0!important}
+:root[data-theme="win95"] :is(.btn,.seg button,.seg2 button,.chips button,.tabs-s button,.hm-tile,.bal,.bell,.world){background:#C0C0C0;color:#000000;border:2px solid;border-color:#FFFFFF #404040 #404040 #FFFFFF;box-shadow:inset -1px -1px 0 #808080,inset 1px 1px 0 #DFDFDF;border-radius:0!important}
 :root[data-theme="win95"] :is(.btn,.seg button,.seg2 button,.chips button):active:not(:disabled){border-color:#404040 #FFFFFF #FFFFFF #404040;box-shadow:inset 1px 1px 0 #808080;transform:none}
 :root[data-theme="win95"] .btn.main{font-weight:800;outline:1px solid #000000;outline-offset:-1px}
 :root[data-theme="win95"] .seg,:root[data-theme="win95"] .seg2{border:0;gap:2px;border-radius:0}
@@ -989,7 +995,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=6e11e13b","zh-TW":"zh-TW.js?v=b75e20f4","zh-CN":"zh-CN.js?v=f516d3d8","ko":"ko.js?v=9e5a0ffd","ko-Hani":"ko-Hani.js?v=57f4e4cb"};
+  window.AX_LANGS = {"en":"en.js?v=dc8f07e0","zh-TW":"zh-TW.js?v=2f4046d2","zh-CN":"zh-CN.js?v=9a76ae9f","ko":"ko.js?v=589df7ce","ko-Hani":"ko-Hani.js?v=c96624e5"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -997,6 +1003,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 <body>
 <header><div class="wrap">
   <div class="logo" translate="no">風の芽<small>経済組</small><small class="logo-rm hidden">Kazenome-EconomicGroup</small></div>
+  <button class="world hidden" id="worldBtn" type="button" aria-label="世界（地図）"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg><span>世界</span></button>
   <button class="bell hidden" id="bell" aria-label="通知"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="bn hidden" id="bellN">0</span></button>
   <div class="bal hidden" id="bal"><b class="num" id="balNum">0</b><span>X</span></div>
 </div></header>
@@ -1938,6 +1945,7 @@ async function enter() {
   }
   if (location.hash.includes('access_token')) history.replaceState(null, '', location.pathname);
   $('#bal').classList.remove('hidden'); $('#tabs').classList.remove('hidden'); $('#bell').classList.remove('hidden'); bellPoll();
+  $('#worldBtn').classList.toggle('hidden', betaHidden('map'));
   go(sessionStorageGet('view') || 'vHome');
   if (up) {   // ゲストがメールのリンクで入った → 本登録になった
     go('vMore', 'prof'); toast('本登録になりました！新しいパスワード（6文字以上）を決めてください');
@@ -1971,6 +1979,7 @@ function go(v, sub) {
   if (!subs.some(x => x[0] === sub) && !HIDDEN_SUBS.includes(sub)) sub = subs[0][0];
   if (sub !== 'vRoom') roomStop();
   if (window.MapApp && !(main === 'vCorp' && sub === 'map')) MapApp.pause();
+  $('#worldBtn').classList.toggle('on', main === 'vCorp' && sub === 'map');
   try { sessionStorage.setItem('view', main); sessionStorage.setItem('sub:' + main, sub); } catch (e) {}
   const sec = main === 'vGame' ? sub : main;
   view = sec;
@@ -7731,6 +7740,7 @@ async function noticeOpen() {
   };
 }
 $('#bell').onclick = noticeOpen;
+$('#worldBtn').onclick = () => go('vCorp', 'map');   // 上の「世界」：国土の地図を開く
 
 /* =================================================================
    メンション・人のページ
