@@ -954,7 +954,7 @@ function nearNode(x, y, rpx, pred) {
 /* ---------- 道具 ---------- */
 const TOOL_HINT = {
   look: '', land: '土地：2か所タップして四角くえらびます（区画は10m四方）',
-  rail: '線路：タップして点をおくと、なめらかな線になります。点はドラッグで動かせます', road: '道路：タップして点をおくと、なめらかな線になります。点はドラッグで動かせます',
+  rail: '線路：タップして点をおきます。線路のはしから始めると延長、まん中から始めると分岐。点はドラッグで動かせます', road: '道路：タップして点をおきます。道路のはし・まん中から始めると、つながります。点はドラッグで動かせます',
   sta: '駅：ホームの起点をタップ（自分の線路の上）。バス停は道路の上をタップ', dep: '車庫：自分の線路（バスは道路）の横をタップ', del: 'こわす：自分の線・駅・車庫・建物をタップ'
 };
 function setTool(t) {
@@ -1259,6 +1259,82 @@ function minRadius(P) {
   return mr;
 }
 const toInts = P => P.flatMap(p => [Math.round(p[0] * 100), Math.round(p[1] * 100)]);
+
+/* ---- 直線＋カーブ（A列車ふう）：点は角。角に半径 R の円弧を入れる。はしをつないだときは、その向きから円弧で出る・入る ---- */
+const V2 = { sub: (a, b) => [a[0] - b[0], a[1] - b[1]], add: (a, b) => [a[0] + b[0], a[1] + b[1]], mul: (a, k) => [a[0] * k, a[1] * k], len: a => Math.hypot(a[0], a[1]),
+             nrm: a => { const l = Math.hypot(a[0], a[1]) || 1; return [a[0] / l, a[1] / l]; }, cross: (a, b) => a[0] * b[1] - a[1] * b[0], dot: (a, b) => a[0] * b[0] + a[1] * b[1],
+             rot90: a => [-a[1], a[0]], rotm90: a => [a[1], -a[0]] };
+// 円弧の点（中心 c・半径 r・はじめの角度 a0 から da（左回り +）だけ）
+function arcPts(c, r, a0, da) {
+  const n = Math.max(2, Math.ceil(Math.abs(da) * r / 0.08)), out = [];
+  for (let k = 1; k <= n; k++) { const a = a0 + da * k / n; out.push([c[0] + r * Math.cos(a), c[1] + r * Math.sin(a)]); }
+  return out;
+}
+const angOf = v => Math.atan2(v[1], v[0]);
+const norm2pi = a => { a %= 2 * Math.PI; return a < 0 ? a + 2 * Math.PI : a; };
+// 向き h（単位）で p を出て、円弧（半径 r）で曲がってから、まっすぐ q へ。q が近すぎるときは半径を小さくする
+function arcToPoint(p, h, q, r) {
+  const d = V2.sub(q, p), cr = V2.cross(h, d), D = V2.len(d);
+  if (D < 1e-6) return { pts: [], exit: h, r: 1e9 };
+  if (Math.abs(cr) < 1e-6 * D) { if (V2.dot(h, d) > 0) return { pts: [q], exit: h, r: 1e9 }; return null; }
+  const left = cr > 0, rmax = D * D / (2 * Math.abs(cr));
+  const rr = Math.min(r, rmax * 0.97);
+  const nrm = left ? V2.rot90(h) : V2.rotm90(h), c = V2.add(p, V2.mul(nrm, rr));
+  const w = V2.sub(q, c), W = V2.len(w); if (W <= rr) return null;
+  const lam = Math.sqrt(W * W - rr * rr), ua = angOf(w) + (left ? 1 : -1) * Math.atan2(rr, lam), u = [Math.cos(ua), Math.sin(ua)];
+  const t = V2.add(c, V2.mul(left ? V2.rotm90(u) : V2.rot90(u), rr));
+  const a0 = angOf(V2.sub(p, c)), a1 = angOf(V2.sub(t, c));
+  const da = left ? norm2pi(a1 - a0) : -norm2pi(a0 - a1);
+  return { pts: [...arcPts(c, rr, a0, da), q], exit: u, r: rr, t };
+}
+// 両はしの向きが決まっているとき（点が2つ）：円弧＋直線＋円弧（いちばん短いもの）
+function dubins(p0, h0, p1, h1, r) {
+  let best = null;
+  for (const [s0, s1] of [[1, 1], [-1, -1], [1, -1], [-1, 1]]) {   // 1 左回り・-1 右回り
+    const c0 = V2.add(p0, V2.mul(s0 > 0 ? V2.rot90(h0) : V2.rotm90(h0), r)), c1 = V2.add(p1, V2.mul(s1 > 0 ? V2.rot90(h1) : V2.rotm90(h1), r));
+    const d = V2.sub(c1, c0), D = V2.len(d); let u, lam;
+    if (s0 === s1) { if (D < 1e-6) continue; u = V2.nrm(d); lam = D; }
+    else { if (D < 2 * r) continue; lam = Math.sqrt(D * D - 4 * r * r); const ua = angOf(d) + (s0 > 0 ? 1 : -1) * Math.atan2(2 * r, lam); u = [Math.cos(ua), Math.sin(ua)]; }
+    const q0 = V2.add(c0, V2.mul(s0 > 0 ? V2.rotm90(u) : V2.rot90(u), r)), q1 = V2.add(c1, V2.mul(s1 > 0 ? V2.rotm90(u) : V2.rot90(u), r));
+    const a00 = angOf(V2.sub(p0, c0)), a01 = angOf(V2.sub(q0, c0)), a10 = angOf(V2.sub(q1, c1)), a11 = angOf(V2.sub(p1, c1));
+    const da0 = s0 > 0 ? norm2pi(a01 - a00) : -norm2pi(a00 - a01), da1 = s1 > 0 ? norm2pi(a11 - a10) : -norm2pi(a10 - a11);
+    const L = r * (Math.abs(da0) + Math.abs(da1)) + lam;
+    if (!best || L < best.L) best = { L, pts: [...arcPts(c0, r, a00, da0), q1, ...arcPts(c1, r, a10, da1)] };
+  }
+  return best ? best.pts : null;
+}
+// 点の列 → 直線と円弧の線（0.5マスごと）。h0：はじめの向き、h1：おわりの向き（どちらもなくてよい）。r：半径（マス）
+function arcGeom(ctrl, h0, h1, r) {
+  const n = ctrl.length; if (n < 2) return { pts: ctrl.slice(), ok: true };
+  if (n === 2 && h0 && h1) { const d = dubins(ctrl[0], h0, ctrl[1], h1, r); return d ? { pts: resample([ctrl[0], ...d], 0.5), ok: true } : { pts: [ctrl[0], ctrl[1]], ok: false }; }
+  let head = [ctrl[0]], Q0 = ctrl[0];
+  if (h0) { const a = arcToPoint(ctrl[0], h0, n > 2 || !h1 ? ctrl[1] : ctrl[1], r); if (!a) return { pts: [ctrl[0], ctrl[1]], ok: false }; head = [ctrl[0], ...a.pts.slice(0, -1)]; Q0 = a.t || ctrl[0]; }
+  let tail = [ctrl[n - 1]], Qn = ctrl[n - 1];
+  if (h1 && n > 2) {
+    const b = arcToPoint(ctrl[n - 1], V2.mul(h1, -1), ctrl[n - 2], r); if (!b) return { pts: [ctrl[0], ctrl[n - 1]], ok: false };
+    tail = [...b.pts.slice(0, -1)].reverse().concat([ctrl[n - 1]]); Qn = b.t || ctrl[n - 1];
+  } else if (h1 && n === 2) {
+    const b = arcToPoint(ctrl[1], V2.mul(h1, -1), ctrl[0], r); if (!b) return { pts: [ctrl[0], ctrl[1]], ok: false };
+    return { pts: resample([ctrl[0], ...b.pts.slice(0, -1).reverse(), ctrl[1]], 0.5), ok: true };
+  }
+  const Q = [Q0, ...ctrl.slice(1, n - 1), Qn];
+  const out = [...head];
+  let cur = Q0;
+  for (let i = 1; i < Q.length - 1; i++) {
+    const P = Q[i], u = V2.nrm(V2.sub(P, Q[i - 1])), v = V2.nrm(V2.sub(Q[i + 1], P));
+    const th = Math.acos(clamp(V2.dot(u, v), -1, 1));
+    if (th < 1e-4) continue;
+    const availIn = i === 1 ? V2.len(V2.sub(P, Q[0])) : V2.len(V2.sub(P, Q[i - 1])) / 2;
+    const availOut = i === Q.length - 2 ? V2.len(V2.sub(Q[i + 1], P)) : V2.len(V2.sub(Q[i + 1], P)) / 2;
+    const tt = Math.tan(th / 2), ri = Math.min(r, Math.min(availIn, availOut) / tt), T = ri * tt;
+    const S1 = V2.sub(P, V2.mul(u, T)), E1 = V2.add(P, V2.mul(v, T)), left = V2.cross(u, v) > 0;
+    const c = V2.add(S1, V2.mul(left ? V2.rot90(u) : V2.rotm90(u), ri));
+    const a0 = angOf(V2.sub(S1, c)), a1 = angOf(V2.sub(E1, c)), da = left ? norm2pi(a1 - a0) : -norm2pi(a0 - a1);
+    out.push(S1, ...arcPts(c, ri, a0, da)); cur = E1;
+  }
+  out.push(...tail);
+  return { pts: resample(out, 0.5), ok: true };
+}
 // はしをつなぐ先をさがす（線路は自分の線路、道路はどの道路でも）
 function findAttach(kind, x, y) {
   const pred = s => kind === 'rail' ? (s.k === 'rail' && s.mine) : (s.k === 'road' && s.c !== 'exp');
@@ -1283,7 +1359,9 @@ function findAttach(kind, x, y) {
 }
 function startDraw(kind) {
   const admin = S.as === 'gov';
-  const st = S.toolState = { kind, ctrl: [], A: null, B: null, curve: [], quote: null, err: null, opts: { dbl: false, elec: false, lanes: admin ? 2 : 1, cls: admin ? 'nat' : 'priv', name: '' }, qt: 0 };
+  let mode = kind === 'rail' ? 'arc' : 'free', rad = kind === 'rail' ? 400 : 50;
+  try { mode = localStorage.getItem('mp_dm_' + kind) || mode; rad = Number(localStorage.getItem('mp_dr_' + kind)) || rad; } catch (e) {}
+  const st = S.toolState = { kind, mode, rad, ctrl: [], A: null, B: null, curve: [], quote: null, err: null, opts: { dbl: false, elec: false, lanes: admin ? 2 : 1, cls: admin ? 'nat' : 'priv', name: '' }, qt: 0 };
   S.tapHook = (x, y) => {
     const a = findAttach(kind, x, y);
     if (!st.ctrl.length) { st.ctrl.push(a ? [a.x, a.y] : [x, y]); st.A = a; }
@@ -1333,10 +1411,22 @@ function phantoms(st) {
   }
   return [A, B];
 }
+// はしの向き（直線＋カーブ）：はじめは出ていく向き、おわりは着く向き
+function endHeads(st) {
+  const c = st.ctrl, n = c.length; let h0 = null, h1 = null;
+  if (st.A) { let t = st.A.din ? [-st.A.din[0], -st.A.din[1]] : st.A.tan.slice(); if (!st.A.din && V2.dot(t, V2.sub(c[1], c[0])) < 0) t = [-t[0], -t[1]]; h0 = V2.nrm(t); }
+  if (st.B) { let t = st.B.din ? st.B.din.slice() : st.B.tan.slice(); if (!st.B.din && V2.dot(t, V2.sub(c[n - 1], c[n - 2])) < 0) t = [-t[0], -t[1]]; h1 = V2.nrm(t); }
+  return [h0, h1];
+}
 function drawUpdate(fast) {
   const st = S.toolState; if (!st) return;
-  const [A, B] = phantoms(st);
-  st.curve = st.ctrl.length >= 2 ? spline(st.ctrl, A, B) : [];
+  if (st.mode === 'arc' && st.ctrl.length >= 2) {
+    const [h0, h1] = endHeads(st), g = arcGeom(st.ctrl, h0, h1, st.rad / 50);
+    st.curve = g.pts; st.geoBad = !g.ok;
+  } else {
+    const [A, B] = phantoms(st);
+    st.curve = st.ctrl.length >= 2 ? spline(st.ctrl, A, B) : []; st.geoBad = false;
+  }
   st.rmin = st.curve.length > 6 ? minRadius(st.curve) : 1e9;
   st.quote = null; st.err = null;
   S.dirty = true;
@@ -1353,7 +1443,7 @@ async function quoteDraw(st) {
 function drawArgs(st, dry) {
   if (st.edit) return { p_id: st.edit.id, p_ctl: toInts(st.ctrl), p_pts: toInts(st.curve), p_dry: dry };
   const o = st.opts;
-  return { p_kind: st.kind, p_cls: st.kind === 'road' ? o.cls : null, p_ctl: toInts(st.ctrl), p_pts: toInts(st.curve),
+  return { p_kind: st.kind, p_cls: st.kind === 'road' ? o.cls : null, p_ctl: st.mode === 'arc' ? null : toInts(st.ctrl), p_pts: toInts(st.curve),
     p_opts: { dbl: o.dbl, elec: o.elec, name: o.name, lanes: o.lanes }, p_as: S.as, p_from: st.A ? st.A.att : null, p_to: st.B ? st.B.att : null, p_dry: dry };
 }
 function drawSheet() {
@@ -1363,6 +1453,9 @@ function drawSheet() {
   const q = st.quote;
   sheet(`<h4>${st.edit ? (rail ? '線路の形を直す' : '道路の形を直す') : rail ? '線路をひく' : '道路をひく'}</h4>
     <p class="small" style="margin:0 0 4px"><span>点 ${st.ctrl.length}・長さ 約${fmt(lenM)} m</span>${st.curve.length > 6 ? `<span>・いちばんきついカーブ 半径 ${rminM >= 50000 ? '—' : fmt(rminM) + ' m'}</span>` : ''}${st.A ? '<span>・はじめ：つなぐ</span>' : ''}${st.B ? '<span>・おわり：つなぐ</span>' : ''}</p>
+    ${st.edit ? '' : `<div class="mp-row"><span class="mp-seg"><button data-m="arc" class="${st.mode === 'arc' ? 'on' : ''}">直線＋カーブ</button><button data-m="free" class="${st.mode !== 'arc' ? 'on' : ''}">なめらか</button></span>
+      ${st.mode === 'arc' ? `<span>カーブの半径</span> <select class="mp-inp" data-rad style="width:auto">${(rail ? [160, 200, 250, 300, 400, 500, 600, 800, 1000, 1500, 2000, 3000] : [15, 20, 30, 50, 80, 100, 150, 200, 300, 500]).map(m => `<option value="${m}" ${st.rad === m ? 'selected' : ''}>${fmt(m)} m</option>`).join('')}</select>` : ''}</div>`}
+    ${st.geoBad ? `<p class="mp-warn">この点では、えらんだ半径のカーブでつながりません（点を動かすか、半径を小さく）</p>` : ''}
     ${tight ? `<p class="mp-warn">${rail ? 'カーブがきつすぎます（線路は半径150m以上）' : 'カーブがきつすぎます'}</p>` : ''}
     ${st.edit ? '' : rail ? `<div class="mp-row"><span class="mp-seg"><button data-d="0" class="${!o.dbl ? 'on' : ''}">単線</button><button data-d="1" class="${o.dbl ? 'on' : ''}">複線</button></span>
         <span class="mp-seg"><button data-e="0" class="${!o.elec ? 'on' : ''}">非電化</button><button data-e="1" class="${o.elec ? 'on' : ''}">電化</button></span></div>`
@@ -1370,10 +1463,12 @@ function drawSheet() {
         片側 <span class="mp-seg">${(gov ? [0, 1, 2, 3] : [0, 1, 2]).map(n => `<button data-l="${n}" class="${o.lanes === n ? 'on' : ''}">${n ? n + '車線' : '細い道'}</button>`).join('')}</span></div>`}
     ${st.edit ? '' : `<div class="mp-row"><input class="mp-inp" data-nm placeholder="${rail ? '路線名（なくてもよい）' : '道路の名前（なくてもよい）'}" value="${esc(o.name)}"></div>`}
     <div class="mp-row">${q ? `<span class="mp-cost">工事費 ${X(q.cost)}</span><span class="small"><span>使用料 1日 ${X(q.lease || 0)}</span>${q.tunnel ? `<span>・トンネル ${q.tunnel}マス</span>` : ''}${q.bridge ? `<span>・橋 ${q.bridge}マス</span>` : ''}<span>・最高 ${q.vlim} km/h</span></span>`
-      : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.curve.length > 2 ? '<span class="muted small">見つもり中…</span>' : '<span class="muted small">地図をタップして点をおいてください（2つ以上）。はしを線の近くにおくと、つながります</span>'}</div>
+      : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.curve.length > 2 ? '<span class="muted small">見つもり中…</span>' : st.mode === 'arc' ? '<span class="muted small">地図をタップして角の点をおいてください（2つ以上）。角には、えらんだ半径のカーブが入ります。線路のはしから始めると延長、まん中から始めると分岐です</span>' : '<span class="muted small">地図をタップして点をおいてください（2つ以上）。はしを線の近くにおくと、つながります</span>'}</div>
     <div class="mp-row"><button class="btn" data-undo ${st.ctrl.length ? '' : 'disabled'}>1つもどす</button><button class="btn" data-cancel>キャンセル</button>
-      <button class="btn main" data-ok ${q && !tight ? '' : 'disabled'}>${st.edit ? 'この形にする' : `つくる（${esc(asName())}）`}</button></div>
+      <button class="btn main" data-ok ${q && !tight && !st.geoBad ? '' : 'disabled'}>${st.edit ? 'この形にする' : `つくる（${esc(asName())}）`}</button></div>
     <p class="muted small" style="margin:6px 0 0">点はドラッグで動かせます。長押しで消せます</p>`, s => {
+    s.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { st.mode = b.dataset.m; try { localStorage.setItem('mp_dm_' + st.kind, st.mode); } catch (e) {} drawUpdate(); });
+    { const rd = s.querySelector('[data-rad]'); if (rd) rd.onchange = () => { st.rad = Number(rd.value); try { localStorage.setItem('mp_dr_' + st.kind, String(st.rad)); } catch (e) {} drawUpdate(); }; }
     s.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { o.dbl = b.dataset.d === '1'; drawUpdate(); });
     s.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { o.elec = b.dataset.e === '1'; drawUpdate(); });
     s.querySelectorAll('[data-l]').forEach(b => b.onclick = () => { o.lanes = Number(b.dataset.l); drawUpdate(); });
@@ -1530,6 +1625,43 @@ function staSheet(kind, hit, hit2) {
     };
   });
   S.onSheetClose = () => { S.toolState = null; S.drawTool = null; S.dirty = true; if (S.tool === 'sta') hint('駅：ホームの起点をタップ（自分の線路の上）。バス停は道路の上をタップ'); };
+  draw(); quote();
+}
+
+function depTap(x, y) {
+  const hr = nearSeg(x, y, 14, s => s.k === 'rail' && s.mine);
+  const hb = hr ? null : nearSeg(x, y, 12, s => s.k === 'road' && s.c !== 'exp');
+  const hit = hr || hb; if (!hit) return toast('自分の線路（バスは道路）の近くをタップしてください');
+  const kind = hr ? 'rail' : 'bus';
+  // タップした側
+  const side = ((x - hit.x) * -Math.sin(hit.ang) + (y - hit.y) * Math.cos(hit.ang)) >= 0 ? 1 : -1;
+  const st = { size: 'S', side, name: nearDist(x, y) + (kind === 'rail' ? '車両基地' : '営業所'), q: null, err: null };
+  const prev = () => ({ fx: hit.x, fy: hit.y, a: hit.ang, side: st.side, sz: st.size, k: kind });
+  S.drawTool = (g, z) => { const P = depPoly(prev()); g.beginPath(); P.forEach((p, i) => i ? g.lineTo(sx(p[0]), sy(p[1])) : g.moveTo(sx(p[0]), sy(p[1]))); g.closePath(); g.fillStyle = st.err ? 'rgba(220,40,40,.35)' : 'rgba(30,110,230,.3)'; g.fill(); g.strokeStyle = '#1f5fbf'; g.lineWidth = 2; g.stroke(); };
+  S.dirty = true;
+  const quote = async () => {
+    try { st.q = await call('mp_dep_build', { p_kind: kind, p_seg: hit.s.id, p_x: hit.x, p_y: hit.y, p_side: st.side, p_size: st.size, p_name: st.name || '仮', p_as: S.as, p_dry: true }); st.err = null; }
+    catch (e) { st.q = null; st.err = e.message; }
+    draw(); S.dirty = true;
+  };
+  const sizes = kind === 'rail' ? [['S', '小（16両）'], ['M', '中（48両）'], ['L', '大（120両）']] : [['S', '小（20台）'], ['M', '中（60台）']];
+  const draw = () => sheet(`<h4>${kind === 'rail' ? '🏭 車両基地をつくる' : '🏭 バスの営業所をつくる'}</h4>
+    <div class="mp-row"><input class="mp-inp" data-nm value="${esc(st.name)}"></div>
+    <div class="mp-row"><span class="mp-seg">${sizes.map(s => `<button data-s="${s[0]}" class="${st.size === s[0] ? 'on' : ''}">${s[1]}</button>`).join('')}</span>
+      <button class="btn" data-side>反対側にする</button></div>
+    <div class="mp-row">${st.q ? `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small">使用料 1日 ${X(st.q.lease)}・維持費 1日 ${X(st.q.up_day)}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : '<span class="muted small">見つもり中…</span>'}</div>
+    <div class="mp-row"><button class="btn main" data-ok ${st.q ? '' : 'disabled'}>つくる（${esc(asName())}）</button></div>`, s => {
+    s.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
+    s.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { st.size = b.dataset.s; quote(); });
+    s.querySelector('[data-side]').onclick = () => { st.side = -st.side; quote(); };
+    s.querySelector('[data-ok]').onclick = async () => {
+      st.name = s.querySelector('[data-nm]').value.trim();
+      if (await api('mp_dep_build', { p_kind: kind, p_seg: hit.s.id, p_x: hit.x, p_y: hit.y, p_side: st.side, p_size: st.size, p_name: st.name, p_as: S.as, p_dry: false }, 'つくりました')) {
+        refreshBox(hit.x - 12, hit.y - 12, hit.x + 12, hit.y + 12); sheet(null); S.drawTool = null;
+      }
+    };
+  });
+  S.onSheetClose = () => { S.drawTool = null; S.dirty = true; };
   draw(); quote();
 }
 
