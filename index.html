@@ -995,7 +995,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=d6fc47e3","zh-TW":"zh-TW.js?v=1779d164","zh-CN":"zh-CN.js?v=d0813a36","ko":"ko.js?v=4e5607ee","ko-Hani":"ko-Hani.js?v=7b2b66a1"};
+  window.AX_LANGS = {"en":"en.js?v=e4cc8376","zh-TW":"zh-TW.js?v=123fd9d0","zh-CN":"zh-CN.js?v=41ce50b9","ko":"ko.js?v=2208b606","ko-Hani":"ko-Hani.js?v=92b39114"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -4870,7 +4870,7 @@ const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
-const MAPV = '55';
+const MAPV = '56';
 let mapLoading = null;
 function mapScripts() {
   if (window.MapApp) return Promise.resolve();
@@ -7691,7 +7691,7 @@ const NT_GO = { フレンド: ['vHome', 'friend'], メッセージ: ['vHome', 'm
   没収: ['vTax', 'tax'], 企業申請: ['vWork', 'corp'], 社長交代: ['vWork', 'corp'], 命令: ['vWork', 'corp'], 応募: ['vWork', 'corp'], 口座の申込: ['vWork', 'corp'],
   借入の申込: ['vWork', 'corp'], 返済: ['vWork', 'corp'], 採用: ['vWork', 'mywork'], 株: ['vCorp', 'stock'], 株の譲渡: ['vCorp', 'stock'], 配当: ['vCorp', 'stock'],
   口座: ['vCorp', 'bank'], 借入: ['vCorp', 'bank'], 交換: ['vCorp', 'invest'], 本: ['vInfo', 'pub'], '広報・書籍': ['vInfo', 'pub'], 対戦: ['vGame', 'vGameList'],
-  倒産: ['vMore', 'hist'], 風の芽ジャンボ: ['vGame', 'vLot'], タスク: ['vGame', 'vTask'], ゲームランク: ['vGame', 'vTask'], カジノランク: ['vGame', 'vTask'], 廃業: ['vMore', 'hist'], お金: ['vMore', 'hist'], 認証: ['vWork', 'corp'], 窓口: ['vCorp', 'desk'], サーバー: ['vWork', 'corp'], 上場: ['vWork', 'corp'], 馬主: ['vHome', 'horses'], せり: ['vHome', 'horses'], 補助金: ['vWork', 'corp'] };
+  倒産: ['vMore', 'hist'], 風の芽ジャンボ: ['vGame', 'vLot'], タスク: ['vGame', 'vTask'], ゲームランク: ['vGame', 'vTask'], カジノランク: ['vGame', 'vTask'], 廃業: ['vMore', 'hist'], お金: ['vMore', 'hist'], 認証: ['vWork', 'corp'], 窓口: ['vCorp', 'desk'], サーバー: ['vWork', 'corp'], 上場: ['vWork', 'corp'], 馬主: ['vHome', 'horses'], せり: ['vHome', 'horses'], 補助金: ['vWork', 'corp'], 国土: ['vCorp', 'map'] };
 function noticeGo(n) {
   const L = n.link || {}, b = n.body || '', tag = noticeTag(b);
   $$('.modal').forEach(m => m.remove());
@@ -7704,6 +7704,11 @@ function noticeGo(n) {
   if (L.go === 'stock' && L.cid) return stkOpen(L.cid);
   if (L.go === 'mywork') return go('vWork', 'mywork');
   if (L.go === 'lot') return go('vLot');
+  if (L.go === 'map') {   // 国土：地図をひらいて、土地の申請など
+    go('vCorp', 'map');
+    if (L.k === 'landreq') { let n = 0; const w = () => { if (window.MapApp && MapApp.state && MapApp.state.open && MapApp.landReqs) MapApp.landReqs(); else if (n++ < 40) setTimeout(w, 250); }; w(); }
+    return;
+  }
   if (L.go === 'tl') { tlScope = 'mention'; $$('#tlScope button').forEach(x => x.classList.toggle('on', x.dataset.k === 'mention')); return go('vInfo', 'tl'); }
   if (tag === '注文') return go(/渡してください/.test(b) ? 'vWork' : 'vCorp', /渡してください/.test(b) ? 'corp' : 'order');
   const g = NT_GO[tag] || (/税|給付金|滞納|差し押さえ/.test(b) ? ['vTax', 'tax'] : null);

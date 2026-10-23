@@ -899,6 +899,23 @@ async function api(fn, args, okMsg) {
   catch (e) { toast(e.message); return null; }
   finally { if (key) INFLIGHT.delete(key); }
 }
+// 他人の土地：見つもりの need（許可のいる筆）を出す。持ち主への申請ボタンつき
+const LRS = { wait: '返事まち', ok: '許可', no: 'ことわり' };
+function needH(need) {
+  if (!need || !need.length) return '';
+  return `<div class="mp-need"><p class="mp-warn" style="margin:4px 0">他人の土地を使います。持ち主に申請して許可をもらうか、持ち主が貸出料を決めているときだけ、つくれます</p>
+    ${need.map(p => `<div class="small">・<span translate="no">${esc(p.label)}</span>（<span>${esc(p.owner)}</span>・<span>${p.n}区画</span>）${p.wait ? ' <b>申請中</b>' : p.no ? ' <span class="mp-warn">ことわられました</span>' : ''}</div>`).join('')}
+    ${need.some(p => !p.wait) ? `<div class="mp-row"><button class="btn" data-lreq>持ち主に申請する（${esc(asName())}）</button></div>` : ''}</div>`;
+}
+function needBind(s, need, after) {
+  const b = s.querySelector('[data-lreq]'); if (!b || !need) return;
+  b.onclick = async () => {
+    const msg = prompt(T('持ち主へのひとこと（なくてもよい）'), ''); if (msg == null) return;
+    const r = await api('mp_land_req', { p_parcels: need.filter(p => !p.wait).map(p => p.id), p_msg: msg, p_as: S.as }, '申請しました。返事がきたら通知がとどきます');
+    if (r && after) after();
+  };
+}
+const hasNeed = q => !!(q && q.need && q.need.length);
 
 /* ---------- 指・マウス ---------- */
 function zoomAt(px, py, f) {
@@ -1055,6 +1072,9 @@ async function showSpot(cx, cy) {
       <b>持ち主</b><span>${P ? `<span>${esc(P.owner)}</span>${P.mine ? '<small>（あなた）</small>' : ''}` : d.pub ? '公衆用道路' : '国'}</span>
       ${P ? `<b>筆</b><span>${esc(P.ban)}・${fmt(P.n * 100)}㎡・地価 ${X(P.val)}</span>` : ''}
       ${P && P.sale != null ? `<b>売り出し</b><span>${X(P.sale)}</span>` : ''}
+      ${P ? `<b>貸出料</b><span>${P.rent != null ? `<span>1区画・1日 ${X(P.rent)}</span><small>（線路・道路・駅・車庫に、申請なしで使えます）</small>` : '<span>貸していません</span>'}${P.mine ? `<small>・標準 ${X(P.std)}</small>` : ''}</span>` : ''}
+      ${P && !P.mine && (P.reqs || []).length ? `<b>申請</b><span>${P.reqs.map(r => `<span>${esc(r.who)}</span>：<b>${esc(LRS[r.st] || r.st)}</b>${r.st === 'ok' ? `<small>（1区画・1日 ${X(r.fee)}）</small>` : ''}`).join('<br>')}</span>` : ''}
+      ${P && P.mine && P.nreq ? `<b>申請</b><span><a href="#" data-lreqs>返事まち ${P.nreq}件</a></span>` : ''}
       ${P && P.b ? bldRow(P.b, P.mine) : ''}
       ${on ? `<b>あるもの</b><span>${on}</span>` : ''}
       ${(d.leases || []).length ? `<b>使用料</b><span>${d.leases.map(l => `<span>${esc(l.who)}</span>：<span>1日 ${X(l.fee)}</span>`).join('<br>')}</span>` : ''}
@@ -1064,8 +1084,15 @@ async function showSpot(cx, cy) {
       ${!P && !d.buy && d.why ? `<span class="muted small">${esc(d.why)}</span>` : ''}
       ${P && P.b ? `<button class="btn main" data-bopen>部屋・テナント</button>` : ''}
       ${P && P.mine ? `<button class="btn" data-sell>${P.sale != null ? '売り出しをやめる' : '売りに出す'}</button>
-        ${P.b ? '' : '<button class="btn" data-bld>建物を建てる</button>'}<button class="btn" data-split>分筆</button><button class="btn" data-merge>合筆</button>` : ''}</div>`, s => {
+        ${P.b ? '' : '<button class="btn" data-bld>建物を建てる</button>'}<button class="btn" data-split>分筆</button><button class="btn" data-merge>合筆</button><button class="btn" data-rent>貸出料</button>` : ''}
+      ${P && !P.mine && P.rent == null && S.as !== 'gov' && !(P.reqs || []).some(r => r.as === S.as && r.st !== 'no') ? `<button class="btn" data-lreq1>使う申請（${esc(asName())}）</button>` : ''}</div>`, s => {
     const q = k => s.querySelector(k);
+    if (q('[data-rent]')) q('[data-rent]').onclick = () => parcelRent(P, cx, cy);
+    if (q('[data-lreqs]')) q('[data-lreqs]').onclick = ev => { ev.preventDefault(); openLandReqs(); };
+    if (q('[data-lreq1]')) q('[data-lreq1]').onclick = async () => {
+      const msg = prompt(T('持ち主へのひとこと（なくてもよい）。許可されると、この筆を線路・道路・駅・車庫に使えます'), ''); if (msg == null) return;
+      if (await api('mp_land_req', { p_parcels: [P.id], p_msg: msg, p_as: S.as }, '申請しました。返事がきたら通知がとどきます')) showSpot(cx, cy);
+    };
     if (q('[data-buyhere]')) q('[data-buyhere]').onclick = () => { setTool('land'); S.toolState.a = [cx, cy]; landSheet(); S.dirty = true; };
     if (q('[data-pbuy]')) q('[data-pbuy]').onclick = () => parcelBuy(P);
     if (q('[data-sell]')) q('[data-sell]').onclick = () => parcelSell(P);
@@ -1117,8 +1144,10 @@ function segOpts(s) {
       : `<div class="mp-row">片側 <span class="mp-seg">${[0, 1, 2, 3].map(n => `<button data-l="${n}" class="${st.l === n ? 'on' : ''}">${n ? n + '車線' : '細い道'}</button>`).join('')}</span></div>`}
       <div class="mp-row"><input class="mp-inp" data-nm placeholder="名前（路線名など）" value="${esc(st.name)}"></div>
       <div class="mp-row">${same() ? '' : q ? `<span class="mp-cost">${q.cost > 0 ? '工事費 ' + X(q.cost) : '工事費なし'}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button><span class="muted small">工事費を出してから、変えられます</span>'}</div>
+      ${!same() && q ? needH(q.need) : ''}
       <p class="muted small">もとにもどしても（単線にする・車線をへらす）お金はもどりません</p>
-      <div class="mp-row"><button class="btn main" data-ok ${same() || q ? '' : 'disabled'}>この設定にする</button></div>`, sh => {
+      <div class="mp-row"><button class="btn main" data-ok ${same() || (q && !hasNeed(q)) ? '' : 'disabled'}>この設定にする</button></div>`, sh => {
+      needBind(sh, !same() && q && q.need, () => quote());
       sh.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { st.dbl = b.dataset.d === '1'; changed(); });
       sh.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { st.el = b.dataset.e === '1'; changed(); });
       sh.querySelectorAll('[data-l]').forEach(b => b.onclick = () => { st.l = Number(b.dataset.l); changed(); });
@@ -1141,9 +1170,18 @@ function showSta(s) {
   sheet(`<h4>${s.k === 'rail' ? '🚉 ' : '🚏 '}<span>${esc(s.n)}</span>${s.k === 'rail' ? '<span>駅</span>' : ''}</h4><p class="small muted" data-addr translate="no" style="margin:0"></p>
     <div class="mp-kv"><b>持ち主</b><span><span>${esc(S.vis.names[s.o] || '')}</span>${s.mine ? '<small>（あなた）</small>' : ''}</span>
       ${s.k === 'rail' ? `<b>ホーム</b><span>${s.pl} m・${s.tr}番線まで</span>` : ''}
+      ${s.k === 'bus' ? `<b>貸し出し</b><span>${s.ln != null ? `<span>ほかの人・会社に貸しています（1系統・1日 ${X(s.ln)}）</span>` : '<span>ほかの人・会社には貸していません</span>'}</span>` : ''}
       <b>系統</b><span>${(s.rt || []).map(r => `<a href="#" data-rt="${r.id}" style="color:${esc(r.c)};font-weight:800">■ ${esc(r.n)}</a>`).join('<br>') || 'なし'}</span></div>
-    ${s.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button><button class="btn" data-del>こわす</button></div>` : ''}`, sh => {
+    ${s.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button>${s.k === 'bus' ? '<button class="btn" data-lend>貸し出し</button>' : ''}<button class="btn" data-del>こわす</button></div>` : ''}`, sh => {
     sh.querySelectorAll('[data-rt]').forEach(a => a.onclick = ev => { ev.preventDefault(); openDia(Number(a.dataset.rt)); });
+    const ld = sh.querySelector('[data-lend]'); if (ld) ld.onclick = async () => {
+      const v = prompt(T('ほかの人・会社に貸す使用料（1系統・1日・X）。空にすると貸しません（いま使っている系統は、そのまま使えます）'), s.ln != null ? String(s.ln) : '1000');
+      if (v == null) return;
+      const t = String(v).replace(/[,，\s]/g, ''), n = t === '' ? null : Number(t);
+      if (n != null && !(n >= 0)) return toast('数字を入れてください');
+      const r = await api('mp_stop_lend', { p_id: s.id, p_lend: n }, n == null ? '貸すのをやめました' : '貸し出します');
+      if (r) { s.ln = r.lend; refreshBox(s.fx - 3, s.fy - 3, s.fx + 3, s.fy + 3); showSta(s); }
+    };
     const r = sh.querySelector('[data-ren]'); if (r) r.onclick = async () => { const nm = prompt(T('新しい名前'), s.n); if (nm && await api('mp_sta_edit', { p_id: s.id, p_name: nm, p_del: false }, '名前を変えました')) refreshBox(s.fx - 3, s.fy - 3, s.fx + 3, s.fy + 3); };
     const d = sh.querySelector('[data-del]'); if (d) d.onclick = async () => { if (confirm(T('こわしますか？（工事費はもどりません）')) && await api('mp_sta_edit', { p_id: s.id, p_name: null, p_del: true }, 'こわしました')) { refreshBox(s.fx - 3, s.fy - 3, s.fx + 3, s.fy + 3); sheet(null); } };
   });
@@ -1215,6 +1253,14 @@ async function parcelSell(P) {
   let price = null;
   if (P.sale == null) { const v = prompt(T(`${P.ban}（${fmt(P.n * 100)}㎡）の値段（X）`), String(P.val || '')); if (!v) return; price = Number(String(v).replace(/[^\d]/g, '')); if (!price) return; }
   if (await api('mp_parcel_sell', { p_ids: [P.id], p_price: price, p_as: S.as }, price == null ? '売り出しをやめました' : '売りに出しました')) { refreshP(P); sheet(null); }
+}
+// 貸出料（1区画・1日）：決めておくと、ほかの人・会社が申請なしで線路・道路・駅・車庫に使える。空にすると貸さない
+async function parcelRent(P, cx, cy) {
+  const v = prompt(T(`${P.ban}の貸出料（1区画・1日・X）。ほかの人・会社が、申請なしで線路・道路・駅・車庫に使えます。空にすると貸しません（標準 ${P.std} X）`), P.rent != null ? String(P.rent) : String(P.std));
+  if (v == null) return;
+  const t = String(v).replace(/[,，\s]/g, ''), n = t === '' ? null : Number(t);
+  if (n != null && !(n >= 0)) return toast('数字を入れてください');
+  if (await api('mp_parcel_rent', { p_ids: [P.id], p_rent: n }, n == null ? '貸すのをやめました（つくってあるものは、そのままです）' : '貸出料を決めました')) showSpot(cx, cy);
 }
 // 分筆：筆の中で2か所タップして四角をえらぶ
 function startSplit(P) {
@@ -1523,8 +1569,9 @@ function drawSheet() {
     <div class="mp-row">${q ? `<span class="mp-cost">工事費 ${X(q.cost)}</span><span class="small"><span>使用料 1日 ${X(q.lease || 0)}</span>${q.tunnel ? `<span>・トンネル ${q.tunnel}マス</span>` : ''}${q.bridge ? `<span>・橋 ${q.bridge}マス</span>` : ''}<span>・最高 ${q.vlim} km/h</span></span>`
       : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>'
       : st.curve.length > 2 ? `<button class="btn" data-est ${tight || st.geoBad ? 'disabled' : ''}>見つもる</button><span class="muted small">工事費を出してから、つくれます</span>` : st.mode === 'arc' ? '<span class="muted small">地図をタップして角の点をおいてください（2つ以上）。角には、えらんだ半径のカーブが入ります。線路のはしから始めると延長、まん中から始めると分岐です</span>' : '<span class="muted small">地図をタップして点をおいてください（2つ以上）。はしを線の近くにおくと、つながります</span>'}</div>
+    ${q ? needH(q.need) : ''}
     <div class="mp-row"><button class="btn" data-undo ${st.ctrl.length ? '' : 'disabled'}>1つもどす</button><button class="btn" data-cancel>キャンセル</button>
-      <button class="btn main" data-ok ${q && !tight && !st.geoBad ? '' : 'disabled'}>${st.edit ? 'この形にする' : `つくる（${esc(asName())}）`}</button></div>
+      <button class="btn main" data-ok ${q && !tight && !st.geoBad && !hasNeed(q) ? '' : 'disabled'}>${st.edit ? 'この形にする' : `つくる（${esc(asName())}）`}</button></div>
     <p class="muted small" style="margin:6px 0 0">点はドラッグで動かせます。長押しで消せます</p>`, s => {
     s.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { st.mode = b.dataset.m; try { localStorage.setItem('mp_dm_' + st.kind, st.mode); } catch (e) {} drawUpdate(); });
     { const rd = s.querySelector('[data-rad]'); if (rd) rd.onchange = () => { st.rad = Number(rd.value); try { localStorage.setItem('mp_dr_' + st.kind, String(st.rad)); } catch (e) {} drawUpdate(); }; }
@@ -1536,6 +1583,7 @@ function drawSheet() {
     s.querySelector('[data-undo]').onclick = () => { if (st.edit && st.ctrl.length <= 2) return; st.ctrl.pop(); if (!st.edit) st.B = null; if (!st.ctrl.length) st.A = null; drawUpdate(); };
     s.querySelector('[data-cancel]').onclick = () => setTool(st.edit ? 'look' : st.kind);
     { const es = s.querySelector('[data-est]'); if (es) es.onclick = () => quoteDraw(st); }
+    needBind(s, q && q.need, () => quoteDraw(st));
     s.querySelector('[data-ok]').onclick = async () => {
       if (nm) o.name = nm.value;
       const r = await api(st.edit ? 'mp_seg_edit' : 'mp_seg_build', drawArgs(st, false));
@@ -1694,9 +1742,11 @@ function staSheet(kind, hit, hit2) {
         <span class="muted small">20m の車両 ${Math.floor(st.plat / 20)}両まで</span></div>
       <div class="mp-row">番線 <span class="mp-seg">${[1, 2, 3, 4, 6].map(n => `<button data-t="${n}" class="${st.tracks === n ? 'on' : ''}">${n}</button>`).join('')}</span></div>
       <p class="muted small" style="margin:4px 0 0">起点と終点のあいだが、ホームになります（20m単位）。もう一度タップすると、えらびなおせます</p>` : ''}
-    <div class="mp-row">${st.q ? `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small">維持費 1日 ${X(st.q.up_day)}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button><span class="muted small">工事費を出してから、つくれます</span>'}</div>
-    <div class="mp-row"><button class="btn main" data-ok ${st.q ? '' : 'disabled'}>つくる（${esc(asName())}）</button></div>`, s => {
+    <div class="mp-row">${st.q ? `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small"><span>維持費 1日 ${X(st.q.up_day)}</span>${st.q.lease ? `<span>・使用料 1日 ${X(st.q.lease)}</span>` : ''}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button><span class="muted small">工事費を出してから、つくれます</span>'}</div>
+    ${st.q ? needH(st.q.need) : ''}
+    <div class="mp-row"><button class="btn main" data-ok ${st.q && !hasNeed(st.q) ? '' : 'disabled'}>つくる（${esc(asName())}）</button></div>`, s => {
     s.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
+    needBind(s, st.q && st.q.need, () => quote());
     s.querySelectorAll('[data-pm]').forEach(b => b.onclick = () => { st.plat = clamp(st.plat + Number(b.dataset.pm), 20, 400); changed(); });
     s.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { st.tracks = Number(b.dataset.t); changed(); });
     { const es = s.querySelector('[data-est]'); if (es) es.onclick = () => quote(); }
@@ -1760,8 +1810,10 @@ async function depTap(x, y) {
     <div class="mp-row"><span class="mp-seg">${sizes.map(s => `<button data-s="${s[0]}" class="${st.size === s[0] ? 'on' : ''}">${s[1]}</button>`).join('')}</span>
       <button class="btn" data-side>反対側にする</button></div>
     <div class="mp-row">${st.q ? `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small">使用料 1日 ${X(st.q.lease)}・維持費 1日 ${X(st.q.up_day)}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button><span class="muted small">工事費を出してから、つくれます</span>'}</div>
-    <div class="mp-row"><button class="btn main" data-ok ${st.q ? '' : 'disabled'}>つくる（${esc(asName())}）</button></div>`, s => {
+    ${st.q ? needH(st.q.need) : ''}
+    <div class="mp-row"><button class="btn main" data-ok ${st.q && !hasNeed(st.q) ? '' : 'disabled'}>つくる（${esc(asName())}）</button></div>`, s => {
     s.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
+    needBind(s, st.q && st.q.need, () => quote());
     s.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { st.size = b.dataset.s; changed(); });
     s.querySelector('[data-side]').onclick = () => { st.side = -st.side; changed(); };
     { const es = s.querySelector('[data-est]'); if (es) es.onclick = () => quote(); }
@@ -1807,9 +1859,11 @@ function depSheetRail(h1, h2) {
     <div class="mp-row"><span>留置線</span> ${step('n', 1)} <button class="btn" data-side>反対側にする</button></div>
     <p class="small" style="margin:4px 0 0">20m の車両 ${Math.floor(st.len / 20) * st.n}両まで（${Math.floor(st.len / 20)}両 × ${st.n}本）</p>
     <div class="mp-row">${st.q ? `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small">使用料 1日 ${X(st.q.lease)}・維持費 1日 ${X(st.q.up_day)}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button><span class="muted small">工事費を出してから、つくれます</span>'}</div>
-    <div class="mp-row"><button class="btn main" data-ok ${st.q ? '' : 'disabled'}>つくる（${esc(asName())}）</button></div>
+    ${st.q ? needH(st.q.need) : ''}
+    <div class="mp-row"><button class="btn main" data-ok ${st.q && !hasNeed(st.q) ? '' : 'disabled'}>つくる（${esc(asName())}）</button></div>
     <p class="muted small" style="margin:4px 0 0">起点と終点のあいだに、線路にそって車両基地をつくります（20m単位）。もう一度タップすると、えらびなおせます</p>`, s => {
     s.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
+    needBind(s, st.q && st.q.need, () => quote());
     s.querySelectorAll('[data-len]').forEach(b => b.onclick = () => { st.len = clamp(st.len + Number(b.dataset.len), 40, 1000); changed(); });
     s.querySelectorAll('[data-n]').forEach(b => b.onclick = () => { st.n = clamp(st.n + Number(b.dataset.n), 1, 20); changed(); });
     s.querySelector('[data-side]').onclick = () => { st.side = -st.side; changed(); };
@@ -1856,10 +1910,11 @@ function openMenu() {
     <button class="mp-item" style="text-align:left" data-k="routes"><b>🗺 系統とダイヤ</b><br><small>止まる駅の順番・列車の時刻（採時駅）・ダイヤグラム・運用</small></button>
     <button class="mp-item" style="text-align:left" data-k="blds"><b>🏢 自分の建物</b><br><small>部屋の入居・家賃の水準・テナント（${esc(asName())}）</small></button>
     <button class="mp-item" style="text-align:left" data-k="tenants"><b>🔑 テナント募集</b><br><small>会社で部屋を借りる・借りている部屋</small></button>
+    <button class="mp-item" style="text-align:left" data-k="landreq"><b>📨 土地の申請</b><br><small>他人の土地を使う申請・とどいた申請への返事（許可・ことわる）</small></button>
     <button class="mp-item" style="text-align:left" data-k="ledger"><b>💴 お金の記録</b><br><small>運賃・家賃・維持費・使用料・工事費（${esc(asName())}）</small></button>
     ${S.admin ? `<button class="mp-item" style="text-align:left" data-k="admin"><b>🛠 管理</b><br><small>値段の設定・用途地域・ようす</small></button>` : ''}
     <button class="mp-item" style="text-align:left" data-k="help"><b>❓ あそびかた</b></button></div>`], b => {
-    b.querySelectorAll('[data-k]').forEach(x => x.onclick = () => { m.close(); ({ cars: () => openCars(), routes: openRoutes, blds: openMyBlds, tenants: openTenants, ledger: openLedger, admin: openAdmin, help: openHelp })[x.dataset.k](); });
+    b.querySelectorAll('[data-k]').forEach(x => x.onclick = () => { m.close(); ({ cars: () => openCars(), routes: openRoutes, blds: openMyBlds, tenants: openTenants, landreq: () => openLandReqs(), ledger: openLedger, admin: openAdmin, help: openHelp })[x.dataset.k](); });
   });
 }
 function openHelp() {
@@ -1868,7 +1923,9 @@ function openHelp() {
     <p><b>土地</b>：国の土地は区画（10m四方・100㎡）でえらんで買えます。道路の部分は国の土地（公衆用道路）なので買えません。買った土地は「筆」になり、地番がつきます（住所は町字＋地番）。となりあう自分の筆は合筆、筆の一部は分筆できます。売りに出ている筆は、その値段（＋取得税3%）。毎日、地価の0.01%の固定資産税。</p>
     <p><b>建物</b>：自分の筆に、プリセット（一戸建て・アパート・マンション・タワーマンション・店舗つき住宅・雑居ビル・オフィスビル・超高層ビル・ショッピングセンター・工場・倉庫・港湾施設・田畑・駐車場・立体駐車場）から、形と階数をえらんで建てます。広さと高さは用途地域の建ぺい率・容積率まで。細い形（塔状・板状）ほど高くできます。</p>
     <p><b>部屋とテナント</b>：部屋ごとに「入居募集」（町の人やお店が入って家賃）・「テナント募集」（会社に貸す。会社が借りると、1時間ごとに会社から家賃）・「自分で使う」（店・事務所などは売上が入る）をえらびます。家賃の水準を上げると、入りにくく出ていきやすくなります。人が多いところ・乗り降りの多い駅の近くは入りやすく、店の売上も多くなります。会社は ≡ →「テナント募集」から部屋を借りられます。</p>
-    <p><b>線路・道路</b>：点をおくと、なめらかな線になります。他人の土地や国の土地の上につくると、毎日使用料がかかります（国・県・市の道路の上はかかりません）。まちの中は工事費が高くなります。</p>
+    <p><b>線路・道路</b>：点をおくと、なめらかな線になります。他人の土地や国の土地の上につくると、毎日使用料がかかります（国・府県・市の道路の上はかかりません）。まちの中は工事費が高くなります。</p>
+    <p><b>他人の土地</b>：線路・道路・駅・車庫は、他人の筆の上には、持ち主が貸出料を決めているか、申請して許可をもらったときだけつくれます（使用料は1区画・1日。許可のときに持ち主が決めます）。自分の筆は、タップ →「貸出料」で貸し出せます。申請は ≡ →「土地の申請」。前からあるものは、そのまま使えます。</p>
+    <p><b>バス停の貸し出し</b>：ほかの人・会社のバス停は、持ち主が貸し出しているものだけ系統に入れられます（1系統・1日の使用料。使いはじめたときの値段のまま）。自分のバス停は、タップ →「貸し出し」。</p>
     <p><b>駅と車庫</b>：駅はホームの長さ（20m単位）と番線の数を決めます（20mの車両がホームに入る両数まで）。車両は車庫に車籍をおきます。</p>
     <p><b>車両</b>：122系0番台は国鉄103系とほぼ同じ性能（最高100km/h）。1両ずつ注文して、両はしに運転台つきの Tc（奇数向き・偶数向き）、まん中に Mp（パンタグラフつき）と M をはさんで編成にします。</p>
     <p><b>系統とダイヤ</b>：止まる駅を順にえらんで系統をつくり、列車を入れます。時刻を決めるのは、会社が決めた採時駅だけ（着・発・番線）。ほかの駅は走る時間から自動で決まります。「運用を自動で組む」で、編成を列車にわりあてられます。</p>
@@ -1972,8 +2029,9 @@ function routeBuild(kind, edit) {
   S.tapHook = (x, y) => {
     const h = nearSta(x, y, 18); if (!h || h.s.k !== kind) return toast(kind === 'rail' ? '駅をタップしてください' : 'バス停をタップしてください');
     if (kind === 'rail' && !h.s.mine) return toast('自分（この名義）の駅だけです');
+    if (kind === 'bus' && !h.s.mine && h.s.ln == null && !(edit && edit.stops.some(x => x.id === h.s.id))) return toast('このバス停は、持ち主が貸し出していません');
     if (st.stops.length && st.stops[st.stops.length - 1].id === h.s.id) return;
-    st.stops.push({ id: h.s.id, n: h.s.n, x: h.s.fx, y: h.s.fy }); if (st.stops.length === 1 || st.stops.length === 2) st.timing.add(h.s.id); draw();
+    st.stops.push({ id: h.s.id, n: h.s.n, x: h.s.fx, y: h.s.fy, ln: h.s.mine ? null : h.s.ln }); if (st.stops.length === 1 || st.stops.length === 2) st.timing.add(h.s.id); draw();
   };
   S.drawTool = (g, z) => {
     g.strokeStyle = st.color; g.lineWidth = 3; g.setLineDash([8, 6]); g.beginPath();
@@ -1983,7 +2041,7 @@ function routeBuild(kind, edit) {
   const draw = () => {
     sheet(`<h4>${edit ? '系統を直す' : kind === 'rail' ? '鉄道の系統をつくる' : 'バスの系統をつくる'}</h4>
       <div class="mp-row"><input class="mp-inp" style="flex:1 1 150px" data-nm placeholder="系統の名前（例：瑠璃本線）" value="${esc(st.name)}"><input type="color" data-col value="${esc(st.color)}" style="width:44px;height:36px;border:0;background:none"></div>
-      <div class="mp-list">${st.stops.map((s, i) => `<div class="mp-item" style="display:flex;align-items:center;gap:6px"><b>${i + 1}.</b> ${esc(s.n)}
+      <div class="mp-list">${st.stops.map((s, i) => `<div class="mp-item" style="display:flex;align-items:center;gap:6px"><b>${i + 1}.</b> ${esc(s.n)}${s.ln != null ? ` <small class="muted">（借りる・1日 ${X(s.ln)}）</small>` : ''}
           <label class="small" style="margin-left:auto"><input type="checkbox" data-tm="${s.id}" ${st.timing.has(s.id) ? 'checked' : ''}> 採時駅</label><button class="btn" data-rm="${i}">×</button></div>`).join('') || '<p class="muted small">まだ駅がありません</p>'}</div>
       <div class="mp-row">停車時間 <input class="mp-inp mp-num" type="number" min="10" max="300" value="${st.dwell}" data-dw> 秒</div>
       <div class="mp-row"><button class="btn" data-cancel>キャンセル</button><button class="btn main" data-ok ${st.stops.length >= 2 ? '' : 'disabled'}>${edit ? 'この順に直す' : '系統をつくる'}（${esc(asName())}）</button></div>
@@ -2000,7 +2058,7 @@ function routeBuild(kind, edit) {
         if (kind === 'bus') { paths = await busPaths(st.stops.map(x => x.id)); if (!paths) return; }
         const r = await api('mp_route_save', { p_id: edit ? edit.id : null, p_kind: kind, p_name: st.name, p_color: st.color, p_stops: st.stops.map(x => x.id),
           p_timing: st.stops.map(x => x.id).filter(id => st.timing.has(id)), p_dwell: st.dwell, p_paths: paths, p_as: S.as });
-        if (r) { toast(edit ? '直しました' : '系統をつくりました。列車を入れましょう'); setTool('look'); openDia(r.id); }
+        if (r) { toast(T(edit ? '直しました' : '系統をつくりました。列車を入れましょう') + (r.stopfee ? SEP() + T(`（バス停の使用料 1日 ${fmt(r.stopfee)} X）`) : '')); setTool('look'); openDia(r.id); }
       };
     });
     S.dirty = true;
@@ -2225,6 +2283,43 @@ async function autoForm(D, reload) {
       if (r) { toast(T(`${r.ok}本にわりあてました（${r.used}編成）`) + (r.none ? SEP() + T(`・${r.none}本は編成が足りません`) : '')); m.close(); reload(); }
     };
   });
+}
+
+/* ---- 土地の申請：とどいた申請（自分と自分の会社の筆）・出した申請 ---- */
+async function openLandReqs() {
+  const m = modal(['土地の申請', '<p class="muted small">読みこんでいます…</p>']);
+  let D = null, tab = 'in', open = null;
+  const load = async () => { D = await api('mp_land_reqs', {}); if (!D) return m.close(); if (!D.in.some(r => r.st === 'wait') && D.out.length && tab === 'in' && !D.in.length) tab = 'out'; draw(); };
+  const item = (r, inc) => `<div class="mp-item"><b translate="no">${esc(r.label)}</b> <small>${fmt(r.n * 100)}㎡</small><br>
+      <small><span>${esc(r.who)}</span> → <span>${esc(r.owner)}</span>・<b class="${r.st === 'no' ? 'mp-warn' : ''}">${esc(LRS[r.st] || r.st)}</b>${r.st === 'ok' ? `<span>（1区画・1日 ${X(r.fee)}）</span>` : ''}${r.rent != null ? `<span>・貸出料 ${X(r.rent)}</span>` : ''}</small>
+      ${r.msg ? `<br><small>ひとこと：<span>${esc(r.msg)}</span></small>` : ''}${r.reply ? `<br><small>返事：<span>${esc(r.reply)}</span></small>` : ''}
+      ${inc && open === r.id ? `<div class="mp-row"><span class="small">使用料（1区画・1日）</span><input class="mp-inp mp-num" style="width:110px" data-fee value="${r.st === 'ok' ? r.fee : r.std}"> X <small class="muted">標準 ${X(r.std)}</small></div>
+        <div class="mp-row"><input class="mp-inp" data-rp placeholder="返事のひとこと（なくてもよい）"><button class="btn main" data-okgo="${r.id}">許可する</button></div>` : ''}
+      <div class="mp-row">${inc ? (open !== r.id ? `<button class="btn ${r.st === 'wait' ? 'main' : ''}" data-ok="${r.id}">${r.st === 'ok' ? '使用料を変える' : '許可する'}</button>` : '')
+          + (r.st !== 'no' ? `<button class="btn" data-no="${r.id}">${r.st === 'ok' ? '許可をやめる' : 'ことわる'}</button>` : '')
+        : `<button class="btn" data-del="${r.id}">${r.st === 'ok' ? '許可を返す' : '取り消す'}</button>`}<button class="btn" data-go="${r.x},${r.y}">地図で見る</button></div></div>`;
+  const draw = () => {
+    const L = tab === 'in' ? D.in : D.out, nw = D.in.filter(r => r.st === 'wait').length;
+    m.set('土地の申請', `<div class="tabs-s">${[['in', 'とどいた申請'], ['out', '出した申請']].map(t => `<button data-tab="${t[0]}" class="${tab === t[0] ? 'on' : ''}"><span>${t[1]}</span>${t[0] === 'in' && nw ? ` <b>${nw}</b>` : ''}</button>`).join('')}</div>
+      <div class="mp-list" style="margin-top:8px">${L.map(r => item(r, tab === 'in')).join('') || '<p class="muted small">ありません</p>'}</div>
+      <p class="muted small">${tab === 'in' ? '許可すると、その人・会社は申請した筆を、線路・道路・駅・車庫に使えます（使用料は1区画・1日。毎時、あなたに入ります）。許可をやめても、もうつくってあるものはそのままです。筆をタップ →「貸出料」で、だれでも申請なしで使えるようにもできます'
+        : '申請は、地図で線路などを見つもったとき（「持ち主に申請する」）や、他人の筆をタップ →「使う申請」でできます。許可を返しても、もうつくってあるものはそのままです'}</p>`, b => {
+      b.querySelectorAll('[data-tab]').forEach(x => x.onclick = () => { tab = x.dataset.tab; open = null; draw(); });
+      b.querySelectorAll('[data-ok]').forEach(x => x.onclick = () => { open = Number(x.dataset.ok); draw(); });
+      b.querySelectorAll('[data-okgo]').forEach(x => x.onclick = async () => {
+        const t = String(b.querySelector('[data-fee]').value || '').replace(/[,，\s]/g, ''), f = t === '' ? null : Number(t);
+        if (f != null && !(f >= 0)) return toast('数字を入れてください');
+        if (await api('mp_land_decide', { p_ids: [Number(x.dataset.okgo)], p_ok: true, p_fee: f, p_reply: b.querySelector('[data-rp]').value }, '許可しました')) { open = null; load(); }
+      });
+      b.querySelectorAll('[data-no]').forEach(x => x.onclick = async () => {
+        const rp = prompt(T('返事のひとこと（なくてもよい）'), ''); if (rp == null) return;
+        if (await api('mp_land_decide', { p_ids: [Number(x.dataset.no)], p_ok: false, p_fee: null, p_reply: rp }, 'ことわりました')) load();
+      });
+      b.querySelectorAll('[data-del]').forEach(x => x.onclick = async () => { if (confirm(T('この申請を取り消しますか？（つくってあるものは、そのままです）')) && await api('mp_land_req_del', { p_ids: [Number(x.dataset.del)] }, '取り消しました')) load(); });
+      b.querySelectorAll('[data-go]').forEach(x => x.onclick = () => { const [cx, cy] = x.dataset.go.split(',').map(Number); m.close(); setCam((cx + 0.5) / 5, (cy + 0.5) / 5, Math.max(S.cam.z, 24)); showSpot(cx, cy); });
+    });
+  };
+  load();
 }
 
 /* ---- お金の記録 ---- */
@@ -2687,5 +2782,5 @@ async function openMyBlds() {
     b.querySelectorAll('[data-b]').forEach(x => x.onclick = () => { const [cx, cy] = x.dataset.xy.split(',').map(Number); m.close(); setCam((cx + 0.5) / 5, (cy + 0.5) / 5, Math.max(S.cam.z, 30)); openBld(Number(x.dataset.b)); });
   });
 }
-window.MapApp = { open, pause, state: S, spline, setCam };
+window.MapApp = { open, pause, state: S, spline, setCam, landReqs: () => openLandReqs() };
 })();

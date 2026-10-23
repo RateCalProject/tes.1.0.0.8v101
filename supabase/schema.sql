@@ -16538,6 +16538,7 @@ drop function if exists public.mp_land_sell(int[], bigint, text);
 drop function if exists public.mp_bld(int[], text, text, boolean);
 drop function if exists public._mp_lease_add(int[], text, bigint, uuid, int, boolean);
 drop function if exists public._mp_chimoku(int, int, text, text);
+drop function if exists public._mp_lease_set(text, bigint, uuid, int, boolean);   -- t54b：前の使用料をうけつぐ prev をたした
 create table if not exists public.mp_places (
   id     text primary key,       -- p:県 m:市町村 w:区 d:町名 r:川
   k      text not null,          -- pref / muni / ward / dist / river
@@ -16842,6 +16843,39 @@ create table if not exists public.mp_changes (     -- 変わったもの（共�
 create table if not exists public.mp_serials (     -- 車番の続き
   owner text not null, type text not null, n int not null default 0, primary key (owner, type)
 );
+-- 他人の筆を使う（線路・道路・駅・車庫）：持ち主が貸出料を決めているか、申請が許可されているときだけ。今ある分はそのまま
+alter table public.mp_parcels add column if not exists rent numeric;     -- 貸出料（1区画・1日。null は貸さない）
+create table if not exists public.mp_landreq (     -- 他人の筆を使う申請（筆ごと・名義ごと）
+  id     bigserial primary key,
+  parcel bigint not null references public.mp_parcels(id) on delete cascade,
+  req_u  uuid references public.profiles(id) on delete cascade,
+  req_c  int references public.companies(id) on delete cascade,
+  msg    text not null default '',
+  st     text not null default 'wait' check (st in ('wait', 'ok', 'no')),   -- 返事まち・許可・ことわり
+  fee    numeric,                      -- 許可した使用料（1区画・1日）
+  reply  text,
+  created_at timestamptz not null default now(),
+  decided_at timestamptz
+);
+create unique index if not exists mp_landreq_one on public.mp_landreq (parcel, coalesce(req_u::text, ''), coalesce(req_c, 0));
+create index if not exists mp_landreq_req on public.mp_landreq (req_u, req_c);
+-- バス停の貸し出し：他社は、貸しているバス停だけ使える（1系統・1日の使用料は、系統をつくったときの値段のまま）。今ある系統はそのまま
+alter table public.mp_stations add column if not exists lend numeric;    -- バス停の貸出料（1系統・1日。null は貸さない）
+create table if not exists public.mp_stopuse (     -- 他社のバス停を使う系統
+  route bigint not null references public.mp_routes(id) on delete cascade,
+  stop  bigint not null references public.mp_stations(id) on delete cascade,
+  fee   numeric not null default 0,    -- 1日あたり
+  since timestamptz not null default now(),
+  primary key (route, stop)
+);
+create index if not exists mp_stopuse_stop on public.mp_stopuse (stop);
+-- 今ある系統が使っている他社のバス停は、使用料なしでそのまま使える
+insert into public.mp_stopuse(route, stop, fee)
+select distinct r.id, s.id, 0 from public.mp_routes r cross join lateral unnest(r.stops) x(sid) join public.mp_stations s on s.id = x.sid
+ where r.kind = 'bus' and not (s.own_u is not distinct from r.own_u and s.own_c is not distinct from r.own_c)
+on conflict do nothing;
+alter table public.mp_landreq enable row level security;
+alter table public.mp_stopuse enable row level security;
 alter table public.mp_chunks enable row level security;
 alter table public.mp_places enable row level security;
 alter table public.mp_centers enable row level security;
@@ -17249,7 +17283,7 @@ begin
     'nodes', (select coalesce(jsonb_agg(jsonb_build_object('id', n.id, 'k', n.kind, 'x', n.x, 'y', n.y, 'n', n.name, 'nk', n.nk)), '[]'::jsonb)
                from mp_nodes n where (n.name is not null or p_lod = 0) and n.x between p_x0 * 100 and p_x1 * 100 and n.y between p_y0 * 100 and p_y1 * 100
                  and (n.name is not null or exists (select 1 from mp_segs s where s.n0 = n.id and not s.gov) or exists (select 1 from mp_segs s where s.n1 = n.id and not s.gov))),
-    'stas', (select coalesce(jsonb_agg(jsonb_build_object('id', s.id, 'k', s.kind, 'seg', s.seg, 'at', s.at, 'x', s.x, 'y', s.y, 'a', s.ang, 'pl', s.plat, 'tr', s.tracks, 'n', s.name,
+    'stas', (select coalesce(jsonb_agg(jsonb_build_object('id', s.id, 'k', s.kind, 'seg', s.seg, 'at', s.at, 'x', s.x, 'y', s.y, 'a', s.ang, 'pl', s.plat, 'tr', s.tracks, 'n', s.name, 'ln', s.lend,
                   'mine', coalesce(s.own_u = u or s.own_c = any(me_cs), false), 'o', case when s.own_u is not null then 'u:' || s.own_u else 'c:' || s.own_c end,
                   'rt', (select coalesce(jsonb_agg(jsonb_build_object('id', ro.id, 'c', ro.color, 'n', ro.name)), '[]'::jsonb) from mp_routes ro where s.id = any(ro.stops)))), '[]'::jsonb)
                from mp_stations s where s.x between (p_x0 - 5) * 100 and (p_x1 + 5) * 100 and s.y between (p_y0 - 5) * 100 and (p_y1 + 5) * 100 and (p_lod < 2 or s.kind = 'rail')),
@@ -17371,7 +17405,7 @@ end $$;
 -- 線を位置 s で2つに分けて、まん中に点を作る（駅・車庫・使用料・使っているマスも分ける）
 create or replace function public._mp_split(sid bigint, s real) returns bigint
 language plpgsql set search_path = public as $$
-declare sg mp_segs; q record; nid bigint; pa int[]; pb int[]; bid bigint; ta int[]; tb int[];
+declare sg mp_segs; q record; nid bigint; pa int[]; pb int[]; bid bigint; ta int[]; tb int[]; prev jsonb;
 begin
   select * into sg from mp_segs where id = sid for update;
   if s < 0.3 or s > sg.len - 0.3 then raise exception '線のはしの近くでは分けられません'; end if;
@@ -17386,9 +17420,10 @@ begin
   ta := _mp_tiles(pa); tb := _mp_tiles(pb);
   delete from mp_occ where what = sg.kind and ref = sid;
   perform _mp_occ_set(sid, sg.kind, ta); perform _mp_occ_set(bid, sg.kind, tb);
-  -- 使用料は、分けたあとの線ごとに区画で決めなおす
-  perform _mp_lease_set('seg', sid, sg.own_u, sg.own_c, sg.gov);
-  perform _mp_lease_set('seg', bid, sg.own_u, sg.own_c, sg.gov);
+  -- 使用料は、分けたあとの線ごとに区画で決めなおす（前から使っていた区画の使用料はそのまま）
+  prev := (select jsonb_object_agg(e.x || ',' || e.y, e.fee) from mp_leases e where e.ref_kind = 'seg' and e.ref = sid);
+  perform _mp_lease_set('seg', sid, sg.own_u, sg.own_c, sg.gov, prev);
+  perform _mp_lease_set('seg', bid, sg.own_u, sg.own_c, sg.gov, prev);
   -- 駅・車庫は、後ろ半分にあるものを新しい線へ
   update mp_stations set seg = bid, at = at - s where seg = sid and at > s;
   update mp_depots set seg = bid, at = at - s where seg = sid and at > s;
@@ -17519,7 +17554,7 @@ language plpgsql security definer set search_path = public as $$
 #variable_conflict use_column
 declare u uuid := _me(); pa record; tiles int[]; ters text[]; ln real; rmin real; cost numeric := 0; i int; lq record; n0 bigint; n1 bigint; sid bigint;
         dbl boolean := coalesce((p_opts ->> 'dbl')::boolean, false); elec boolean := coalesce((p_opts ->> 'elec')::boolean, false); nm text := left(coalesce(p_opts ->> 'name', ''), 30);
-        cls text := coalesce(p_cls, 'priv'); base numeric; np int := array_length(p_pts, 1) / 2; bad text; ln_ int := (p_opts ->> 'lanes')::int; mul real[]; cells int[]; sw real;
+        cls text := coalesce(p_cls, 'priv'); base numeric; np int := array_length(p_pts, 1) / 2; bad text; ln_ int := (p_opts ->> 'lanes')::int; mul real[]; cells int[]; sw real; need jsonb;
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
@@ -17558,12 +17593,15 @@ begin
   end loop;
   cost := round(cost);
   select * into lq from _mp_lease_quote(cells, pa.pu, pa.pc, pa.gv);
+  -- 他人の筆は、貸出料があるか申請が許可されているときだけ
+  need := _mp_land_need(cells, pa.pu, pa.pc, pa.gv);
   if p_dry then
     return jsonb_build_object('cost', cost, 'lease', round(lq.fee), 'own', lq.own, 'other', lq.other, 'state', lq.state, 'pub', lq.pub,
       'tiles', array_length(tiles, 1) / 2, 'len_m', round(ln * 50), 'rmin_m', round(least(rmin, 99999) * 50),
       'vlim', case when p_kind = 'rail' then _mp_vlim(rmin) else _mp_road_v(cls, ln_) end, 'lanes', ln_,
-      'tunnel', (select count(*) from unnest(ters) t where t in ('M', 'K')), 'bridge', (select count(*) from unnest(ters) t where t in ('R', 'L', 'S')));
+      'tunnel', (select count(*) from unnest(ters) t where t in ('M', 'K')), 'bridge', (select count(*) from unnest(ters) t where t in ('R', 'L', 'S')), 'need', need);
   end if;
+  perform _mp_land_stop(need);
   perform _mp_pay(pa.pu, pa.pc, pa.gv, cost::bigint, p_kind, format('%sの工事（%sm）', case when p_kind = 'rail' then '線路' else '道路' end, round(ln * 50)));
   n0 := _mp_end(p_kind, p_from, p_pts[1], p_pts[2], pa.pu, pa.pc, pa.gv);
   n1 := _mp_end(p_kind, p_to, p_pts[2 * np - 1], p_pts[2 * np], pa.pu, pa.pc, pa.gv);
@@ -17583,6 +17621,7 @@ create or replace function public.mp_seg_edit(p_id bigint, p_ctl int[], p_pts in
 language plpgsql security definer set search_path = public as $$
 #variable_conflict use_column
 declare u uuid := _me(); sg mp_segs; me_cs int[]; tiles int[]; old int[]; newt int[] := '{}'; ters text[]; ln real; rmin real; amt_ numeric := 0; mul real[]; i int; base numeric; lq record; a mp_nodes; b mp_nodes; np int := array_length(p_pts, 1) / 2; bad text;
+        ncells int[]; need jsonb;
 begin
   perform _mp_ok(u);
   select * into sg from mp_segs where id = p_id for update;
@@ -17610,15 +17649,19 @@ begin
   mul := _mp_cmuls(newt, ters);
   bad := _mp_seg_blocked(tiles, _mp_seg_cells_arr(_mp_sub(p_pts, least(0.4, ln / 3), ln - least(0.4, ln / 3)), sg.kind, sg.w, sg.dbl));
   if bad is not null then raise exception '%にかかるので、通れません（線をずらしてください）', left(bad, 80); end if;
-  bad := _mp_bld_hit(_mp_seg_cells_arr(p_pts, sg.kind, sg.w, sg.dbl));
+  ncells := _mp_seg_cells_arr(p_pts, sg.kind, sg.w, sg.dbl);
+  bad := _mp_bld_hit(ncells);
   if bad is not null then raise exception '建物のある土地（%）は通れません', left(bad, 60); end if;
   base := case when sg.kind = 'rail' then _mp_rate('rail') else _mp_rate('road') * _mp_road_mul(sg.cls, sg.lanes) end;
   for i in 1..coalesce(array_length(ters, 1), 0) loop
     amt_ := amt_ + base * mul[i] * case when sg.dbl then _mp_rate('dbl_mul') else 1 end + case when sg.elec then _mp_rate('elec') else 0 end;
   end loop;
   amt_ := round(amt_);
-  select * into lq from _mp_lease_quote(_mp_seg_cells_arr(p_pts, sg.kind, sg.w, sg.dbl), sg.own_u, sg.own_c, sg.gov);
-  if p_dry then return jsonb_build_object('cost', amt_, 'lease', round(lq.fee), 'tiles', array_length(tiles, 1) / 2, 'new', coalesce(array_length(newt, 1), 0) / 2, 'len_m', round(ln * 50), 'rmin_m', round(least(rmin, 99999) * 50), 'vlim', _mp_vlim(rmin)); end if;
+  select * into lq from _mp_lease_quote(ncells, sg.own_u, sg.own_c, sg.gov);
+  -- 新しく通る他人の筆は、貸出料があるか申請が許可されているときだけ（前から通っている区画はそのまま）
+  need := _mp_land_need(ncells, sg.own_u, sg.own_c, sg.gov, _mp_seg_cells_arr(sg.pts, sg.kind, sg.w, sg.dbl));
+  if p_dry then return jsonb_build_object('cost', amt_, 'lease', round(lq.fee), 'tiles', array_length(tiles, 1) / 2, 'new', coalesce(array_length(newt, 1), 0) / 2, 'len_m', round(ln * 50), 'rmin_m', round(least(rmin, 99999) * 50), 'vlim', _mp_vlim(rmin), 'need', need); end if;
+  perform _mp_land_stop(need);
   perform _mp_pay(sg.own_u, sg.own_c, sg.gov, amt_::bigint, sg.kind, format('%sの引きなおし', case when sg.kind = 'rail' then '線路' else '道路' end));
   perform _mp_chg('seg', p_id, 'set', sg.bb);
   delete from mp_occ where what = sg.kind and ref = p_id;
@@ -17633,7 +17676,7 @@ end $$;
 -- 複線にする・電化する・道路の車線を変える・名前を変える（費用は増える分だけ。もどしても返金なし）
 create or replace function public.mp_seg_opts(p_id bigint, p_dbl boolean, p_elec boolean, p_name text, p_dry boolean, p_lanes int default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); sg mp_segs; me_cs int[]; ters text[]; amt_ numeric := 0; i int; base numeric; nl int; what text := ''; mul real[]; what2 text;
+declare u uuid := _me(); sg mp_segs; me_cs int[]; ters text[]; amt_ numeric := 0; i int; base numeric; nl int; what text := ''; mul real[]; what2 text; wc int[]; need jsonb;
 begin
   perform _mp_ok(u);
   select * into sg from mp_segs where id = p_id for update;
@@ -17663,10 +17706,14 @@ begin
   end if;
   amt_ := round(amt_);
   if (sg.kind = 'rail' and coalesce(p_dbl, sg.dbl) and not sg.dbl) or (sg.kind = 'road' and nl > sg.lanes) then
-    what2 := _mp_bld_hit(_mp_seg_cells_arr(sg.pts, sg.kind, case when sg.kind = 'rail' then 0.5 else _mp_road_w(sg.cls, nl) end, coalesce(p_dbl, sg.dbl)));
+    wc := _mp_seg_cells_arr(sg.pts, sg.kind, case when sg.kind = 'rail' then 0.5 else _mp_road_w(sg.cls, nl) end, coalesce(p_dbl, sg.dbl));
+    what2 := _mp_bld_hit(wc);
     if what2 is not null then raise exception '建物のある土地（%）にかかるので、はばを広げられません', left(what2, 60); end if;
+    -- 広げたところが他人の筆にかかるときは、貸出料があるか申請が許可されているときだけ
+    need := _mp_land_need(wc, sg.own_u, sg.own_c, sg.gov, _mp_seg_cells_arr(sg.pts, sg.kind, sg.w, sg.dbl));
   end if;
-  if p_dry then return jsonb_build_object('cost', amt_, 'lanes', nl); end if;
+  if p_dry then return jsonb_build_object('cost', amt_, 'lanes', nl, 'need', need); end if;
+  perform _mp_land_stop(need);
   if amt_ > 0 then perform _mp_pay(sg.own_u, sg.own_c, sg.gov, amt_::bigint, sg.kind, case when sg.kind = 'rail' then '線路の' else '道路の' end || what); end if;
   update mp_segs set dbl = case when kind = 'rail' then coalesce(p_dbl, dbl) else false end, elec = case when kind = 'rail' then coalesce(p_elec, elec) else false end,
          name = coalesce(left(p_name, 30), name),
@@ -17717,6 +17764,8 @@ begin
   if not found then return; end if;
   delete from mp_occ where what = sg.kind and ref = p_id;
   perform _mp_lease_del('seg', p_id);
+  delete from mp_leases where ref_kind = 'sta' and ref in (select id from mp_stations where seg = p_id);
+  delete from mp_leases where ref_kind = 'dep' and ref in (select id from mp_depots where seg = p_id);
   delete from mp_stations where seg = p_id;
   delete from mp_depots where seg = p_id;
   delete from mp_segs where id = p_id;
@@ -17730,6 +17779,7 @@ end $$;
 create or replace function public.mp_sta_build(p_kind text, p_seg bigint, p_x real, p_y real, p_plat int, p_tracks int, p_name text, p_as text, p_dry boolean) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); pa record; sg mp_segs; q record; s real; span real; tiles int[]; cost numeric; sid bigint; pt record; nm text := left(trim(coalesce(p_name, '')), 20); sub int[];
+        pcs int[]; oc int[]; need jsonb; lfee numeric := 0;
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
@@ -17751,8 +17801,17 @@ begin
     if exists (select 1 from mp_stations t where t.seg = p_seg and abs(t.at - s) < (t.plat / 50.0 + span) / 2 + 1)
        or exists (select 1 from mp_depots t where t.seg = p_seg and abs(t.at - s) < (span + (_mp_dep_dim(t.kind, t.size))[1]) / 2 + 0.2) then raise exception '近くにほかの駅・車庫があります'; end if;
     tiles := _mp_tiles(sub);
-    if _mp_bld_hit((select coalesce(array_agg(u.v order by z.y, z.x, u.o), '{}') from _mp_line_cells(sub, greatest(0.5, (0.22 * p_tracks + 0.18) * 2.5)::real) z,
-                    lateral unnest(array[z.x, z.y]) with ordinality u(v, o))) is not null then raise exception 'ホームが建物のある土地にかかります'; end if;
+    pcs := (select coalesce(array_agg(u.v order by z.y, z.x, u.o), '{}') from _mp_line_cells(sub, greatest(0.5, (0.22 * p_tracks + 0.18) * 2.5)::real) z,
+                    lateral unnest(array[z.x, z.y]) with ordinality u(v, o));
+    if _mp_bld_hit(pcs) is not null then raise exception 'ホームが建物のある土地にかかります'; end if;
+    -- ホームが他人の筆にかかるところ（線路の区画はのぞく）は、貸出料があるか申請が許可されているときだけ。使用料もかかる
+    oc := _mp_seg_cells_arr(_mp_sub(sg.pts, greatest(0, s - span / 2 - 1), least(sg.len, s + span / 2 + 1)), 'rail', sg.w, sg.dbl);   -- ホームの前後 50m までの線路
+    need := _mp_land_need(pcs, pa.pu, pa.pc, false, oc);
+    with c as (select distinct pcs[2 * i - 1] x, pcs[2 * i] y from generate_series(1, coalesce(array_length(pcs, 1), 0) / 2) i),
+         o as materialized (select distinct oc[2 * i - 1] x, oc[2 * i] y from generate_series(1, coalesce(array_length(oc, 1), 0) / 2) i)
+    select coalesce(sum(coalesce(_mp_land_fee(p.id, pa.pu, pa.pc), _mp_land_std(p.id))), 0) into lfee
+      from c join mp_pcells pcl on pcl.x = c.x and pcl.y = c.y join mp_parcels p on p.id = pcl.parcel
+     where not exists (select 1 from o where o.x = c.x and o.y = c.y) and (p.own_u is not null or p.own_c is not null) and not _mp_same(p.own_u, p.own_c, false, pa.pu, pa.pc, false);
     select * into pt from _mp_at(sg.pts, s);
     cost := (_mp_rate('sta_base') + p_tracks * p_plat * _mp_rate('sta_m')) * (1 + _mp_rate('urb_sta') * _mp_dens(pt.x, pt.y));
   elsif p_kind = 'bus' then
@@ -17763,13 +17822,16 @@ begin
     tiles := array[floor(pt.x)::int, floor(pt.y)::int];
     cost := _mp_rate('stop');
   else raise exception '作るものがちがいます'; end if;
-  if p_dry then return jsonb_build_object('cost', round(cost), 'up_day', case when p_kind = 'rail' then round(_mp_rate('up_sta') * (1 + 0.25 * (p_tracks - 1))) else _mp_rate('up_stop') end); end if;
+  if p_dry then return jsonb_build_object('cost', round(cost), 'up_day', case when p_kind = 'rail' then round(_mp_rate('up_sta') * (1 + 0.25 * (p_tracks - 1))) else _mp_rate('up_stop') end,
+    'lease', round(lfee), 'need', need); end if;
+  perform _mp_land_stop(need);
   perform _mp_pay(pa.pu, pa.pc, false, round(cost)::bigint, 'sta', format('%s「%s」の工事', case when p_kind = 'rail' then '駅' else 'バス停' end, nm));
   select * into pt from _mp_at(sg.pts, s);
   insert into mp_stations(kind, seg, at, x, y, ang, plat, tracks, name, own_u, own_c, cost)
   values (p_kind, p_seg, s, round(pt.x * 100), round(pt.y * 100), pt.ang, p_plat, p_tracks, nm, pa.pu, pa.pc, round(cost))
   returning id into sid;
   perform _mp_occ_set(sid, case when p_kind = 'rail' then 'sta' else 'stop' end, tiles);
+  if p_kind = 'rail' then perform _mp_lease_set('sta', sid, pa.pu, pa.pc, false); end if;
   perform _mp_chg('sta', sid, 'set', box(point(pt.x - 3, pt.y - 3), point(pt.x + 3, pt.y + 3)));
   return jsonb_build_object('id', sid, 'cost', round(cost));
 end $$;
@@ -17785,6 +17847,7 @@ begin
   if p_del then
     if exists (select 1 from mp_routes r where p_id = any(r.stops)) then raise exception 'この駅を使っている系統があります（系統から外してから）'; end if;
     delete from mp_occ where what in ('sta', 'stop') and ref = p_id;
+    perform _mp_lease_del('sta', p_id);
     delete from mp_stations where id = p_id;
     perform _mp_chg('sta', p_id, 'del', box(point(st.x / 100.0 - 3, st.y / 100.0 - 3), point(st.x / 100.0 + 3, st.y / 100.0 + 3)));
     return jsonb_build_object('ok', true);
@@ -17793,6 +17856,22 @@ begin
   update mp_stations set name = left(trim(p_name), 20) where id = p_id;
   perform _mp_chg('sta', p_id, 'set', box(point(st.x / 100.0 - 3, st.y / 100.0 - 3), point(st.x / 100.0 + 3, st.y / 100.0 + 3)));
   return jsonb_build_object('ok', true);
+end $$;
+-- バス停を他社に貸す（p_lend：1系統・1日の使用料。null なら貸さない）。いま使っている系統はそのまま（使用料も、使いはじめたときのまま）
+create or replace function public.mp_stop_lend(p_id bigint, p_lend numeric) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); st mp_stations; me_cs int[];
+begin
+  perform _mp_ok(u);
+  select * into st from mp_stations where id = p_id for update;
+  if not found or st.kind <> 'bus' then raise exception 'バス停が見つかりません'; end if;
+  me_cs := array(select id from companies where owner = u);
+  if not coalesce(st.own_u = u or st.own_c = any(me_cs), false) then raise exception 'あなたのバス停ではありません'; end if;
+  if p_lend is not null and (p_lend < 0 or p_lend > 100000000) then raise exception '使用料は0〜1億 X にしてください'; end if;
+  update mp_stations set lend = round(p_lend) where id = p_id;
+  perform _mp_chg('sta', p_id, 'set', box(point(st.x / 100.0 - 3, st.y / 100.0 - 3), point(st.x / 100.0 + 3, st.y / 100.0 + 3)));
+  return jsonb_build_object('ok', true, 'lend', round(p_lend),
+    'users', (select count(distinct x.route) from mp_stopuse x where x.stop = p_id));
 end $$;
 
 /* ---------- 車庫（鉄道の車両基地・バスの営業所） ---------- */
@@ -17821,7 +17900,7 @@ language sql immutable as $$ select _mp_dep_tiles_g(p, s, side, lt, wt, 0.9::rea
 create or replace function public.mp_dep_build(p_kind text, p_seg bigint, p_x real, p_y real, p_side int, p_size text, p_name text, p_as text, p_dry boolean) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); pa record; sg mp_segs; q record; s real; lt real; wt real; gap real := 0.9; dim real[]; cap int; cost numeric; tiles int[]; ters text[]; bad text; lq record; did bigint; pt record; dcells int[];
-        nm text := left(trim(coalesce(p_name, '')), 20); side int := case when p_side < 0 then -1 else 1 end;
+        nm text := left(trim(coalesce(p_name, '')), 20); side int := case when p_side < 0 then -1 else 1 end; need jsonb;
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
@@ -17864,8 +17943,11 @@ begin
   dcells := (select coalesce(array_agg(u.v order by z.y, z.x, u.o), '{}') from _mp_dep_cells(pt.x, pt.y, pt.ang, side, p_kind, coalesce(p_size, 'S')) z, lateral unnest(array[z.x, z.y]) with ordinality u(v, o));
   if _mp_bld_hit(dcells) is not null then raise exception '道路・線路・建物などのあるマスには作れません（%）。反対側か、ほかの場所にしてください', _mp_bld_hit(dcells); end if;
   select * into lq from _mp_lease_quote(dcells, pa.pu, pa.pc, false);
+  -- 他人の筆は、貸出料があるか申請が許可されているときだけ
+  need := _mp_land_need(dcells, pa.pu, pa.pc, false);
   if p_dry then return jsonb_build_object('cost', round(cost), 'lease', round(lq.fee), 'cap', cap, 'tiles', array_length(tiles, 1) / 2,
-    'up_day', round(_mp_rate(case when p_kind = 'rail' then 'up_dep' else 'up_bdep' end) * case when coalesce(p_size, '') like 'T%' then greatest(1, cap / 24.0) when p_size = 'L' then 5 when p_size = 'M' then 2.5 else 1 end)); end if;
+    'up_day', round(_mp_rate(case when p_kind = 'rail' then 'up_dep' else 'up_bdep' end) * case when coalesce(p_size, '') like 'T%' then greatest(1, cap / 24.0) when p_size = 'L' then 5 when p_size = 'M' then 2.5 else 1 end), 'need', need); end if;
+  perform _mp_land_stop(need);
   perform _mp_pay(pa.pu, pa.pc, false, round(cost)::bigint, 'dep', format('%s「%s」の工事', case when p_kind = 'rail' then '車両基地' else '営業所' end, nm));
   select * into pt from _mp_at(sg.pts, s);
   insert into mp_depots(kind, seg, at, side, size, x, y, ang, cap, name, own_u, own_c, cost)
@@ -18415,6 +18497,11 @@ begin
     select * into st from mp_stations where id = p_stops[i];
     if not found or st.kind <> p_kind then raise exception '%番目の駅が見つかりません', i; end if;
     if p_kind = 'rail' and not _mp_same(st.own_u, st.own_c, false, pa.pu, pa.pc, false) then raise exception '「%」はこの名義の駅ではありません', st.name; end if;
+    -- 他社のバス停は、貸しているものだけ（この系統がもう使っているものはそのまま）
+    if p_kind = 'bus' and not _mp_same(st.own_u, st.own_c, false, pa.pu, pa.pc, false) and st.lend is null
+       and not exists (select 1 from mp_stopuse x join mp_routes r2 on r2.id = x.route where x.route = p_id and x.stop = st.id and r2.own_u is not distinct from pa.pu and r2.own_c is not distinct from pa.pc) then
+      raise exception '「%」はほかの人・会社のバス停で、貸し出されていません', st.name;
+    end if;
     if i > 1 and p_stops[i] = p_stops[i - 1] then raise exception '同じ駅が続いています'; end if;
   end loop;
   for i in 1..n - 1 loop
@@ -18444,9 +18531,18 @@ begin
            tt = coalesce((select jsonb_object_agg(k, v) from jsonb_each(tt) e(k, v) where k::bigint = any(p_stops)), '{}'::jsonb)
      where route = rid;
   end if;
+  -- 他社のバス停の使用料（1系統・1日）：使いはじめたときの貸出料のまま
+  if p_kind = 'bus' then
+    delete from mp_stopuse x where x.route = rid and not (x.stop = any(p_stops));
+    insert into mp_stopuse(route, stop, fee)
+      select rid, s.id, coalesce(s.lend, 0) from mp_stations s
+       where s.id in (select distinct unnest(p_stops)) and not _mp_same(s.own_u, s.own_c, false, pa.pu, pa.pc, false)
+    on conflict (route, stop) do nothing;
+  end if;
   perform _mp_resched(rid);
   perform _mp_chg('route', rid, 'set', null);
-  return jsonb_build_object('id', rid, 'legs', lg);
+  return jsonb_build_object('id', rid, 'legs', lg,
+    'stopfee', (select coalesce(sum(x.fee), 0) from mp_stopuse x where x.route = rid));
 end $$;
 create or replace function public.mp_route_del(p_id bigint, p_as text) returns jsonb
 language plpgsql security definer set search_path = public as $$
@@ -18838,16 +18934,29 @@ begin
     amt := round(o.amt / 24.0);
     if amt > 0 then perform _mp_soft_pay(o.pu, o.pc, false, amt, 'upkeep', format('維持費（%s）', o.ks)); end if;
   end loop;
-  -- 使用料：払う人 → 区画の筆の持ち主（筆がなければ国庫）。自分の筆になっていればなし
+  -- 使用料：払う人 → 区画の筆の持ち主（筆がなければ国庫）。自分の筆になっていればなし。同じ人の同じ区画は1回（線路と駅のホームが重なるところなど）
   for o in select e.pay_u, e.pay_c, sum(e.fee) fee, p.own_u lu, p.own_c lc
-             from mp_leases e left join mp_pcells pc on pc.x = e.x and pc.y = e.y left join mp_parcels p on p.id = pc.parcel
-            where not e.pay_gov and (p.id is null or not _mp_same(p.own_u, p.own_c, false, e.pay_u, e.pay_c, false))
+             from (select distinct on (l.x, l.y, l.pay_u, l.pay_c) l.x, l.y, l.pay_u, l.pay_c, l.fee from mp_leases l where not l.pay_gov order by l.x, l.y, l.pay_u, l.pay_c, l.fee desc) e
+             left join mp_pcells pc on pc.x = e.x and pc.y = e.y left join mp_parcels p on p.id = pc.parcel
+            where p.id is null or not _mp_same(p.own_u, p.own_c, false, e.pay_u, e.pay_c, false)
             group by e.pay_u, e.pay_c, p.own_u, p.own_c loop
     amt := round(o.fee / 24.0);
     if amt <= 0 then continue; end if;
     amt := _mp_soft_pay(o.pay_u, o.pay_c, false, amt, 'lease', '土地の使用料');
     if amt > 0 and (o.lu is not null or o.lc is not null) then
       perform _mp_earn(o.lu, o.lc, false, amt, 'lease_in', '土地の使用料（受けとり）');
+    end if;
+  end loop;
+  -- 他社のバス停の使用料（1系統・1日）：系統の持ち主 → バス停の持ち主
+  for o in select ro.own_u pay_u, ro.own_c pay_c, sx.own_u lu, sx.own_c lc, sum(x.fee) fee
+             from mp_stopuse x join mp_routes ro on ro.id = x.route join mp_stations sx on sx.id = x.stop
+            where x.fee > 0 and not _mp_same(sx.own_u, sx.own_c, false, ro.own_u, ro.own_c, false)
+            group by ro.own_u, ro.own_c, sx.own_u, sx.own_c loop
+    amt := round(o.fee / 24.0);
+    if amt <= 0 then continue; end if;
+    amt := _mp_soft_pay(o.pay_u, o.pay_c, false, amt, 'lease', 'バス停の使用料');
+    if amt > 0 and (o.lu is not null or o.lc is not null) then
+      perform _mp_earn(o.lu, o.lc, false, amt, 'lease_in', 'バス停の使用料（受けとり）');
     end if;
   end loop;
   -- 建物：町の人の出入り・家賃・テナントの家賃・店などの売上
@@ -19211,6 +19320,13 @@ begin
     'parcel', case when pa.id is null then null else jsonb_build_object('id', pa.id, 'ban', _mp_ban(pa.ban, pa.eda), 'n', pa.n, 'val', pa.val, 'sale', pa.sale,
                  'owner', _mp_pname(pa.own_u, pa.own_c, false), 'mine', coalesce(pa.own_u = u or pa.own_c = any(me_cs), false),
                  'bld', pa.bld, 'price', pa.price,
+                 -- 貸出料（1区画・1日）・標準の使用料・申請（持ち主には返事まちの数、ほかの人には自分の名義の申請）
+                 'rent', pa.rent, 'std', _mp_land_std(pa.id),
+                 'nreq', case when coalesce(pa.own_u = u or pa.own_c = any(me_cs), false) then (select count(*) from mp_landreq q where q.parcel = pa.id and q.st = 'wait') end,
+                 'reqs', case when not coalesce(pa.own_u = u or pa.own_c = any(me_cs), false) then
+                           (select coalesce(jsonb_agg(jsonb_build_object('id', q.id, 'who', _mp_pname(q.req_u, q.req_c, false), 'as', case when q.req_u is not null then 'me' else (select cid from companies where id = q.req_c) end,
+                                     'st', q.st, 'fee', q.fee, 'reply', q.reply) order by q.id), '[]'::jsonb)
+                              from mp_landreq q where q.parcel = pa.id and (q.req_u = u or q.req_c = any(me_cs))) end,
                  'b', (select jsonb_build_object('id', b.id, 'name', b.name, 'kind', b.kind, 'floors', b.floors, 'cost', b.cost,
                           'n', (select count(*) from mp_units x where x.bld = b.id), 'occ', (select count(*) from mp_units x where x.bld = b.id and (x.t_kind is not null or x.mode = 'self')),
                           'rent', (select coalesce(round(sum(x.rent)), 0) from mp_units x where x.bld = b.id and x.t_kind is not null),
@@ -19319,7 +19435,11 @@ begin
   perform _mp_pay(pa.pu, pa.pc, false, p.sale + tax, 'land', format('土地 %s（%s㎡）を買った（取得税 %s X をふくむ）', _mp_ban(p.ban, p.eda), p.n * 100, tax));
   perform _mp_earn(p.own_u, p.own_c, false, p.sale, 'land', format('土地 %s（%s㎡）が売れた', _mp_ban(p.ban, p.eda), p.n * 100));
   perform _notice(coalesce(p.own_u, (select owner from companies where id = p.own_c)), format('【国土】売りに出していた土地（%s）が %s X で売れました。', addr, _fmt(p.sale)));
-  update mp_parcels set own_u = pa.pu, own_c = pa.pc, price = p.sale, sale = null, bought_at = now() where id = p.id;
+  -- 貸出料と申請は、新しい持ち主が決めなおす（作ってあるものの使用料はそのまま、新しい持ち主へ）
+  perform _notice(w, format('【国土】土地を使う申請（%s）は、持ち主が変わったのでなくなりました。新しい持ち主に申請してください。', addr))
+     from (select distinct coalesce(q.req_u, (select owner from companies where id = q.req_c)) w from mp_landreq q where q.parcel = p.id and q.st = 'wait') z where w is not null and w <> u;
+  delete from mp_landreq where parcel = p.id;
+  update mp_parcels set own_u = pa.pu, own_c = pa.pc, price = p.sale, sale = null, rent = null, bought_at = now() where id = p.id;
   perform _mp_chg('land', null, 'set', box(point(_mp_t5((p.bb[1])[0]::int), _mp_t5((p.bb[1])[1]::int)), point(_mp_t5((p.bb[0])[0]::int) + 1, _mp_t5((p.bb[0])[1]::int) + 1)));
   return jsonb_build_object('price', p.sale, 'tax', tax, 'total', p.sale + tax, 'n', p.n);
 end $$;
@@ -19364,6 +19484,12 @@ begin
   if reach < ncell then raise exception 'となりあっていない筆があります'; end if;
   keep := ps[1];
   if p_dry then return jsonb_build_object('ban', _mp_ban(keep.ban, keep.eda), 'n', ncell); end if;
+  -- 貸出料は、どの筆も同じときだけのこす。許可は、どの筆でも許可されている名義だけのこす（使用料は高いほう）
+  update mp_parcels set rent = case when (select count(distinct coalesce(p.rent, -1)) from unnest(ps) p) = 1 then keep.rent end where id = keep.id;
+  update mp_landreq q set fee = (select max(q2.fee) from mp_landreq q2 where q2.parcel = any(p_ids) and q2.st = 'ok' and q2.req_u is not distinct from q.req_u and q2.req_c is not distinct from q.req_c)
+   where q.parcel = keep.id and q.st = 'ok';
+  delete from mp_landreq q where q.parcel = keep.id and q.st = 'ok'
+     and (select count(distinct q2.parcel) from mp_landreq q2 where q2.parcel = any(p_ids) and q2.st = 'ok' and q2.req_u is not distinct from q.req_u and q2.req_c is not distinct from q.req_c) < n;
   update mp_pcells set parcel = keep.id where parcel = any(p_ids) and parcel <> keep.id;
   update mp_parcels set n = ncell, price = (select sum(p.price) from unnest(ps) p), val = (select sum(p.val) from unnest(ps) p),
     bb = (select box(point(min(x), min(y)), point(max(x) + 1, max(y) + 1)) from mp_pcells where parcel = keep.id) where id = keep.id;
@@ -19404,14 +19530,123 @@ begin
   if ra < nin or rb < nout then raise exception '分けたあとの土地が、ひとつながりになりません'; end if;
   neda := coalesce((select max(q.eda) from mp_parcels q where q.cho = p.cho and q.ban = p.ban), 0) + 1;
   if p_dry then return jsonb_build_object('n', nin, 'rest', nout, 'ban', _mp_ban(p.ban, neda)); end if;
-  insert into mp_parcels(own_u, own_c, cho, ban, eda, n, bb, price, val, bought_at)
-    values (p.own_u, p.own_c, p.cho, p.ban, neda, nin, box(point(x0, y0), point(x1 + 1, y1 + 1)), round(p.price * nin / (nin + nout)), round(p.val * nin / (nin + nout)), p.bought_at)
+  insert into mp_parcels(own_u, own_c, cho, ban, eda, n, bb, price, val, bought_at, rent)
+    values (p.own_u, p.own_c, p.cho, p.ban, neda, nin, box(point(x0, y0), point(x1 + 1, y1 + 1)), round(p.price * nin / (nin + nout)), round(p.val * nin / (nin + nout)), p.bought_at, p.rent)
     returning id into nid;
+  -- 貸出料と許可は、分けた筆にもそのまま
+  insert into mp_landreq(parcel, req_u, req_c, msg, st, fee, reply, created_at, decided_at)
+    select nid, q.req_u, q.req_c, q.msg, q.st, q.fee, q.reply, q.created_at, q.decided_at from mp_landreq q where q.parcel = p.id and q.st = 'ok';
   update mp_pcells set parcel = nid where parcel = p.id and x between x0 and x1 and y between y0 and y1;
   update mp_parcels q set bb = (select box(point(min(x), min(y)), point(max(x) + 1, max(y) + 1)) from mp_pcells where parcel = q.id) where q.id in (p.id, nid);
   update mp_parcels set n = nout, price = p.price - round(p.price * nin / (nin + nout)), val = p.val - round(p.val * nin / (nin + nout)) where id = p.id;
   perform _mp_chg('land', null, 'set', box(point(_mp_t5((p.bb[1])[0]::int), _mp_t5((p.bb[1])[1]::int)), point(_mp_t5((p.bb[0])[0]::int) + 1, _mp_t5((p.bb[0])[1]::int) + 1)));
   return jsonb_build_object('id', nid, 'ban', _mp_ban(p.ban, neda), 'n', nin, 'rest', nout);
+end $$;
+
+/* ---------- 他人の筆を使う：貸出料・申請（持ち主が許可・ことわる） ---------- */
+-- 貸出料を決める（自分か自分の会社の筆。p_rent：1区画・1日。null なら貸さない）。作ってあるものの使用料はそのまま
+create or replace function public.mp_parcel_rent(p_ids bigint[], p_rent numeric) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); me_cs int[]; n int;
+begin
+  perform _mp_ok(u);
+  if p_rent is not null and (p_rent < 0 or p_rent > 100000000) then raise exception '貸出料は0〜1億 X にしてください'; end if;
+  me_cs := array(select id from companies where owner = u);
+  update mp_parcels set rent = round(p_rent, 1) where id = any(p_ids) and (own_u = u or own_c = any(me_cs));
+  get diagnostics n = row_count;
+  if n = 0 then raise exception 'あなたの土地がありません'; end if;
+  return jsonb_build_object('n', n, 'rent', round(p_rent, 1));
+end $$;
+-- 他人の筆を使う申請（p_as の名義で・筆ごと）。持ち主に通知。返事まちなら、ひとことを変えるだけ。ことわられたら1日たってから
+create or replace function public.mp_land_req(p_parcels bigint[], p_msg text, p_as text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pa record; p mp_parcels; q mp_landreq; n int := 0; nn int := 0; m text := left(trim(coalesce(p_msg, '')), 200); who uuid; owners uuid[] := '{}';
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  if pa.gv then raise exception '国は申請しなくても使えます'; end if;
+  if coalesce(array_length(p_parcels, 1), 0) = 0 or array_length(p_parcels, 1) > 50 then raise exception '筆を1〜50えらんでください'; end if;
+  for p in select * from mp_parcels where id = any(p_parcels) order by id for update loop
+    if (p.own_u is null and p.own_c is null) or _mp_same(p.own_u, p.own_c, false, pa.pu, pa.pc, false) then continue; end if;
+    q := null;
+    select * into q from mp_landreq r where r.parcel = p.id and r.req_u is not distinct from pa.pu and r.req_c is not distinct from pa.pc;
+    if q.id is null then
+      insert into mp_landreq(parcel, req_u, req_c, msg) values (p.id, pa.pu, pa.pc, m);
+    elsif q.st = 'wait' then
+      update mp_landreq set msg = m where id = q.id; n := n + 1; continue;
+    elsif q.st = 'no' and q.decided_at < now() - interval '1 day' then
+      update mp_landreq set st = 'wait', msg = m, fee = null, reply = null, created_at = now(), decided_at = null where id = q.id;
+    else continue; end if;
+    n := n + 1; nn := nn + 1;
+    who := coalesce(p.own_u, (select owner from companies where id = p.own_c));
+    if who is not null and not (who = any(owners)) then owners := owners || who; end if;
+  end loop;
+  if n = 0 then raise exception '申請できる土地がありません（自分の土地・もう許可されている土地・ことわられて1日たっていない土地は申請できません）'; end if;
+  foreach who in array owners loop
+    perform _notice_l(who, format('【国土】%sから、あなたの土地を使う申請がとどきました（国土の ≡ →「土地の申請」）。', pa.nm), jsonb_build_object('go', 'map', 'k', 'landreq'), null);
+  end loop;
+  return jsonb_build_object('n', n, 'new', nn);
+end $$;
+-- 申請の一覧：とどいた申請（自分と自分の会社の筆）・出した申請（自分と自分の会社の名義）
+create or replace function public.mp_land_reqs() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); me_cs int[];
+begin
+  perform _mp_ok(u);
+  me_cs := array(select id from companies where owner = u);
+  return jsonb_build_object(
+    'in', (select coalesce(jsonb_agg(z.j order by z.w desc, z.at desc), '[]'::jsonb) from (
+             select q.st = 'wait' w, q.created_at at, jsonb_build_object('id', q.id, 'parcel', p.id, 'label', _mp_parcel_label(p.id), 'n', p.n, 'owner', _mp_pname(p.own_u, p.own_c, false),
+               'who', _mp_pname(q.req_u, q.req_c, false), 'msg', q.msg, 'st', q.st, 'fee', q.fee, 'reply', q.reply, 'std', _mp_land_std(p.id), 'rent', p.rent,
+               'at', q.created_at, 'x', (select min(c.x) from mp_pcells c where c.parcel = p.id), 'y', (select min(c.y) from mp_pcells c where c.parcel = p.id)) j
+               from mp_landreq q join mp_parcels p on p.id = q.parcel
+              where p.own_u = u or p.own_c = any(me_cs)
+              order by (q.st = 'wait') desc, q.created_at desc limit 200) z),
+    'out', (select coalesce(jsonb_agg(z.j order by z.at desc), '[]'::jsonb) from (
+             select q.created_at at, jsonb_build_object('id', q.id, 'parcel', p.id, 'label', _mp_parcel_label(p.id), 'n', p.n, 'owner', _mp_pname(p.own_u, p.own_c, false),
+               'who', _mp_pname(q.req_u, q.req_c, false), 'msg', q.msg, 'st', q.st, 'fee', q.fee, 'reply', q.reply, 'rent', p.rent,
+               'at', q.created_at, 'x', (select min(c.x) from mp_pcells c where c.parcel = p.id), 'y', (select min(c.y) from mp_pcells c where c.parcel = p.id)) j
+               from mp_landreq q join mp_parcels p on p.id = q.parcel
+              where q.req_u = u or q.req_c = any(me_cs)
+              order by q.created_at desc limit 200) z));
+end $$;
+-- 申請に答える（自分と自分の会社の筆）。許可：使用料 p_fee（1区画・1日。null なら標準）。ことわる：許可したあとでも（作ってあるものはそのまま）
+create or replace function public.mp_land_decide(p_ids bigint[], p_ok boolean, p_fee numeric, p_reply text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); me_cs int[]; q record; n int := 0; f numeric; rp text := nullif(left(trim(coalesce(p_reply, '')), 200), ''); w record; acc jsonb := '[]'::jsonb;
+begin
+  perform _mp_ok(u);
+  if p_ok is null then raise exception '許可するか、ことわるかをえらんでください'; end if;
+  if p_fee is not null and (p_fee < 0 or p_fee > 100000000) then raise exception '使用料は0〜1億 X にしてください'; end if;
+  me_cs := array(select id from companies where owner = u);
+  for q in select r.* from mp_landreq r join mp_parcels p on p.id = r.parcel where r.id = any(p_ids) and (p.own_u = u or p.own_c = any(me_cs)) order by r.id for update of r loop
+    f := case when p_ok then round(coalesce(p_fee, _mp_land_std(q.parcel)), 1) end;
+    update mp_landreq set st = case when p_ok then 'ok' else 'no' end, fee = f, reply = rp, decided_at = now() where id = q.id;
+    acc := acc || jsonb_build_array(jsonb_build_object('who', coalesce(q.req_u, (select owner from companies where id = q.req_c)), 'label', _mp_parcel_label(q.parcel), 'f', f));
+    n := n + 1;
+  end loop;
+  if n = 0 then raise exception '申請が見つかりません'; end if;
+  for w in select (e ->> 'who')::uuid who, string_agg(e ->> 'label', '・' order by e ->> 'label') ls, count(*) c, min((e ->> 'f')::numeric) f0, max((e ->> 'f')::numeric) f1
+             from jsonb_array_elements(acc) e where e ->> 'who' is not null group by 1 loop
+    perform _notice_l(w.who, case when p_ok
+        then format('【国土】土地を使う申請 %s件（%s）が許可されました（使用料 1区画・1日 %s X）。%s', w.c, split_part(w.ls, '・', 1),
+                    case when w.f0 = w.f1 then _mp_fmtn(w.f0) else _mp_fmtn(w.f0) || '〜' || _mp_fmtn(w.f1) end, coalesce('「' || rp || '」', ''))
+        else format('【国土】土地を使う申請 %s件（%s）がことわられました。%s', w.c, split_part(w.ls, '・', 1), coalesce('「' || rp || '」', '')) end,
+      jsonb_build_object('go', 'map', 'k', 'landreq'), null);
+  end loop;
+  return jsonb_build_object('n', n);
+end $$;
+-- 出した申請を取り消す（許可されたものも。作ってあるものはそのまま）
+create or replace function public.mp_land_req_del(p_ids bigint[]) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); me_cs int[]; n int;
+begin
+  perform _mp_ok(u);
+  me_cs := array(select id from companies where owner = u);
+  delete from mp_landreq where id = any(p_ids) and (req_u = u or req_c = any(me_cs));
+  get diagnostics n = row_count;
+  if n = 0 then raise exception '申請が見つかりません'; end if;
+  return jsonb_build_object('n', n);
 end $$;
 
 -- 建物の住む人・働く人（半径 r マスの中。入っている部屋・自分で使う部屋）
@@ -19425,11 +19660,34 @@ language sql stable set search_path = public as $$
 $$;
 
 /* ---------- 使用料（区画ごと）：作る人と土地の持ち主がちがうとき。国が作るものと、公道の上はなし ---------- */
+-- 他人の筆の使用料の標準（1区画・1日）：筆の地価の平均 × lease
+create or replace function public._mp_land_std(pid bigint) returns numeric
+language sql stable set search_path = public as $$
+  select round(p.val::numeric / greatest(p.n, 1) * _mp_rate('lease'), 1) from mp_parcels p where p.id = pid
+$$;
+-- 他人の筆を使うときの使用料（1区画・1日）：許可された申請の使用料 → 持ち主が決めた貸出料。どちらもなければ null（使えない）
+create or replace function public._mp_land_fee(pid bigint, pu uuid, pc int) returns numeric
+language sql stable set search_path = public as $$
+  select coalesce((select q.fee from mp_landreq q where q.parcel = pid and q.st = 'ok' and q.req_u is not distinct from pu and q.req_c is not distinct from pc limit 1),
+                  (select p.rent from mp_parcels p where p.id = pid))
+$$;
+-- 筆の名前（住所＋地番）
+create or replace function public._mp_parcel_label(pid bigint) returns text
+language sql stable set search_path = public as $$
+  select (select _mp_addr(_mp_t5(c.x), _mp_t5(c.y), c.x, c.y) ->> 'text' from mp_pcells c where c.parcel = p.id order by c.y, c.x limit 1) || ' ' || _mp_ban(p.ban, p.eda)
+    from mp_parcels p where p.id = pid
+$$;
+-- 使用料の数（小数1けたまで。3,500・12.5）
+create or replace function public._mp_fmtn(n numeric) returns text
+language sql immutable as $$ select case when n = trunc(n) then to_char(n, 'FM999,999,999,999,990') else to_char(round(n, 1), 'FM999,999,999,999,990.0') end $$;
 -- 作ったもの（rk, rid）の区画の使用料を決める（1日あたりの合計を返す）
-create or replace function public._mp_lease_set(rk text, rid bigint, pu uuid, pc int, gv boolean) returns numeric
+--   もう使っていた区画の使用料はそのまま（prev：区画 'X,Y' → 使用料。なければ今の分）。新しい区画は、国の土地は lease_gov、
+--   他人の筆は許可の使用料か貸出料（なければ標準）。駅（sta）は、ホームが他人の筆にかかる分だけ
+create or replace function public._mp_lease_set(rk text, rid bigint, pu uuid, pc int, gv boolean, prev jsonb default null) returns numeric
 language plpgsql set search_path = public as $$
 declare total numeric; cells int[];
 begin
+  prev := coalesce(prev, (select jsonb_object_agg(e.x || ',' || e.y, e.fee) from mp_leases e where e.ref_kind = rk and e.ref = rid), '{}'::jsonb);
   delete from mp_leases where ref_kind = rk and ref = rid;
   if gv then return 0; end if;
   cells := (select coalesce(array_agg(u.v order by z.n, u.o), '{}') from (select q.x, q.y, row_number() over () n from (select distinct x, y from _mp_struct_cells(rk, rid)) q) z,
@@ -19443,12 +19701,58 @@ begin
                       join tv on tv.tx = _mp_t5(c.x) and tv.ty = _mp_t5(c.y)
                       left join mp_pcells pcl on pcl.x = c.x and pcl.y = c.y left join mp_parcels p on p.id = pcl.parcel
               where pub.x is null),
+       pf as materialized (select d.pid, _mp_land_fee(d.pid, pu, pc) f from (select distinct v.pid from v where v.pid is not null) d),
        ins as (insert into mp_leases(x, y, ref_kind, ref, pay_u, pay_c, fee)
-               select v.x, v.y, rk, rid, pu, pc, round(v.cv * case when v.pid is null then _mp_rate('lease_gov') else _mp_rate('lease') end, 3)
-                 from v where v.pid is null or not _mp_same(v.lu, v.lc, false, pu, pc, false)
+               select v.x, v.y, rk, rid, pu, pc,
+                      coalesce((prev ->> (v.x || ',' || v.y))::numeric,
+                               case when v.pid is null then round(v.cv * _mp_rate('lease_gov'), 3)
+                                    else coalesce(pf.f, round(v.cv * _mp_rate('lease'), 3)) end)
+                 from v left join pf on pf.pid = v.pid
+                where ((v.pid is null and rk <> 'sta')
+                    or (v.pid is not null and not _mp_same(v.lu, v.lc, false, pu, pc, false) and (rk <> 'sta' or v.lu is not null or v.lc is not null)))
+                  -- 駅：線路の区画は線路の使用料に入っている
+                  and (rk <> 'sta' or not exists (select 1 from mp_leases e2 join mp_stations st on st.id = rid where e2.x = v.x and e2.y = v.y and e2.ref_kind = 'seg' and e2.ref = st.seg))
                returning fee)
   select coalesce(sum(fee), 0) into total from ins;
   return total;
+end $$;
+-- 区画の一覧 cells（[X0, Y0, X1, Y1, …]）のうち、他人の筆で、使う許可（貸出料・許可された申請）がないもの。筆ごとに
+--   [{id, label, owner, n（区画）, wait（申請中）, no（ことわられた）}]。なければ null
+--   国が作るものはなし。old（前の形・もとの線の区画）にある区画と、公道（国の道路・線路）の区画はのぞく
+create or replace function public._mp_land_need(cells int[], pu uuid, pc int, gv boolean, old int[] default null) returns jsonb
+language plpgsql stable set search_path = public as $$
+declare r jsonb; cand int[];
+begin
+  if gv or coalesce(array_length(cells, 1), 0) < 2 then return null; end if;
+  with c as (select distinct cells[2 * i - 1] x, cells[2 * i] y from generate_series(1, array_length(cells, 1) / 2) i),
+       o as materialized (select distinct old[2 * i - 1] x, old[2 * i] y from generate_series(1, coalesce(array_length(old, 1), 0) / 2) i),
+       hc as materialized (select c.x, c.y, pcl.parcel from c join mp_pcells pcl on pcl.x = c.x and pcl.y = c.y where not exists (select 1 from o where o.x = c.x and o.y = c.y)),
+       bad as (select p.id from (select distinct parcel from hc) h join mp_parcels p on p.id = h.parcel
+                where (p.own_u is not null or p.own_c is not null) and not _mp_same(p.own_u, p.own_c, false, pu, pc, false) and _mp_land_fee(p.id, pu, pc) is null)
+  select coalesce(array_agg(u.v order by z.x, z.y, u.o), '{}') into cand
+    from (select hc.x, hc.y from hc join bad on bad.id = hc.parcel) z, lateral unnest(array[z.x, z.y]) with ordinality u(v, o);
+  if coalesce(array_length(cand, 1), 0) = 0 then return null; end if;
+  -- 公道の区画はのぞく（まわりを通る国の線だけで見る）
+  with c as (select distinct cand[2 * i - 1] x, cand[2 * i] y from generate_series(1, array_length(cand, 1) / 2) i),
+       pb as materialized (select * from _mp_pub_of(cand)),
+       hit as (select pcl.parcel, count(*) n from c join mp_pcells pcl on pcl.x = c.x and pcl.y = c.y
+                where not exists (select 1 from pb where pb.x = c.x and pb.y = c.y) group by pcl.parcel)
+  select jsonb_agg(jsonb_build_object('id', p.id, 'label', _mp_parcel_label(p.id), 'owner', _mp_pname(p.own_u, p.own_c, false), 'n', hit.n,
+           'wait', exists (select 1 from mp_landreq q where q.parcel = p.id and q.st = 'wait' and q.req_u is not distinct from pu and q.req_c is not distinct from pc),
+           'no', exists (select 1 from mp_landreq q where q.parcel = p.id and q.st = 'no' and q.req_u is not distinct from pu and q.req_c is not distinct from pc))
+           order by p.id) into r
+    from (select * from hit order by parcel limit 30) hit join mp_parcels p on p.id = hit.parcel;
+  return r;
+end $$;
+-- 使う許可のない他人の筆があれば止める（作るとき）
+create or replace function public._mp_land_stop(need jsonb) returns void
+language plpgsql immutable as $$
+begin
+  if need is not null and jsonb_array_length(need) > 0 then
+    raise exception '他人の土地（%）は、持ち主に申請して許可をもらうか、持ち主が貸出料を決めているときだけ使えます',
+      (select string_agg(e ->> 'label', '・') from (select e from jsonb_array_elements(need) e limit 3) z)
+      || case when jsonb_array_length(need) > 3 then format(' ほか%s筆', jsonb_array_length(need) - 3) else '' end;
+  end if;
 end $$;
 create or replace function public._mp_lease_del(rk text, rid bigint) returns void
 language sql set search_path = public as $$ delete from mp_leases where ref_kind = rk and ref = rid $$;
@@ -19462,12 +19766,14 @@ begin
   with c as (select distinct cells[2 * i - 1] x, cells[2 * i] y from generate_series(1, array_length(cells, 1) / 2) i),
        pb as materialized (select * from _mp_pub_of(cells)),
        tv as materialized (select z.tx, z.ty, coalesce(_mp_cval(z.tx, z.ty), 120) cv from (select distinct _mp_t5(c.x) tx, _mp_t5(c.y) ty from c) z),
-       v as (select c.x, c.y, pb.x is not null ispub, p.id pid, p.own_u lu, p.own_c lc, tv.cv
+       v0 as (select c.x, c.y, pb.x is not null ispub, p.id pid, p.own_u lu, p.own_c lc, tv.cv
                from c left join pb on pb.x = c.x and pb.y = c.y
                       join tv on tv.tx = _mp_t5(c.x) and tv.ty = _mp_t5(c.y)
-                      left join mp_pcells pcl on pcl.x = c.x and pcl.y = c.y left join mp_parcels p on p.id = pcl.parcel)
+                      left join mp_pcells pcl on pcl.x = c.x and pcl.y = c.y left join mp_parcels p on p.id = pcl.parcel),
+       pf as materialized (select d.pid, _mp_land_fee(d.pid, pu, pc) f from (select distinct v0.pid from v0 where v0.pid is not null) d),
+       v as (select v0.*, pf.f lf from v0 left join pf on pf.pid = v0.pid)
   select coalesce(sum(case when gv or ispub or (pid is not null and _mp_same(lu, lc, false, pu, pc, false)) then 0
-                           when pid is null then cv * _mp_rate('lease_gov') else cv * _mp_rate('lease') end), 0),
+                           when pid is null then cv * _mp_rate('lease_gov') else coalesce(lf, cv * _mp_rate('lease')) end), 0),
          count(*) filter (where not gv and not ispub and pid is not null and _mp_same(lu, lc, false, pu, pc, false)),
          count(*) filter (where not gv and not ispub and pid is not null and not _mp_same(lu, lc, false, pu, pc, false)),
          count(*) filter (where not gv and not ispub and pid is null),
@@ -20389,23 +20695,24 @@ begin
             '_mp_bld_dem','_mp_bld_hit','_mp_bld_make','_mp_bld_people','_mp_bld_plan','_mp_bld_presets','_mp_bld_refresh','_mp_bld_shape',
             '_mp_bld_tick_day','_mp_bld_tick_hour','_mp_bus_path','_mp_busy_cells','_mp_catch','_mp_cell','_mp_chg','_mp_chimoku',
             '_mp_cho_at','_mp_cho_set_tiles','_mp_cho_text','_mp_cmuls','_mp_cval','_mp_dens','_mp_dep_cells','_mp_dep_dim',
-            '_mp_dep_tiles','_mp_dep_tiles_g','_mp_earn','_mp_edec','_mp_end','_mp_end_ang','_mp_form_perf','_mp_form_rule',
-            '_mp_g','_mp_geom_ok','_mp_hms','_mp_hourf','_mp_lease_del','_mp_lease_quote','_mp_lease_set','_mp_leg_from',
-            '_mp_leg_time','_mp_len','_mp_line_cells','_mp_lock','_mp_mine','_mp_minr','_mp_npc_name','_mp_occ_set',
-            '_mp_ok','_mp_okey','_mp_party','_mp_pay','_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_proj',
-            '_mp_pub_cells','_mp_pub_of','_mp_rail_path','_mp_rate','_mp_renet','_mp_resched','_mp_rev','_mp_road_mul',
-            '_mp_road_v','_mp_road_w','_mp_room','_mp_route_catch','_mp_routes_fix','_mp_run','_mp_same','_mp_seg_blocked',
-            '_mp_seg_cells_arr','_mp_seg_chain','_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells',
-            '_mp_struct_cells','_mp_sub','_mp_t49_from_tiles','_mp_t5','_mp_ters','_mp_thin','_mp_tick','_mp_tick_day',
-            '_mp_tick_hour','_mp_tiles','_mp_tmul','_mp_train_calc','_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim',
-            '_mp_vruns','_mp_world','_mp_zname','_mp_zone_rule','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_place_at','mp_admin_rates',
-            'mp_admin_rename','mp_admin_state','mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options',
-            'mp_bld_quote','mp_bld_set','mp_boot','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_list',
-            'mp_cho_get','mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia','mp_form_del','mp_form_set','mp_land_buy',
-            'mp_ledger_page','mp_parcel_buy','mp_parcel_merge','mp_parcel_sell','mp_parcel_split','mp_poll','mp_route_del','mp_route_save',
-            'mp_routes_list','mp_seg_build','mp_seg_del','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_split','mp_spot',
-            'mp_sta_build','mp_sta_edit','mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave',
-            'mp_unit_market','mp_unit_mine','mp_unit_set') loop
+            '_mp_dep_tiles','_mp_dep_tiles_g','_mp_earn','_mp_edec','_mp_end','_mp_end_ang','_mp_fmtn','_mp_form_perf',
+            '_mp_form_rule','_mp_g','_mp_geom_ok','_mp_hms','_mp_hourf','_mp_land_fee','_mp_land_need','_mp_land_std',
+            '_mp_land_stop','_mp_lease_del','_mp_lease_quote','_mp_lease_set','_mp_leg_from','_mp_leg_time','_mp_len','_mp_line_cells',
+            '_mp_lock','_mp_mine','_mp_minr','_mp_npc_name','_mp_occ_set','_mp_ok','_mp_okey','_mp_parcel_label',
+            '_mp_party','_mp_pay','_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_proj','_mp_pub_cells','_mp_pub_of',
+            '_mp_rail_path','_mp_rate','_mp_renet','_mp_resched','_mp_rev','_mp_road_mul','_mp_road_v','_mp_road_w',
+            '_mp_room','_mp_route_catch','_mp_routes_fix','_mp_run','_mp_same','_mp_seg_blocked','_mp_seg_cells_arr','_mp_seg_chain',
+            '_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_struct_cells','_mp_sub',
+            '_mp_t49_from_tiles','_mp_t5','_mp_ters','_mp_thin','_mp_tick','_mp_tick_day','_mp_tick_hour','_mp_tiles',
+            '_mp_tmul','_mp_train_calc','_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim','_mp_vruns','_mp_world',
+            '_mp_zname','_mp_zone_rule','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state',
+            'mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set',
+            'mp_boot','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_list','mp_cho_get','mp_chunk_get',
+            'mp_dep_build','mp_dep_edit','mp_dia','mp_form_del','mp_form_set','mp_land_buy','mp_land_decide','mp_land_req',
+            'mp_land_req_del','mp_land_reqs','mp_ledger_page','mp_parcel_buy','mp_parcel_merge','mp_parcel_rent','mp_parcel_sell','mp_parcel_split',
+            'mp_poll','mp_route_del','mp_route_save','mp_routes_list','mp_seg_build','mp_seg_del','mp_seg_edit','mp_seg_join',
+            'mp_seg_opts','mp_seg_split','mp_spot','mp_sta_build','mp_sta_edit','mp_stop_lend','mp_train_autoform','mp_train_bulk',
+            'mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market','mp_unit_mine','mp_unit_set') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
       execute format('revoke all on function %s from authenticated', f.sig);
