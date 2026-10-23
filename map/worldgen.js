@@ -349,7 +349,7 @@ function world(opt) {
   /* ---------- 県（たねのいちばん近いもの。市町村ごと＝市町村のたねの場所で決める） ---------- */
   const PC = 1400;
   function prefSeed(i, j) {
-    if (i === 0 && j === 0) return { id: 'p:ruri', k: 'pref', name: '瑠璃', x: 0, y: 0, type: '県' };
+    if (i === 0 && j === 0) return { id: 'p:ruri', k: 'pref', name: '瑠璃', x: 0, y: 0, type: '府' };   // 瑠璃府
     return { id: 'p:' + i + '_' + j, k: 'pref', name: kanjiName(hash3(i, j, S_PREF + 2)), type: '県',
       x: Math.floor(i * PC - PC / 4 + PC / 2 * rnd(i, j, S_PREF)), y: Math.floor(j * PC - PC / 4 + PC / 2 * rnd(i, j, S_PREF + 1)) };
   }
@@ -390,7 +390,7 @@ function world(opt) {
   function places(cx0, cy0, cx1, cy1) {
     const X0 = cx0 * CS, Y0 = cy0 * CS, X1 = (cx1 + 1) * CS, Y1 = (cy1 + 1) * CS, out = [];
     const inR = (x, y) => x >= X0 && x < X1 && y >= Y0 && y < Y1;
-    // 県（はじめは瑠璃県だけ。広げたら、遠くに別の県ができる）
+    // 県（はじめは瑠璃府だけ。広げたら、遠くに別の県ができる）
     for (const p of prefsIn(X0, Y0, X1, Y1)) out.push(p);
     // 市町村
     if (inR(0, 0)) out.push({ id: RURI.id, k: 'muni', name: RURI.name, x: 0, y: 0, type: '市', pop: ruriTotal(), wards: true, parent: 'p:ruri', cap: true });

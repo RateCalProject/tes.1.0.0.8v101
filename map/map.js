@@ -741,7 +741,7 @@ function drawPlaces(g, it, z) {
   ps.filter(show).sort((a, b) => rank(a) - rank(b) || (b.pop || 0) - (a.pop || 0)).forEach(p => {
     const x = sx(p.x + 0.5), y = sy(p.y + 0.5);
     if (x < -60 || y < -30 || x > S.W + 60 || y > S.H + 30) return;
-    if (p.k === 'pref') label(g, p.n + '県', x, y, { size: 18, bold: true, color: '#3a3a3a' });
+    if (p.k === 'pref') label(g, p.n + (p.t || '県'), x, y, { size: 18, bold: true, color: '#3a3a3a' });   // 瑠璃府は「府」
     else if (p.k === 'muni') label(g, p.n + (p.t || ''), x, y, { size: p.pop > 500000 ? 16 : 13, bold: true, color: '#2b2b2b' });
     else if (p.k === 'ward') label(g, p.n + '区', x, y, { size: 13, bold: true, color: '#5a4a6a' });
     else if (p.k === 'river') label(g, p.n, x, y, { size: 12, color: '#1e5ea8' });
@@ -2318,7 +2318,7 @@ function namesTool() {
     S.sel = { kind: 'cell', x: tx * 5 + 2, y: ty * 5 + 2 }; S.dirty = true;
     const d = await api('mp_admin_place_at', { p_x: tx, p_y: ty }); if (!d) return;
     const subName = d.sub ? (d.sub.kind === 'aza' ? '字' : '丁目') : null, choName = d.cho ? (d.cho.kind === 'oaza' ? '大字' : '町') : null;
-    const rows = [['県', d.pref, 'place', '県'], ['郡', d.gun, 'gun', '郡'], ['市区町村', d.muni, 'place', d.muni && d.muni.type], ['区', d.ward, 'place', '区'],
+    const rows = [[(d.pref && d.pref.type) || '県', d.pref, 'place', (d.pref && d.pref.type) || '県'], ['郡', d.gun, 'gun', '郡'], ['市区町村', d.muni, 'place', d.muni && d.muni.type], ['区', d.ward, 'place', '区'],
                   [choName || '町', d.cho, 'cho', ''], [subName || '丁目', d.sub, 'cho', '']].filter(r => r[1]);
     sheet(`<h4>${esc(d.text || '')}</h4><div class="mp-kv">${rows.map((r, i) => `<b>${esc(r[0])}</b><span><b>${esc(r[1].name + (r[0] === '郡' ? '郡' : r[3] || ''))}</b>
         ${r[1].gen ? `<small class="muted">（もとは ${esc(r[1].gen)}）</small>` : ''} <button class="btn" style="padding:2px 8px" data-ren="${i}">名前を変える</button></span>`).join('')}</div>

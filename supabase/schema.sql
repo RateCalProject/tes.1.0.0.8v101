@@ -16493,7 +16493,7 @@ end $$;
 --   土地（t49）：1マスを 5×5 の区画（10m四方・100㎡）に分ける。買った土地は筆（mp_parcels。区画は mp_pcells）になり、町字ごとの地番がつく
 --         道路の部分は国の土地（公衆用道路）なので買えない。売り買い・合筆・分筆・建物は筆ごと。住所は 県・郡・市区町村・区・町字・地番
 --         町字（町・大字・丁目・字）はマスごと（チャンクの k・kp）、名前は mp_cho。地図に県・市区町村・町字の境界線
---         瑠璃県・瑠璃市・中里区・梁川区のほかの県・郡・市区町村・区は仮の名前（無名001…）。名前・町字の合併・分割は管理者が地図で
+--         瑠璃府・瑠璃市・中里区・梁川区のほかの県・郡・市区町村・区は仮の名前（無名001…）。名前・町字の合併・分割は管理者が地図で
 --   線（道路・線路）はなめらかな曲線（点の列 pts：1/100 マスの整数）。道路は車線（片側）つき。道路は交差点でつながったグラフ（n0・n1）
 --   持ち主：人・会社・国（管理者）。他人の土地（・国の土地）の上に作ると使用料（1日あたり。1時間ごとに 1/24 ずつ。区画ごと）
 --   車両：1両ずつ注文して車庫に車籍。編成を組み、系統（止まる駅の順）に列車（ダイヤ）を入れる。採時駅だけ着・発・番線を指定
@@ -17729,7 +17729,7 @@ end $$;
 -- p_kind：rail（駅。自分の線路の上）/ bus（バス停。どの道路の上でも）。p_s：線の上の位置（マス）
 create or replace function public.mp_sta_build(p_kind text, p_seg bigint, p_x real, p_y real, p_plat int, p_tracks int, p_name text, p_as text, p_dry boolean) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); pa record; sg mp_segs; q record; s real; span real; tiles int[]; cost numeric; sid bigint; pt record; nm text := left(trim(coalesce(p_name, '')), 20);
+declare u uuid := _me(); pa record; sg mp_segs; q record; s real; span real; tiles int[]; cost numeric; sid bigint; pt record; nm text := left(trim(coalesce(p_name, '')), 20); sub int[];
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
@@ -17746,11 +17746,12 @@ begin
     if p_tracks < 1 or p_tracks > 8 then raise exception '番線の数は1〜8です'; end if;
     span := p_plat / 50.0;
     if s - span / 2 < 0.3 or s + span / 2 > sg.len - 0.3 then raise exception 'ホームが線路からはみ出します（線路のはしから離すか、ホームを短くしてください）'; end if;
-    if _mp_minr(_mp_sub(sg.pts, s - span / 2, s + span / 2)) < 8 then raise exception 'ホームはカーブのゆるいところ（半径400m以上）に作ります'; end if;
+    sub := _mp_sub(sg.pts, s - span / 2, s + span / 2);   -- ホームの線（先に1回だけ）
+    if _mp_minr(sub) < 8 then raise exception 'ホームはカーブのゆるいところ（半径400m以上）に作ります'; end if;
     if exists (select 1 from mp_stations t where t.seg = p_seg and abs(t.at - s) < (t.plat / 50.0 + span) / 2 + 1)
        or exists (select 1 from mp_depots t where t.seg = p_seg and abs(t.at - s) < (span + (_mp_dep_dim(t.kind, t.size))[1]) / 2 + 0.2) then raise exception '近くにほかの駅・車庫があります'; end if;
-    tiles := _mp_tiles(_mp_sub(sg.pts, s - span / 2, s + span / 2));
-    if _mp_bld_hit((select coalesce(array_agg(u.v order by z.y, z.x, u.o), '{}') from _mp_line_cells(_mp_sub(sg.pts, s - span / 2, s + span / 2), greatest(0.5, (0.22 * p_tracks + 0.18) * 2.5)::real) z,
+    tiles := _mp_tiles(sub);
+    if _mp_bld_hit((select coalesce(array_agg(u.v order by z.y, z.x, u.o), '{}') from _mp_line_cells(sub, greatest(0.5, (0.22 * p_tracks + 0.18) * 2.5)::real) z,
                     lateral unnest(array[z.x, z.y]) with ordinality u(v, o))) is not null then raise exception 'ホームが建物のある土地にかかります'; end if;
     select * into pt from _mp_at(sg.pts, s);
     cost := (_mp_rate('sta_base') + p_tracks * p_plat * _mp_rate('sta_m')) * (1 + _mp_rate('urb_sta') * _mp_dens(pt.x, pt.y));
@@ -19054,12 +19055,18 @@ language sql immutable as $$
    where (q.x + 0.5 - (s.ax + (s.bx - s.ax) * q.t)) ^ 2 + (q.y + 0.5 - (s.ay + (s.bby - s.ay) * q.t)) ^ 2 <= r * r
 $$;
 -- 駅のホームの区画（線の上の at から前後 plat/2 m・はば は番線の数から）
+-- ホームの線（_mp_sub）は先に1回だけ計算する（_mp_line_cells の中に式のまま入れると、点ごとに何度も計算されて、長い線では数秒かかる）
 create or replace function public._mp_sta_cells(sid bigint) returns table (x int, y int)
-language sql stable set search_path = public as $$
-  select c.x, c.y from mp_stations st join mp_segs sg on sg.id = st.seg,
-    lateral _mp_line_cells(_mp_sub(sg.pts, greatest(0, st.at - st.plat / 100.0), least(sg.len, st.at + st.plat / 100.0)), greatest(0.5, (0.22 * greatest(1, st.tracks) + 0.18) * 2.5)::real) c
-   where st.id = sid and st.kind = 'rail'
-$$;
+language plpgsql stable set search_path = public as $$
+declare st mp_stations; sg mp_segs; sub int[];
+begin
+  select * into st from mp_stations where id = sid and kind = 'rail';
+  if not found then return; end if;
+  select * into sg from mp_segs where id = st.seg;
+  if not found then return; end if;
+  sub := _mp_sub(sg.pts, greatest(0, st.at - st.plat / 100.0), least(sg.len, st.at + st.plat / 100.0));
+  return query select c.x, c.y from _mp_line_cells(sub, greatest(0.5, (0.22 * greatest(1, st.tracks) + 0.18) * 2.5)::real) c;
+end $$;
 -- 車庫の区画（線の横の四角。画面の depPoly と同じ形）
 -- 車庫の大きさ：[長さ, はば, 線からのあき（マス）, 入る両数]。sz は S・M・L か、線路をなぞった 'T長さx留置線の数'（例 T400x6：400m・6本）
 create or replace function public._mp_dep_dim(kind text, sz text) returns real[]
@@ -19160,13 +19167,13 @@ begin
   if ar.k = 'ward' then select * into mu from mp_places where id = ar.parent; else mu := ar; end if;
   select * into pr from mp_places where id = mu.parent;
   if c.t in ('S', 'D') then
-    return jsonb_build_object('text', coalesce(mu.name || mu.type, '') || 'の沖（海）', 'pref', pr.name || '県', 'muni', mu.name || mu.type);
+    return jsonb_build_object('text', coalesce(mu.name || mu.type, '') || 'の沖（海）', 'pref', pr.name || coalesce(nullif(pr.type, ''), '県'), 'muni', mu.name || mu.type);
   end if;
   gun := case when mu.type in ('町', '村') and coalesce(mu.extra ->> 'gun', '') <> '' then (mu.extra ->> 'gun') || '郡' else '' end;
-  head := coalesce(pr.name || '県', '') || gun || coalesce(mu.name || mu.type, '') || case when ar.k = 'ward' then ar.name || '区' else '' end;
+  head := coalesce(pr.name || coalesce(nullif(pr.type, ''), '県'), '') || gun || coalesce(mu.name || mu.type, '') || case when ar.k = 'ward' then ar.name || '区' else '' end;
   if c.t in ('R', 'L') then
     return jsonb_build_object('text', head || '（' || case when c.t = 'R' then coalesce((select p.name from mp_places p where p.k = 'river' order by p.pt <-> point(px, py) limit 1), '川') else '湖' end || '）',
-      'pref', pr.name || '県', 'muni', mu.name || mu.type, 'ward', case when ar.k = 'ward' then ar.name || '区' end);
+      'pref', pr.name || coalesce(nullif(pr.type, ''), '県'), 'muni', mu.name || mu.type, 'ward', case when ar.k = 'ward' then ar.name || '区' end);
   end if;
   ck := _mp_cho_at(px, py);
   ct := _mp_cho_text(ck, mu.type);
@@ -19175,7 +19182,7 @@ begin
     if found then ck := pa.cho; ct := _mp_cho_text(pa.cho, mu.type); end if;
   end if;
   return jsonb_build_object('text', head || ct, 'ban', case when pa.id is not null then _mp_ban(pa.ban, pa.eda) end,
-    'pref', pr.name || '県', 'gun', nullif(gun, ''), 'muni', mu.name || mu.type, 'ward', case when ar.k = 'ward' then ar.name || '区' end, 'cho', ck, 'chot', ct);
+    'pref', pr.name || coalesce(nullif(pr.type, ''), '県'), 'gun', nullif(gun, ''), 'muni', mu.name || mu.type, 'ward', case when ar.k = 'ward' then ar.name || '区' end, 'cho', ck, 'chot', ct);
 end $$;
 
 /* ---------- 区画をしらべる（住所・地目・用途地域・地価・筆・通っているもの） ---------- */
@@ -19490,7 +19497,7 @@ begin
 end $$;
 
 /* ---------- 管理：名前（無名001…）・町字の合併と分割 ---------- */
--- 仮の名前：瑠璃市以外の市町村・郡、中里区・梁川区以外の区、瑠璃県以外の県 → 無名001…（瑠璃に近い順。まだのものだけ・番号は続きから）。もとの名前は extra.gen
+-- 仮の名前：瑠璃市以外の市町村・郡、中里区・梁川区以外の区、瑠璃府以外の県 → 無名001…（瑠璃に近い順。まだのものだけ・番号は続きから）。もとの名前は extra.gen
 create or replace function public._mp_placeholder_names() returns jsonb
 language plpgsql set search_path = public as $$
 declare m int; nm int := 0; nw int := 0; np int := 0; ng int := 0;
@@ -19534,7 +19541,7 @@ begin
     if a.kind in ('chome', 'aza') then select * into b from mp_cho where id = a.parent; else b := a; a := null; end if;
   end if;
   return jsonb_build_object(
-    'pref', case when pr.id is not null then jsonb_build_object('id', pr.id, 'name', pr.name, 'gen', pr.extra ->> 'gen') end,
+    'pref', case when pr.id is not null then jsonb_build_object('id', pr.id, 'name', pr.name, 'type', coalesce(nullif(pr.type, ''), '県'), 'gen', pr.extra ->> 'gen') end,
     'gun', case when coalesce(mu.extra ->> 'gun', '') <> '' and mu.type in ('町', '村') then jsonb_build_object('id', mu.extra ->> 'gid', 'name', mu.extra ->> 'gun', 'gen', mu.extra ->> 'gen_gun') end,
     'muni', case when mu.id is not null then jsonb_build_object('id', mu.id, 'name', mu.name, 'type', mu.type, 'gen', mu.extra ->> 'gen') end,
     'ward', case when ar.k = 'ward' then jsonb_build_object('id', ar.id, 'name', ar.name, 'gen', ar.extra ->> 'gen') end,
