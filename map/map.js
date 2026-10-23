@@ -540,6 +540,8 @@ function render() {
   // 車庫・駅
   for (const d of it.deps.values()) drawDepot(g, d, z);
   for (const s of it.stas.values()) drawStation(g, s, z);
+  // 自分の住所（家のしるし。自分にだけ見える）
+  if (S.boot && S.boot.home && z >= 1.2) drawHome(g, S.boot.home);
   // えらんだもの
   if (S.sel && S.sel.kind === 'seg') { const s = it.segs.get(S.sel.id); if (s) { g.strokeStyle = 'rgba(220,40,60,.75)'; g.lineWidth = Math.max(4, s.w * z + 4); pathSeg(g, s); g.stroke(); } }
   if (S.sel && S.sel.kind === 'cell') {
@@ -735,6 +737,13 @@ function label(g, text, x, y, o) {
 }
 function roundRect(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
 function drawPlaces(g, it, z) {
+  // 目じるし（大学のキャンパスなど）：町字より先に（重なったら町字のほうを出さない）
+  if (z >= 4.5 && z < 24) for (const p of it.places.values()) {
+    if (p.k !== 'spot') continue;
+    const x = sx(p.x + 0.5), y = sy(p.y + 0.5);
+    if (x < -120 || y < -30 || x > S.W + 120 || y > S.H + 30) continue;
+    label(g, '🎓 ' + p.n, x, y, { size: 14, bold: true, color: '#7a3214', bg: 'rgba(255,250,240,.88)', border: 'rgba(122,50,20,.35)' });
+  }
   // 町字（町・大字は近いとき、丁目・字はもっと近いとき）
   if (z >= 5) {
     const cs = [...it.chos.values()].filter(c => (c[1] === 'cho' || c[1] === 'oaza') ? z >= 5 && z < 40 : z >= 14);
@@ -758,6 +767,14 @@ function drawPlaces(g, it, z) {
     else if (p.k === 'river') label(g, p.n, x, y, { size: 12, color: '#1e5ea8' });
     else label(g, p.n, x, y, { size: 11, color: '#555' });
   });
+}
+// 自分の住所のしるし（ピンに家の形）
+function drawHome(g, h) {
+  const x = sx((h.x + 0.5) / 5), y = sy((h.y + 0.5) / 5);
+  if (x < -30 || y < -40 || x > S.W + 30 || y > S.H + 30) return;
+  g.fillStyle = '#e0533d'; g.strokeStyle = '#fff'; g.lineWidth = 2;
+  g.beginPath(); g.arc(x, y - 16, 10, Math.PI * 0.8, Math.PI * 2.2); g.lineTo(x, y); g.closePath(); g.fill(); g.stroke();
+  g.fillStyle = '#fff'; g.beginPath(); g.moveTo(x - 6, y - 15); g.lineTo(x, y - 21); g.lineTo(x + 6, y - 15); g.lineTo(x + 4, y - 15); g.lineTo(x + 4, y - 10); g.lineTo(x - 4, y - 10); g.lineTo(x - 4, y - 15); g.closePath(); g.fill();
 }
 function drawScale(g, z) {
   // 縮尺（100m・500m・1km・5km・10km…）
@@ -1137,6 +1154,7 @@ async function showSpot(cx, cy) {
       ${P && P.b ? bldRow(P.b, P.mine) : ''}
       ${on ? `<b>あるもの</b><span>${on}</span>` : ''}
       ${(d.leases || []).length ? `<b>使用料</b><span>${d.leases.map(l => `<span>${esc(l.who)}</span>：<span>1日 ${X(l.fee)}</span>`).join('<br>')}</span>` : ''}
+      ${isHome(cx, cy, P) ? '<b>住所</b><span>🏠 あなたの住所です</span>' : ''}
     </div>
     <div class="mp-row">${!P && d.buy ? `<button class="btn main" data-buyhere>ここの土地を買う</button>` : ''}
       ${P && !P.mine && P.sale != null ? `<button class="btn main" data-pbuy>この筆を買う（${X(Math.ceil(P.sale * 1.03))}）</button>` : ''}
@@ -1144,7 +1162,8 @@ async function showSpot(cx, cy) {
       ${P && P.b ? `<button class="btn main" data-bopen>${P.gov ? '建物を見る' : '部屋・テナント'}</button>` : ''}
       ${P && P.mine ? `<button class="btn" data-sell>${P.sale != null ? '売り出しをやめる' : '売りに出す'}</button>
         ${P.b ? '' : '<button class="btn" data-bld>建物を建てる</button>'}<button class="btn" data-split>分筆</button><button class="btn" data-merge>合筆</button><button class="btn" data-rent>貸出料</button>` : ''}
-      ${P && !P.mine && !P.gov && P.rent == null && S.as !== 'gov' && !(P.reqs || []).some(r => r.as === S.as && r.st !== 'no') ? `<button class="btn" data-lreq1>使う申請（${esc(asName())}）</button>` : ''}</div>`, s => {
+      ${P && !P.mine && !P.gov && P.rent == null && S.as !== 'gov' && !(P.reqs || []).some(r => r.as === S.as && r.st !== 'no') ? `<button class="btn" data-lreq1>使う申請（${esc(asName())}）</button>` : ''}
+      ${/海|川|湖/.test(d.ter || '') ? '' : '<button class="btn" data-home>🏠 ここを自分の住所に</button>'}</div>`, s => {
     const q = k => s.querySelector(k);
     if (q('[data-rent]')) q('[data-rent]').onclick = () => parcelRent(P, cx, cy);
     if (q('[data-lreqs]')) q('[data-lreqs]').onclick = ev => { ev.preventDefault(); openLandReqs(); };
@@ -1159,8 +1178,29 @@ async function showSpot(cx, cy) {
     if (q('[data-bopen]')) q('[data-bopen]').onclick = () => openBld(P.b.id);
     if (q('[data-split]')) q('[data-split]').onclick = () => startSplit(P);
     if (q('[data-merge]')) q('[data-merge]').onclick = () => startMerge(P);
+    if (q('[data-home]')) q('[data-home]').onclick = () => homeHere(cx, cy, P);
   });
   S.addr.hidden = false; S.addr.textContent = d.addr.text + (d.addr.ban ? ' ' + d.addr.ban : '');
+}
+// 自分の住所（t54i）：ここが住所か（区画か、同じ建物）
+function isHome(cx, cy, P) { const h = S.boot.home; return !!h && ((h.x === cx && h.y === cy) || (!!P && !!P.b && h.bld === P.b.id)); }
+// ここを自分の住所に（建物に部屋がいくつもあれば、部屋をえらぶ）
+async function homeHere(cx, cy, P) {
+  const done = r => { S.boot.home = r; S.dirty = true; if (S.sel && S.sel.kind === 'cell' && S.sel.x === cx && S.sel.y === cy) showSpot(cx, cy); };
+  if (P && P.b && P.b.n > 1) {
+    const d = await api('mp_bld_get', { p_bld: P.b.id }); if (!d) return;
+    const m = modal(['自分の住所にする', `<p class="small" style="margin:0 0 6px"><span translate="no">${esc(d.addr)}</span> <span>${esc(d.name || d.kname)}</span></p>
+      <p class="muted small">部屋をえらんでください。住所は、あなたのページでみんなに見えます</p>
+      <div class="mp-row" style="flex-wrap:wrap">${d.units.map(u => `<button class="btn" data-hu="${u.id}">${esc(u.room)}</button>`).join('')}</div>
+      <div class="mp-row"><button class="btn" data-hu="0">部屋なし（建物まで）</button></div>`], b => {
+      b.querySelectorAll('[data-hu]').forEach(x => x.onclick = async () => {
+        const r = await api('mp_home_set', { p_x: cx, p_y: cy, p_unit: Number(x.dataset.hu) || null }, '自分の住所にしました'); if (r) { m.close(); done(r); }
+      });
+    });
+    return;
+  }
+  if (!confirm(T('ここを自分の住所にします。住所は、あなたのページでみんなに見えます。よろしいですか？'))) return;
+  const r = await api('mp_home_set', { p_x: cx, p_y: cy, p_unit: null }, '自分の住所にしました'); if (r) done(r);
 }
 function showSeg(s, hit) {
   S.sel = { kind: 'seg', id: s.id }; S.dirty = true;
@@ -2002,13 +2042,32 @@ function openMenu() {
     <button class="mp-item" style="text-align:left" data-k="xfer"><b>🤝 編成の譲渡</b><br><small>とどいた申しこみを受けとる・ことわる／出した申しこみ</small></button>
     <button class="mp-item" style="text-align:left" data-k="blds"><b>🏢 自分の建物</b><br><small>部屋の入居・家賃の水準・テナント（${esc(asName())}）</small></button>
     <button class="mp-item" style="text-align:left" data-k="tenants"><b>🔑 テナント募集</b><br><small>会社で部屋を借りる・借りている部屋</small></button>
+    <button class="mp-item" style="text-align:left" data-k="home"><b>🏠 自分の住所</b><br><small>${S.boot.home ? `<span translate="no">${esc(S.boot.home.text)}</span>` : 'まだ決めていません'}</small></button>
     <button class="mp-item" style="text-align:left" data-k="landreq"><b>📨 土地の申請</b><br><small>他人の土地を使う申請・とどいた申請への返事（許可・ことわる）</small></button>
     <button class="mp-item" style="text-align:left" data-k="ledger"><b>💴 お金の記録</b><br><small>運賃・家賃・維持費・使用料・工事費（${esc(asName())}）</small></button>
     ${S.admin ? `<button class="mp-item" style="text-align:left" data-k="admin"><b>🛠 管理</b><br><small>値段の設定・用途地域・ようす</small></button>` : ''}
     <button class="mp-item" style="text-align:left" data-k="help"><b>❓ あそびかた</b></button></div>`], b => {
-    b.querySelectorAll('[data-k]').forEach(x => x.onclick = () => { m.close(); ({ cars: () => openCars(), routes: openRoutes, ops: () => openOps(), xfer: () => openXfers(), blds: openMyBlds, tenants: openTenants, landreq: () => openLandReqs(), ledger: openLedger, admin: openAdmin, help: openHelp })[x.dataset.k](); });
+    b.querySelectorAll('[data-k]').forEach(x => x.onclick = () => { m.close(); ({ cars: () => openCars(), routes: openRoutes, ops: () => openOps(), xfer: () => openXfers(), blds: openMyBlds, tenants: openTenants, home: openHome, landreq: () => openLandReqs(), ledger: openLedger, admin: openAdmin, help: openHelp })[x.dataset.k](); });
   });
 }
+// 自分の住所（t54i）：見る・地図で見る・消す
+function openHome() {
+  const h = S.boot.home;
+  const m = modal(['自分の住所', h ? `<p class="small" style="margin:0 0 6px"><b translate="no">${esc(h.text)}</b></p>
+      <p class="muted small"><span>あなたのページ（人のページ）で、みんなに見えます。</span><span>変えるときは、地図で区画か建物をタップ →「ここを自分の住所に」。</span></p>
+      <div class="mp-row"><button class="btn main" data-go>地図で見る</button><button class="btn" data-clr style="color:#c33">住所を消す</button></div>`
+    : `<p class="small"><span>まだ決めていません。</span><span>地図で区画か建物をタップ →「ここを自分の住所に」で決められます（建物なら部屋もえらべます）。</span></p>
+      <p class="muted small">住所は、あなたのページ（人のページ）でみんなに見えます</p>`], b => {
+    const q = k => b.querySelector(k);
+    if (q('[data-go]')) q('[data-go]').onclick = () => { m.close(); homeGo(h.x, h.y); };
+    if (q('[data-clr]')) q('[data-clr]').onclick = async () => {
+      if (!confirm(T('自分の住所を消します。よろしいですか？'))) return;
+      if (await api('mp_home_clear', {}, '住所を消しました')) { S.boot.home = null; S.dirty = true; m.close(); }
+    };
+  });
+}
+// 住所（区画）へ地図を動かして、しらべる
+function homeGo(x, y) { setCam((x + 0.5) / 5, (y + 0.5) / 5, Math.max(S.cam.z, 30)); showSpot(x, y); }
 function openHelp() {
   modal(['国土のあそびかた', `<div class="small" style="line-height:1.8">
     <p><b>地図</b>：瑠璃市中里区がまん中。北西が山、南東が海です。指2本で拡大・縮小、ドラッグで動かします。タップすると住所（町字・地番）・地目・用途地域・地価がわかります。線は県・市区町村・町字の境界です。</p>
@@ -2016,6 +2075,9 @@ function openHelp() {
     <p><b>地価と評価額</b>：瑠璃市の中心（中里区）は地価が高く（1㎡ 約10億 X）、まわり5kmで、なだらかにふつうの地価にもどります。国の土地を買う値段は地価、固定資産税・家賃・使用料・取得税は評価額（ふつうの地価）で計算します。瑠璃市役所と市民広場は国の建物です。</p>
     <p><b>建物</b>：自分の筆に、プリセット（一戸建て・アパート・マンション・タワーマンション・店舗つき住宅・雑居ビル・オフィスビル・超高層ビル・ショッピングセンター・工場・倉庫・港湾施設・田畑・駐車場・立体駐車場）から、形と階数をえらんで建てます。広さと高さは用途地域の建ぺい率・容積率まで。細い形（塔状・板状）ほど高くできます。</p>
     <p><b>部屋とテナント</b>：部屋ごとに「入居募集」（町の人やお店が入って家賃）・「テナント募集」（会社に貸す。会社が借りると、1時間ごとに会社から家賃）・「自分で使う」（店・事務所などは売上が入る）をえらびます。家賃の水準を上げると、入りにくく出ていきやすくなります。人が多いところ・乗り降りの多い駅の近くは入りやすく、店の売上も多くなります。会社は ≡ →「テナント募集」から部屋を借りられます。</p>
+    <p><b>自社のオフィス</b>：自分の建物の部屋をえらんで「自社のオフィスにする」で、自分の別の会社をすぐ入れられます。家賃は自分で決めます（0 X でもよい）。店・事務所などの売上は、入った会社に入ります。退去すると入居募集にもどります。</p>
+    <p><b>自分の住所</b>：地図で区画か建物をタップ →「ここを自分の住所に」（建物なら部屋もえらべます）。住所はあなたのページ（人のページ）でみんなに見えます。地図には🏠が出ます（自分にだけ）。≡ →「自分の住所」で見る・消す。</p>
+    <p><b>風の芽大学</b>：風の芽大学中央駅のまわりは、風の芽大学 麦畑キャンパス（約140ha）。本部・図書館・学部・研究所・大学病院・附属学校・学生寮・グラウンド・実験農場（麦畑）などがならぶ、国の建物です。</p>
     <p><b>線路・道路</b>：点をおくと、なめらかな線になります。他人の土地や国の土地の上につくると、毎日使用料がかかります（国・府県・市の道路の上はかかりません）。まちの中は工事費が高くなります。</p>
     <p><b>他人の土地</b>：線路・道路・駅・車庫は、他人の筆の上には、持ち主が貸出料を決めているか、申請して許可をもらったときだけつくれます（使用料は1区画・1日。許可のときに持ち主が決めます）。自分の筆は、タップ →「貸出料」で貸し出せます。申請は ≡ →「土地の申請」。前からあるものは、そのまま使えます。</p>
     <p><b>バス停の貸し出し</b>：ほかの人・会社のバス停は、持ち主が貸し出しているものだけ系統に入れられます（1系統・1日の使用料。使いはじめたときの値段のまま）。自分のバス停は、タップ →「貸し出し」。</p>
@@ -2935,7 +2997,13 @@ const BK = {
   office: ['#aebdd0', '#e1e8f0', '#a7b6c7'], sky: ['#9fb3cc', '#d3dfeb', '#8ea4bc'], mall: ['#e8d2b0', '#f6ecdc', '#dcc9aa'],
   factory: ['#b8b8b0', '#e4e4dc', '#c4c4ba'], warehouse: ['#c2b59b', '#ece4d2', '#cfc2a6'], port: ['#9ab3c0', '#dde8ee', '#a9bcc6'],
   farm: ['#a9cf73'], parking: ['#bdbdbd'], pkbld: ['#b0b0b0', '#e2e2e2', '#c2c2c2'],
-  cityhall: ['#c9b48c', '#f1e8d6', '#d8c6a3'], plaza: ['#e6dfcf']   // 国の建物（t54g）：市役所・広場
+  cityhall: ['#c9b48c', '#f1e8d6', '#d8c6a3'], plaza: ['#e6dfcf'],   // 国の建物（t54g）：市役所・広場
+  // 風の芽大学（t54i）：本部・校舎・研究棟・図書館・講堂・体育館・学生会館・学生寮・大学病院・博物館・附属学校・温室・グラウンド・実験農場・緑地・並木道
+  uhq: ['#a65a46', '#efe2d4', '#d4bfaa'], ukan: ['#c08a68', '#f2e8dc', '#d9c8b4'], ulab: ['#9fb0bf', '#e6eaee', '#bcc6cf'],
+  ulib: ['#6f8a5e', '#efeadf', '#d3c9b6'], uhall: ['#8c4a3c', '#eadccd', '#cdb9a3'], ugym: ['#7fa0b8', '#e8edf1', '#c5d0d8'],
+  uunion: ['#d39a5c', '#f4eadc', '#dbc8b0'], udorm: ['#a39d90', '#f1eee8', '#d4cfc5'], uhosp: ['#e4e8ec', '#ffffff', '#d7dde3'],
+  umus: ['#6e7a8a', '#ece8e0', '#cfc8bb'], uschool: ['#c9b48a', '#f3eee2', '#d8cfb9'], ugh: ['#bfe3dc', '#e8f5f3', '#bcd9d4'],
+  ufield: ['#93c56a'], ufarm: ['#e2c666'], ugreen: ['#c3dfae'], uave: ['#e6dfcf']
 };
 const USE_NAME = { home: '住居', shop: '店舗', office: '事務所', factory: '工場', warehouse: '倉庫', port: '港湾', farm: '田畑', parking: '駐車場', plaza: '広場' };
 const SHAPE_NAME = { full: 'ぜんぶ', slab: '板状', tower: '塔状', L: 'L字', ko: 'コの字', ro: 'ロの字' };
@@ -2979,17 +3047,26 @@ function drawBlds(g, it, z, v) {
   worldT(g);
   for (const b of bs) {
     const col = BK[b.kind] || ['#bbb', '#eee', '#ccc'];
-    if (b.floors <= 0) {   // 田畑・駐車場（平ら）
+    if (b.floors <= 0) {   // 田畑・駐車場・広場・グラウンド・緑地（平ら）
+      const pave = b.kind === 'plaza' || b.kind === 'uave', wheat = b.kind === 'ufarm', grass = b.kind === 'ugreen' || b.kind === 'ufield';
       g.fillStyle = col[0]; g.fill(b.base);
-      if (z >= 14) {
-        g.save(); g.clip(b.base); g.strokeStyle = b.kind === 'farm' ? 'rgba(90,130,40,.55)' : b.kind === 'plaza' ? 'rgba(160,150,130,.45)' : 'rgba(255,255,255,.85)'; g.lineWidth = (b.kind === 'farm' ? 1 : 1.2) / z;
-        g.beginPath(); const step = b.kind === 'farm' ? 0.04 : 0.05;
+      if (z >= 14 && !grass) {
+        g.save(); g.clip(b.base); g.strokeStyle = b.kind === 'farm' ? 'rgba(90,130,40,.55)' : wheat ? 'rgba(150,110,30,.45)' : pave ? 'rgba(160,150,130,.45)' : 'rgba(255,255,255,.85)'; g.lineWidth = (b.kind === 'farm' || wheat ? 1 : 1.2) / z;
+        g.beginPath(); const step = b.kind === 'farm' || wheat ? 0.04 : 0.05;
         for (let x = Math.floor(b.bb[0] / step) * step; x <= b.bb[2]; x += step) { g.moveTo(x, b.bb[1]); g.lineTo(x, b.bb[3]); }
-        if (b.kind === 'plaza') for (let y = Math.floor(b.bb[1] / step) * step; y <= b.bb[3]; y += step) { g.moveTo(b.bb[0], y); g.lineTo(b.bb[2], y); }   // 広場：石だたみ
+        if (pave) for (let y = Math.floor(b.bb[1] / step) * step; y <= b.bb[3]; y += step) { g.moveTo(b.bb[0], y); g.lineTo(b.bb[2], y); }   // 広場：石だたみ
         g.stroke(); g.restore();
       }
-      g.strokeStyle = b.own === 2 ? '#1f5bd6' : 'rgba(60,60,60,.55)'; g.lineWidth = (b.own === 2 ? 1.6 : 1) / z; g.stroke(b.baseEdge);
-      if (b.kind === 'plaza' && z >= 9) { g.fillStyle = 'rgba(110,170,90,.55)'; for (const k of b.set) { const [x, y] = k.split(',').map(Number); if ((x * 7 + y * 13) % 9 === 0) { g.beginPath(); g.arc((x + 0.5) / 5, (y + 0.5) / 5, 0.045, 0, Math.PI * 2); g.fill(); } } }   // 広場の木
+      if (b.kind === 'ufield' && z >= 9) drawField(g, b, z);
+      g.strokeStyle = b.own === 2 ? '#1f5bd6' : grass || pave || wheat ? 'rgba(60,90,40,.28)' : 'rgba(60,60,60,.55)'; g.lineWidth = (b.own === 2 ? 1.6 : 1) / z; g.stroke(b.baseEdge);
+      if ((pave || b.kind === 'ugreen') && z >= 9) {   // 広場・並木道・緑地の木
+        g.fillStyle = b.kind === 'ugreen' ? 'rgba(80,150,70,.6)' : 'rgba(110,170,90,.55)';
+        for (const k of b.set) {
+          const [x, y] = k.split(',').map(Number);
+          const edge = b.kind === 'uave' && (!b.set.has((x - 1) + ',' + y) || !b.set.has((x + 1) + ',' + y) || !b.set.has(x + ',' + (y - 1)) || !b.set.has(x + ',' + (y + 1)));
+          if (b.kind === 'uave' ? edge && (x + y) % 2 === 0 : (x * 7 + y * 13) % (b.kind === 'ugreen' ? 4 : 9) === 0) { g.beginPath(); g.arc((x + 0.5) / 5, (y + 0.5) / 5, b.kind === 'ugreen' ? 0.06 : 0.045, 0, Math.PI * 2); g.fill(); }
+        }
+      }
     } else if (walls) {
       g.fillStyle = col[1]; g.fill(b.wallS); g.fillStyle = col[2]; g.fill(b.wallE);
       g.strokeStyle = 'rgba(60,60,60,.35)'; g.lineWidth = 0.8 / z; g.stroke(b.wallS); g.stroke(b.wallE);
@@ -3005,8 +3082,24 @@ function drawBlds(g, it, z, v) {
   if (z >= 24) for (const b of bs.slice().reverse()) {
     if (!b.name && b.floors <= 0) continue;
     const t = (b.name || '') + (b.floors > 0 ? (b.name ? ' ' : '') + b.floors + 'F' : '');
-    label(g, t, sx(walls ? b.lx : b.cx), sy(walls ? b.ly : b.cy), { size: b.kind === 'cityhall' ? 12 : 10, color: b.own === 2 ? '#123c8c' : b.own === 3 ? '#5a3d0c' : '#333', bg: 'rgba(255,255,255,.82)' });
+    label(g, t, sx(walls ? b.lx : b.cx), sy(walls ? b.ly : b.cy), { size: b.kind === 'cityhall' || b.kind === 'uhq' ? 12 : 10, color: b.own === 2 ? '#123c8c' : b.own === 3 ? '#5a3d0c' : '#333', bg: 'rgba(255,255,255,.82)' });
   }
+}
+// グラウンド：大きいものは陸上のトラック（だ円）、小さいものはコートの白線
+function drawField(g, b, z) {
+  const [x0, y0, x1, y1] = b.bb, w = x1 - x0, h = y1 - y0;
+  g.save(); g.clip(b.base);
+  if (Math.min(w, h) >= 1.2) {
+    const ins = 0.12, r = (Math.min(w, h) - 2 * ins) / 2, cx0 = x0 + ins, cy0 = y0 + ins, W = w - 2 * ins, H = h - 2 * ins;
+    const lane = (k, col, lw) => { g.strokeStyle = col; g.lineWidth = lw; g.beginPath(); const rr = Math.max(0.01, r - k);
+      if (typeof g.roundRect === 'function') g.roundRect(cx0 + k, cy0 + k, W - 2 * k, H - 2 * k, rr); else g.rect(cx0 + k, cy0 + k, W - 2 * k, H - 2 * k); g.stroke(); };
+    lane(0.06, '#c8704a', 0.12);                  // トラック（6m）
+    if (z >= 14) { lane(0.02, 'rgba(255,255,255,.8)', 1 / z); lane(0.1, 'rgba(255,255,255,.8)', 1 / z); }
+  } else {
+    g.strokeStyle = 'rgba(255,255,255,.85)'; g.lineWidth = 1.2 / z; g.strokeRect(x0 + 0.04, y0 + 0.04, w - 0.08, h - 0.08);
+    g.beginPath(); if (w >= h) { g.moveTo(x0 + w / 2, y0 + 0.04); g.lineTo(x0 + w / 2, y1 - 0.04); } else { g.moveTo(x0 + 0.04, y0 + h / 2); g.lineTo(x1 - 0.04, y0 + h / 2); } g.stroke();
+  }
+  g.restore();
 }
 // タップしたところの建物（屋根を押しても）
 function hitBld(x, y) {
@@ -3137,7 +3230,8 @@ async function openBld(bid) {
         <div class="mp-row" data-bulk><small data-n>${sel.size}室えらんでいます</small>
           <button class="btn" data-all>ぜんぶえらぶ</button><button class="btn" data-none>えらばない</button></div>
         <div class="mp-row"><button class="btn" data-mode="npc">入居募集にする</button><button class="btn" data-mode="self">自分で使う</button>
-          <button class="btn" data-mode="corp">テナント募集にする</button><input class="mp-inp mp-num" data-ask inputmode="numeric" placeholder="家賃/日" style="width:110px"></div>` : ''}
+          <button class="btn" data-mode="corp">テナント募集にする</button><input class="mp-inp mp-num" data-ask inputmode="numeric" placeholder="家賃/日" style="width:110px"></div>
+        ${ownCorps(d).length ? '<div class="mp-row"><button class="btn" data-own>🏢 自社のオフィスにする</button><small class="muted">自分の会社をすぐ入れる</small></div>' : ''}` : ''}
       <div data-units>${floors.map((f, i) => { const us = d.units.filter(u => u.f === f); return `<details ${i < 3 || floors.length <= 6 ? 'open' : ''} class="mp-floor">
         <summary><b>${f > 0 ? T(`${f}階`) : T('地上')}</b> <small><span>${us.length}室</span>・<span>入居 ${us.filter(u => u.tk || u.mode === 'self').length}</span></small></summary>
         ${us.map(row).join('')}</details>`; }).join('')}</div>
@@ -3153,6 +3247,12 @@ async function openBld(bid) {
         const mode = x.dataset.mode, ask = q('[data-ask]') && q('[data-ask]').value.replace(/[^\d]/g, '');
         if (await api('mp_unit_set', { p_units: [...sel], p_mode: mode, p_ask: mode === 'corp' && ask ? Number(ask) : null, p_as: S.as }, '変えました')) { sel.clear(); load(); }
       });
+      if (q('[data-own]')) q('[data-own]').onclick = () => {
+        if (!sel.size) return toast(T('部屋をえらんでください'));
+        const us = d.units.filter(u => sel.has(u.id));
+        if (us.some(u => u.use === 'home')) return toast(T('住居には会社は入れません（店・事務所などの部屋をえらんでください）'));
+        unitOwn(d, us, () => { sel.clear(); load(); });
+      };
       const lv = q('.mp-lv'); if (lv) { lv.oninput = () => { q('.mp-lvn').textContent = lv.value + '%'; }; q('[data-lvset]').onclick = async () => { if (await api('mp_bld_set', { p_bld: bid, p_name: null, p_rent_lv: Number(lv.value) / 100, p_as: S.as }, '家賃の水準を変えました')) load(); }; }
       b.querySelectorAll('[data-out]').forEach(x => x.onclick = async () => { if (!confirm(T('テナントの会社に退去してもらいます。よろしいですか？'))) return; if (await api('mp_unit_leave', { p_unit: Number(x.dataset.out), p_as: S.as }, '退去してもらいました')) load(); });
       b.querySelectorAll('[data-lease]').forEach(x => x.onclick = () => leaseUnit(Number(x.dataset.lease), d.units.find(u => u.id === Number(x.dataset.lease)), load));
@@ -3165,6 +3265,22 @@ async function openBld(bid) {
     });
   };
   load();
+}
+// 自社のオフィス：入れられる自分の会社（建物の持ち主の会社はのぞく）
+function ownCorps(d) { return (S.boot.as || []).filter(a => a.as !== 'me' && a.as !== 'gov' && a.as !== d.own_as); }
+function unitOwn(d, us, after) {
+  const corps = ownCorps(d), mr = us.reduce((a, u) => a + (u.mr || 0), 0);
+  const m = modal(['自社のオフィスにする', `<p class="small" style="margin:0 0 6px"><span>${esc(d.name || d.kname)}</span>：<span>${us.map(u => esc(u.room)).join('・')}</span></p>
+    <p class="small"><span>えらんだ部屋に、自分の会社をすぐ入れます。</span><span>店・事務所などの売上（外の客から）は、その会社に入ります。</span></p>
+    <div class="mp-row"><select class="mp-inp" data-co style="width:auto">${corps.map(a => `<option value="${esc(a.as)}">${esc(asLabel(a))}</option>`).join('')}</select></div>
+    <div class="mp-row"><span>家賃 1日</span> <input class="mp-inp mp-num" data-rent inputmode="numeric" value="0" style="width:120px"> <span>X</span></div>
+    <p class="muted small"><span>家賃は1時間ごとに、会社から建物の持ち主へ払います（0 X なら払いません）。</span><br><span>相場は1日 ${X(mr)}</span></p>
+    <div class="mp-row"><button class="btn main" data-ok>入れる</button></div>`], b => {
+    b.querySelector('[data-ok]').onclick = async () => {
+      const co = b.querySelector('[data-co]').value, rent = Number(String(b.querySelector('[data-rent]').value || '0').replace(/[^\d]/g, '') || 0);
+      if (await api('mp_unit_own', { p_units: us.map(u => u.id), p_corp: co, p_rent: rent, p_as: d.own_as || S.as }, '自社のオフィスにしました')) { m.close(); if (after) after(); }
+    };
+  });
 }
 function refreshBld(d) { const P = S.vis && S.vis.parcels.get(d.parcel); if (P) refreshP(P); else { for (const c of S.cells.values()) c.stale = true; S.dirty = true; } }
 // 自分の会社のうち、この部屋を借りている会社（名義）
@@ -3235,5 +3351,5 @@ async function openMyBlds() {
     b.querySelectorAll('[data-b]').forEach(x => x.onclick = () => { const [cx, cy] = x.dataset.xy.split(',').map(Number); m.close(); setCam((cx + 0.5) / 5, (cy + 0.5) / 5, Math.max(S.cam.z, 30)); openBld(Number(x.dataset.b)); });
   });
 }
-window.MapApp = { open, pause, state: S, spline, setCam, landReqs: () => openLandReqs(), xfers: () => openXfers() };
+window.MapApp = { open, pause, state: S, spline, setCam, landReqs: () => openLandReqs(), xfers: () => openXfers(), goto: (x, y) => homeGo(x, y) };
 })();

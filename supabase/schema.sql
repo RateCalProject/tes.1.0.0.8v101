@@ -16545,7 +16545,7 @@ drop function if exists public.mp_train_save(bigint, bigint, int, text, text, in
 drop function if exists public.mp_xfer_offer(bigint, text, bigint, text, text);   -- t54h：1両ずつの譲渡（p_cars）をたした
 create table if not exists public.mp_places (
   id     text primary key,       -- p:県 m:市町村 w:区 d:町名 r:川
-  k      text not null,          -- pref / muni / ward / dist / river
+  k      text not null,          -- pref / muni / ward / dist / river / spot（目じるし：大学のキャンパスなど。t54i）
   name   text not null,
   x      int not null, y int not null,
   pt     point not null,
@@ -17023,6 +17023,15 @@ insert into public.mp_car_hist(car, at, k, num, type, ou, oc, d)
          jsonb_build_object('dep', coalesce((select dd.name from public.mp_depots dd where dd.id = c.depot), ''))
     from public.mp_cars c join public.mp_types t on t.code = c.type
    where not exists (select 1 from public.mp_car_hist h where h.car = c.id);
+-- t54i：自分の住所（地図でえらぶ：区画か建物の部屋。人のページでみんなに見える）
+create table if not exists public.mp_homes (
+  u    uuid primary key references public.profiles(id) on delete cascade,
+  x int not null, y int not null,          -- 区画（10m）
+  bld  bigint references public.mp_blds(id) on delete set null,
+  unit bigint references public.mp_units(id) on delete set null,
+  at   timestamptz not null default now()
+);
+alter table public.mp_homes enable row level security;
 alter table public.mp_chunks enable row level security;
 alter table public.mp_places enable row level security;
 alter table public.mp_centers enable row level security;
@@ -17383,7 +17392,8 @@ begin
               'lease','lease_gov','fare_base','fare_km','bus_fare','bus_km','catch_rail','catch_bus','max_tiles','up_rail','up_road','up_sta','up_stop','up_dep','up_bdep','prop_tax','urb_k','urb_sta']) k),
     'ver', coalesce((select max(ver) from mp_changes), 0),
     'world', _mp_world(),
-    'bld', _mp_bld_presets(), 'zr', (select jsonb_object_agg(z, _mp_zone_rule(z)) from unnest(array['a','b','c','d','e','f','g','h','i']) z)) into r;
+    'bld', _mp_bld_presets(), 'zr', (select jsonb_object_agg(z, _mp_zone_rule(z)) from unnest(array['a','b','c','d','e','f','g','h','i']) z),
+    'home', (select jsonb_build_object('text', _mp_home_text(h), 'x', h.x, 'y', h.y, 'bld', h.bld) from mp_homes h where h.u = _me())) into r;
   return r;
 end $$;
 -- 地形のデータ（チャンク）。p_keys は [cx0, cy0, cx1, cy1, …]（一度に 64 まで）
@@ -17452,7 +17462,7 @@ begin
                   case when pa.gov then 3 when coalesce(pa.own_u = u or pa.own_c = any(me_cs), false) then 2 else 1 end)), '[]'::jsonb)
                from mp_blds b join mp_parcels pa on pa.id = b.parcel where pa.bb && box(point(p_x0 * 5, p_y0 * 5), point(p_x1 * 5, p_y1 * 5))) end,
     'places', (select coalesce(jsonb_agg(jsonb_build_object('id', p.id, 'k', p.k, 'n', p.name, 'x', p.x, 'y', p.y, 't', p.type, 'pop', p.pop, 'par', p.parent)), '[]'::jsonb)
-               from mp_places p where p.pt <@ b and p.k in ('pref', 'muni', 'ward', 'river') and (p_lod < 2 or p.k in ('pref', 'muni'))),
+               from mp_places p where p.pt <@ b and p.k in ('pref', 'muni', 'ward', 'river', 'spot') and (p_lod < 2 or p.k in ('pref', 'muni'))),
     -- 町字の名前：[id, 種類, 名前, x, y]（町・大字は lod 1 から、丁目・字は lod 0）
     'chos', (select coalesce(jsonb_agg(jsonb_build_array(m.id, m.kind, m.name, m.x, m.y)), '[]'::jsonb)
                from mp_cho m where m.pt <@ b and m.gone is null and (p_lod = 0 or (p_lod = 1 and m.kind in ('cho', 'oaza')))),
@@ -20798,7 +20808,23 @@ language sql immutable as $$
    {"k":"parking","n":"駐車場","use":"parking","one":true,"z":"abcdefgh","cpm":30,"f0":0,"f1":0,"min":1,"max":400,"sh":["full"]},
    {"k":"pkbld","n":"立体駐車場","use":"parking","u":0,"z":"bcdef","cpm":400,"f0":2,"f1":8,"min":6,"max":400,"sh":["full","slab"]},
    {"k":"cityhall","n":"市役所","use":"office","u":0,"z":"abcdefghi","cpm":1200,"f0":1,"f1":80,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
-   {"k":"plaza","n":"広場","use":"plaza","one":true,"z":"abcdefghi","cpm":40,"f0":0,"f1":0,"min":1,"max":1600,"sh":["full"],"gov":true}
+   {"k":"plaza","n":"広場","use":"plaza","one":true,"z":"abcdefghi","cpm":40,"f0":0,"f1":0,"min":1,"max":1600,"sh":["full"],"gov":true},
+   {"k":"uhq","n":"大学の本部","use":"school","u":0,"z":"abcdefghi","cpm":900,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"ukan","n":"大学の校舎","use":"school","u":0,"z":"abcdefghi","cpm":600,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"ulab","n":"大学の研究棟","use":"school","u":0,"z":"abcdefghi","cpm":700,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"ulib","n":"大学の図書館","use":"school","u":0,"z":"abcdefghi","cpm":700,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"uhall","n":"大学の講堂","use":"school","u":0,"z":"abcdefghi","cpm":800,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"ugym","n":"大学の体育館","use":"school","u":0,"z":"abcdefghi","cpm":450,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"uunion","n":"学生会館","use":"school","u":0,"z":"abcdefghi","cpm":500,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"udorm","n":"学生寮","use":"home","u":0,"z":"abcdefghi","cpm":400,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"uhosp","n":"大学病院","use":"hospital","u":0,"z":"abcdefghi","cpm":900,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"umus","n":"大学の博物館","use":"school","u":0,"z":"abcdefghi","cpm":700,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"uschool","n":"附属学校","use":"school","u":0,"z":"abcdefghi","cpm":450,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"ugh","n":"温室","use":"farm","u":0,"z":"abcdefghi","cpm":200,"f0":1,"f1":2,"min":1,"max":1600,"sh":["full"],"gov":true},
+   {"k":"ufield","n":"グラウンド","use":"plaza","one":true,"z":"abcdefghi","cpm":30,"f0":0,"f1":0,"min":1,"max":1600,"sh":["full"],"gov":true},
+   {"k":"ufarm","n":"実験農場","use":"farm","one":true,"z":"abcdefghi","cpm":10,"f0":0,"f1":0,"min":1,"max":1600,"sh":["full"],"gov":true},
+   {"k":"ugreen","n":"緑地","use":"plaza","one":true,"z":"abcdefghi","cpm":20,"f0":0,"f1":0,"min":1,"max":1600,"sh":["full"],"gov":true},
+   {"k":"uave","n":"並木道","use":"plaza","one":true,"z":"abcdefghi","cpm":40,"f0":0,"f1":0,"min":1,"max":1600,"sh":["full"],"gov":true}
   ]'::jsonb
 $$;
 -- 用途地域の決まり：建ぺい率 cv・容積率 far・いちばん高い階 mf
@@ -21148,6 +21174,7 @@ begin
   one := coalesce((pr ->> 'one')::boolean, false);
   return jsonb_build_object('id', b.id, 'parcel', b.parcel, 'kind', b.kind, 'kname', pr ->> 'n', 'shape', b.shape, 'floors', b.floors, 'fm2', b.fm2,
     'name', b.name, 'cost', b.cost, 'rent_lv', b.rent_lv, 'opt', b.opt, 'built_at', b.built_at, 'mine', mine, 'one', one, 'gov', p.gov,
+    'own_as', case when mine and p.own_c is not null then (select c.cid from companies c where c.id = p.own_c) when mine then 'me' end,
     'owner', _mp_pname(p.own_u, p.own_c, p.gov), 'addr', (_mp_addr(_mp_t5(b.cells[1]), _mp_t5(b.cells[2]), b.cells[1], b.cells[2]) ->> 'text') || ' ' || _mp_ban(p.ban, p.eda),
     'dem', b.dem, 'mr', b.mr,
     'units', (select coalesce(jsonb_agg(jsonb_build_object('id', x.id, 'f', x.floor, 'no', x.no, 'room', _mp_room(x.floor, x.no, one), 'use', x.use, 'm2', x.m2, 'mode', x.mode,
@@ -21233,6 +21260,34 @@ begin
   end loop;
   return jsonb_build_object('n', n);
 end $$;
+-- 自社のオフィス（t54i）：自分（名義）の建物の部屋に、自分の別の会社をすぐ入れる。家賃は p_rent（1日。0 でもよい）。
+--   町の人が入っている部屋は入れかわる。ほかの会社が入っている部屋はだめ。売上（外の客から）はその会社へ。募集の家賃（ask）は相場にしておく
+create or replace function public.mp_unit_own(p_units bigint[], p_corp text, p_rent bigint, p_as text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pa record; tc record; n int := 0; x record;
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  if pa.gv then raise exception '国の建物には会社は入れません'; end if;
+  if coalesce(array_length(p_units, 1), 0) = 0 then raise exception '部屋をえらんでください'; end if;
+  if coalesce(p_corp, '') in ('', 'me', 'gov') then raise exception '入る会社をえらんでください'; end if;
+  select * into tc from _mp_party(u, p_corp);
+  if tc.pc is null then raise exception '入る会社をえらんでください'; end if;
+  if pa.pc is not distinct from tc.pc then raise exception '建物の持ち主の会社です（「自分で使う」にしてください）'; end if;
+  if p_rent is null or p_rent < 0 or p_rent > 100000000 then raise exception '家賃は1日 0〜1億 X です'; end if;
+  for x in select un.*, b.parcel, b.mr from mp_units un join mp_blds b on b.id = un.bld where un.id = any(p_units) order by un.id for update of un loop
+    if not exists (select 1 from mp_parcels p where p.id = x.parcel and not p.gov and _mp_same(p.own_u, p.own_c, false, pa.pu, pa.pc, false)) then
+      raise exception 'あなた（この名義）の建物ではありません';
+    end if;
+    if x.use not in ('shop', 'office', 'factory', 'warehouse', 'port', 'farm', 'parking') then raise exception '住居には会社は入れません（店・事務所などの部屋をえらんでください）'; end if;
+    if x.t_kind = 'corp' and x.t_c is distinct from tc.pc then raise exception 'ほかの会社が入っている部屋があります（先に退去してもらってください）'; end if;
+    update mp_units set mode = 'corp', ask = round((x.mr ->> x.use)::numeric * x.m2)::bigint, t_kind = 'corp', t_c = tc.pc, t_name = null, rent = p_rent,
+                        since = case when x.t_kind = 'corp' then since else now() end
+     where id = x.id;
+    n := n + 1;
+  end loop;
+  return jsonb_build_object('n', n, 'corp', tc.nm, 'rent', p_rent);
+end $$;
 -- テナント募集中の部屋（地図の範囲 p_box [x0, y0, x1, y1]（マス）か、ぜんぶ）。用途でしぼれる
 create or replace function public.mp_unit_market(p_box int[], p_use text) returns jsonb
 language plpgsql security definer set search_path = public as $$
@@ -21289,6 +21344,11 @@ begin
   select name, owner into cname, co from companies where id = x.t_c;
   update mp_units set t_kind = null, t_c = null, t_name = null, rent = 0, since = null where id = x.id;
   one := (select coalesce((pr ->> 'one')::boolean, false) from jsonb_array_elements(_mp_bld_presets()) pr where pr ->> 'k' = b.kind);
+  -- 自社のオフィス（建物の持ち主と同じ人の会社）だったときは、入居募集にもどす（知らせはなし）
+  if co is not null and co = coalesce(p.own_u, (select owner from companies where id = p.own_c)) then
+    update mp_units set mode = 'npc', ask = null where id = x.id;
+    return jsonb_build_object('ok', true, 'own', true);
+  end if;
   if owner_side then
     perform _notice(co, format('【国土】「%s」%sの賃貸借が、持ち主から終わりになりました。', b.name, _mp_room(x.floor, x.no, one)));
   else
@@ -21367,6 +21427,73 @@ begin
     perform _notice(t.co, format('【国土】家賃が払えていないので、「%s」%sを退去しました。', t.bname, _mp_room(t.floor, t.no, one)));
     perform _notice(coalesce(t.own_u, (select owner from companies where id = t.own_c)), format('【国土】「%s」%sのテナントが、家賃が払えずに退去しました。', t.bname, _mp_room(t.floor, t.no, one)));
   end loop;
+end $$;
+
+/* ---------- 自分の住所（t54i）：地図でえらぶ（区画か、建物の部屋）。人のページでみんなに見える ---------- */
+-- 住所のことば：町字＋地番（筆のとき）＋建物の名前＋部屋（101号室）
+create or replace function public._mp_home_text(h mp_homes) returns text
+language plpgsql stable set search_path = public as $$
+declare a jsonb; b mp_blds; x mp_units; one boolean; t text;
+begin
+  if h.u is null then return null; end if;
+  a := _mp_addr(_mp_t5(h.x), _mp_t5(h.y), h.x, h.y);
+  t := a ->> 'text';
+  if a ->> 'ban' is not null then t := t || ' ' || (a ->> 'ban'); end if;
+  if h.bld is not null then
+    select * into b from mp_blds where id = h.bld;
+    if found then
+      t := t || ' ' || coalesce(nullif(btrim(b.name), ''), (select pr ->> 'n' from jsonb_array_elements(_mp_bld_presets()) pr where pr ->> 'k' = b.kind), '');
+      one := (select coalesce((pr ->> 'one')::boolean, false) from jsonb_array_elements(_mp_bld_presets()) pr where pr ->> 'k' = b.kind);
+      if h.unit is not null and not one then
+        select * into x from mp_units where id = h.unit and bld = b.id;
+        if found then t := t || ' ' || _mp_room(x.floor, x.no, false); end if;
+      end if;
+    end if;
+  end if;
+  return t;
+end $$;
+-- 住所を決める：区画（p_x, p_y：10m の区画）か、建物の部屋（p_unit）。建物の上（建物のある筆）なら、その建物の名前も入る
+create or replace function public.mp_home_set(p_x int, p_y int, p_unit bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare me uuid := _me(); c record; x mp_units; b mp_blds; bid bigint; h mp_homes;
+begin
+  perform _mp_ok(me);
+  if p_unit is not null then
+    select * into x from mp_units where id = p_unit;
+    if not found then raise exception '部屋が見つかりません'; end if;
+    select * into b from mp_blds where id = x.bld;
+    if p_x is null or not exists (select 1 from mp_pcells pc where pc.parcel = b.parcel and pc.x = p_x and pc.y = p_y) then p_x := b.cells[1]; p_y := b.cells[2]; end if;
+    bid := b.id;
+  else
+    if p_x is null or p_y is null then raise exception '場所をえらんでください'; end if;
+    select bl.id into bid from mp_pcells pc join mp_blds bl on bl.parcel = pc.parcel where pc.x = p_x and pc.y = p_y;
+  end if;
+  select * into c from _mp_cell(_mp_t5(p_x), _mp_t5(p_y));
+  if c.t is null then raise exception '地図の外です'; end if;
+  if c.t in ('S', 'D', 'R', 'L') then raise exception '海・川・湖は住所にできません'; end if;
+  insert into mp_homes(u, x, y, bld, unit, at) values (me, p_x, p_y, bid, case when bid is not null then p_unit end, now())
+    on conflict (u) do update set x = excluded.x, y = excluded.y, bld = excluded.bld, unit = excluded.unit, at = now()
+    returning * into h;
+  return jsonb_build_object('text', _mp_home_text(h), 'x', h.x, 'y', h.y, 'bld', h.bld);
+end $$;
+-- 住所を消す
+create or replace function public.mp_home_clear() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare me uuid := _me();
+begin
+  delete from mp_homes where mp_homes.u = me;
+  return jsonb_build_object('ok', found);
+end $$;
+-- 人の住所（人のページ。ID（アカウント番号）で。決めていなければ null）
+create or replace function public.mp_home_get(p_uid text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare me uuid := _me_g(); p profiles; h mp_homes;
+begin
+  select * into p from profiles where account_no = ltrim(btrim(coalesce(p_uid, '')), '@');
+  if not found then raise exception 'その人は見つかりません'; end if;
+  select * into h from mp_homes where mp_homes.u = p.id;
+  if not found then return null; end if;
+  return jsonb_build_object('text', _mp_home_text(h), 'x', h.x, 'y', h.y, 'me', p.id = me);
 end $$;
 
 -- いままでの建物（種類だけのもの）を、プリセットの建物にうつす（町の人が入った状態で）。何度流しても同じ
@@ -22202,28 +22329,29 @@ begin
             '_mp_chimoku','_mp_cho_at','_mp_cho_set_tiles','_mp_cho_text','_mp_cmuls','_mp_cval','_mp_day_ok','_mp_dens',
             '_mp_dep_cells','_mp_dep_dim','_mp_dep_tiles','_mp_dep_tiles_g','_mp_dia_snap','_mp_dispatch','_mp_earn','_mp_edec',
             '_mp_end','_mp_end_ang','_mp_fmtn','_mp_form_drop','_mp_form_perf','_mp_form_routes','_mp_form_rule','_mp_form_rule_t',
-            '_mp_form_runs','_mp_g','_mp_geom_ok','_mp_gov_build','_mp_hm_parse','_mp_hms','_mp_hourf','_mp_kinds_of',
-            '_mp_kprio','_mp_land_fee','_mp_land_need','_mp_land_std','_mp_land_stop','_mp_lease_del','_mp_lease_quote','_mp_lease_set',
-            '_mp_leg_from','_mp_leg_time','_mp_len','_mp_line_cells','_mp_lock','_mp_lvmap_build','_mp_mcval','_mp_mine',
-            '_mp_minr','_mp_mvalue','_mp_npc_name','_mp_occ_set','_mp_ok','_mp_okey','_mp_op_of_form','_mp_parcel_label',
-            '_mp_parcel_vals','_mp_party','_mp_pay','_mp_pick_trk','_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_pref_road',
-            '_mp_pref_type','_mp_proj','_mp_pub_cells','_mp_pub_of','_mp_rail_path','_mp_rate','_mp_renet','_mp_resample',
-            '_mp_resched','_mp_rev','_mp_road_mul','_mp_road_v','_mp_road_w','_mp_room','_mp_route_catch','_mp_route_sta',
-            '_mp_routes_fix','_mp_run','_mp_run_check','_mp_run_mark','_mp_same','_mp_seg_blocked','_mp_seg_cells_arr','_mp_seg_chain',
-            '_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_sta_trk','_mp_struct_cells',
-            '_mp_sub','_mp_t49_from_tiles','_mp_t5','_mp_ters','_mp_thin','_mp_tick','_mp_tick_day','_mp_tick_hour',
-            '_mp_tiles','_mp_tmul','_mp_today','_mp_train_calc','_mp_train_json','_mp_train_times','_mp_unit_mr','_mp_use_name',
-            '_mp_value','_mp_vlim','_mp_vruns','_mp_world','_mp_zname','_mp_zone_rule','mp_admin_cho_merge','mp_admin_cho_split',
-            'mp_admin_lvset','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state','mp_admin_zone','mp_area','mp_bld_build',
-            'mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set','mp_boot','mp_car_log','mp_car_move',
-            'mp_car_order','mp_car_scrap','mp_car_work','mp_cars_gone','mp_cars_list','mp_cho_get','mp_chunk_get','mp_dep_build',
-            'mp_dep_edit','mp_dia','mp_dia_undo','mp_form_del','mp_form_order','mp_form_set','mp_kinds_list','mp_kinds_set',
-            'mp_land_buy','mp_land_decide','mp_land_req','mp_land_req_del','mp_land_reqs','mp_ledger_page','mp_op_del','mp_op_export',
-            'mp_op_import','mp_op_save','mp_ops_list','mp_parcel_buy','mp_parcel_merge','mp_parcel_rent','mp_parcel_sell','mp_parcel_split',
-            'mp_poll','mp_route_del','mp_route_pat','mp_route_save','mp_routes_list','mp_seg_build','mp_seg_del','mp_seg_edit',
-            'mp_seg_join','mp_seg_opts','mp_seg_speed','mp_seg_split','mp_spot','mp_sta_build','mp_sta_edit','mp_sta_trk',
-            'mp_sta_trk_set','mp_stop_lend','mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave',
-            'mp_unit_market','mp_unit_mine','mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer') loop
+            '_mp_form_runs','_mp_g','_mp_geom_ok','_mp_gov_build','_mp_hm_parse','_mp_hms','_mp_home_text','_mp_hourf',
+            '_mp_kinds_of','_mp_kprio','_mp_land_fee','_mp_land_need','_mp_land_std','_mp_land_stop','_mp_lease_del','_mp_lease_quote',
+            '_mp_lease_set','_mp_leg_from','_mp_leg_time','_mp_len','_mp_line_cells','_mp_lock','_mp_lvmap_build','_mp_mcval',
+            '_mp_mine','_mp_minr','_mp_mvalue','_mp_npc_name','_mp_occ_set','_mp_ok','_mp_okey','_mp_op_of_form',
+            '_mp_parcel_label','_mp_parcel_vals','_mp_party','_mp_pay','_mp_pick_trk','_mp_pkey','_mp_placeholder_names','_mp_pname',
+            '_mp_pref_road','_mp_pref_type','_mp_proj','_mp_pub_cells','_mp_pub_of','_mp_rail_path','_mp_rate','_mp_renet',
+            '_mp_resample','_mp_resched','_mp_rev','_mp_road_mul','_mp_road_v','_mp_road_w','_mp_room','_mp_route_catch',
+            '_mp_route_sta','_mp_routes_fix','_mp_run','_mp_run_check','_mp_run_mark','_mp_same','_mp_seg_blocked','_mp_seg_cells_arr',
+            '_mp_seg_chain','_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_sta_trk',
+            '_mp_struct_cells','_mp_sub','_mp_t49_from_tiles','_mp_t5','_mp_ters','_mp_thin','_mp_tick','_mp_tick_day',
+            '_mp_tick_hour','_mp_tiles','_mp_tmul','_mp_today','_mp_train_calc','_mp_train_json','_mp_train_times','_mp_unit_mr',
+            '_mp_use_name','_mp_value','_mp_vlim','_mp_vruns','_mp_world','_mp_zname','_mp_zone_rule','mp_admin_cho_merge',
+            'mp_admin_cho_split','mp_admin_lvset','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state','mp_admin_zone','mp_area',
+            'mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set','mp_boot','mp_car_log',
+            'mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_gone','mp_cars_list','mp_cho_get','mp_chunk_get',
+            'mp_dep_build','mp_dep_edit','mp_dia','mp_dia_undo','mp_form_del','mp_form_order','mp_form_set','mp_home_clear',
+            'mp_home_get','mp_home_set','mp_kinds_list','mp_kinds_set','mp_land_buy','mp_land_decide','mp_land_req','mp_land_req_del',
+            'mp_land_reqs','mp_ledger_page','mp_op_del','mp_op_export','mp_op_import','mp_op_save','mp_ops_list','mp_parcel_buy',
+            'mp_parcel_merge','mp_parcel_rent','mp_parcel_sell','mp_parcel_split','mp_poll','mp_route_del','mp_route_pat','mp_route_save',
+            'mp_routes_list','mp_seg_build','mp_seg_del','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_speed','mp_seg_split',
+            'mp_spot','mp_sta_build','mp_sta_edit','mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_train_autoform','mp_train_bulk',
+            'mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market','mp_unit_mine','mp_unit_own','mp_unit_set',
+            'mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
       execute format('revoke all on function %s from authenticated', f.sig);
