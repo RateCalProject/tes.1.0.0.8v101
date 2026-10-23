@@ -570,19 +570,19 @@ function drawParcels(g, it, z, v) {
   worldT(g);
   const mark = S.toolState && S.toolState.marks;   // 合筆でえらんでいる筆
   for (const p of vis) {
-    g.fillStyle = p.own === 2 ? 'rgba(40,110,220,.24)' : 'rgba(230,120,30,.2)';
+    g.fillStyle = p.own === 3 ? 'rgba(110,110,110,.16)' : p.own === 2 ? 'rgba(40,110,220,.24)' : 'rgba(230,120,30,.2)';
     g.fill(p.fill);
   }
   if (z >= 12) {
     for (const p of vis) {
-      g.strokeStyle = p.own === 2 ? 'rgba(30,80,170,.85)' : 'rgba(180,90,20,.75)';
+      g.strokeStyle = p.own === 3 ? 'rgba(90,90,90,.7)' : p.own === 2 ? 'rgba(30,80,170,.85)' : 'rgba(180,90,20,.75)';
       g.lineWidth = 1.2 / z; g.stroke(p.edge);
       if (p.sale != null) { g.strokeStyle = '#d23'; g.setLineDash([4 / z, 3 / z]); g.lineWidth = 2 / z; g.stroke(p.edge); g.setLineDash([]); }
     }
   }
   if (mark && mark.size) for (const p of vis) if (mark.has(p.id)) { g.strokeStyle = '#ff9800'; g.lineWidth = 3.5 / z; g.stroke(p.edge); }
   screenT(g);
-  if (z >= 36) for (const p of vis) label(g, p.ban, sx(p.lx), sy(p.ly), { size: 10, color: p.own === 2 ? '#1a3f8a' : '#7a4416' });
+  if (z >= 36) for (const p of vis) label(g, p.ban, sx(p.lx), sy(p.ly), { size: 10, color: p.own === 3 ? '#444' : p.own === 2 ? '#1a3f8a' : '#7a4416' });
 }
 // 境界線：県（太い一点鎖線）・市区町村（鎖線）・区（破線）・町／大字（点線）・丁目／字（細い点線）
 const BND_ST = { pref: { w: 3.2, c: 'rgba(80,40,110,.85)', d: [12, 4, 2, 4], z: 1.2 }, muni: { w: 2.2, c: 'rgba(90,50,120,.75)', d: [9, 4], z: 1.2 },
@@ -856,7 +856,7 @@ function build(root) {
   S.wrap.querySelector('[data-full]').onclick = () => { S.wrap.classList.toggle('mp-full'); resize(); };
   S.wrap.querySelector('[data-zin]').onclick = () => zoomAt(S.W / 2, S.H / 2, 1.6);
   S.wrap.querySelector('[data-zout]').onclick = () => zoomAt(S.W / 2, S.H / 2, 1 / 1.6);
-  S.wrap.querySelector('[data-home]').onclick = () => setCam(0, 0, 6);
+  S.wrap.querySelector('[data-home]').onclick = () => setCam(HOME[0], HOME[1], 6);
   S.wrap.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => setTool(b.dataset.tool));
   S.wrap.querySelector('[data-menu]').onclick = () => openMenu();
   bindInput();
@@ -1065,6 +1065,8 @@ function onH(n) {
   return esc(n);
 }
 const CLS_NAME = { exp: '高速道路', nat: '国道', pref: '県道', city: '市道', lane: '市道（細い道）', priv: '私道', rail: '線路' };
+// ⌂：瑠璃市役所（中里区中央三丁目）のまん中（マス）
+const HOME = [-3.1, 2.9];
 // 都道府県道の名前：その場所の都道府県（瑠璃府なら府道）
 const prefRoad = pref => /府$/.test(pref || '') ? '府道' : /都$/.test(pref || '') ? '都道' : /道$/.test(pref || '') ? '道道' : '県道';
 // 線の制限速度のグラフ（よこ：線にそった長さ・たて：速さ。カーブがきついところほど低い）。at：タップしたところ（m）
@@ -1097,10 +1099,12 @@ async function showSpot(cx, cy) {
     <div class="mp-kv"><b>地形</b><span><span>${esc(d.ter)}</span>${d.elev ? `<small>（標高 約${d.elev}m）</small>` : ''}</span><b>地目</b><span>${esc(d.chimoku)}</span>
       <b>用途地域</b><span>${esc(d.zname)}</span><b>人の多さ</b><span>${fmt(d.dens)} 人/km²</span>
       ${d.cval != null ? `<b>地価</b><span>${X(d.cval)}（1区画・100㎡）</span>` : ''}
+      ${d.cval0 != null ? `<b>評価額</b><span><span>${X(d.cval0)}（1区画・100㎡）</span><br><small class="muted">税・家賃・使用料は評価額で計算します</small></span>` : ''}
       <b>持ち主</b><span>${P ? `<span>${esc(P.owner)}</span>${P.mine ? '<small>（あなた）</small>' : ''}` : d.pub ? '公衆用道路' : '国'}</span>
       ${P ? `<b>筆</b><span>${esc(P.ban)}・${fmt(P.n * 100)}㎡・地価 ${X(P.val)}</span>` : ''}
+      ${P && P.val0 != null ? `<b>筆の評価額</b><span>${X(P.val0)}</span>` : ''}
       ${P && P.sale != null ? `<b>売り出し</b><span>${X(P.sale)}</span>` : ''}
-      ${P ? `<b>貸出料</b><span>${P.rent != null ? `<span>1区画・1日 ${X(P.rent)}</span><small>（線路・道路・駅・車庫に、申請なしで使えます）</small>` : '<span>貸していません</span>'}${P.mine ? `<small>・標準 ${X(P.std)}</small>` : ''}</span>` : ''}
+      ${P && !P.gov ? `<b>貸出料</b><span>${P.rent != null ? `<span>1区画・1日 ${X(P.rent)}</span><small>（線路・道路・駅・車庫に、申請なしで使えます）</small>` : '<span>貸していません</span>'}${P.mine ? `<small>・標準 ${X(P.std)}</small>` : ''}</span>` : ''}
       ${P && !P.mine && (P.reqs || []).length ? `<b>申請</b><span>${P.reqs.map(r => `<span>${esc(r.who)}</span>：<b>${esc(LRS[r.st] || r.st)}</b>${r.st === 'ok' ? `<small>（1区画・1日 ${X(r.fee)}）</small>` : ''}`).join('<br>')}</span>` : ''}
       ${P && P.mine && P.nreq ? `<b>申請</b><span><a href="#" data-lreqs>返事まち ${P.nreq}件</a></span>` : ''}
       ${P && P.b ? bldRow(P.b, P.mine) : ''}
@@ -1110,10 +1114,10 @@ async function showSpot(cx, cy) {
     <div class="mp-row">${!P && d.buy ? `<button class="btn main" data-buyhere>ここの土地を買う</button>` : ''}
       ${P && !P.mine && P.sale != null ? `<button class="btn main" data-pbuy>この筆を買う（${X(Math.ceil(P.sale * 1.03))}）</button>` : ''}
       ${!P && !d.buy && d.why ? `<span class="muted small">${esc(d.why)}</span>` : ''}
-      ${P && P.b ? `<button class="btn main" data-bopen>部屋・テナント</button>` : ''}
+      ${P && P.b ? `<button class="btn main" data-bopen>${P.gov ? '建物を見る' : '部屋・テナント'}</button>` : ''}
       ${P && P.mine ? `<button class="btn" data-sell>${P.sale != null ? '売り出しをやめる' : '売りに出す'}</button>
         ${P.b ? '' : '<button class="btn" data-bld>建物を建てる</button>'}<button class="btn" data-split>分筆</button><button class="btn" data-merge>合筆</button><button class="btn" data-rent>貸出料</button>` : ''}
-      ${P && !P.mine && P.rent == null && S.as !== 'gov' && !(P.reqs || []).some(r => r.as === S.as && r.st !== 'no') ? `<button class="btn" data-lreq1>使う申請（${esc(asName())}）</button>` : ''}</div>`, s => {
+      ${P && !P.mine && !P.gov && P.rent == null && S.as !== 'gov' && !(P.reqs || []).some(r => r.as === S.as && r.st !== 'no') ? `<button class="btn" data-lreq1>使う申請（${esc(asName())}）</button>` : ''}</div>`, s => {
     const q = k => s.querySelector(k);
     if (q('[data-rent]')) q('[data-rent]').onclick = () => parcelRent(P, cx, cy);
     if (q('[data-lreqs]')) q('[data-lreqs]').onclick = ev => { ev.preventDefault(); openLandReqs(); };
@@ -1981,7 +1985,8 @@ function openMenu() {
 function openHelp() {
   modal(['国土のあそびかた', `<div class="small" style="line-height:1.8">
     <p><b>地図</b>：瑠璃市中里区がまん中。北西が山、南東が海です。指2本で拡大・縮小、ドラッグで動かします。タップすると住所（町字・地番）・地目・用途地域・地価がわかります。線は県・市区町村・町字の境界です。</p>
-    <p><b>土地</b>：国の土地は区画（10m四方・100㎡）でえらんで買えます。道路の部分は国の土地（公衆用道路）なので買えません。買った土地は「筆」になり、地番がつきます（住所は町字＋地番）。となりあう自分の筆は合筆、筆の一部は分筆できます。売りに出ている筆は、その値段（＋取得税3%）。毎日、地価の0.01%の固定資産税。</p>
+    <p><b>土地</b>：国の土地は区画（10m四方・100㎡）でえらんで買えます。道路の部分は国の土地（公衆用道路）なので買えません。買った土地は「筆」になり、地番がつきます（住所は町字＋地番）。となりあう自分の筆は合筆、筆の一部は分筆できます。売りに出ている筆は、その値段（＋取得税3%）。毎日、評価額の0.01%の固定資産税。</p>
+    <p><b>地価と評価額</b>：瑠璃市の中心（中里区）は地価が高く（1㎡ 約10億 X）、まわり5kmで、なだらかにふつうの地価にもどります。国の土地を買う値段は地価、固定資産税・家賃・使用料・取得税は評価額（ふつうの地価）で計算します。瑠璃市役所と市民広場は国の建物です。</p>
     <p><b>建物</b>：自分の筆に、プリセット（一戸建て・アパート・マンション・タワーマンション・店舗つき住宅・雑居ビル・オフィスビル・超高層ビル・ショッピングセンター・工場・倉庫・港湾施設・田畑・駐車場・立体駐車場）から、形と階数をえらんで建てます。広さと高さは用途地域の建ぺい率・容積率まで。細い形（塔状・板状）ほど高くできます。</p>
     <p><b>部屋とテナント</b>：部屋ごとに「入居募集」（町の人やお店が入って家賃）・「テナント募集」（会社に貸す。会社が借りると、1時間ごとに会社から家賃）・「自分で使う」（店・事務所などは売上が入る）をえらびます。家賃の水準を上げると、入りにくく出ていきやすくなります。人が多いところ・乗り降りの多い駅の近くは入りやすく、店の売上も多くなります。会社は ≡ →「テナント募集」から部屋を借りられます。</p>
     <p><b>線路・道路</b>：点をおくと、なめらかな線になります。他人の土地や国の土地の上につくると、毎日使用料がかかります（国・府県・市の道路の上はかかりません）。まちの中は工事費が高くなります。</p>
@@ -2679,7 +2684,7 @@ async function openLedger() {
     if (!head) head = d; rows = rows.concat(d.rows); before = d.rows.length ? d.rows[d.rows.length - 1].id : before;
     const day = head.day || {}, a = head.assets;
     m.set('お金の記録', `<p class="small" style="margin:0">${esc(asName())}</p>
-      <div class="mp-kv"><b>土地</b><span>${a.land}筆・${fmt(a.land_m2 || 0)}㎡（地価 ${X(a.land_val)}）</span><b>線路</b><span>${a.rail_km} km</span><b>駅・バス停</b><span>${a.stations}</span><b>車両</b><span>${a.cars}両（台）</span>
+      <div class="mp-kv"><b>土地</b><span>${a.land}筆・${fmt(a.land_m2 || 0)}㎡（地価 ${X(a.land_val)}）${a.land_val0 != null && a.land_val0 !== a.land_val ? `<br><small>評価額 ${X(a.land_val0)}（税・家賃・使用料のもと）</small>` : ''}</span><b>線路</b><span>${a.rail_km} km</span><b>駅・バス停</b><span>${a.stations}</span><b>車両</b><span>${a.cars}両（台）</span>
         ${head.owed ? `<b>未払い</b><span class="mp-warn">${X(head.owed)}（運賃などから先に引かれます）</span>` : ''}</div>
       <h4 style="margin:10px 0 4px">この24時間</h4><div class="mp-kv">${Object.entries(day).map(([k, v]) => `<b>${esc(LK[k] || k)}</b><span style="color:${v >= 0 ? '#1a7f37' : '#c33'}">${v >= 0 ? '+' : ''}${fmt(v)} X</span>`).join('') || '<span class="muted small">なし</span>'}</div>
       <h4 style="margin:10px 0 4px">記録</h4><div class="mp-list">${rows.map(r => `<div class="mp-item"><small>${new Date(r.at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}・${esc(LK[r.k] || r.k)}</small><br>
@@ -2833,9 +2838,10 @@ const BK = {
   tower: ['#cfd6de', '#e8edf2', '#b8c3ce'], shop: ['#e6a06e', '#f3e6d6', '#d9c6ae'], zakkyo: ['#c9b8a6', '#eee6dc', '#cdbfae'],
   office: ['#aebdd0', '#e1e8f0', '#a7b6c7'], sky: ['#9fb3cc', '#d3dfeb', '#8ea4bc'], mall: ['#e8d2b0', '#f6ecdc', '#dcc9aa'],
   factory: ['#b8b8b0', '#e4e4dc', '#c4c4ba'], warehouse: ['#c2b59b', '#ece4d2', '#cfc2a6'], port: ['#9ab3c0', '#dde8ee', '#a9bcc6'],
-  farm: ['#a9cf73'], parking: ['#bdbdbd'], pkbld: ['#b0b0b0', '#e2e2e2', '#c2c2c2']
+  farm: ['#a9cf73'], parking: ['#bdbdbd'], pkbld: ['#b0b0b0', '#e2e2e2', '#c2c2c2'],
+  cityhall: ['#c9b48c', '#f1e8d6', '#d8c6a3'], plaza: ['#e6dfcf']   // 国の建物（t54g）：市役所・広場
 };
-const USE_NAME = { home: '住居', shop: '店舗', office: '事務所', factory: '工場', warehouse: '倉庫', port: '港湾', farm: '田畑', parking: '駐車場' };
+const USE_NAME = { home: '住居', shop: '店舗', office: '事務所', factory: '工場', warehouse: '倉庫', port: '港湾', farm: '田畑', parking: '駐車場', plaza: '広場' };
 const SHAPE_NAME = { full: 'ぜんぶ', slab: '板状', tower: '塔状', L: 'L字', ko: 'コの字', ro: 'ロの字' };
 const MODE_NAME = { npc: '入居募集', corp: 'テナント募集', self: '自分で使う' };
 const kindName = k => { const p = (S.boot.bld || []).find(b => b.k === k); return p ? p.n : k; };
@@ -2872,7 +2878,7 @@ function prepBld(a) {
 function drawBlds(g, it, z, v) {
   const bs = [...it.blds.values()].filter(b => b.bb[2] >= v.x0 && b.bb[0] <= v.x1 && b.bb[3] >= v.y0 && b.bb[1] <= v.y1);
   if (!bs.length) return;
-  bs.sort((a, b) => (a.cy + a.cx * 0.3) - (b.cy + b.cx * 0.3));   // 北西から（手前のものをあとで）
+  bs.sort((a, b) => ((a.floors > 0) - (b.floors > 0)) || ((a.cy + a.cx * 0.3) - (b.cy + b.cx * 0.3)));   // 平らなもの（広場・駐車場・田畑）を先に。あとは北西から（手前のものをあとで）
   const walls = S.b25 && z >= 9, selP = S.sel && S.sel.kind === 'cell' ? S.sel.parcel : null;   // 2D のときは壁を描かない（上から見たまま）
   worldT(g);
   for (const b of bs) {
@@ -2880,12 +2886,14 @@ function drawBlds(g, it, z, v) {
     if (b.floors <= 0) {   // 田畑・駐車場（平ら）
       g.fillStyle = col[0]; g.fill(b.base);
       if (z >= 14) {
-        g.save(); g.clip(b.base); g.strokeStyle = b.kind === 'farm' ? 'rgba(90,130,40,.55)' : 'rgba(255,255,255,.85)'; g.lineWidth = (b.kind === 'farm' ? 1 : 1.2) / z;
+        g.save(); g.clip(b.base); g.strokeStyle = b.kind === 'farm' ? 'rgba(90,130,40,.55)' : b.kind === 'plaza' ? 'rgba(160,150,130,.45)' : 'rgba(255,255,255,.85)'; g.lineWidth = (b.kind === 'farm' ? 1 : 1.2) / z;
         g.beginPath(); const step = b.kind === 'farm' ? 0.04 : 0.05;
         for (let x = Math.floor(b.bb[0] / step) * step; x <= b.bb[2]; x += step) { g.moveTo(x, b.bb[1]); g.lineTo(x, b.bb[3]); }
+        if (b.kind === 'plaza') for (let y = Math.floor(b.bb[1] / step) * step; y <= b.bb[3]; y += step) { g.moveTo(b.bb[0], y); g.lineTo(b.bb[2], y); }   // 広場：石だたみ
         g.stroke(); g.restore();
       }
       g.strokeStyle = b.own === 2 ? '#1f5bd6' : 'rgba(60,60,60,.55)'; g.lineWidth = (b.own === 2 ? 1.6 : 1) / z; g.stroke(b.baseEdge);
+      if (b.kind === 'plaza' && z >= 9) { g.fillStyle = 'rgba(110,170,90,.55)'; for (const k of b.set) { const [x, y] = k.split(',').map(Number); if ((x * 7 + y * 13) % 9 === 0) { g.beginPath(); g.arc((x + 0.5) / 5, (y + 0.5) / 5, 0.045, 0, Math.PI * 2); g.fill(); } } }   // 広場の木
     } else if (walls) {
       g.fillStyle = col[1]; g.fill(b.wallS); g.fillStyle = col[2]; g.fill(b.wallE);
       g.strokeStyle = 'rgba(60,60,60,.35)'; g.lineWidth = 0.8 / z; g.stroke(b.wallS); g.stroke(b.wallE);
@@ -2901,7 +2909,7 @@ function drawBlds(g, it, z, v) {
   if (z >= 24) for (const b of bs.slice().reverse()) {
     if (!b.name && b.floors <= 0) continue;
     const t = (b.name || '') + (b.floors > 0 ? (b.name ? ' ' : '') + b.floors + 'F' : '');
-    label(g, t, sx(walls ? b.lx : b.cx), sy(walls ? b.ly : b.cy), { size: 10, color: b.own === 2 ? '#123c8c' : '#333', bg: 'rgba(255,255,255,.82)' });
+    label(g, t, sx(walls ? b.lx : b.cx), sy(walls ? b.ly : b.cy), { size: b.kind === 'cityhall' ? 12 : 10, color: b.own === 2 ? '#123c8c' : b.own === 3 ? '#5a3d0c' : '#333', bg: 'rgba(255,255,255,.82)' });
   }
 }
 // タップしたところの建物（屋根を押しても）
@@ -2917,7 +2925,7 @@ function hitBld(x, y) {
 }
 // 区画をしらべたときの建物の行
 function bldRow(B, mine) {
-  return `<b>建物</b><span><span>${esc(B.name || kindName(B.kind))}</span><small>（<span>${esc(kindName(B.kind))}</span>${B.floors > 0 ? `・<span>${B.floors}階</span>` : ''}・<span>入居 ${B.occ}/${B.n}</span>）</small>${mine ? `<br><small>家賃 1日 ${X(B.rent)}</small>` : ''}</span>`;
+  return `<b>建物</b><span><span>${esc(B.name || kindName(B.kind))}</span><small>（<span>${esc(kindName(B.kind))}</span>${B.floors > 0 ? `・<span>${B.floors}階</span>` : ''}${B.n ? `・<span>入居 ${B.occ}/${B.n}</span>` : ''}）</small>${mine ? `<br><small>家賃 1日 ${X(B.rent)}</small>` : ''}</span>`;
 }
 
 /* ---- 建てる：プリセットをえらぶ ---- */
@@ -3023,10 +3031,12 @@ async function openBld(bid) {
         <b>種類</b><span><span>${esc(d.kname)}</span>${d.floors > 0 ? `・<span>${d.floors}階</span>・<span>${SHAPE_NAME[d.shape] || d.shape}</span>` : ''}</span>
         <b>住所</b><span translate="no">${esc(d.addr)}</span>
         <b>持ち主</b><span><span>${esc(d.owner)}</span>${d.mine ? '<small>（あなた）</small>' : ''}</span>
-        <b>入りやすさ</b><span>${mainUses.map(u => `<span>${USE_NAME[u] || u}</span> <span style="color:#d89a00">${star(dm[u])}</span>`).join('・')}</span>
+        <b>延床面積</b><span>${fmt(d.fm2 * Math.max(1, d.floors))}㎡</span>
+        ${mainUses.length ? `<b>入りやすさ</b><span>${mainUses.map(u => `<span>${USE_NAME[u] || u}</span> <span style="color:#d89a00">${star(dm[u])}</span>`).join('・')}</span>` : ''}
         ${d.mine ? `<b>入居</b><span>${d.day.occ} / ${d.day.n}</span><b>家賃</b><span>1日 ${X(d.day.rent)}</span>
           <b>家賃の水準</b><span><input type="range" min="50" max="200" step="5" value="${Math.round(d.rent_lv * 100)}" class="mp-lv" style="width:55%;vertical-align:middle"> <b class="mp-lvn">${Math.round(d.rent_lv * 100)}%</b> <button class="btn" data-lvset style="padding:2px 8px">決める</button></span>` : ''}
       </div>
+      ${d.gov ? `<p class="muted small" style="margin:2px 0 6px">国の建物です（税・家賃はありません）</p>` : ''}
       ${d.mine ? `<p class="muted small" style="margin:2px 0 6px">家賃の水準は入居募集の部屋の家賃（相場の何%か）。高いと入りにくく、出ていきやすくなります。店・事務所などを自分で使うか会社が借りると、売上が入ります</p>
         <div class="mp-row" data-bulk><small data-n>${sel.size}室えらんでいます</small>
           <button class="btn" data-all>ぜんぶえらぶ</button><button class="btn" data-none>えらばない</button></div>
