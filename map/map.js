@@ -27,6 +27,7 @@ const S = {
   cells: new Map(), cellBusy: 0, ver: 0, pollT: 0,
   ov: null, ovInfo: null,
   layer: { zone: false, own: true, label: true },
+  b25: true,   // 建物を 2.5D（高さのある見えかた）で描く。false なら 2D（上から見たまま）
   tool: 'look', toolState: null,
   sel: null,          // えらんだもの（{kind, id, ...}）
   hover: null,
@@ -829,7 +830,7 @@ function build(root) {
     <canvas class="mp-cv"></canvas>
     <div class="mp-top">
       <select class="mp-as" title="だれの名前で"></select>
-      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button>
+      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button>
       <span class="mp-addr" translate="no" hidden></span>
     </div>
     <div class="mp-zoom"><button data-full title="大きく">⤢</button><button data-zin>＋</button><button data-zout>－</button><button data-home title="瑠璃市役所">⌂</button></div>
@@ -848,6 +849,10 @@ function build(root) {
   asSel.value = S.as;
   asSel.onchange = () => { S.as = asSel.value; try { localStorage.setItem('mp_as', S.as); } catch (e) {} for (const c of S.cells.values()) c.stale = true; S.dirty = true; if (S.onAs) S.onAs(); };
   S.wrap.querySelectorAll('[data-lay]').forEach(b => b.onclick = () => { const k = b.dataset.lay; S.layer[k] = !S.layer[k]; b.classList.toggle('on', S.layer[k]); S.dirty = true; });
+  // 建物の見えかた：2.5D（高さ・壁）と 2D（上から見たまま）。この端末におぼえる
+  try { const v = localStorage.getItem('mp_b25'); if (v != null) S.b25 = v !== '0'; } catch (e) {}
+  const b25 = S.wrap.querySelector('[data-b25]'), b25L = () => { b25.textContent = S.b25 ? '🏢 2.5D' : '🏢 2D'; };
+  b25L(); b25.onclick = () => { S.b25 = !S.b25; b25L(); try { localStorage.setItem('mp_b25', S.b25 ? '1' : '0'); } catch (e) {} S.dirty = true; };
   S.wrap.querySelector('[data-full]').onclick = () => { S.wrap.classList.toggle('mp-full'); resize(); };
   S.wrap.querySelector('[data-zin]').onclick = () => zoomAt(S.W / 2, S.H / 2, 1.6);
   S.wrap.querySelector('[data-zout]').onclick = () => zoomAt(S.W / 2, S.H / 2, 1 / 1.6);
@@ -2868,7 +2873,7 @@ function drawBlds(g, it, z, v) {
   const bs = [...it.blds.values()].filter(b => b.bb[2] >= v.x0 && b.bb[0] <= v.x1 && b.bb[3] >= v.y0 && b.bb[1] <= v.y1);
   if (!bs.length) return;
   bs.sort((a, b) => (a.cy + a.cx * 0.3) - (b.cy + b.cx * 0.3));   // 北西から（手前のものをあとで）
-  const walls = z >= 9, selP = S.sel && S.sel.kind === 'cell' ? S.sel.parcel : null;
+  const walls = S.b25 && z >= 9, selP = S.sel && S.sel.kind === 'cell' ? S.sel.parcel : null;   // 2D のときは壁を描かない（上から見たまま）
   worldT(g);
   for (const b of bs) {
     const col = BK[b.kind] || ['#bbb', '#eee', '#ccc'];
@@ -2896,7 +2901,7 @@ function drawBlds(g, it, z, v) {
   if (z >= 24) for (const b of bs.slice().reverse()) {
     if (!b.name && b.floors <= 0) continue;
     const t = (b.name || '') + (b.floors > 0 ? (b.name ? ' ' : '') + b.floors + 'F' : '');
-    label(g, t, sx(b.lx), sy(b.ly), { size: 10, color: b.own === 2 ? '#123c8c' : '#333', bg: 'rgba(255,255,255,.82)' });
+    label(g, t, sx(walls ? b.lx : b.cx), sy(walls ? b.ly : b.cy), { size: 10, color: b.own === 2 ? '#123c8c' : '#333', bg: 'rgba(255,255,255,.82)' });
   }
 }
 // タップしたところの建物（屋根を押しても）
@@ -2906,7 +2911,7 @@ function hitBld(x, y) {
   for (const b of bs) {
     const g0 = Math.floor(x * 5) + ',' + Math.floor(y * 5);
     if (b.set.has(g0)) return { b, cell: g0 };
-    if (b.floors > 0 && S.cam.z >= 9) { const k = Math.floor((x - b.dx) * 5) + ',' + Math.floor((y - b.dy) * 5); if (b.set.has(k)) return { b, cell: k }; }
+    if (b.floors > 0 && S.b25 && S.cam.z >= 9) { const k = Math.floor((x - b.dx) * 5) + ',' + Math.floor((y - b.dy) * 5); if (b.set.has(k)) return { b, cell: k }; }
   }
   return null;
 }
