@@ -311,7 +311,7 @@ function produceInput(T) {
     } else { LS.myIn.set(x, v); LS.myTop = x; }
   }
   LS.lastTgt = tgt; LS.lastInp = inp;
-  if (LS.host) hostFinalize(); else sendInputs(false);
+  if (LS.host) hostFinalize();   // 参加者の入力は、このフレームのステップがおわってから、まとめて送る
 }
 // ホスト：2秒ごとに、通信の速さ（往復の時間）と、入力を待って止まった回数から D を決めなおして、全員に知らせる。大きくするのはすぐ、小さくするのはゆっくり
 function adaptD(now) {
@@ -319,8 +319,10 @@ function adaptD(now) {
   LS.dT = now;
   const R = KN.room, rt = Math.max(0, ...(R ? R.mem.filter(m => m.id !== MYID && LS.gs.has(m.id)).map(m => m.rtt || 0) : [0]));
   let want = Math.max(4, Math.min(40, Math.ceil((rt + 50) / TICK)));
-  const waits = LS.stats.wait - LS.dWait; LS.dWait = LS.stats.wait;
+  let waits = LS.stats.wait - LS.dWait; LS.dWait = LS.stats.wait;
+  for (const g of LS.gs.values()) { waits = Math.max(waits, g.w || 0); g.w = 0; }   // 参加者が止まった回数も（ハッシュといっしょに届く）
   if (waits > 20) want = Math.max(want, LS.D + 3);
+  else if (waits > 10) want = Math.max(want, LS.D + 1);   // ときどき止まる：少しだけ大きく（止まるより、少しおくれるほうが気にならない）
   if (want > LS.D) { LS.dLow = 0; setD(Math.min(40, want)); }
   else if (want < LS.D - 2 && waits < 3) { if (++LS.dLow >= 3) { LS.dLow = 0; setD(LS.D - 2); } }
   else LS.dLow = 0;
@@ -346,12 +348,11 @@ function framePack(a, b) {
 function sendFrames(force) {
   const now = realNow();
   for (const g of LS.gs.values()) {
-    const top = LS.nf - 1;
+    const top = LS.nf - 1, direct = net.direct(g.id);
     let from;
-    if (top > g.sent) from = g.sent + 1;
+    if (top > g.sent) from = direct && top - g.ack <= 48 ? g.ack + 1 : g.sent + 1;   // 直接のときは、まだ届いたと言われていない分も（1つ遅れても止まらない）
     else if (g.ack < g.sent && (force || now - g.rs > 300)) { from = g.ack + 1; g.rs = now; }
     else continue;
-    const direct = net.direct(g.id);
     if (!direct && !force && top - from < 2 && now - g.lt < 50) continue;   // 中継のときは少しまとめる
     const b = Math.min(top, from + 59), pk = framePack(from, b);
     if (!pk.d.length) continue;
@@ -362,12 +363,13 @@ function sendFrames(force) {
 function sendInputs(force) {
   const now = realNow();
   const top = LS.myTop;
+  const direct = net.direct();
   let from;
-  if (top > LS.sentIn) from = LS.sentIn + 1;
+  if (top > LS.sentIn) from = direct && top - LS.hostAck <= 48 ? LS.hostAck + 1 : LS.sentIn + 1;   // 直接のときは、まだ届いたと言われていない分も
   else if (LS.hostAck < LS.sentIn && (force || now - LS.lastResendIn > 300)) { from = LS.hostAck + 1; LS.lastResendIn = now; }
   else return;
   from = Math.max(from, LS.D0);
-  if (!net.direct() && !force && top - from < 2 && now - LS.lastSendIn < 50) return;
+  if (!direct && !force && top - from < 2 && now - LS.lastSendIn < 50) return;
   const d = [];
   for (let T = from; T <= top && d.length < 60; T++) d.push(LS.myIn.has(T) ? LS.myIn.get(T) : 0);
   if (!d.length) return;
@@ -400,7 +402,8 @@ function onFrames(m) {
   for (let j = 0; j < m.d.length; j++) { const T = m.a + j; if (T >= LS.tick && !LS.frames.has(T)) LS.frames.set(T, zs.has(T) ? { i: m.d[j], z: 1 } : { i: m.d[j] }); }
   while (LS.lf + 1 < LS.tick || LS.frames.has(LS.lf + 1)) LS.lf++;
   if (typeof m.k === 'number' && m.k > LS.hostAck) { LS.hostAck = m.k; for (const T of LS.myIn.keys()) if (T <= m.k) LS.myIn.delete(T); }
-  if (Number.isInteger(m.D)) LS.D = Math.max(2, Math.min(40, m.D));   // 入力のおくれ（ホストが決める）
+  const e = m.a + m.d.length;   // 入力のおくれ（ホストが決める）。順番が入れかわって届いた古いものでは、もどさない
+  if (Number.isInteger(m.D) && e >= (LS.dN || 0)) { LS.dN = e; LS.D = Math.max(2, Math.min(40, m.D)); }
   LS.lastFrameAt = realNow();
 }
 // 0.5秒ごとのハッシュ（参加者はホストに送る。ホストはくらべて、ずれたら直す）
@@ -413,12 +416,13 @@ function dbgSnap() {
 function checkHash(T) {
   const h = stateHash();
   if (DBG) { LS.dbg = LS.dbg || new Map(); LS.dbg.set(T, JSON.stringify(dbgSnap())); if (LS.dbg.size > 40) LS.dbg.delete(LS.dbg.keys().next().value); }
-  if (!LS.host) { net.send({ y: 'h', n: T, h }); return; }
+  if (!LS.host) { const w = LS.stats.wait - (LS.repW || 0); LS.repW = LS.stats.wait; net.send({ y: 'h', n: T, h, w }); return; }
   LS.hh.set(T, h); LS.hh.delete(T - 1800);
   const pend = LS.gh.get(T); if (pend) { LS.gh.delete(T); pend.forEach(x => cmpHash(T, x[0], x[1])); }
 }
 function onHash(m, from) {
   if (!LS.on || !LS.host) return;
+  const g = LS.gs.get(from); if (g && Number.isInteger(m.w) && m.w > 0) g.w = (g.w || 0) + Math.min(m.w, 600);
   if (LS.hh.has(m.n)) cmpHash(m.n, from, m.h);
   else if (m.n >= LS.tick - 1) { const a = LS.gh.get(m.n) || []; a.push([from, m.h]); LS.gh.set(m.n, a); }
 }
@@ -561,6 +565,10 @@ function mkDedup() {
     return false;
   };
 }
+// PeerJS の JSON の道は、16300 バイトより大きい通信は送れない（送れないうえに、その道がエラーになる）。大きくなりうるもの（状態の直し・部屋・開始）は、はかって大きければ中継で送る
+const BIG = new Set(['snap', 'room', 'start']);
+const ENCD = new TextEncoder();
+const tooBig = env => { if (!BIG.has(env.m && env.m.y)) return false; try { return ENCD.encode(JSON.stringify(env)).length > 15000; } catch (e) { return true; } };
 async function linkHost(code, onMsg) {
   const L = { role: 'host', code, peer: null, gs: new Map(), closed: false, seq: 0, viaPeer: false };
   const dup = mkDedup(), tH = `${PFX}/r/${code}/h`, tG = `${PFX}/r/${code}/g`;
@@ -609,7 +617,7 @@ async function linkHost(code, onMsg) {
     for (const [id, g] of L.gs) {
       if (to && id !== to) continue;
       any = true;
-      if (g.dc && g.dc.open) { try { g.dc.send(env); } catch (e) { needMq = true; } } else needMq = true;
+      if (g.dc && g.dc.open && !tooBig(env)) { try { g.dc.send(env); } catch (e) { needMq = true; } } else needMq = true;
     }
     if (needMq || !any) MQ.pub(tG, env);
   };
@@ -638,7 +646,8 @@ async function linkGuest(code, onMsg) {
   function connect() {
     if (L.closed || !L.peer || L.peer.destroyed) return;
     clearTimeout(L.rt);
-    let c; try { c = L.peer.connect(`${PFX}-${code}`, { reliable: true, serialization: 'json' }); } catch (e) { L.rt = setTimeout(connect, 5000); return; }
+    // 直接の道は、順番を待たずに届いたものからすぐ使う（1つ遅れても、あとのものが止まらない。足りない分は次の通信にも入れて送る）
+    let c; try { c = L.peer.connect(`${PFX}-${code}`, { reliable: false, serialization: 'json' }); } catch (e) { L.rt = setTimeout(connect, 5000); return; }
     const lost = () => { clearTimeout(to); if (L.dc !== c && L.pend !== c) return; if (L.dc === c) L.dc = null; L.pend = null; L.fails++; if (!L.closed) L.rt = setTimeout(connect, L.fails < 3 ? 2500 : 12000); };
     const to = setTimeout(() => { if (!c.open) { try { c.close(); } catch (e) {} lost(); } }, 15000);
     L.pend = c;
@@ -659,7 +668,7 @@ async function linkGuest(code, onMsg) {
   L.direct = () => !!(L.dc && L.dc.open);
   L.send = m => {
     const env = { g: MYID, n: ++L.seq, m };
-    if (L.dc && L.dc.open) { try { L.dc.send(env); return; } catch (e) {} }
+    if (L.dc && L.dc.open && !tooBig(env)) { try { L.dc.send(env); return; } catch (e) {} }
     MQ.pub(tH, env);
   };
   L.close = () => { L.closed = true; clearTimeout(L.rt); if (L.unsub) L.unsub(); const p = L.peer; if (p) setTimeout(() => { try { p.destroy(); } catch (e) {} }, 300); };
@@ -911,7 +920,7 @@ KN.beginLockstep = function (S) {
     frames: new Map(), snaps: new Map(), sched: new Map(), inb: [], nf: D0, ackIn: [], gs: new Map(),
     myIn: new Map(), myTop: D0 - 1, sentIn: D0 - 1, hostAck: D0 - 1, lf: D0 - 1, lastSendIn: 0, lastResendIn: 0,
     budget: 0, lastReal: realNow(), lastStep: realNow(), lastFrameAt: realNow(), prevState: '', hh: new Map(), gh: new Map(),
-    snapReq: false, snapPend: -1, fixes: 0, fixT: 0, desync: 0, err: 0, endInfo: null, stats: { steps: 0, stall: 0, ms: 0, frames: 0, wait: 0 }, names: S.nm || []
+    snapReq: false, snapPend: -1, fixes: 0, fixT: 0, desync: 0, err: 0, endInfo: null, stats: { steps: 0, stall: 0, ms: 0, frames: 0, wait: 0 }, repW: 0, dN: 0, names: S.nm || []
   });
   for (let k = 0; k < n; k++) { LS.inb.push(new Map()); LS.ackIn.push(LS.D - 1); }
   if (KN.host && KN.room) KN.room.mem.forEach(m => { if (m.id !== MYID) LS.gs.set(m.id, { id: m.id, slot: m.s, sent: LS.D - 1, ack: LS.D - 1, rs: 0, lt: 0, lastIn: realNow() }); });

@@ -205,6 +205,10 @@ const PROTO = 1, TICK = 1000 / 60, PFX = 'ebf1', MAXP = 6;
 // 通信の道：dc＝直接（PeerJS）、rt＝近くの中継（Supabase Realtime）、mq＝遠い中継（公開MQTTサーバー）
 const PATHS = ['dc', 'rt', 'mq'], PNAME = { dc: '直接', rt: '中継', mq: '遠い中継' };
 const FAST = new Set(['f', 'i', 'snap', 'dd', 'quit', 'start', 'go']);   // 試合の通信（いちばん速い道で送る）
+// PeerJS の JSON の道は、16300 バイトより大きい通信は送れない（送れないうえに、その道がエラーになる）。大きくなりうるもの（状態の直し・部屋・開始）は、はかって大きければ中継で送る
+const BIG = new Set(['snap', 'room', 'start']);
+const ENCD = new TextEncoder();
+const tooBig = env => { if (!BIG.has(env.m && env.m.y)) return false; try { return ENCD.encode(JSON.stringify(env)).length > 15000; } catch (e) { return true; } };
 const RT_STEP = 80;   // 近くの中継で試合の通信を送る間隔（ms）。中継を使う人が多いときは、人数ぶんのばす（通数の上限を守るため）
 const Q = new URLSearchParams(location.search);
 const FORCE = PATHS.includes(Q.get('enetpath')) ? Q.get('enetpath') : '';   // ためし用：ホストが ?enetpath=rt などで道を決める（使えるときだけ）
@@ -255,7 +259,7 @@ const LS = {
   myIn: new Map(), myTop: 0, sentIn: -1, hostAck: -1, lf: -1, lastSendIn: 0, lastResendIn: 0, rlt: 0,
   budget: 0, lastReal: 0, lastStep: 0, lastFrameAt: 0, hh: new Map(), gh: new Map(),
   snapReq: false, snapPend: -1, fixes: 0, desync: 0, err: 0, endT: -1, deadAt: [], leftK: [], rank: null, specId: null,
-  stats: { steps: 0, stall: 0, ms: 0, frames: 0, wait: 0 }
+  stats: { steps: 0, stall: 0, ms: 0, frames: 0, wait: 0, slow: 0 }
 };
 const idOfK = k => k === LS.meK ? 'p1' : 'f' + k;            // 名簿の番号 → World の中の ID
 const cid = id => id === 'p1' ? 'f' + LS.meK : id;           // World の中の ID → だれの端末でも同じ ID
@@ -340,7 +344,7 @@ function produceInput(T) {
     if (LS.host) LS.inb[LS.slot].set(x, v); else { LS.myIn.set(x, v); LS.myTop = x; }
   }
   LS.lastTgt = tgt; LS.lastInp = inp;
-  if (LS.host) hostFinalize(); else sendInputs(false);
+  if (LS.host) hostFinalize();   // 参加者の入力は、このフレームのステップがおわってから、まとめて送る
 }
 // ホスト：2秒ごとに、通信の速さ（往復の時間＋まとめて送る待ち）と、入力を待って止まった回数から D を決めなおして、全員に知らせる。
 // 大きくするのはすぐ、小さくするのはゆっくり（ただし、速い道に乗りかえたときは、ちがいの半分ずつ早めに）
@@ -349,8 +353,11 @@ function adaptD(now) {
   LS.dT = now;
   const R0 = KN.room, rt = Math.max(0, ...(R0 ? R0.mem.filter(m => m.id !== MYID && LS.gs.has(m.id)).map(m => m.eff || m.rtt || 0) : [0]));
   let want = Math.max(4, Math.min(40, Math.ceil((rt + 50) / TICK)));
-  const waits = LS.stats.wait - LS.dWait; LS.dWait = LS.stats.wait;
+  let waits = LS.stats.wait - LS.dWait, slow = LS.stats.slow - (LS.dSlow || 0); LS.dWait = LS.stats.wait; LS.dSlow = LS.stats.slow;
+  for (const g of LS.gs.values()) { waits = Math.max(waits, g.w || 0); slow = Math.max(slow, g.sl || 0); g.w = 0; g.sl = 0; }
   if (waits > 20) want = Math.max(want, LS.D + 3);
+  else if (waits > 10) want = Math.max(want, LS.D + 1);   // ときどき止まる：少しだけ大きく（止まるより、少しおくれるほうが気にならない）
+  else if (slow > 40) want = Math.max(want, LS.D + 1);   // 2秒のうち 1/3 ほど、フレームが少なくてゆっくりにしていた
   if (want > LS.D) { LS.dLow = 0; LS.dFast = false; setD(Math.min(40, want)); }
   else if (want < LS.D - 2 && waits < 3) {
     if (LS.dFast) { LS.dLow = 0; setD(Math.max(want, LS.D - Math.max(2, Math.ceil((LS.D - want) / 2)))); }
@@ -389,7 +396,7 @@ function sendFrames(force) {
   for (const g of LS.gs.values()) {
     const p = net.path(g.id), hold = p === 'rt' && !force && !g.kick && now - g.lt < gap - 8;
     let from;
-    if (top > g.sent) { if (hold) continue; from = g.sent + 1; }
+    if (top > g.sent) { if (hold) continue; from = p === 'dc' && top - g.ack <= 48 ? g.ack + 1 : g.sent + 1; }   // 直接のときは、まだ届いたと言われていない分も
     else if (g.ack < g.sent && (force || now - Math.max(g.rs, g.lt) > 300)) { if (hold) continue; from = g.ack + 1; g.rs = now; }   // 送ってから0.3秒たっても届いたと返事がないとき、もう一度
     else continue;
     if (p !== 'mq') {
@@ -411,13 +418,13 @@ function sendFrames(force) {
 }
 function sendInputs(force) {
   const now = realNow(), top = LS.myTop;
+  const p = net.path();
   let from;
-  if (top > LS.sentIn) from = LS.sentIn + 1;
+  if (top > LS.sentIn) from = p === 'dc' && top - LS.hostAck <= 48 ? LS.hostAck + 1 : LS.sentIn + 1;   // 直接のときは、まだ届いたと言われていない分も（1つ遅れても止まらない）
   else if (LS.hostAck < LS.sentIn && (force || now - LS.lastResendIn > 300)) { from = LS.hostAck + 1; LS.lastResendIn = now; }
   else return;
   from = Math.max(from, LS.D0);
   if (!force) {   // 中継のときは少しまとめる（近くの中継はホストが決めた間隔で）
-    const p = net.path();
     if (p === 'rt' && now - LS.lastSendIn < ((net.L && net.L.gap) || RT_STEP) - 8) return;
     if (p === 'mq' && top - from < 2 && now - LS.lastSendIn < 50) return;
   }
@@ -456,7 +463,8 @@ function onFrames(m) {
   while (LS.lf + 1 < LS.tick || LS.frames.has(LS.lf + 1)) LS.lf++;
   const k = typeof m.k === 'number' ? m.k : (m.ks && typeof m.ks[LS.slot] === 'number' ? m.ks[LS.slot] : -1);
   if (k > LS.hostAck) { LS.hostAck = k; for (const T of LS.myIn.keys()) if (T <= k) LS.myIn.delete(T); }
-  if (Number.isInteger(m.D)) LS.D = clampN(m.D, 2, 40);   // 入力のおくれ（ホストが決める）
+  const e = m.a + m.d.length;   // 入力のおくれ（ホストが決める）。順番が入れかわって届いた古いものでは、もどさない
+  if (Number.isInteger(m.D) && e >= (LS.dN || 0)) { LS.dN = e; LS.D = clampN(m.D, 2, 40); }
   LS.lastFrameAt = realNow();
 }
 
@@ -564,12 +572,17 @@ const DBG = Q.has('enetdbg');
 function checkHash(T) {
   const h = stateHash();
   if (DBG) { LS.dbg = LS.dbg || new Map(); LS.dbg.set(T, JSON.stringify(capSnap())); if (LS.dbg.size > 40) LS.dbg.delete(LS.dbg.keys().next().value); }
-  if (!LS.host) { net.send({ y: 'h', n: T, h }); return; }
+  if (!LS.host) {
+    const st = LS.stats, w = st.wait - (LS.repW || 0), sl = st.slow - (LS.repS || 0); LS.repW = st.wait; LS.repS = st.slow;
+    net.send({ y: 'h', n: T, h, w, sl }); return;
+  }
   LS.hh.set(T, h); LS.hh.delete(T - 1800);
   const pend = LS.gh.get(T); if (pend) { LS.gh.delete(T); pend.forEach(x => cmpHash(T, x[0], x[1])); }
 }
 function onHash(m, from) {
   if (!LS.on || !LS.host || typeof m.n !== 'number') return;
+  const g = LS.gs.get(from);
+  if (g) { if (Number.isInteger(m.w) && m.w > 0) g.w = (g.w || 0) + Math.min(m.w, 600); if (Number.isInteger(m.sl) && m.sl > 0) g.sl = (g.sl || 0) + Math.min(m.sl, 600); }
   if (LS.hh.has(m.n)) cmpHash(m.n, from, m.h);
   else if (m.n >= LS.tick - 1) { const a = LS.gh.get(m.n) || []; a.push([from, m.h]); LS.gh.set(m.n, a); }
 }
@@ -896,7 +909,7 @@ async function linkHost(code, onMsg) {
   };
   L.setWant = (id, p) => { const g = L.gs.get(id); if (g) g.want = p; };
   function put(p, id, env) {
-    if (p === 'dc') { const g = L.gs.get(id); if (!dcOk(g)) return false; try { g.dc.send(env); return true; } catch (e) { return false; } }
+    if (p === 'dc') { const g = L.gs.get(id); if (!dcOk(g) || tooBig(env)) return false; try { g.dc.send(env); return true; } catch (e) { return false; } }
     if (p === 'rt') return RT.pub(rtn(id), env);
     return false;
   }
@@ -939,7 +952,8 @@ async function linkGuest(code, onMsg) {
   function connect() {
     if (L.closed || !L.peer || L.peer.destroyed) return;
     clearTimeout(L.rt);
-    let c; try { c = L.peer.connect(`${PFX}-${code}`, { reliable: true, serialization: 'json' }); } catch (e) { L.rt = setTimeout(connect, 5000); return; }
+    // 直接の道は、順番を待たずに届いたものからすぐ使う（1つ遅れても、あとのものが止まらない。足りない分は次の通信にも入れて送る）
+    let c; try { c = L.peer.connect(`${PFX}-${code}`, { reliable: false, serialization: 'json' }); } catch (e) { L.rt = setTimeout(connect, 5000); return; }
     const lost = () => { clearTimeout(to); if (L.dc !== c && L.pend !== c) return; if (L.dc === c) L.dc = null; L.pend = null; L.fails++; if (!L.closed) L.rt = setTimeout(connect, L.fails < 3 ? 2500 : 12000); };
     const to = setTimeout(() => { if (!c.open) { try { c.close(); } catch (e) {} lost(); } }, 15000);
     L.pend = c;
@@ -963,7 +977,7 @@ async function linkGuest(code, onMsg) {
   // 試合の通信を送る道（ホストが知らせてきた道。使えないときは、直接か遠い中継）
   L.path = () => { const w = L.want; if (w === 'dc' && dcOk()) return 'dc'; if (w === 'rt' && RT.ready(rtName)) return 'rt'; if (w === 'mq') return 'mq'; return dcOk() ? 'dc' : 'mq'; };
   function put(p, env) {
-    if (p === 'dc') { if (!dcOk()) return false; try { L.dc.send(env); return true; } catch (e) { return false; } }
+    if (p === 'dc') { if (!dcOk() || tooBig(env)) return false; try { L.dc.send(env); return true; } catch (e) { return false; } }
     if (p === 'rt') return RT.pub(rtName, env);
     if (p === 'mq') return MQ.pub(tH, env) > 0;
     return false;
@@ -1191,7 +1205,7 @@ KN.beginLockstep = function (S) {
     myIn: new Map(), myTop: D - 1, sentIn: D - 1, hostAck: D - 1, lf: D - 1, lastSendIn: 0, lastResendIn: 0, rlt: 0,
     budget: 0, lastReal: realNow(), lastStep: realNow(), lastFrameAt: realNow(), hh: new Map(), gh: new Map(),
     snapReq: false, snapPend: -1, fixes: 0, desync: 0, err: 0, endT: -1, deadAt: list.map(() => -1), leftK: list.map(() => false), rank: null, specId: null,
-    stats: { steps: 0, stall: 0, ms: 0, frames: 0, wait: 0 }
+    stats: { steps: 0, stall: 0, ms: 0, frames: 0, wait: 0, slow: 0 }, repW: 0, repS: 0, dSlow: 0, dN: 0
   });
   if (KN.host && KN.room) KN.room.mem.forEach(m => { const j = hk.findIndex(k => list[k].id === m.id); if (m.id !== MYID && j >= 0) LS.gs.set(m.id, { id: m.id, slot: j, sent: D - 1, ack: D - 1, rs: 0, lt: 0, lastIn: realNow() }); });
   try { setRear(false); buildWazaButtons(w.get('p1')); Snd.init(); Snd.play('start'); } catch (e) {}
@@ -1238,17 +1252,33 @@ window.frame = function (now) {
   requestAnimationFrame(window.frame);
   netFrame(now);
 };
+// 描くのが重い端末：フレームの間隔が長い（1秒に40回くらいより少ない）ことが続いたら、画面のこまかさを少しずつ下げる（1まで。もどさない）
+const PRF = { ema: TICK, t: 0 };
+function perfAdapt(el) {
+  const ms = Math.min(el, 100); PRF.ema += (ms - PRF.ema) * 0.05; PRF.t += ms;
+  if (PRF.t < 1500) return;
+  PRF.t = 0;
+  const rd = R.renderer, cur = rd.getPixelRatio();
+  if (PRF.ema > 24 && cur > 1) { rd.setPixelRatio(Math.max(1, cur - 0.25)); PRF.ema = TICK; }
+}
 function netFrame(now) {
   const dt = Math.min(.1, (now - (G.last || now)) / 1000); G.last = now;
   LS.stats.frames++;
   const t = realNow();
   const el = Math.min(t - LS.lastReal, 500); LS.lastReal = t;
-  LS.budget = Math.min(LS.budget + el, Math.max(TICK * 6, el + TICK * 2));
-  // 遅れているときは速く進める（届いているフレームが多いほど）。描くのが遅い端末では、1回に何ステップも進める
-  let ahead = 0; if (!LS.host) { let x = LS.tick; while (LS.frames.has(x)) x++; ahead = x - LS.tick; }
-  if (ahead > LS.D + 6) LS.budget += TICK * Math.min(4, Math.max(1, Math.floor((ahead - LS.D) / 8)));
-  let maxSteps = Math.min(15, Math.max(4, Math.ceil(el / TICK) + 1));
-  if (ahead > 20) maxSteps = Math.max(maxSteps, 8);
+  try { perfAdapt(el); } catch (e) {}
+  // どこまでフレームが届いているか（ホストは、まとめおわったところまで）
+  let ahead; if (LS.host) ahead = LS.nf - LS.tick; else { let x = LS.tick; while (LS.frames.has(x)) x++; ahead = x - LS.tick; }
+  // なめらかに進める：届いたフレームがへってきたら少しゆっくり（止まるのをへらす）。参加者は、ためすぎたら少し速く（ホストの速さが基準）。
+  // 大きくおくれているときは、おくれに合わせて速く（最大5倍）。止まったあとは一気に進めず、1フレームに1ステップ多いくらいで追いつく
+  const BUF = LS.host ? 1 : 2;
+  let rate = 1;
+  if (ahead > LS.D + 6) rate = 1 + Math.min(4, (ahead - LS.D - 6) / 10);
+  else if (ahead < BUF) { rate = 0.92; LS.stats.slow++; }
+  else if (!LS.host && ahead > BUF + 3 && net.path() === 'dc') rate = 1.04;   // 中継のときは、まとめて届くのでそのまま（通数がふえないように）
+  LS.budget = Math.min(LS.budget + el * rate, Math.max(TICK * 6, el * rate + TICK * 2));
+  let maxSteps = Math.min(15, Math.max(2, Math.ceil(el * rate / TICK) + 1));
+  if (ahead > LS.D + 6) maxSteps = Math.max(maxSteps, 8);
   let steps = 0;
   while (LS.on && LS.budget >= TICK - 0.5 && steps < maxSteps && canStep(LS.tick)) { stepOnce(); LS.budget -= TICK; steps++; }
   if (!LS.on) return;
