@@ -16876,6 +16876,16 @@ select distinct r.id, s.id, 0 from public.mp_routes r cross join lateral unnest(
 on conflict do nothing;
 alter table public.mp_landreq enable row level security;
 alter table public.mp_stopuse enable row level security;
+-- ダイヤの取り消し（系統ごと・変える前の列車。新しい20回分）
+create table if not exists public.mp_dia_hist (
+  id     bigserial primary key,
+  route  bigint not null references public.mp_routes(id) on delete cascade,
+  what   text not null,                -- 何をしたか（「列車 101M を直した」など）
+  trains jsonb not null,               -- 変える前の列車（時刻の計算の分はのぞく）
+  at     timestamptz not null default now()
+);
+create index if not exists mp_dia_hist_r on public.mp_dia_hist (route, id desc);
+alter table public.mp_dia_hist enable row level security;
 alter table public.mp_chunks enable row level security;
 alter table public.mp_places enable row level security;
 alter table public.mp_centers enable row level security;
@@ -18526,6 +18536,8 @@ begin
            legs = lg, ok = true, why = null, runt = '{}'::jsonb, catch = null
      where id = p_id;
     rid := p_id;
+    -- 駅の順を変えたら、それより前のダイヤにはもどせない
+    if r.stops is distinct from p_stops then delete from mp_dia_hist where route = rid; end if;
     -- 駅が変わったら、列車の指定（採時駅・通過）のうち、もうない駅の分を消す
     update mp_trains set skip = array(select x from unnest(skip) x where x = any(p_stops)),
            tt = coalesce((select jsonb_object_agg(k, v) from jsonb_each(tt) e(k, v) where k::bigint = any(p_stops)), '{}'::jsonb)
@@ -18687,6 +18699,38 @@ begin
   update mp_trains set bad = true where route = rid and form is null;
 end $$;
 
+-- ダイヤの取り消し：変える前の列車をおぼえる（系統ごとに新しい20回分）。時刻の計算の分（sched・warn・bad）はのぞく
+create or replace function public._mp_dia_snap(rid bigint, what text) returns void
+language plpgsql set search_path = public as $$
+begin
+  insert into mp_dia_hist(route, what, trains)
+  values (rid, left(what, 80), coalesce((select jsonb_agg(to_jsonb(t) - 'sched' - 'warn' - 'bad' order by t.id) from mp_trains t where t.route = rid), '[]'::jsonb));
+  delete from mp_dia_hist h where h.route = rid and h.id not in (select x.id from mp_dia_hist x where x.route = rid order by x.id desc limit 20);
+end $$;
+-- ダイヤの取り消し：いちばん新しい操作の前にもどす（系統の持ち主）
+create or replace function public.mp_dia_undo(p_route bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); r mp_routes; h mp_dia_hist; j jsonb; t mp_trains; n int := 0;
+begin
+  perform _mp_ok(u);
+  select * into r from mp_routes where id = p_route for update;
+  if not found or not _mp_mine(u, r.own_u, r.own_c) then raise exception '系統が見つかりません'; end if;
+  select * into h from mp_dia_hist where route = p_route order by id desc limit 1;
+  if not found then raise exception 'もどせる操作がありません'; end if;
+  delete from mp_trains where route = p_route;
+  for j in select * from jsonb_array_elements(h.trains) loop
+    t := jsonb_populate_record(null::mp_trains, j || jsonb_build_object('route', p_route, 'sched', '[]'::jsonb, 'bad', false));
+    -- もうない編成・駅ははずす
+    if t.form is not null and not exists (select 1 from mp_forms f where f.id = t.form and f.own_u is not distinct from r.own_u and f.own_c is not distinct from r.own_c) then t.form := null; end if;
+    t.skip := coalesce(array(select x from unnest(t.skip) x where x = any(r.stops)), '{}');
+    insert into mp_trains select t.*;
+    n := n + 1;
+  end loop;
+  delete from mp_dia_hist where id = h.id;
+  perform _mp_resched(p_route);
+  perform _mp_chg('route', p_route, 'set', null);
+  return jsonb_build_object('what', h.what, 'n', n, 'left', (select count(*) from mp_dia_hist where route = p_route));
+end $$;
 -- 列車をつくる・直す。p_tt：採時駅の指定 {駅: {a, d, t}}。p_skip：通過する駅
 create or replace function public.mp_train_save(p_id bigint, p_route bigint, p_dir int, p_num text, p_kind text, p_dep int, p_form bigint, p_tt jsonb, p_skip bigint[], p_as text) returns jsonb
 language plpgsql security definer set search_path = public as $$
@@ -18709,8 +18753,10 @@ begin
     tt_ := tt_ || jsonb_build_object(k, jsonb_strip_nulls(jsonb_build_object('a', (v ->> 'a')::int, 'd', (v ->> 'd')::int, 't', (v ->> 't')::int)));
   end loop;
   select count(*) into n from mp_trains where route = p_route;
+  if p_id is null and n >= 400 then raise exception '1つの系統の列車は400本までです'; end if;
+  if p_id is not null and not exists (select 1 from mp_trains where id = p_id and route = p_route) then raise exception '列車が見つかりません'; end if;
+  perform _mp_dia_snap(p_route, format(case when p_id is null then '列車 %s を足した' else '列車 %s を直した' end, left(trim(p_num), 12)));
   if p_id is null then
-    if n >= 400 then raise exception '1つの系統の列車は400本までです'; end if;
     insert into mp_trains(route, dir, num, kind, dep, form, tt, skip)
     values (p_route, case when p_dir = -1 then -1 else 1 end, left(trim(p_num), 12), left(coalesce(nullif(trim(p_kind), ''), '普通'), 8), p_dep, p_form, tt_,
             coalesce(array(select x from unnest(p_skip) x where x = any(r.stops)), '{}'))
@@ -18738,6 +18784,7 @@ begin
   select count(*) into have from mp_trains where route = p_route;
   if have + (p_to - p_from) / (p_every * 60) + 1 > 400 then raise exception '1つの系統の列車は400本までです'; end if;
   base := case when p_dir = -1 then 2 else 1 end;
+  perform _mp_dia_snap(p_route, format('列車を %s本 まとめて足した', (p_to - p_from) / (p_every * 60) + 1));
   t := p_from;
   while t <= p_to loop
     n := n + 1;
@@ -18755,6 +18802,9 @@ begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
   rids := array(select distinct t.route from mp_trains t join mp_routes r on r.id = t.route where t.id = any(p_ids) and r.own_u is not distinct from pa.pu and r.own_c is not distinct from pa.pc);
+  foreach rr in array rids loop
+    perform _mp_dia_snap(rr, format('列車を %s本 消した', (select count(*) from mp_trains where route = rr and id = any(p_ids))));
+  end loop;
   delete from mp_trains t using mp_routes r where r.id = t.route and t.id = any(p_ids) and r.own_u is not distinct from pa.pu and r.own_c is not distinct from pa.pc;
   foreach rr in array rids loop perform _mp_resched(rr); end loop;
   return jsonb_build_object('ok', true);
@@ -18771,12 +18821,17 @@ begin
   mine := _mp_mine(u, r.own_u, r.own_c);
   return jsonb_build_object('id', r.id, 'kind', r.kind, 'name', r.name, 'color', r.color, 'mine', mine, 'ok', r.ok, 'why', r.why, 'dwell', r.dwell,
     'owner', _mp_pname(r.own_u, r.own_c, false), 'timing', to_jsonb(r.timing), 'last', r.last,
+    'undo', case when mine then (select jsonb_build_object('what', h.what, 'at', h.at, 'n', (select count(*) from mp_dia_hist x where x.route = r.id))
+                                   from mp_dia_hist h where h.route = r.id order by h.id desc limit 1) end,
     'stops', (select jsonb_agg(jsonb_build_object('id', s.id, 'name', s.name, 'tracks', s.tracks, 'plat', s.plat) order by o) from unnest(r.stops) with ordinality z(sid, o) join mp_stations s on s.id = z.sid),
     'km', (select jsonb_agg(round((coalesce((select sum((l ->> 'd')::real) from jsonb_array_elements(r.legs) with ordinality q(l, k) where k < o), 0) / 1000)::numeric, 2) order by o) from unnest(r.stops) with ordinality z(sid, o)),
     'legs', (select jsonb_agg(jsonb_build_object('d', l -> 'd', 'e', l -> 'e', 's', l -> 's', 'g', l -> 'g')) from jsonb_array_elements(r.legs) l),
     'trains', (select coalesce(jsonb_agg(jsonb_build_object('id', t.id, 'dir', t.dir, 'num', t.num, 'kind', t.kind, 'dep', t.dep, 'form', t.form, 'tt', t.tt, 'skip', to_jsonb(t.skip),
-                 'sched', t.sched, 'warn', case when mine then t.warn end, 'fname', (select name from mp_forms where id = t.form)) order by t.dir desc, t.dep), '[]'::jsonb)
-               from mp_trains t where t.route = r.id));
+                 'sched', t.sched, 'warn', case when mine then t.warn end, 'fname', (select name from mp_forms where id = t.form),
+                 'fser', fi.ser, 'fn', fi.n) order by t.dir desc, t.dep), '[]'::jsonb)   -- 編成の形式（系列）と両数（列車一覧の絞り込み）
+               from mp_trains t left join lateral (select string_agg(distinct se.name, '+') ser, count(*) n from mp_cars c join mp_types ty on ty.code = c.type join mp_series se on se.code = ty.series
+                                                   where t.form is not null and c.form = t.form) fi on true
+              where t.route = r.id));
 end $$;
 -- 系統の一覧（自分の名義 / 地図の範囲）
 create or replace function public.mp_routes_list(p_as text) returns jsonb
@@ -18807,6 +18862,7 @@ begin
     perf := _mp_form_perf(p_forms[i]);
     if (perf ->> 'rail')::boolean <> (r.kind = 'rail') then raise exception '%', case when r.kind = 'rail' then '鉄道の系統にはバスを使えません' else 'バスの系統には電車を使えません' end; end if;
   end loop;
+  perform _mp_dia_snap(p_route, '運用を自動で組んだ');
   -- ほかの系統で使っている編成は、その分も見る（ここでは、この系統の列車だけをわりあてなおす）
   update mp_trains set form = null where route = p_route;
   perform _mp_resched(p_route);
@@ -20695,24 +20751,25 @@ begin
             '_mp_bld_dem','_mp_bld_hit','_mp_bld_make','_mp_bld_people','_mp_bld_plan','_mp_bld_presets','_mp_bld_refresh','_mp_bld_shape',
             '_mp_bld_tick_day','_mp_bld_tick_hour','_mp_bus_path','_mp_busy_cells','_mp_catch','_mp_cell','_mp_chg','_mp_chimoku',
             '_mp_cho_at','_mp_cho_set_tiles','_mp_cho_text','_mp_cmuls','_mp_cval','_mp_dens','_mp_dep_cells','_mp_dep_dim',
-            '_mp_dep_tiles','_mp_dep_tiles_g','_mp_earn','_mp_edec','_mp_end','_mp_end_ang','_mp_fmtn','_mp_form_perf',
-            '_mp_form_rule','_mp_g','_mp_geom_ok','_mp_hms','_mp_hourf','_mp_land_fee','_mp_land_need','_mp_land_std',
-            '_mp_land_stop','_mp_lease_del','_mp_lease_quote','_mp_lease_set','_mp_leg_from','_mp_leg_time','_mp_len','_mp_line_cells',
-            '_mp_lock','_mp_mine','_mp_minr','_mp_npc_name','_mp_occ_set','_mp_ok','_mp_okey','_mp_parcel_label',
-            '_mp_party','_mp_pay','_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_proj','_mp_pub_cells','_mp_pub_of',
-            '_mp_rail_path','_mp_rate','_mp_renet','_mp_resched','_mp_rev','_mp_road_mul','_mp_road_v','_mp_road_w',
-            '_mp_room','_mp_route_catch','_mp_routes_fix','_mp_run','_mp_same','_mp_seg_blocked','_mp_seg_cells_arr','_mp_seg_chain',
-            '_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_struct_cells','_mp_sub',
-            '_mp_t49_from_tiles','_mp_t5','_mp_ters','_mp_thin','_mp_tick','_mp_tick_day','_mp_tick_hour','_mp_tiles',
-            '_mp_tmul','_mp_train_calc','_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim','_mp_vruns','_mp_world',
-            '_mp_zname','_mp_zone_rule','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state',
-            'mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set',
-            'mp_boot','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_list','mp_cho_get','mp_chunk_get',
-            'mp_dep_build','mp_dep_edit','mp_dia','mp_form_del','mp_form_set','mp_land_buy','mp_land_decide','mp_land_req',
-            'mp_land_req_del','mp_land_reqs','mp_ledger_page','mp_parcel_buy','mp_parcel_merge','mp_parcel_rent','mp_parcel_sell','mp_parcel_split',
-            'mp_poll','mp_route_del','mp_route_save','mp_routes_list','mp_seg_build','mp_seg_del','mp_seg_edit','mp_seg_join',
-            'mp_seg_opts','mp_seg_split','mp_spot','mp_sta_build','mp_sta_edit','mp_stop_lend','mp_train_autoform','mp_train_bulk',
-            'mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market','mp_unit_mine','mp_unit_set') loop
+            '_mp_dep_tiles','_mp_dep_tiles_g','_mp_dia_snap','_mp_earn','_mp_edec','_mp_end','_mp_end_ang','_mp_fmtn',
+            '_mp_form_perf','_mp_form_rule','_mp_g','_mp_geom_ok','_mp_hms','_mp_hourf','_mp_land_fee','_mp_land_need',
+            '_mp_land_std','_mp_land_stop','_mp_lease_del','_mp_lease_quote','_mp_lease_set','_mp_leg_from','_mp_leg_time','_mp_len',
+            '_mp_line_cells','_mp_lock','_mp_mine','_mp_minr','_mp_npc_name','_mp_occ_set','_mp_ok','_mp_okey',
+            '_mp_parcel_label','_mp_party','_mp_pay','_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_proj','_mp_pub_cells',
+            '_mp_pub_of','_mp_rail_path','_mp_rate','_mp_renet','_mp_resched','_mp_rev','_mp_road_mul','_mp_road_v',
+            '_mp_road_w','_mp_room','_mp_route_catch','_mp_routes_fix','_mp_run','_mp_same','_mp_seg_blocked','_mp_seg_cells_arr',
+            '_mp_seg_chain','_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_struct_cells',
+            '_mp_sub','_mp_t49_from_tiles','_mp_t5','_mp_ters','_mp_thin','_mp_tick','_mp_tick_day','_mp_tick_hour',
+            '_mp_tiles','_mp_tmul','_mp_train_calc','_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim','_mp_vruns',
+            '_mp_world','_mp_zname','_mp_zone_rule','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_place_at','mp_admin_rates','mp_admin_rename',
+            'mp_admin_state','mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote',
+            'mp_bld_set','mp_boot','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_list','mp_cho_get',
+            'mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia','mp_dia_undo','mp_form_del','mp_form_set','mp_land_buy',
+            'mp_land_decide','mp_land_req','mp_land_req_del','mp_land_reqs','mp_ledger_page','mp_parcel_buy','mp_parcel_merge','mp_parcel_rent',
+            'mp_parcel_sell','mp_parcel_split','mp_poll','mp_route_del','mp_route_save','mp_routes_list','mp_seg_build','mp_seg_del',
+            'mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_split','mp_spot','mp_sta_build','mp_sta_edit','mp_stop_lend',
+            'mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market','mp_unit_mine',
+            'mp_unit_set') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
       execute format('revoke all on function %s from authenticated', f.sig);

@@ -2116,6 +2116,7 @@ const kindL = k => k === '普通' ? '各停' : k;   // 種別の見せ方（デ�
 async function openDia(rid) {
   const m = modal(['系統', '<p class="muted small">読みこんでいます…</p>'], null, 'mp-wide');
   let D = null, tab = 'dia';
+  const lf = { kinds: new Set(), sers: new Set(), dirs: new Set(), sort: 'dep' };   // 列車一覧の絞り込み（空はぜんぶ）・並べ替え
   const load = async () => { D = await api('mp_dia', { p_route: rid }); if (!D) return m.close(); S.routeHi = { legs: D.legs, color: D.color }; S.dirty = true; draw(); };
   m.onclose = () => { S.routeHi = null; S.dirty = true; };
   const draw = () => {
@@ -2125,13 +2126,44 @@ async function openDia(rid) {
       <div class="tabs-s" style="margin-top:8px">${[['dia', 'ダイヤグラム'], ['tt1', '時刻表（下り）'], ['tt2', '時刻表（上り）'], ['list', '列車']].map(t => `<button data-tab="${t[0]}" class="${tab === t[0] ? 'on' : ''}">${t[1]}</button>`).join('')}</div>
       <div data-pane style="margin-top:8px"></div>
       ${D.mine ? `<div class="mp-row"><button class="btn main" data-add>＋ 列車</button><button class="btn" data-bulk>＋ まとめて</button><button class="btn" data-auto>運用を自動で組む</button>
-        <button class="btn" data-edit>駅の順を直す</button><button class="btn" data-del>系統を消す</button></div>` : ''}`, b => {
+        <button class="btn" data-edit>駅の順を直す</button><button class="btn" data-del>系統を消す</button></div>
+        <div class="mp-row"><button class="btn" style="flex:none" data-undo ${D.undo ? '' : 'disabled'}>↶ 取り消す</button>${D.undo ? `<span class="small muted"><span>もどす：</span><span>${esc(D.undo.what)}</span><span>（${D.undo.n}回もどせます）</span></span>` : '<span class="small muted">もどせる操作はありません</span>'}</div>` : ''}`, b => {
       b.querySelectorAll('[data-tab]').forEach(x => x.onclick = () => { tab = x.dataset.tab; draw(); });
+      { const un = b.querySelector('[data-undo]'); if (un) un.onclick = async () => {
+        if (!D.undo || !confirm(T('この操作を取り消して、その前のダイヤにもどしますか？') + '\n' + T(D.undo.what))) return;
+        const r = await api('mp_dia_undo', { p_route: rid }); if (r) { toast(T('取り消しました') + SEP() + '（' + T(r.what) + '）'); load(); }
+      }; }
       const pane = b.querySelector('[data-pane]');
       if (tab === 'dia') diaCanvas(pane, D, t => trainEdit(D, t, load));
       if (tab === 'tt1' || tab === 'tt2') pane.innerHTML = ttTable(D, tab === 'tt1' ? 1 : -1, idx);
       if (tab === 'list') {
-        pane.innerHTML = `<div class="mp-list">${D.trains.map(t => `<button class="mp-item" style="text-align:left" data-t="${t.id}"><b>${esc(t.num)}</b> <span>${esc(kindL(t.kind))}・${t.dir === 1 ? '下り' : '上り'}・${hms(t.dep)}発</span>・${t.fname ? `<span>${esc(t.fname)}</span>` : '<span class="mp-warn">編成なし</span>'}${t.warn ? `<br><small class="mp-warn">${warnH(t.warn)}</small>` : ''}</button>`).join('') || '<p class="muted small">列車はまだありません</p>'}</div>`;
+        // 形式（編成の系列・両数）・種別・向きで絞りこむ。発車時刻・列車番号・種別・形式で並べかえる
+        const serOf = t => t.fser ? t.fser + '|' + t.fn : '';   // 形式（系列）と両数
+        const serH = k => { if (!k) return '<span>編成なし</span>'; const [a, n] = k.split('|'); return `<span>${esc(a)}</span>・<span>${D.kind === 'bus' ? `${n}台` : `${n}両`}</span>`; };
+        const KO = ['普通', '快速', '急行', '特急', '回送'], ko = k => { const i = KO.indexOf(k); return i < 0 ? 99 : i; };
+        const kinds = [...new Set(D.trains.map(t => t.kind))].sort((a, b) => ko(a) - ko(b) || a.localeCompare(b, 'ja'));
+        const sers = [...new Set(D.trains.map(serOf))].sort((a, b) => (a === '') - (b === '') || a.localeCompare(b, 'ja', { numeric: true }));
+        for (const k of [...lf.kinds]) if (!kinds.includes(k)) lf.kinds.delete(k);
+        for (const k of [...lf.sers]) if (!sers.includes(k)) lf.sers.delete(k);
+        const pass = t => (!lf.kinds.size || lf.kinds.has(t.kind)) && (!lf.sers.size || lf.sers.has(serOf(t))) && (!lf.dirs.size || lf.dirs.has(t.dir));
+        const byNum = (a, b) => String(a.num).localeCompare(String(b.num), 'ja', { numeric: true });
+        const cmp = { dep: (a, b) => a.dep - b.dep || byNum(a, b), num: (a, b) => byNum(a, b) || a.dep - b.dep, kind: (a, b) => ko(a.kind) - ko(b.kind) || a.dep - b.dep,
+                      ser: (a, b) => (serOf(a) === '') - (serOf(b) === '') || serOf(a).localeCompare(serOf(b), 'ja', { numeric: true }) || a.dep - b.dep }[lf.sort];
+        const L = D.trains.filter(pass).sort(cmp);
+        const chip = (g, v, label, on) => `<button data-${g}="${esc(String(v))}" class="${on ? 'on' : ''}">${label}</button>`;
+        const row = (title, g, all, items) => `<div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">${title}</span><span class="mp-seg" style="flex-wrap:wrap">${chip(g, '*', 'すべて', !all.size)}${items.join('')}</span></div>`;
+        pane.innerHTML = `${row('種別', 'fk', lf.kinds, kinds.map(k => chip('fk', k, `<span>${esc(kindL(k))}</span>`, lf.kinds.has(k))))}
+          ${row('形式', 'fs', lf.sers, sers.map(k => chip('fs', k, serH(k), lf.sers.has(k))))}
+          ${row('向き', 'fd', lf.dirs, [chip('fd', 1, '下り', lf.dirs.has(1)), chip('fd', -1, '上り', lf.dirs.has(-1))])}
+          <div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">並べかえ</span><select class="mp-inp" style="width:auto" data-sort>${[['dep', '発車時刻'], ['num', '列車番号'], ['kind', '種別'], ['ser', '形式']].map(o => `<option value="${o[0]}" ${lf.sort === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>
+            <span class="muted">${L.length} / ${D.trains.length}本</span></div>
+          <div class="mp-list">${L.map(t => `<button class="mp-item" style="text-align:left" data-t="${t.id}"><b>${esc(t.num)}</b> <span>${esc(kindL(t.kind))}・${t.dir === 1 ? '下り' : '上り'}・${hms(t.dep)}発</span>・${t.fname ? `<span>${esc(t.fname)}</span>${t.fser ? `<small class="muted">（${serH(serOf(t))}）</small>` : ''}` : '<span class="mp-warn">編成なし</span>'}${t.warn ? `<br><small class="mp-warn">${warnH(t.warn)}</small>` : ''}</button>`).join('')
+            || `<p class="muted small">${D.trains.length ? '条件にあう列車はありません' : '列車はまだありません'}</p>`}</div>`;
+        const tog = (set, v) => { if (v === '*') set.clear(); else if (set.has(v)) set.delete(v); else set.add(v); draw(); };
+        pane.querySelectorAll('[data-fk]').forEach(x => x.onclick = () => tog(lf.kinds, x.dataset.fk));
+        pane.querySelectorAll('[data-fs]').forEach(x => x.onclick = () => tog(lf.sers, x.dataset.fs));
+        pane.querySelectorAll('[data-fd]').forEach(x => x.onclick = () => tog(lf.dirs, x.dataset.fd === '*' ? '*' : Number(x.dataset.fd)));
+        pane.querySelector('[data-sort]').onchange = e => { lf.sort = e.target.value; draw(); };
         pane.querySelectorAll('[data-t]').forEach(x => x.onclick = () => trainEdit(D, D.trains.find(t => t.id === Number(x.dataset.t)), load));
       }
       const q = k => b.querySelector(k);
