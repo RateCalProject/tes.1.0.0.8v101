@@ -1012,9 +1012,26 @@ function projSeg(s, x, y) {
   }
   return best;
 }
+// 駅・バス停をタップしたか：駅はホームの四角（描いた大きさ）と駅名のところ、バス停は丸。まわりは rpx の半分（画面の px）まで
 function nearSta(x, y, rpx) {
-  const it = S.vis; if (!it) return null; let best = null;
-  for (const s of it.stas.values()) { const d = Math.hypot(s.fx - x, s.fy - y) * S.cam.z; if (d < rpx + (s.k === 'rail' ? s.pl / 100 * S.cam.z : 0) && (!best || d < best.d)) best = { s, d }; }
+  const it = S.vis; if (!it) return null; let best = null; const z = S.cam.z, tol = rpx / 2;
+  for (const s of it.stas.values()) {
+    const dx = x - s.fx, dy = y - s.fy; let d;
+    if (s.k === 'rail') {
+      const L = Math.max(10, s.pl / 50 * z), Wd = Math.max(5, (0.22 * Math.max(1, s.tr) + 0.18) * z);   // drawStation と同じ（px）
+      const ca = Math.cos(s.a), sa = Math.sin(s.a), u = (dx * ca + dy * sa) * z, v = (-dx * sa + dy * ca) * z;
+      d = Math.hypot(Math.max(0, Math.abs(u) - L / 2), Math.max(0, Math.abs(v) - Wd / 2));
+      if (d > tol) {
+        if (z < 1.6) continue;
+        const lx = dx * z, ly = dy * z + Wd / 2 + 10, hw = Math.max(18, String(s.n || '').length * 7);   // 駅名のラベル（ホームの上）
+        if (Math.abs(lx) <= hw && Math.abs(ly) <= 10) d = tol; else continue;
+      }
+    } else {
+      d = Math.max(0, Math.hypot(dx, dy) * z - Math.max(3.5, 0.18 * z));
+      if (d > tol) continue;
+    }
+    if (!best || d < best.d) best = { s, d };
+  }
   return best;
 }
 function nearDep(x, y) {
