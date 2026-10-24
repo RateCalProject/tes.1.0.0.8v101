@@ -17050,6 +17050,42 @@ create table if not exists public.mp_thru (
 create unique index if not exists mp_thru_pair on public.mp_thru (coalesce(hu::text, ''), coalesce(hc, 0), coalesce(gu::text, ''), coalesce(gc, 0));
 create index if not exists mp_thru_g on public.mp_thru (gu, gc) where st = 'ok';
 alter table public.mp_thru enable row level security;
+-- t54k：学校・特殊工場・物流（トラック）。建物の事業（学校：生徒と授業料。工場・田畑・港：つくるもの・在庫・仕入れ・売上）
+create table if not exists public.mp_sc (
+  bld     bigint primary key references public.mp_blds(id) on delete cascade,
+  prod    text,                                -- つくるもの（品目。railcar は鉄道車両。学校は null）
+  grp     text,                                -- 学校の種類（es 小学校・jhs 中学校・hs 高校・univ 大学・voc 専門学校）
+  imp     boolean not null default true,       -- 材料が近くで買えないときは輸入する
+  lv      real not null default 1,             -- 授業料の水準（学校）・車両の値段の水準（鉄道車両工場）
+  x real not null, y real not null,            -- 建物のまん中（マス）
+  q_until timestamptz,                         -- 鉄道車両工場：この時刻まで注文の車両をつくっている
+  st      jsonb,                               -- 学校：生徒・定員・通える人など（1時間ごと）
+  at      timestamptz not null default now()
+);
+create index if not exists mp_sc_prod on public.mp_sc (prod) where prod is not null;
+create index if not exists mp_sc_grp on public.mp_sc (grp) where grp is not null;
+alter table public.mp_sc enable row level security;
+create table if not exists public.mp_stock (       -- 在庫（建物ごと・品目ごと）
+  bld  bigint not null references public.mp_blds(id) on delete cascade,
+  good text not null,
+  qty  numeric not null default 0 check (qty >= 0),
+  primary key (bld, good)
+);
+alter table public.mp_stock enable row level security;
+create table if not exists public.mp_sclog (       -- つくった・使った・仕入れた・売った・運んだ記録（1時間ごと。3日分）
+  id   bigserial primary key,
+  at   timestamptz not null,
+  bld  bigint not null,
+  k    text not null,      -- make つくった・use 使った・buy 仕入れ・sell 売った（工場へ）・imp 輸入・shop お店へ・mkt 市場へ・ship 運送費・cost 材料・人件費など・fee 授業料・rc 車両の注文
+  good text,
+  qty  numeric not null default 0,
+  amt  bigint not null default 0,
+  peer bigint,             -- 相手の建物
+  km   real
+);
+create index if not exists mp_sclog_b on public.mp_sclog (bld, at);
+create index if not exists mp_sclog_at on public.mp_sclog (at);
+alter table public.mp_sclog enable row level security;
 alter table public.mp_chunks enable row level security;
 alter table public.mp_places enable row level security;
 alter table public.mp_centers enable row level security;
@@ -17092,7 +17128,7 @@ on conflict (code) do nothing;
 create or replace function public._mp_rate(k text) returns numeric
 language sql stable set search_path = public as $$
   select coalesce((select (value::jsonb ->> k)::numeric from app_settings where key = 'mp_rates' and value::jsonb ? k),
-    (jsonb_build_object(
+    ((jsonb_build_object(
       'land_P', 200000, 'land_F', 120000, 'land_B', 150000, 'land_H', 90000, 'land_M', 25000, 'land_K', 7000,
       'dens_k', 0.2, 'road_mul', 1.25, 'sta_mul', 0.9, 'sta_r', 15,
       'lease', 0.001, 'lease_gov', 0.0005, 'prop_tax', 0.0001,
@@ -17102,7 +17138,11 @@ language sql stable set search_path = public as $$
       'up_rail', 1500, 'up_road', 300, 'up_sta', 50000, 'up_stop', 500, 'up_dep', 60000, 'up_bdep', 20000,
       'g_rail', 0.55, 'g_bus', 0.12, 'fare_base', 150, 'fare_km', 20, 'bus_fare', 220, 'bus_km', 15,
       'catch_rail', 20, 'catch_bus', 6, 'max_tiles', 600, 'grow', 0.0002, 'grow_sta', 0.0006, 'urb_k', 0.03, 'urb_sta', 0.02
-    ) ->> k)::numeric)
+    ) || jsonb_build_object(
+      -- t54k：品目の値段（1t・1kL・1台）・トラック（1t あたり：積みおろし＋1km）・輸入（値段の何倍）・市場に売る（何倍）・お店の食品・鉄道車両工場
+      'p_wheat', 40000, 'p_flour', 70000, 'p_food', 200000, 'p_ore', 25000, 'p_steel', 90000, 'p_car', 1500000, 'p_crude', 60000, 'p_chem', 120000, 'p_elec', 1000000,
+      'truck_base', 500, 'truck_km', 60, 'sc_imp', 1.2, 'sc_mkt', 0.85, 'sc_shop', 0.3, 'sc_food', 0.0002, 'sc_food_km', 30, 'sc_keep', 0.25, 'rc_parts', 0.45, 'rc_m2', 5000
+    )) ->> k)::numeric)
 $$;
 create or replace function public._mp_ok(u uuid) returns void
 language plpgsql stable set search_path = public as $$
@@ -17319,8 +17359,9 @@ $$;
 create or replace function public._mp_same(au uuid, ac int, ag boolean, bu uuid, bc int, bg boolean) returns boolean
 language sql immutable as $$ select (ag and bg) or (not ag and not bg and au is not distinct from bu and ac is not distinct from bc) $$;
 -- 記録の種類：運賃・家賃・使用料・維持費・税は「国土の事業」（所得に入る。維持費・使用料・税は所得からひく）。工事・土地・車両は「国土の買いもの」
+--   t54k：授業料・仕入れ（材料）・運送費も「国土の事業」
 create or replace function public._mp_g(k text) returns text
-language sql immutable as $$ select case when k in ('fare', 'rent', 'lease_in', 'upkeep', 'lease', 'tax', 'sales') then 'map_in' else 'map' end $$;
+language sql immutable as $$ select case when k in ('fare', 'rent', 'lease_in', 'upkeep', 'lease', 'tax', 'sales', 'tuition', 'goods', 'ship') then 'map_in' else 'map' end $$;
 -- 払う（国庫へ）：工事費・維持費・税・国の土地
 create or replace function public._mp_pay(pu uuid, pc int, gv boolean, amt bigint, k text, memo text) returns void
 language plpgsql set search_path = public as $$
@@ -17410,7 +17451,8 @@ begin
               'lease','lease_gov','fare_base','fare_km','bus_fare','bus_km','catch_rail','catch_bus','max_tiles','up_rail','up_road','up_sta','up_stop','up_dep','up_bdep','prop_tax','urb_k','urb_sta']) k),
     'ver', coalesce((select max(ver) from mp_changes), 0),
     'world', _mp_world(),
-    'bld', _mp_bld_presets(), 'zr', (select jsonb_object_agg(z, _mp_zone_rule(z)) from unnest(array['a','b','c','d','e','f','g','h','i']) z),
+    'bld', _mp_bld_presets(), 'goods', _mp_goods(), 'sck', _mp_sc_kinds(), 'rcp', _mp_sc_recipes(),
+    'scr', jsonb_build_object('rc_m2', _mp_rate('rc_m2'), 'rc_parts', _mp_rate('rc_parts'), 'imp', _mp_rate('sc_imp'), 'mkt', _mp_rate('sc_mkt')), 'zr', (select jsonb_object_agg(z, _mp_zone_rule(z)) from unnest(array['a','b','c','d','e','f','g','h','i']) z),
     'home', (select jsonb_build_object('text', _mp_home_text(h), 'x', h.x, 'y', h.y, 'bld', h.bld) from mp_homes h where h.u = _me())) into r;
   return r;
 end $$;
@@ -18251,11 +18293,12 @@ language sql stable set search_path = public as $$
       or exists (select 1 from jsonb_array_elements(t.cpl) c join mp_ops o on o.id = (c ->> 'op')::bigint where o.form = fid)
 $$;
 
--- 注文（1両から）。p_dry なら見つもり
-create or replace function public.mp_car_order(p_type text, p_n int, p_depot bigint, p_as text, p_dry boolean) returns jsonb
+-- 注文（1両から）。p_dry なら見つもり。p_maker：鉄道車両工場（t54k。null なら国のメーカー）
+drop function if exists public.mp_car_order(text, int, bigint, text, boolean);
+create or replace function public.mp_car_order(p_type text, p_n int, p_depot bigint, p_as text, p_dry boolean, p_maker bigint default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
 #variable_conflict use_column
-declare u uuid := _me(); pa record; t mp_types; d mp_depots; have int; k text; s int; i int; nums text[] := '{}'; cost bigint; cid bigint; fid bigint; hrs int; fnm text;
+declare u uuid := _me(); pa record; t mp_types; d mp_depots; have int; k text; s int; i int; nums text[] := '{}'; cost bigint; cid bigint; fid bigint; hrs int; fnm text; mk jsonb;
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
@@ -18274,16 +18317,22 @@ begin
   if t.num_from + s + p_n - 1 > t.num_to then raise exception 'この形式の車番がいっぱいです（%〜%）', t.num_from, t.num_to; end if;
   cost := t.price * p_n;
   hrs := case when t.role = 'Bus' then 3 else 6 end;
-  if p_dry then
-    return jsonb_build_object('cost', cost, 'nums', (select jsonb_agg(_mp_carnum(t, t.num_from + s + i)) from generate_series(0, p_n - 1) i), 'hours', hrs, 'upkeep', t.upkeep * p_n);
+  if p_maker is not null then   -- 鉄道車両工場（払い・鉄鋼はここで）
+    mk := _mp_maker_order(p_maker, pa.pu, pa.pc, array_fill(p_type, array[p_n]), p_dry);
+    cost := (mk ->> 'cost')::bigint; hrs := (mk ->> 'hours')::int;
   end if;
-  perform _mp_pay(pa.pu, pa.pc, false, cost, 'car', format('%s を %s両 注文', t.label, p_n));
+  if p_dry then
+    return jsonb_build_object('cost', cost, 'nums', (select jsonb_agg(_mp_carnum(t, t.num_from + s + i)) from generate_series(0, p_n - 1) i), 'hours', hrs, 'upkeep', t.upkeep * p_n,
+                              'maker', mk ->> 'maker', 'self', mk -> 'self', 'steel', mk -> 'steel');
+  end if;
+  if p_maker is null then perform _mp_pay(pa.pu, pa.pc, false, cost, 'car', format('%s を %s両 注文', t.label, p_n)); end if;
   insert into mp_serials(owner, type, n) values (k, p_type, s + p_n) on conflict (owner, type) do update set n = excluded.n;
   for i in 0..p_n - 1 loop
     insert into mp_cars(type, num, own_u, own_c, depot, heat, ac, toilet, busy_until, busy_kind, price)
-    values (p_type, _mp_carnum(t, t.num_from + s + i), pa.pu, pa.pc, p_depot, t.heat, t.ac, t.toilet, now() + make_interval(hours => hrs), 'deliver', t.price)
+    values (p_type, _mp_carnum(t, t.num_from + s + i), pa.pu, pa.pc, p_depot, t.heat, t.ac, t.toilet, now() + make_interval(hours => hrs), 'deliver', round(cost::numeric / p_n)::bigint)
     returning id into cid;
-    insert into mp_car_hist(car, k, num, type, ou, oc, d) values (cid, 'new', _mp_carnum(t, t.num_from + s + i), p_type, pa.pu, pa.pc, jsonb_build_object('dep', d.name));
+    insert into mp_car_hist(car, k, num, type, ou, oc, d) values (cid, 'new', _mp_carnum(t, t.num_from + s + i), p_type, pa.pu, pa.pc,
+      jsonb_build_object('dep', d.name) || case when mk is not null then jsonb_build_object('maker', mk ->> 'maker') else '{}'::jsonb end);
     nums := nums || _mp_carnum(t, t.num_from + s + i);
     -- バスは1台で1編成（編成番号は車番。同じ名前の編成があれば「*」をつける）
     if t.role = 'Bus' then
@@ -19543,7 +19592,8 @@ begin
   select * into r from mp_routes where id = rid;
   rr := _mp_rate(case when r.kind = 'rail' then 'catch_rail' else 'catch_bus' end);
   for s in select * from mp_stations where id = any(r.stops) loop
-    out := out || jsonb_build_object(s.id::text, round(_mp_catch(s.x / 100.0, s.y / 100.0, rr) + _mp_bld_people(s.x / 100.0, s.y / 100.0, rr)));
+    out := out || jsonb_build_object(s.id::text, round(_mp_catch(s.x / 100.0, s.y / 100.0, rr) + _mp_bld_people(s.x / 100.0, s.y / 100.0, rr)
+                                                     + _mp_sc_riders(s.x, s.y, s.kind, rr)));   -- t54k：学校の生徒
   end loop;
   update mp_routes set catch = out where id = rid;
   return out;
@@ -19690,6 +19740,8 @@ begin
   end loop;
   -- 建物：町の人の出入り・家賃・テナントの家賃・店などの売上
   perform _mp_bld_tick_hour(h);
+  -- 学校・工場・物流（t54k）。うまくいかなくても、ほかの1時間の分はそのまま
+  begin perform _mp_sc_tick_hour(h); exception when others then raise warning 'mp sc: %', sqlerrm; end;
 end $$;
 
 create or replace function public._mp_tick_day() returns void
@@ -19720,6 +19772,7 @@ begin
   delete from mp_hours where hour < now() - interval '35 days';
   delete from mp_changes where at < now() - interval '3 days';
   delete from mp_ledger where created_at < now() - interval '60 days';
+  delete from mp_sclog where at < now() - interval '3 days';
 end $$;
 
 -- cron から（毎時2分）。すんだ時刻を mp_state に覚えて、とんだ時間もうめる（12時間まで）
@@ -19789,7 +19842,8 @@ begin
   return (select jsonb_object_agg(kk, _mp_rate(kk)) from unnest(array['land_P','land_F','land_B','land_H','land_M','land_K','dens_k','road_mul','sta_mul','sta_r',
     'lease','lease_gov','prop_tax','rail','road','dbl_mul','elec','sta_base','sta_m','stop','dep_S','dep_M','dep_L','bdep_S','bdep_M',
     'up_rail','up_road','up_sta','up_stop','up_dep','up_bdep','g_rail','g_bus','fare_base','fare_km','bus_fare','bus_km','catch_rail','catch_bus',
-    'max_tiles','grow','grow_sta','urb_k','urb_sta']) kk);
+    'max_tiles','grow','grow_sta','urb_k','urb_sta',
+    'p_wheat','p_flour','p_food','p_ore','p_steel','p_car','p_crude','p_chem','p_elec','truck_base','truck_km','sc_imp','sc_mkt','sc_shop','sc_food','sc_food_km','sc_keep','rc_parts','rc_m2']) kk);
 end $$;
 -- 用途地域を塗る（p_z が null なら、もとにもどす）
 create or replace function public.mp_admin_zone(p_tiles int[], p_z text) returns jsonb
@@ -20852,37 +20906,50 @@ end $$;
 
 -- プリセット：k・名前 n・おもな用途 use・1部屋の広さ u（0 は1フロア1部屋）・1部屋だけ one・1階 g1・2階 g2 の用途・建てられる用途地域 z・
 --   床1㎡の工事費 cpm・階数 f0〜f1・筆の大きさ（区画）min〜max・形 sh・つけられるもの opt（shop1：1階を店舗に）・海のそば sea・国の建物 gov（t54g：プレイヤーは建てない）
+--   t54k：学校の種類 sc（_mp_sc_kinds）・特殊工場のつくるもの mk（_mp_sc_recipes。railcar は鉄道車両）・建てる画面の分けかた cat
 create or replace function public._mp_bld_presets() returns jsonb
 language sql immutable as $$
   select '[
-   {"k":"house","n":"一戸建て","use":"home","one":true,"z":"abcehi","cpm":300,"f0":1,"f1":3,"min":1,"max":6,"sh":["full","L"]},
-   {"k":"apart","n":"アパート","use":"home","u":40,"z":"abce","cpm":320,"f0":2,"f1":3,"min":2,"max":12,"sh":["full","slab","L"]},
-   {"k":"mansion","n":"マンション","use":"home","u":70,"z":"bcde","cpm":600,"f0":4,"f1":15,"min":4,"max":60,"sh":["slab","L","ko","ro","full"],"opt":["shop1"]},
-   {"k":"tower","n":"タワーマンション","use":"home","u":75,"z":"cd","cpm":900,"f0":20,"f1":45,"min":16,"max":200,"sh":["tower"],"opt":["shop1"]},
-   {"k":"shop","n":"店舗つき住宅","use":"home","u":50,"g1":"shop","z":"abcde","cpm":350,"f0":1,"f1":3,"min":1,"max":6,"sh":["full"]},
-   {"k":"zakkyo","n":"雑居ビル","use":"office","u":60,"g1":"shop","g2":"shop","z":"cd","cpm":650,"f0":3,"f1":10,"min":2,"max":12,"sh":["full","slab"]},
-   {"k":"office","n":"オフィスビル","use":"office","u":0,"z":"cd","cpm":800,"f0":5,"f1":30,"min":6,"max":120,"sh":["full","slab","L","tower"],"opt":["shop1"]},
-   {"k":"sky","n":"超高層ビル","use":"office","u":0,"g1":"shop","g2":"shop","z":"d","cpm":1100,"f0":30,"f1":60,"min":25,"max":400,"sh":["tower"]},
-   {"k":"mall","n":"ショッピングセンター","use":"shop","u":200,"z":"cde","cpm":450,"f0":1,"f1":4,"min":20,"max":1600,"sh":["full","slab","ro"]},
-   {"k":"factory","n":"工場","use":"factory","one":true,"z":"ef","cpm":250,"f0":1,"f1":2,"min":10,"max":1600,"sh":["full","slab"]},
-   {"k":"warehouse","n":"倉庫","use":"warehouse","one":true,"z":"efg","cpm":200,"f0":1,"f1":3,"min":4,"max":800,"sh":["full","slab"]},
-   {"k":"port","n":"港湾施設","use":"port","one":true,"z":"g","cpm":500,"f0":1,"f1":1,"min":10,"max":1600,"sh":["full"],"sea":true},
-   {"k":"farm","n":"田畑","use":"farm","one":true,"z":"h","cpm":10,"f0":0,"f1":0,"min":4,"max":1600,"sh":["full"]},
-   {"k":"parking","n":"駐車場","use":"parking","one":true,"z":"abcdefgh","cpm":30,"f0":0,"f1":0,"min":1,"max":400,"sh":["full"]},
-   {"k":"pkbld","n":"立体駐車場","use":"parking","u":0,"z":"bcdef","cpm":400,"f0":2,"f1":8,"min":6,"max":400,"sh":["full","slab"]},
+   {"k":"house","n":"一戸建て","use":"home","one":true,"z":"abcehi","cpm":300,"f0":1,"f1":3,"min":1,"max":6,"sh":["full","L"],"cat":"home"},
+   {"k":"apart","n":"アパート","use":"home","u":40,"z":"abce","cpm":320,"f0":2,"f1":3,"min":2,"max":12,"sh":["full","slab","L"],"cat":"home"},
+   {"k":"mansion","n":"マンション","use":"home","u":70,"z":"bcde","cpm":600,"f0":4,"f1":15,"min":4,"max":60,"sh":["slab","L","ko","ro","full"],"opt":["shop1"],"cat":"home"},
+   {"k":"tower","n":"タワーマンション","use":"home","u":75,"z":"cd","cpm":900,"f0":20,"f1":45,"min":16,"max":200,"sh":["tower"],"opt":["shop1"],"cat":"home"},
+   {"k":"shop","n":"店舗つき住宅","use":"home","u":50,"g1":"shop","z":"abcde","cpm":350,"f0":1,"f1":3,"min":1,"max":6,"sh":["full"],"cat":"home"},
+   {"k":"zakkyo","n":"雑居ビル","use":"office","u":60,"g1":"shop","g2":"shop","z":"cd","cpm":650,"f0":3,"f1":10,"min":2,"max":12,"sh":["full","slab"],"cat":"biz"},
+   {"k":"office","n":"オフィスビル","use":"office","u":0,"z":"cd","cpm":800,"f0":5,"f1":30,"min":6,"max":120,"sh":["full","slab","L","tower"],"opt":["shop1"],"cat":"biz"},
+   {"k":"sky","n":"超高層ビル","use":"office","u":0,"g1":"shop","g2":"shop","z":"d","cpm":1100,"f0":30,"f1":60,"min":25,"max":400,"sh":["tower"],"cat":"biz"},
+   {"k":"mall","n":"ショッピングセンター","use":"shop","u":200,"z":"cde","cpm":450,"f0":1,"f1":4,"min":20,"max":1600,"sh":["full","slab","ro"],"cat":"biz"},
+   {"k":"factory","n":"工場","use":"factory","one":true,"z":"ef","cpm":250,"f0":1,"f1":2,"min":10,"max":1600,"sh":["full","slab"],"cat":"ind"},
+   {"k":"warehouse","n":"倉庫","use":"warehouse","one":true,"z":"efg","cpm":200,"f0":1,"f1":3,"min":4,"max":800,"sh":["full","slab"],"cat":"ind"},
+   {"k":"port","n":"港湾施設","use":"port","one":true,"z":"g","cpm":500,"f0":1,"f1":1,"min":10,"max":1600,"sh":["full"],"sea":true,"cat":"ind"},
+   {"k":"farm","n":"田畑","use":"farm","one":true,"z":"h","cpm":10,"f0":0,"f1":0,"min":4,"max":1600,"sh":["full"],"cat":"ind"},
+   {"k":"parking","n":"駐車場","use":"parking","one":true,"z":"abcdefgh","cpm":30,"f0":0,"f1":0,"min":1,"max":400,"sh":["full"],"cat":"park"},
+   {"k":"pkbld","n":"立体駐車場","use":"parking","u":0,"z":"bcdef","cpm":400,"f0":2,"f1":8,"min":6,"max":400,"sh":["full","slab"],"cat":"park"},
+   {"k":"es","n":"小学校","use":"school","one":true,"z":"abce","cpm":350,"f0":1,"f1":4,"min":10,"max":400,"sh":["full","slab","L","ko"],"sc":"es","cat":"school"},
+   {"k":"jhs","n":"中学校","use":"school","one":true,"z":"abce","cpm":350,"f0":1,"f1":4,"min":10,"max":400,"sh":["full","slab","L","ko"],"sc":"jhs","cat":"school"},
+   {"k":"hs","n":"高校","use":"school","one":true,"z":"abcde","cpm":400,"f0":1,"f1":6,"min":12,"max":600,"sh":["full","slab","L","ko"],"sc":"hs","cat":"school"},
+   {"k":"univ","n":"大学","use":"school","one":true,"z":"abcdeh","cpm":500,"f0":1,"f1":20,"min":20,"max":1600,"sh":["full","slab","L","ko","ro","tower"],"sc":"univ","cat":"school"},
+   {"k":"voc","n":"専門学校","use":"school","one":true,"z":"bcde","cpm":600,"f0":2,"f1":15,"min":3,"max":200,"sh":["full","slab","tower"],"sc":"voc","cat":"school"},
+   {"k":"mill","n":"製粉工場","use":"factory","one":true,"z":"efg","cpm":300,"f0":1,"f1":4,"min":10,"max":1600,"sh":["full","slab"],"mk":"flour","cat":"ind"},
+   {"k":"foodf","n":"食品工場","use":"factory","one":true,"z":"ef","cpm":300,"f0":1,"f1":4,"min":10,"max":1600,"sh":["full","slab"],"mk":"food","cat":"ind"},
+   {"k":"steelw","n":"製鉄所","use":"factory","one":true,"z":"fg","cpm":400,"f0":1,"f1":3,"min":40,"max":1600,"sh":["full","slab"],"mk":"steel","cat":"ind"},
+   {"k":"carf","n":"自動車工場","use":"factory","one":true,"z":"ef","cpm":350,"f0":1,"f1":3,"min":30,"max":1600,"sh":["full","slab"],"mk":"car","cat":"ind"},
+   {"k":"petro","n":"石油化学工場","use":"factory","one":true,"z":"fg","cpm":450,"f0":1,"f1":3,"min":30,"max":1600,"sh":["full","slab"],"mk":"chem","cat":"ind"},
+   {"k":"elecf","n":"半導体・家電工場","use":"factory","one":true,"z":"ef","cpm":500,"f0":1,"f1":5,"min":10,"max":1600,"sh":["full","slab"],"mk":"elec","cat":"ind"},
+   {"k":"railf","n":"鉄道車両工場","use":"factory","one":true,"z":"ef","cpm":350,"f0":1,"f1":2,"min":30,"max":1600,"sh":["full","slab"],"mk":"railcar","cat":"ind"},
    {"k":"cityhall","n":"市役所","use":"office","u":0,"z":"abcdefghi","cpm":1200,"f0":1,"f1":80,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
    {"k":"plaza","n":"広場","use":"plaza","one":true,"z":"abcdefghi","cpm":40,"f0":0,"f1":0,"min":1,"max":1600,"sh":["full"],"gov":true},
-   {"k":"uhq","n":"大学の本部","use":"school","u":0,"z":"abcdefghi","cpm":900,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
-   {"k":"ukan","n":"大学の校舎","use":"school","u":0,"z":"abcdefghi","cpm":600,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
-   {"k":"ulab","n":"大学の研究棟","use":"school","u":0,"z":"abcdefghi","cpm":700,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
-   {"k":"ulib","n":"大学の図書館","use":"school","u":0,"z":"abcdefghi","cpm":700,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
-   {"k":"uhall","n":"大学の講堂","use":"school","u":0,"z":"abcdefghi","cpm":800,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
-   {"k":"ugym","n":"大学の体育館","use":"school","u":0,"z":"abcdefghi","cpm":450,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
-   {"k":"uunion","n":"学生会館","use":"school","u":0,"z":"abcdefghi","cpm":500,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"uhq","n":"大学の本部","use":"school","u":0,"z":"abcdefghi","cpm":900,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true,"sc":"univ"},
+   {"k":"ukan","n":"大学の校舎","use":"school","u":0,"z":"abcdefghi","cpm":600,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true,"sc":"univ"},
+   {"k":"ulab","n":"大学の研究棟","use":"school","u":0,"z":"abcdefghi","cpm":700,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true,"sc":"univ"},
+   {"k":"ulib","n":"大学の図書館","use":"school","u":0,"z":"abcdefghi","cpm":700,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true,"sc":"univ"},
+   {"k":"uhall","n":"大学の講堂","use":"school","u":0,"z":"abcdefghi","cpm":800,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true,"sc":"univ"},
+   {"k":"ugym","n":"大学の体育館","use":"school","u":0,"z":"abcdefghi","cpm":450,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true,"sc":"univ"},
+   {"k":"uunion","n":"学生会館","use":"school","u":0,"z":"abcdefghi","cpm":500,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true,"sc":"univ"},
    {"k":"udorm","n":"学生寮","use":"home","u":0,"z":"abcdefghi","cpm":400,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
    {"k":"uhosp","n":"大学病院","use":"hospital","u":0,"z":"abcdefghi","cpm":900,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
-   {"k":"umus","n":"大学の博物館","use":"school","u":0,"z":"abcdefghi","cpm":700,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
-   {"k":"uschool","n":"附属学校","use":"school","u":0,"z":"abcdefghi","cpm":450,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"umus","n":"大学の博物館","use":"school","u":0,"z":"abcdefghi","cpm":700,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true,"sc":"univ"},
+   {"k":"uschool","n":"附属学校","use":"school","u":0,"z":"abcdefghi","cpm":450,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true,"sc":"hs"},
    {"k":"ugh","n":"温室","use":"farm","u":0,"z":"abcdefghi","cpm":200,"f0":1,"f1":2,"min":1,"max":1600,"sh":["full"],"gov":true},
    {"k":"ufield","n":"グラウンド","use":"plaza","one":true,"z":"abcdefghi","cpm":30,"f0":0,"f1":0,"min":1,"max":1600,"sh":["full"],"gov":true},
    {"k":"ufarm","n":"実験農場","use":"farm","one":true,"z":"abcdefghi","cpm":10,"f0":0,"f1":0,"min":1,"max":1600,"sh":["full"],"gov":true},
@@ -20902,7 +20969,7 @@ $$;
 create or replace function public._mp_unit_mr(use text, lvm2 numeric) returns numeric
 language sql immutable as $$
   select round((case use when 'home' then 0.40 when 'shop' then 0.64 when 'office' then 0.56 when 'factory' then 0.24 when 'warehouse' then 0.20
-                 when 'port' then 0.28 when 'farm' then 0.06 when 'parking' then 0.24 else 0.4 end * sqrt(greatest(lvm2, 1)))::numeric, 3)
+                 when 'port' then 0.28 when 'farm' then 0.06 when 'parking' then 0.24 when 'school' then 0.30 else 0.4 end * sqrt(greatest(lvm2, 1)))::numeric, 3)
 $$;
 -- 部屋の名前（101号室・全体）
 create or replace function public._mp_room(f int, no int, one boolean) returns text
@@ -20911,7 +20978,7 @@ language sql immutable as $$ select case when one then '全体' else (f * 100 + 
 create or replace function public._mp_use_name(use text) returns text
 language sql immutable as $$
   select case use when 'home' then '住居' when 'shop' then '店舗' when 'office' then '事務所' when 'factory' then '工場' when 'warehouse' then '倉庫'
-    when 'port' then '港湾' when 'farm' then '田畑' when 'parking' then '駐車場' else use end
+    when 'port' then '港湾' when 'farm' then '田畑' when 'parking' then '駐車場' when 'school' then '学校' else use end
 $$;
 
 /* ---------- 形：筆の区画から、建物の区画をえらぶ（いちばん多くて nmax） ---------- */
@@ -20993,6 +21060,7 @@ begin
     'office', round(least(2, greatest(0.15, 0.25 + 0.4 * den + 0.8 * sta + case when z in ('c', 'd') then 0.2 else 0 end))::numeric, 3),
     'shop', round(least(2, greatest(0.15, 0.25 + 0.5 * den + 1.0 * sta))::numeric, 3),
     'factory', 0.8, 'warehouse', 0.8, 'port', 0.9, 'farm', 1.0,
+    'school', round(least(2, greatest(0.15, 0.3 + 0.6 * den + 0.4 * sta))::numeric, 3),
     'parking', round(least(2, greatest(0.15, 0.3 + 0.5 * den + 0.5 * sta))::numeric, 3), 'den', round(den::numeric, 3), 'sta', round(sta::numeric, 3));
 end $$;
 -- 建物の入りやすさ・相場を見なおす
@@ -21006,7 +21074,7 @@ begin
   z := (select c.z from _mp_cell(floor(cx)::int, floor(cy)::int) c);
   lv := p.val::numeric / greatest(p.n * 100, 1);
   update mp_blds set dem = _mp_bld_dem(cx, cy, z),
-    mr = (select jsonb_object_agg(u, _mp_unit_mr(u, lv)) from unnest(array['home', 'shop', 'office', 'factory', 'warehouse', 'port', 'farm', 'parking']) u)
+    mr = (select jsonb_object_agg(u, _mp_unit_mr(u, lv)) from unnest(array['home', 'shop', 'office', 'factory', 'warehouse', 'port', 'farm', 'parking', 'school']) u)
    where id = bid;
 end $$;
 
@@ -21031,6 +21099,7 @@ begin
     when 'port' then nm[1 + b % array_length(nm, 1)] || '海運'
     when 'farm' then fam[1 + a % array_length(fam, 1)] || '農園'
     when 'parking' then '月極の利用者'
+    when 'school' then '学校法人' || nm[1 + b % array_length(nm, 1)] || '学園'
     else fam[1 + a % array_length(fam, 1)] || 'さん' end;
 end $$;
 -- 建物のはじめの名前（町・大字の名前＋種類ごとの名前）
@@ -21046,6 +21115,9 @@ begin
                   when 'tower' then array['タワー','タワーレジデンス'] when 'office' then array['ビル','センタービル'] when 'zakkyo' then array['ビル','会館']
                   when 'sky' then array['タワー','スカイビル'] when 'mall' then array['モール','ショッピングセンター'] when 'factory' then array['工場']
                   when 'warehouse' then array['倉庫'] when 'port' then array['ふ頭'] when 'parking' then array['駐車場'] when 'pkbld' then array['パーキング']
+                  when 'es' then array['小学校'] when 'jhs' then array['中学校'] when 'hs' then array['高校'] when 'univ' then array['大学'] when 'voc' then array['専門学校']
+                  when 'mill' then array['製粉工場'] when 'foodf' then array['食品工場'] when 'steelw' then array['製鉄所'] when 'carf' then array['自動車工場']
+                  when 'petro' then array['石油化学工場'] when 'elecf' then array['電子工場'] when 'railf' then array['車両工場']
                   else array[]::text[] end;
   if coalesce(array_length(sf, 1), 0) = 0 or base = '' then return ''; end if;
   return base || sf[1 + abs(hashtext(seed::text)) % array_length(sf, 1)];
@@ -21154,6 +21226,7 @@ begin
   end loop;
   update mp_parcels set bld = q ->> 'kind', bld_cost = p_cost, bld_at = now() where id = pid;
   perform _mp_bld_refresh(bid);
+  perform _mp_sc_init(bid);
   if fill then
     update mp_units u set t_kind = 'npc', t_name = _mp_npc_name(u.id, u.use), since = now(),
                           rent = round((b.mr ->> u.use)::numeric * u.m2 * b.rent_lv::numeric, 1)
@@ -21246,7 +21319,8 @@ begin
               from mp_units x where x.bld = b.id),
     'day', case when mine then (select jsonb_build_object(
               'rent', coalesce(sum(x.rent) filter (where x.t_kind is not null), 0)::bigint,
-              'occ', count(*) filter (where x.t_kind is not null or x.mode = 'self'), 'n', count(*)) from mp_units x where x.bld = b.id) end);
+              'occ', count(*) filter (where x.t_kind is not null or x.mode = 'self'), 'n', count(*)) from mp_units x where x.bld = b.id) end,
+    'sc', _mp_sc_info(b.id, u));
 end $$;
 create or replace function public.mp_bld_set(p_bld bigint, p_name text, p_rent_lv real, p_as text) returns jsonb
 language plpgsql security definer set search_path = public as $$
@@ -21342,7 +21416,7 @@ begin
     if not exists (select 1 from mp_parcels p where p.id = x.parcel and not p.gov and _mp_same(p.own_u, p.own_c, false, pa.pu, pa.pc, false)) then
       raise exception 'あなた（この名義）の建物ではありません';
     end if;
-    if x.use not in ('shop', 'office', 'factory', 'warehouse', 'port', 'farm', 'parking') then raise exception '住居には会社は入れません（店・事務所などの部屋をえらんでください）'; end if;
+    if x.use not in ('shop', 'office', 'factory', 'warehouse', 'port', 'farm', 'parking', 'school') then raise exception '住居には会社は入れません（店・事務所などの部屋をえらんでください）'; end if;
     if x.t_kind = 'corp' and x.t_c is distinct from tc.pc then raise exception 'ほかの会社が入っている部屋があります（先に退去してもらってください）'; end if;
     update mp_units set mode = 'corp', ask = round((x.mr ->> x.use)::numeric * x.m2)::bigint, t_kind = 'corp', t_c = tc.pc, t_name = null, rent = p_rent,
                         since = case when x.t_kind = 'corp' then since else now() end
@@ -21380,7 +21454,7 @@ begin
   if not found then raise exception '部屋が見つかりません'; end if;
   if x.mode <> 'corp' then raise exception 'この部屋はテナント募集をしていません'; end if;
   if x.t_kind is not null then raise exception 'もう会社が入っています'; end if;
-  if x.use not in ('shop', 'office', 'factory', 'warehouse', 'port', 'farm', 'parking') then raise exception '住居には会社は入れません'; end if;
+  if x.use not in ('shop', 'office', 'factory', 'warehouse', 'port', 'farm', 'parking', 'school') then raise exception '住居には会社は入れません'; end if;
   select * into b from mp_blds where id = x.bld;
   select * into p from mp_parcels where id = b.parcel;
   if _mp_same(p.own_u, p.own_c, false, pa.pu, pa.pc, false) then raise exception '自分の建物です（「自分で使う」にしてください）'; end if;
@@ -21469,7 +21543,8 @@ begin
   for o in select case when x.t_kind = 'corp' then null else p.own_u end pu, case when x.t_kind = 'corp' then x.t_c else p.own_c end pc,
                   sum((b.mr ->> x.use)::numeric * x.m2 * 1.3 * least(1.8, greatest(0.3, coalesce((b.dem ->> x.use)::real, 0.5))) * (0.85 + 0.3 * random())) amt, count(*) n
              from mp_units x join mp_blds b on b.id = x.bld join mp_parcels p on p.id = b.parcel
-            where x.use <> 'home' and b.built_at < h - interval '1 hour' and ((x.mode = 'self' and x.t_kind is null) or (x.t_kind = 'corp' and x.t_c is not null and x.since < h))
+            where x.use not in ('home', 'school') and b.built_at < h - interval '1 hour' and ((x.mode = 'self' and x.t_kind is null) or (x.t_kind = 'corp' and x.t_c is not null and x.since < h))
+              and not exists (select 1 from mp_sc sc where sc.bld = b.id and sc.prod is not null)   -- t54k：特殊工場・つくるものを決めた田畑・港は、物流で売る
             group by 1, 2 loop
     amt := round(o.amt / 24.0);
     if amt > 0 then perform _mp_earn(o.pu, o.pc, false, amt, 'sales', format('店・事務所などの売上（%s室）', o.n)); end if;
@@ -21589,11 +21664,13 @@ end $$;
    ===================================================================== */
 
 /* ---------- 編成で注文 ---------- */
--- p_types：形式のコード（先頭から順に）。p_name：編成番号（自分で入れる）。p_dry なら見つもり
-create or replace function public.mp_form_order(p_types text[], p_name text, p_depot bigint, p_as text, p_dry boolean) returns jsonb
+-- p_types：形式のコード（先頭から順に）。p_name：編成番号（自分で入れる）。p_dry なら見つもり。p_maker：鉄道車両工場（t54k。null なら国のメーカー）
+drop function if exists public.mp_form_order(text[], text, bigint, text, boolean);
+create or replace function public.mp_form_order(p_types text[], p_name text, p_depot bigint, p_as text, p_dry boolean, p_maker bigint default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); pa record; d mp_depots; why text; nc int := coalesce(array_length(p_types, 1), 0); have int; k text; t mp_types; i int;
         cnt jsonb := '{}'::jsonb; s int; nums text[] := '{}'; cost bigint := 0; up bigint := 0; fid bigint; nm text := left(trim(coalesce(p_name, '')), 20); hrs int := 6; ky text; vv text; cid bigint;
+        mk jsonb; lst bigint := 0;
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
@@ -21620,15 +21697,22 @@ begin
     cnt := cnt || jsonb_build_object(t.code, coalesce((cnt ->> t.code)::int, 0) + 1);
     cost := cost + t.price; up := up + t.upkeep;
   end loop;
-  if p_dry then return jsonb_build_object('cost', cost, 'nums', to_jsonb(nums), 'hours', hrs, 'upkeep', up, 'n', nc); end if;
-  perform _mp_pay(pa.pu, pa.pc, false, cost, 'car', format('編成「%s」（%s両）を注文', nm, nc));
+  lst := cost;
+  if p_maker is not null then   -- 鉄道車両工場（払い・鉄鋼はここで）
+    mk := _mp_maker_order(p_maker, pa.pu, pa.pc, p_types, p_dry);
+    cost := (mk ->> 'cost')::bigint; hrs := (mk ->> 'hours')::int;
+  end if;
+  if p_dry then return jsonb_build_object('cost', cost, 'nums', to_jsonb(nums), 'hours', hrs, 'upkeep', up, 'n', nc, 'maker', mk ->> 'maker', 'self', mk -> 'self', 'steel', mk -> 'steel'); end if;
+  if p_maker is null then perform _mp_pay(pa.pu, pa.pc, false, cost, 'car', format('編成「%s」（%s両）を注文', nm, nc)); end if;
   insert into mp_forms(name, own_u, own_c, depot) values (nm, pa.pu, pa.pc, p_depot) returning id into fid;
   for i in 1..nc loop
     select * into t from mp_types where code = p_types[i];
     insert into mp_cars(type, num, own_u, own_c, depot, form, pos, heat, ac, toilet, busy_until, busy_kind, price)
-    values (t.code, nums[i], pa.pu, pa.pc, p_depot, fid, i, t.heat, t.ac, t.toilet, now() + make_interval(hours => hrs), 'deliver', t.price)
+    values (t.code, nums[i], pa.pu, pa.pc, p_depot, fid, i, t.heat, t.ac, t.toilet, now() + make_interval(hours => hrs), 'deliver',
+            case when mk is null then t.price else round(t.price::numeric * cost / greatest(lst, 1))::bigint end)
     returning id into cid;
-    insert into mp_car_hist(car, k, num, type, ou, oc, d) values (cid, 'new', nums[i], t.code, pa.pu, pa.pc, jsonb_build_object('dep', d.name));
+    insert into mp_car_hist(car, k, num, type, ou, oc, d) values (cid, 'new', nums[i], t.code, pa.pu, pa.pc,
+      jsonb_build_object('dep', d.name) || case when mk is not null then jsonb_build_object('maker', mk ->> 'maker') else '{}'::jsonb end);
   end loop;
   for ky, vv in select * from jsonb_each_text(cnt) loop
     insert into mp_serials(owner, type, n) values (k, ky, vv::int) on conflict (owner, type) do update set n = mp_serials.n + excluded.n;
@@ -22397,6 +22481,516 @@ begin
 end $$;
 
 
+/* =====================================================================
+   国土 t54k：学校・特殊工場・物流（トラック）
+   - 学校（小学校・中学校・高校・大学・専門学校）：延床面積で定員。まわりの人（年ごろの人のわりあい・駅で通えるか）から生徒が通う。
+     同じ種類の学校が近くにあると、定員のわりあいで分けあう。授業料（水準 50〜200%。高いと生徒が減る）が売上に（自分で使うか、会社が借りて）。
+     町の学校法人が入居（入居募集）しても、生徒は通う（家賃が入る）。生徒は近くの駅・バス停の乗る人にふえる。麦畑キャンパス（国の大学）も同じ（授業料はなし）
+   - 特殊工場：材料（在庫）から製品をつくる（延床面積で1日の量）。
+       食べもの：小麦（田畑）→ 製粉工場（小麦粉）→ 食品工場（食品）→ お店
+       鉄：鉄鉱石（港）→ 製鉄所（鉄鋼）→ 自動車工場（自動車）
+       化学：原油（港）→ 石油化学工場（化学品）→ 半導体・家電工場（家電・半導体）
+       鉄道車両工場：鉄鋼から鉄道車両（持ち主は部品代だけで自分で使う・ほかの人・会社に売る）
+     田畑・港湾施設は、持ち主（借りている会社）が「つくるもの」（小麦・鉄鉱石・原油）を決めると物流に入る（決めなければ、いままでどおりの売上）
+   - 物流（トラック）：1時間ごとに、材料のいる工場が近くの工場・田畑・港の在庫から自動で買う（市場の値段＋運送費：1tごとに積みおろし＋距離）。
+     近くで買うより輸入（値段の1.2倍）が安いとき・足りないときは輸入。売れのこり（6時間分をこえる在庫）は市場へ（0.85倍）。
+     食品はお店へ（お店の床の広さで売れる量・30km まで。人・会社が使っているお店には小売のもうけ）。自動車・家電・半導体は市場へ（1倍）
+   - 動くのは「自分で使う」か「会社が借りている」とき。払いきれていない分（未払い）があると、つくる・仕入れるを止める（売るのはつづける）
+   ===================================================================== */
+
+/* ---------- 品目・つくりかた・学校の種類 ---------- */
+-- 品目：名前 n・単位 u・重さ wt（1単位の t。運送費）・値段 p（市場の値段。mp_rates の p_品目）・最後の品 fin（shop：お店へ・mkt：市場へ 1倍）
+create or replace function public._mp_goods() returns jsonb
+language sql stable set search_path = public as $$
+  select jsonb_build_object(
+    'wheat', jsonb_build_object('n', '小麦', 'u', 't', 'wt', 1, 'p', _mp_rate('p_wheat')),
+    'flour', jsonb_build_object('n', '小麦粉', 'u', 't', 'wt', 1, 'p', _mp_rate('p_flour')),
+    'food',  jsonb_build_object('n', '食品', 'u', 't', 'wt', 1, 'p', _mp_rate('p_food'), 'fin', 'shop'),
+    'ore',   jsonb_build_object('n', '鉄鉱石', 'u', 't', 'wt', 1, 'p', _mp_rate('p_ore')),
+    'steel', jsonb_build_object('n', '鉄鋼', 'u', 't', 'wt', 1, 'p', _mp_rate('p_steel')),
+    'car',   jsonb_build_object('n', '自動車', 'u', '台', 'wt', 1.4, 'p', _mp_rate('p_car'), 'fin', 'mkt'),
+    'crude', jsonb_build_object('n', '原油', 'u', 'kL', 'wt', 0.9, 'p', _mp_rate('p_crude')),
+    'chem',  jsonb_build_object('n', '化学品', 'u', 't', 'wt', 1, 'p', _mp_rate('p_chem')),
+    'elec',  jsonb_build_object('n', '家電・半導体', 'u', 't', 'wt', 1, 'p', _mp_rate('p_elec'), 'fin', 'mkt'))
+$$;
+-- つくりかた（つくるもの → 材料 in（1単位あたり）・延床1㎡・1日にできる量 r・材料のほかの費用 oc（できたものの値段の何倍）・その記録の名前 ocn・田畑か港か raw）
+--   railcar：鉄道車両（鉄鋼 = 車両の重さ × 0.8t。1日につくれる両数 = 延床面積 ÷ rc_m2）
+create or replace function public._mp_sc_recipes() returns jsonb
+language sql immutable as $$
+  select '{
+    "wheat":   {"in":{},            "r":0.000375, "oc":0.2,  "raw":"farm", "ocn":"小麦の種・肥料など"},
+    "ore":     {"in":{},            "r":0.004,    "oc":0.6,  "raw":"port", "ocn":"鉄鉱石の仕入れ（船から）"},
+    "crude":   {"in":{},            "r":0.00167,  "oc":0.6,  "raw":"port", "ocn":"原油の仕入れ（船から）"},
+    "flour":   {"in":{"wheat":1.2}, "r":0.00357,  "oc":0.04, "ocn":"製粉の電気・人件費など"},
+    "food":    {"in":{"flour":0.9}, "r":0.00125,  "oc":0.44, "ocn":"食品のほかの材料・人件費など"},
+    "steel":   {"in":{"ore":1.7},   "r":0.00278,  "oc":0.28, "ocn":"製鉄の石炭・電気・人件費など"},
+    "car":     {"in":{"steel":2.0}, "r":0.000167, "oc":0.6,  "ocn":"自動車の部品・人件費など"},
+    "chem":    {"in":{"crude":1.2}, "r":0.00208,  "oc":0.12, "ocn":"石油化学の電気・人件費など"},
+    "elec":    {"in":{"chem":2.3},  "r":0.00025,  "oc":0.48, "ocn":"家電・半導体の部品・人件費など"},
+    "railcar": {"in":{"steel":0},   "rc":true}
+  }'::jsonb
+$$;
+-- 学校の種類：生徒1人の床 spp（㎡）・通える範囲 r（マス）・その年ごろの人のわりあい age・授業料（1人・1日。先生の給料などをひいた分）fee・
+--   駅・バス停の乗る人に足す人数（生徒1人あたり）w・駅で通えるかで生徒が変わる acc
+create or replace function public._mp_sc_kinds() returns jsonb
+language sql immutable as $$
+  select '{
+    "es":   {"n":"小学校",   "spp":10, "r":16,  "age":0.06,  "fee":200, "w":0.05, "acc":false},
+    "jhs":  {"n":"中学校",   "spp":11, "r":30,  "age":0.03,  "fee":230, "w":0.1,  "acc":false},
+    "hs":   {"n":"高校",     "spp":12, "r":100, "age":0.03,  "fee":320, "w":0.8,  "acc":true},
+    "univ": {"n":"大学",     "spp":18, "r":300, "age":0.035, "fee":650, "w":1.0,  "acc":true},
+    "voc":  {"n":"専門学校", "spp":9,  "r":200, "age":0.012, "fee":500, "w":0.9,  "acc":true}
+  }'::jsonb
+$$;
+-- 量のことば（12.5t・3台・1,234kL）
+create or replace function public._mp_fmtq(q numeric, u text) returns text
+language sql immutable as $$
+  select case when u = '台' then to_char(round(q), 'FM999,999,999,990')
+              when q >= 100 then to_char(round(q), 'FM999,999,999,990')
+              when q >= 1 then to_char(round(q, 1), 'FM999,999,990.0')
+              else to_char(round(q, 3), 'FM990.000') end || u
+$$;
+-- 名義のいまの所持金（仕入れの前に、払える分だけにする）
+create or replace function public._mp_bal(pu uuid, pc int) returns numeric
+language sql stable set search_path = public as $$
+  select coalesce(case when pu is not null then (select balance::numeric from profiles where id = pu)
+                       when pc is not null then (select balance::numeric from companies where id = pc) end, 0)
+$$;
+-- 払いきれていない分があるか
+create or replace function public._mp_sc_owes(pu uuid, pc int) returns boolean
+language sql stable set search_path = public as $$
+  select exists (select 1 from mp_owed o where coalesce(o.pu::text, '') = coalesce($1::text, '') and coalesce(o.pc, 0) = coalesce($2, 0) and o.amount > 0)
+$$;
+
+/* ---------- 事業の行（学校・特殊工場は建てたときに。田畑・港は「つくるもの」を決めたときに） ---------- */
+create or replace function public._mp_sc_init(bid bigint) returns void
+language plpgsql set search_path = public as $$
+declare b mp_blds; pr jsonb; cx real; cy real;
+begin
+  select * into b from mp_blds where id = bid; if not found then return; end if;
+  select x into pr from jsonb_array_elements(_mp_bld_presets()) x where x ->> 'k' = b.kind;
+  if pr is null or not (pr ? 'sc' or pr ? 'mk') then return; end if;
+  select avg(b.cells[2 * i - 1] + 0.5) / 5, avg(b.cells[2 * i] + 0.5) / 5 into cx, cy from generate_series(1, array_length(b.cells, 1) / 2) i;
+  insert into mp_sc(bld, prod, grp, x, y, lv) values (bid, pr ->> 'mk', pr ->> 'sc', cx, cy, case when pr ->> 'mk' = 'railcar' then 0.9 else 1 end)   -- 車両は定価の90%から
+    on conflict (bld) do nothing;
+  -- 学校・特殊工場は、はじめは「自分で使う」（建てた人・会社が動かす。入居募集・テナント募集にも変えられる）
+  update mp_units set mode = 'self' where bld = bid and t_kind is null and mode = 'npc';
+end $$;
+-- だれが動かしているか（h の時刻に）：ok 人・会社が動かしている（pu・pc）・npc 町の人（学校法人）が入っている・gv 国の建物。m2 延床面積
+create or replace function public._mp_sc_op(bid bigint, h timestamptz, out ok boolean, out npc boolean, out pu uuid, out pc int, out gv boolean, out m2 int)
+language plpgsql stable set search_path = public as $$
+declare b mp_blds; p mp_parcels; x mp_units;
+begin
+  ok := false; npc := false; gv := false; m2 := 0;
+  select * into b from mp_blds where id = bid; if not found then return; end if;
+  select * into p from mp_parcels where id = b.parcel;
+  if p.gov then ok := true; gv := true; m2 := b.fm2 * greatest(b.floors, 1); return; end if;
+  select * into x from mp_units u where u.bld = bid order by u.floor, u.no limit 1;
+  if not found then return; end if;
+  m2 := x.m2;
+  if b.built_at >= h - interval '1 hour' then return; end if;
+  if x.mode = 'self' and x.t_kind is null then ok := true; pu := p.own_u; pc := p.own_c;
+  elsif x.t_kind = 'corp' and x.t_c is not null and x.since < h then ok := true; pc := x.t_c;
+  elsif x.t_kind = 'npc' then npc := true;
+  end if;
+end $$;
+
+/* ---------- 学校：生徒（1時間ごと） ---------- */
+create or replace function public._mp_sc_school_calc(h timestamptz) returns void
+language plpgsql set search_path = public as $$
+declare kd jsonb := _mp_sc_kinds();
+begin
+  drop table if exists _scs;
+  create temp table _scs on commit drop as
+    select s.bld, s.grp, s.x, s.y, s.lv, op.ok, op.npc, op.gv, op.m2,
+           case when op.ok or op.npc then floor(op.m2 / (kd -> s.grp ->> 'spp')::real)::int else 0 end cap, 0::real pool, 1::real acc
+      from mp_sc s, lateral _mp_sc_op(s.bld, h) op where s.grp is not null and kd ? s.grp;
+  -- 駅で通えるか（高校・大学・専門学校）：列車の走る駅が 750m 以内 → 1・バス停が 500m 以内 → 0.8・どちらもない → 0.5
+  update _scs t set acc = case when not (kd -> t.grp ->> 'acc')::boolean then 1
+      when exists (select 1 from mp_stations st where st.kind = 'rail' and st.x between (t.x - 15) * 100 and (t.x + 15) * 100 and st.y between (t.y - 15) * 100 and (t.y + 15) * 100
+                     and (st.x / 100.0 - t.x) ^ 2 + (st.y / 100.0 - t.y) ^ 2 <= 225 and exists (select 1 from mp_routes r where r.ok and st.id = any(r.stops))) then 1
+      when exists (select 1 from mp_stations st where st.kind = 'bus' and st.x between (t.x - 10) * 100 and (t.x + 10) * 100 and st.y between (t.y - 10) * 100 and (t.y + 10) * 100
+                     and (st.x / 100.0 - t.x) ^ 2 + (st.y / 100.0 - t.y) ^ 2 <= 100 and exists (select 1 from mp_routes r where r.ok and st.id = any(r.stops))) then 0.8
+      else 0.5 end
+   where cap > 0;
+  update _scs t set pool = _mp_catch(t.x, t.y, (kd -> t.grp ->> 'r')::real) * (kd -> t.grp ->> 'age')::real * t.acc where cap > 0;
+  -- 同じ種類の学校で分けあう（通える範囲の中の定員のわりあい）。人・会社の学校は、授業料の水準が高いと減る
+  update mp_sc s set st = jsonb_build_object('n', q.n, 'cap', q.cap, 'pool', round(q.pool), 'acc', q.acc, 'at', h)
+    from (select t.bld, t.cap, t.pool, t.acc,
+                 case when t.cap = 0 then 0 else least(t.cap, floor(t.pool * t.cap
+                   / greatest(1, (select sum(u.cap) from _scs u where u.grp = t.grp and u.cap > 0 and (u.x - t.x) ^ 2 + (u.y - t.y) ^ 2 <= ((kd -> t.grp ->> 'r')::real) ^ 2))
+                   * power(case when t.ok and not t.gv then greatest(t.lv, 0.5) else 1 end, -1.5)))::int end n
+            from _scs t) q
+   where s.bld = q.bld;
+  drop table if exists _scs;
+end $$;
+-- 駅・バス停のまわりの学校の生徒（乗る人に足す）。1つの学校のまわりに駅がいくつもあるときは分ける
+create or replace function public._mp_sc_riders(sx int, sy int, skind text, rr real) returns real
+language sql stable set search_path = public as $$
+  select coalesce(sum((sc.st ->> 'n')::real * (_mp_sc_kinds() -> sc.grp ->> 'w')::real
+           / greatest(1, (select count(*) from mp_stations s2 where s2.kind = skind
+                            and s2.x between (sc.x - rr) * 100 and (sc.x + rr) * 100 and s2.y between (sc.y - rr) * 100 and (sc.y + rr) * 100
+                            and (s2.x / 100.0 - sc.x) ^ 2 + (s2.y / 100.0 - sc.y) ^ 2 <= rr * rr
+                            and exists (select 1 from mp_routes r where r.ok and s2.id = any(r.stops))))), 0)::real
+    from mp_sc sc
+   where sc.grp is not null and coalesce((sc.st ->> 'n')::int, 0) > 0
+     and sc.x between sx / 100.0 - rr and sx / 100.0 + rr and sc.y between sy / 100.0 - rr and sy / 100.0 + rr
+     and (sc.x - sx / 100.0) ^ 2 + (sc.y - sy / 100.0) ^ 2 <= rr * rr
+$$;
+
+/* ---------- 1時間ごと：学校の生徒と授業料・工場がつくる・トラックで仕入れる・売る ---------- */
+-- 変数の名前は、問い合わせの中の表の別名（scx・blx・pcl・stk・shx・o など）とかさならないようにしている
+create or replace function public._mp_sc_tick_hour(h timestamptz) returns void
+language plpgsql set search_path = public as $$
+declare gd jsonb := _mp_goods(); rc jsonb := _mp_sc_recipes(); kd jsonb := _mp_sc_kinds();
+        imul numeric := _mp_rate('sc_imp'); mmul numeric := _mp_rate('sc_mkt'); tb numeric := _mp_rate('truck_base'); tk numeric := _mp_rate('truck_km');
+        fkm numeric := _mp_rate('sc_food_km'); smul numeric := _mp_rate('sc_shop'); rcm2 numeric := _mp_rate('rc_m2'); keep numeric := _mp_rate('sc_keep');
+        fa record; cb record; sp record; gk text; kq numeric; need numeric; qq numeric; have numeric; mk numeric; uc numeric; amt bigint; shp bigint; bal numeric;
+        gp numeric; wt numeric; buf numeric; tq numeric; ta numeric; ts numeric; nn int; mul numeric;
+begin
+  -- 学校：生徒
+  perform _mp_sc_school_calc(h);
+  -- 学校：授業料（人・会社が動かしている学校）
+  for fa in select scx.bld, scx.lv, scx.grp, (scx.st ->> 'n')::int sn, blx.name, opx.pu, opx.pc
+              from mp_sc scx join mp_blds blx on blx.id = scx.bld, lateral _mp_sc_op(scx.bld, h) opx
+             where scx.grp is not null and opx.ok and not opx.gv and coalesce((scx.st ->> 'n')::int, 0) > 0 loop
+    amt := round(fa.sn * (kd -> fa.grp ->> 'fee')::numeric * round(fa.lv::numeric, 2) / 24);
+    if amt > 0 then
+      perform _mp_earn(fa.pu, fa.pc, false, amt, 'tuition', format('授業料：%s（%s人）', fa.name, fa.sn));
+      insert into mp_sclog(at, bld, k, qty, amt) values (h, fa.bld, 'fee', fa.sn, amt);
+    end if;
+  end loop;
+
+  -- この1時間に動いている工場・田畑・港（人・会社が動かしているもの）
+  drop table if exists _sco;
+  create temp table _sco on commit drop as
+    select scx.bld, scx.prod, scx.imp, scx.lv, scx.x, scx.y,
+           coalesce(nullif(blx.name, ''), (select pr ->> 'n' from jsonb_array_elements(_mp_bld_presets()) pr where pr ->> 'k' = blx.kind), '') name,
+           opx.pu, opx.pc, opx.m2, _mp_sc_owes(opx.pu, opx.pc) owes
+      from mp_sc scx join mp_blds blx on blx.id = scx.bld, lateral _mp_sc_op(scx.bld, h) opx
+     where scx.prod is not null and rc ? scx.prod and opx.ok and not opx.gv;
+
+  -- 1) つくる（材料の在庫の分だけ。田畑・港は材料なし）
+  for fa in select * from _sco o where o.prod <> 'railcar' and not o.owes order by o.bld loop
+    mk := (rc -> fa.prod ->> 'r')::numeric * fa.m2 / 24;
+    for gk, kq in select e.key, e.value::text::numeric from jsonb_each(rc -> fa.prod -> 'in') e loop
+      have := coalesce((select stk.qty from mp_stock stk where stk.bld = fa.bld and stk.good = gk), 0);
+      mk := least(mk, have / kq);
+    end loop;
+    mk := floor(mk * 10000) / 10000;
+    if mk <= 0 then continue; end if;
+    for gk, kq in select e.key, e.value::text::numeric from jsonb_each(rc -> fa.prod -> 'in') e loop
+      update mp_stock stk set qty = greatest(0, stk.qty - round(mk * kq, 4)) where stk.bld = fa.bld and stk.good = gk;
+      insert into mp_sclog(at, bld, k, good, qty) values (h, fa.bld, 'use', gk, round(mk * kq, 4));
+    end loop;
+    insert into mp_stock(bld, good, qty) values (fa.bld, fa.prod, mk) on conflict (bld, good) do update set qty = mp_stock.qty + excluded.qty;
+    amt := round(mk * (gd -> fa.prod ->> 'p')::numeric * (rc -> fa.prod ->> 'oc')::numeric);
+    if amt > 0 then amt := _mp_soft_pay(fa.pu, fa.pc, false, amt, 'goods', rc -> fa.prod ->> 'ocn'); end if;
+    insert into mp_sclog(at, bld, k, good, qty, amt) values (h, fa.bld, 'make', fa.prod, mk, 0);
+    if amt > 0 then insert into mp_sclog(at, bld, k, good, qty, amt) values (h, fa.bld, 'cost', fa.prod, 0, amt); end if;
+  end loop;
+
+  -- 2) 仕入れ（トラック）：材料のいる工場が、近くの工場・田畑・港の在庫から買う（市場の値段＋運送費）。輸入のほうが安いとき・足りないときは輸入
+  for cb in select * from _sco o where not o.owes and (rc -> o.prod -> 'in') <> '{}'::jsonb order by random() loop
+    for gk, kq in select e.key, e.value::text::numeric from jsonb_each(rc -> cb.prod -> 'in') e loop
+      if cb.prod = 'railcar' then need := greatest(1, floor(cb.m2 / rcm2)) * 3 * 35;   -- 3日分（1両 35t くらい）
+      else need := (rc -> cb.prod ->> 'r')::numeric * cb.m2 * kq;                         -- 1日分
+      end if;
+      need := round(need - coalesce((select stk.qty from mp_stock stk where stk.bld = cb.bld and stk.good = gk), 0), 4);
+      if need <= 0.001 then continue; end if;
+      gp := (gd -> gk ->> 'p')::numeric; wt := (gd -> gk ->> 'wt')::numeric;
+      for sp in select o.bld, o.name, o.pu, o.pc, stk.qty, (sqrt((o.x - cb.x) ^ 2 + (o.y - cb.y) ^ 2) * 0.05 * 1.25)::numeric km
+                  from _sco o join mp_stock stk on stk.bld = o.bld and stk.good = gk
+                 where o.prod = gk and o.bld <> cb.bld and stk.qty > 0.001
+                 order by 6, o.bld loop
+        uc := gp + wt * (tb + tk * sp.km);
+        exit when uc > gp * imul;              -- 輸入のほうが安い
+        bal := _mp_bal(cb.pu, cb.pc) - 2;
+        qq := floor(least(need, sp.qty, greatest(bal, 0) / uc) * 1000) / 1000;
+        exit when qq <= 0;
+        amt := round(qq * gp); shp := round(qq * wt * (tb + tk * sp.km));
+        update mp_stock stk set qty = greatest(0, stk.qty - qq) where stk.bld = sp.bld and stk.good = gk;
+        insert into mp_stock(bld, good, qty) values (cb.bld, gk, qq) on conflict (bld, good) do update set qty = mp_stock.qty + excluded.qty;
+        perform _mp_pay(cb.pu, cb.pc, false, amt, 'goods', format('仕入れ：%s %s（%s から・%skm）', gd -> gk ->> 'n', _mp_fmtq(qq, gd -> gk ->> 'u'), sp.name, round(sp.km, 1)));
+        perform _mp_earn(sp.pu, sp.pc, false, amt, 'sales', format('売上：%s %s（%s へ・%skm）', gd -> gk ->> 'n', _mp_fmtq(qq, gd -> gk ->> 'u'), cb.name, round(sp.km, 1)));
+        if shp > 0 then perform _mp_pay(cb.pu, cb.pc, false, shp, 'ship', format('運送費（トラック）：%s %s・%skm', gd -> gk ->> 'n', _mp_fmtq(qq, gd -> gk ->> 'u'), round(sp.km, 1))); end if;
+        insert into mp_sclog(at, bld, k, good, qty, amt, peer, km) values (h, cb.bld, 'buy', gk, qq, amt, sp.bld, sp.km), (h, sp.bld, 'sell', gk, qq, amt, cb.bld, sp.km),
+                                                                          (h, cb.bld, 'ship', gk, qq, shp, sp.bld, sp.km);
+        need := need - qq;
+        exit when need <= 0.001;
+      end loop;
+      -- 輸入
+      if need > 0.001 and cb.imp then
+        bal := _mp_bal(cb.pu, cb.pc) - 2;
+        qq := floor(least(need, greatest(bal, 0) / (gp * imul)) * 1000) / 1000;
+        if qq > 0 then
+          amt := round(qq * gp * imul);
+          perform _mp_pay(cb.pu, cb.pc, false, amt, 'goods', format('輸入：%s %s', gd -> gk ->> 'n', _mp_fmtq(qq, gd -> gk ->> 'u')));
+          insert into mp_stock(bld, good, qty) values (cb.bld, gk, qq) on conflict (bld, good) do update set qty = mp_stock.qty + excluded.qty;
+          insert into mp_sclog(at, bld, k, good, qty, amt) values (h, cb.bld, 'imp', gk, qq, amt);
+        end if;
+      end if;
+    end loop;
+  end loop;
+
+  -- 3) 食品をお店へ（人・会社・町の人が入っているお店。床の広さで売れる量。30km まで。近いお店から）
+  if exists (select 1 from _sco o join mp_stock stk on stk.bld = o.bld and stk.good = 'food' where o.prod = 'food' and stk.qty > 0.001) then
+    drop table if exists _shop; drop table if exists _marg;
+    create temp table _shop on commit drop as
+      select ux.id, (blx.cells[1] + 0.5) / 5.0 sx, (blx.cells[2] + 0.5) / 5.0 sy, (ux.m2 * _mp_rate('sc_food') / 24)::numeric dem,
+             case when ux.t_kind = 'corp' then null else pcl.own_u end pu, case when ux.t_kind = 'corp' then ux.t_c else pcl.own_c end pc,
+             ((ux.mode = 'self' and ux.t_kind is null) or (ux.t_kind = 'corp' and ux.t_c is not null)) pl
+        from mp_units ux join mp_blds blx on blx.id = ux.bld join mp_parcels pcl on pcl.id = blx.parcel
+       where ux.use = 'shop' and not pcl.gov and (ux.t_kind is not null or ux.mode = 'self') and blx.built_at < h - interval '1 hour';
+    create temp table _marg (pu uuid, pc int, a numeric) on commit drop;
+    gp := (gd -> 'food' ->> 'p')::numeric; wt := (gd -> 'food' ->> 'wt')::numeric;
+    for fa in select o.*, stk.qty from _sco o join mp_stock stk on stk.bld = o.bld and stk.good = 'food' where o.prod = 'food' and stk.qty > 0.001 order by o.bld loop
+      have := fa.qty; tq := 0; ta := 0; ts := 0; nn := 0;
+      for sp in select shx.id, shx.dem, shx.pu, shx.pc, shx.pl, (sqrt((shx.sx - fa.x) ^ 2 + (shx.sy - fa.y) ^ 2) * 0.05 * 1.25)::numeric km
+                  from _shop shx
+                 where shx.dem > 0.00001 and shx.sx between fa.x - fkm / 0.0625 and fa.x + fkm / 0.0625 and shx.sy between fa.y - fkm / 0.0625 and fa.y + fkm / 0.0625
+                 order by 6, shx.id loop
+        exit when sp.km > fkm;
+        qq := least(have, sp.dem);
+        update _shop shx set dem = shx.dem - qq where shx.id = sp.id;
+        have := have - qq; tq := tq + qq; ta := ta + qq * gp; ts := ts + qq * wt * (tb + tk * sp.km); nn := nn + 1;
+        if sp.pl then insert into _marg values (sp.pu, sp.pc, qq * gp * smul); end if;
+        exit when have <= 0.00001;
+      end loop;
+      if tq > 0 then
+        update mp_stock stk set qty = greatest(0, stk.qty - tq) where stk.bld = fa.bld and stk.good = 'food';
+        amt := round(ta); shp := round(ts);
+        perform _mp_earn(fa.pu, fa.pc, false, amt, 'sales', format('お店に売った：食品 %s（%s軒）', _mp_fmtq(tq, 't'), nn));
+        if shp > 0 then shp := _mp_soft_pay(fa.pu, fa.pc, false, shp, 'ship', format('運送費（トラック）：お店 %s軒へ', nn)); end if;
+        insert into mp_sclog(at, bld, k, good, qty, amt) values (h, fa.bld, 'shop', 'food', tq, amt);
+        if shp > 0 then insert into mp_sclog(at, bld, k, good, qty, amt) values (h, fa.bld, 'ship', 'food', tq, shp); end if;
+      end if;
+    end loop;
+    -- 人・会社が使っているお店：小売のもうけ
+    for fa in select m.pu, m.pc, sum(m.a) a from _marg m group by m.pu, m.pc loop
+      amt := round(fa.a);
+      if amt > 0 then perform _mp_earn(fa.pu, fa.pc, false, amt, 'sales', '食品の販売（お店のもうけ）'); end if;
+    end loop;
+    drop table if exists _shop; drop table if exists _marg;
+  end if;
+
+  -- 4) 市場に売る：最後の品（自動車・家電・半導体は1倍、お店に売れのこった食品は 0.85倍）はぜんぶ。ほかは sc_keep 日分（6時間分）をこえた分。いまはつくらない・使わない品目もぜんぶ
+  for fa in select o.*, stk.good, stk.qty from _sco o join mp_stock stk on stk.bld = o.bld where stk.qty > 0.001 order by o.bld, stk.good loop
+    if (rc -> fa.prod -> 'in') ? fa.good then continue; end if;          -- 材料
+    if fa.good = fa.prod then buf := case when gd -> fa.good ? 'fin' then 0 else (rc -> fa.prod ->> 'r')::numeric * fa.m2 * keep end;
+    else buf := 0; end if;
+    qq := floor((fa.qty - buf) * 10000) / 10000;
+    if qq <= 0.0005 or not (gd ? fa.good) then continue; end if;
+    mul := case when gd -> fa.good ->> 'fin' = 'mkt' then 1 else mmul end;
+    amt := round(qq * (gd -> fa.good ->> 'p')::numeric * mul);
+    update mp_stock stk set qty = greatest(0, stk.qty - qq) where stk.bld = fa.bld and stk.good = fa.good;
+    if amt > 0 then perform _mp_earn(fa.pu, fa.pc, false, amt, 'sales', format('市場に売った：%s %s', gd -> fa.good ->> 'n', _mp_fmtq(qq, gd -> fa.good ->> 'u'))); end if;
+    insert into mp_sclog(at, bld, k, good, qty, amt) values (h, fa.bld, 'mkt', fa.good, qq, amt);
+  end loop;
+  delete from mp_stock stk where stk.qty <= 0.0001;
+  drop table if exists _sco;
+end $$;
+
+/* ---------- 建物の事業（建物のシートに出す） ---------- */
+-- can：持ち主か、借りている会社（設定を変えられる・お金の成績が見られる）
+create or replace function public._mp_sc_info(bid bigint, u uuid) returns jsonb
+language plpgsql stable set search_path = public as $$
+declare s mp_sc; b mp_blds; p mp_parcels; x mp_units; op record; rc jsonb := _mp_sc_recipes(); gd jsonb := _mp_goods(); kd jsonb := _mp_sc_kinds();
+        me_cs int[]; can boolean; o jsonb; capd int;
+begin
+  select * into b from mp_blds where id = bid; if not found then return null; end if;
+  select * into p from mp_parcels where id = b.parcel;
+  select * into s from mp_sc where bld = bid;
+  if s.bld is null and b.kind not in ('farm', 'port') then return null; end if;
+  me_cs := array(select id from companies where owner = u);
+  select * into x from mp_units where bld = bid order by floor, no limit 1;
+  can := not p.gov and (coalesce(p.own_u = u or p.own_c = any(me_cs), false) or coalesce(x.t_kind = 'corp' and x.t_c = any(me_cs), false));
+  select * into op from _mp_sc_op(bid, now());
+  o := jsonb_build_object('can', can, 'op', op.ok, 'npc', op.npc, 'gov', p.gov, 'm2', op.m2,
+         'who', case when op.ok and not op.gv then _mp_pname(op.pu, op.pc, false) end,
+         'as', case when can and op.ok and not op.gv then case when op.pu = u then 'me' when op.pc = any(me_cs) then (select c.cid from companies c where c.id = op.pc) end end);
+  if b.kind = 'farm' then o := o || '{"opts": ["wheat"]}'::jsonb; elsif b.kind = 'port' then o := o || '{"opts": ["ore", "crude"]}'::jsonb; end if;
+  if s.bld is null then return o || jsonb_build_object('kind', 'none'); end if;
+  -- 学校
+  if s.grp is not null then
+    return o || jsonb_build_object('kind', 'school', 'grp', s.grp, 'cap', coalesce((s.st ->> 'cap')::int, floor(op.m2 / (kd -> s.grp ->> 'spp')::real)::int),
+      'n', coalesce((s.st ->> 'n')::int, 0), 'pool', (s.st ->> 'pool')::int, 'acc', (s.st ->> 'acc')::real, 'lv', s.lv,
+      'fee', round((kd -> s.grp ->> 'fee')::numeric * round(s.lv::numeric, 2)),
+      'day', case when can then (select coalesce(sum(l.amt), 0) from mp_sclog l where l.bld = bid and l.k = 'fee' and l.at > now() - interval '24 hours') end,
+      'sta', (select coalesce(jsonb_agg(z.name order by z.d), '[]'::jsonb) from (
+                select st.name, (st.x / 100.0 - s.x) ^ 2 + (st.y / 100.0 - s.y) ^ 2 d from mp_stations st
+                 where st.x between (s.x - 20) * 100 and (s.x + 20) * 100 and st.y between (s.y - 20) * 100 and (s.y + 20) * 100
+                   and (st.x / 100.0 - s.x) ^ 2 + (st.y / 100.0 - s.y) ^ 2 <= 400 and exists (select 1 from mp_routes r where r.ok and st.id = any(r.stops))
+                 order by 2 limit 4) z));
+  end if;
+  -- 工場・田畑・港
+  o := o || jsonb_build_object('kind', case when s.prod = 'railcar' then 'railcar' when rc -> s.prod ? 'raw' then 'raw' else 'make' end, 'prod', s.prod, 'imp', s.imp, 'lv', s.lv,
+    'stock', (select coalesce(jsonb_object_agg(st.good, round(st.qty, 3)), '{}'::jsonb) from mp_stock st where st.bld = bid and st.qty > 0));
+  if s.prod = 'railcar' then
+    capd := greatest(1, floor(op.m2 / _mp_rate('rc_m2')))::int;
+    o := o || jsonb_build_object('capd', capd, 'parts', _mp_rate('rc_parts'), 'wait', greatest(0, ceil(extract(epoch from coalesce(s.q_until, now()) - now()) / 3600))::int);
+  elsif rc ? s.prod then
+    o := o || jsonb_build_object('per_day', round((rc -> s.prod ->> 'r')::numeric * op.m2, 3), 'ins', rc -> s.prod -> 'in', 'oc', rc -> s.prod -> 'oc');
+  end if;
+  if can then
+    o := o || jsonb_build_object(
+      'day', (select coalesce(jsonb_object_agg(z.k, z.v), '{}'::jsonb) from (
+                select l.k, jsonb_build_object('q', (select coalesce(jsonb_object_agg(y.good, y.q), '{}'::jsonb) from (select l2.good, round(sum(l2.qty), 3) q from mp_sclog l2
+                                                       where l2.bld = bid and l2.k = l.k and l2.at > now() - interval '24 hours' and l2.good is not null group by l2.good) y),
+                                               'a', sum(l.amt)) v
+                  from mp_sclog l where l.bld = bid and l.at > now() - interval '24 hours' group by l.k) z),
+      'flows', (select coalesce(jsonb_agg(jsonb_build_object('k', z.k, 'g', z.good, 'q', z.q, 'a', z.a, 'peer', z.pn, 'km', z.km) order by z.a desc), '[]'::jsonb) from (
+                select l.k, l.good, round(sum(l.qty), 3) q, sum(l.amt) a,
+                       coalesce((select coalesce(nullif(pb.name, ''), (select pr ->> 'n' from jsonb_array_elements(_mp_bld_presets()) pr where pr ->> 'k' = pb.kind))
+                                   from mp_blds pb where pb.id = l.peer), '') pn, round(max(l.km)::numeric, 1) km
+                  from mp_sclog l where l.bld = bid and l.k in ('buy', 'sell') and l.at > now() - interval '24 hours' group by l.k, l.good, l.peer
+                 order by 4 desc limit 12) z));
+  end if;
+  return o;
+end $$;
+
+/* ---------- 設定：つくるもの（田畑・港）・輸入する・授業料／車両の値段の水準 ---------- */
+-- 建物の持ち主か、借りている会社が変えられる。p_prod：'' でもとにもどす（いままでの在庫は市場へ 0.85倍）
+create or replace function public.mp_sc_set(p_bld bigint, p_prod text, p_imp boolean, p_lv real, p_as text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pa record; b mp_blds; p mp_parcels; x mp_units; s mp_sc; op record; cx real; cy real; o record; amt bigint; gd jsonb; ru uuid; rcp int;
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  select * into b from mp_blds where id = p_bld for update;
+  if not found then raise exception '建物が見つかりません'; end if;
+  select * into p from mp_parcels where id = b.parcel;
+  if p.gov then raise exception '国の建物は変えられません'; end if;
+  select * into x from mp_units where bld = b.id order by floor, no limit 1;
+  if not (_mp_same(p.own_u, p.own_c, false, pa.pu, pa.pc, false) or (pa.pc is not null and x.t_kind = 'corp' and x.t_c = pa.pc)) then
+    raise exception 'あなた（この名義）の建物ではありません（持ち主か、借りている会社が変えられます）';
+  end if;
+  select * into s from mp_sc where bld = b.id for update;
+  if p_prod is not null then
+    if b.kind not in ('farm', 'port') then raise exception 'つくるものを変えられるのは田畑と港湾施設だけです'; end if;
+    if p_prod <> '' and not ((b.kind = 'farm' and p_prod = 'wheat') or (b.kind = 'port' and p_prod in ('ore', 'crude'))) then raise exception 'その建物では、それはつくれません'; end if;
+    if p_prod is distinct from coalesce(s.prod, '') then
+      -- いままでの在庫は市場へ（動かしている人・会社に。動いていなければ持ち主に）
+      select * into op from _mp_sc_op(b.id, now());
+      if op.ok then ru := op.pu; rcp := op.pc; else ru := p.own_u; rcp := p.own_c; end if;
+      gd := _mp_goods();
+      for o in select st.good, st.qty from mp_stock st where st.bld = b.id and st.qty > 0.0005 loop
+        amt := round(o.qty * coalesce((gd -> o.good ->> 'p')::numeric, 0) * _mp_rate('sc_mkt'));
+        if amt > 0 then perform _mp_earn(ru, rcp, false, amt, 'sales', format('市場に売った：%s %s', gd -> o.good ->> 'n', _mp_fmtq(o.qty, gd -> o.good ->> 'u'))); end if;
+      end loop;
+      delete from mp_stock where bld = b.id;
+      if p_prod = '' then delete from mp_sc where bld = b.id;
+      else
+        select avg(b.cells[2 * i - 1] + 0.5) / 5, avg(b.cells[2 * i] + 0.5) / 5 into cx, cy from generate_series(1, array_length(b.cells, 1) / 2) i;
+        insert into mp_sc(bld, prod, x, y) values (b.id, p_prod, cx, cy) on conflict (bld) do update set prod = excluded.prod;
+      end if;
+    end if;
+    select * into s from mp_sc where bld = b.id;
+  end if;
+  if p_imp is not null then
+    if s.bld is null or s.prod is null then raise exception 'この建物は材料を仕入れません'; end if;
+    update mp_sc set imp = p_imp where bld = b.id;
+  end if;
+  if p_lv is not null then
+    if s.grp is not null then
+      if p_lv < 0.5 or p_lv > 2 then raise exception '授業料の水準は50%%〜200%%です'; end if;
+    elsif s.prod = 'railcar' then
+      if p_lv < 0.4 or p_lv > 1.5 then raise exception '車両の値段は定価の40%%〜150%%です'; end if;
+    else raise exception 'この建物には水準はありません'; end if;
+    update mp_sc set lv = round(p_lv::numeric, 2) where bld = b.id;
+  end if;
+  return jsonb_build_object('ok', true);
+end $$;
+
+/* ---------- 自分（名義）の学校・工場（持ち主か、借りている会社） ---------- */
+create or replace function public.mp_sc_list(p_as text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pa record;
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  return jsonb_build_object('goods', _mp_goods(),
+    'blds', (select coalesce(jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'kind', b.kind, 'prod', s.prod, 'grp', s.grp, 'x', b.cells[1], 'y', b.cells[2],
+               'op', op.ok, 'npc', op.npc, 'owner', _mp_same(p.own_u, p.own_c, false, pa.pu, pa.pc, false), 'who', case when op.ok then _mp_pname(op.pu, op.pc, false) end,
+               'n', (s.st ->> 'n')::int, 'cap', (s.st ->> 'cap')::int,
+               'stock', (select coalesce(jsonb_object_agg(st.good, round(st.qty, 1)), '{}'::jsonb) from mp_stock st where st.bld = b.id and st.qty > 0),
+               'day', (select coalesce(jsonb_object_agg(z.k, z.a), '{}'::jsonb) from (select l.k, sum(l.amt) a from mp_sclog l
+                         where l.bld = b.id and l.at > now() - interval '24 hours' group by l.k) z)) order by s.grp nulls last, b.id), '[]'::jsonb)
+             from mp_sc s join mp_blds b on b.id = s.bld join mp_parcels p on p.id = b.parcel
+             left join lateral (select x.* from mp_units x where x.bld = b.id order by x.floor, x.no limit 1) x on true,
+             lateral _mp_sc_op(b.id, now()) op
+            where not p.gov and (_mp_same(p.own_u, p.own_c, false, pa.pu, pa.pc, false) or (pa.pc is not null and x.t_kind = 'corp' and x.t_c = pa.pc))));
+end $$;
+
+/* ---------- 鉄道車両工場：車両の注文を受ける ---------- */
+-- 動いている鉄道車両工場（車両を注文するときにえらぶ）
+create or replace function public.mp_makers() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); me_cs int[];
+begin
+  perform _mp_ok(u);
+  me_cs := array(select id from companies where owner = u);
+  return (select coalesce(jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'who', _mp_pname(op.pu, op.pc, false),
+            'as', case when op.pu = u then 'me' when op.pc = any(me_cs) then (select c.cid from companies c where c.id = op.pc) end,
+            'lv', s.lv, 'capd', greatest(1, floor(op.m2 / _mp_rate('rc_m2')))::int, 'parts', _mp_rate('rc_parts'),
+            'steel', round(coalesce((select st.qty from mp_stock st where st.bld = b.id and st.good = 'steel'), 0), 1),
+            'wait', greatest(0, ceil(extract(epoch from coalesce(s.q_until, now()) - now()) / 3600))::int,
+            'x', b.cells[1], 'y', b.cells[2]) order by b.id), '[]'::jsonb)
+           from mp_sc s join mp_blds b on b.id = s.bld, lateral _mp_sc_op(b.id, now()) op
+          where s.prod = 'railcar' and op.ok and not op.gv);
+end $$;
+-- 注文を受ける（mp_car_order・mp_form_order から）。注文する名義（bu・bc）と工場を動かしている名義が同じなら部品代（定価 × rc_parts）だけ。
+--   ちがえば 定価 × 水準 を工場へ（工場は部品代を国庫へ）。鉄鋼（車両の重さ × 0.8t）を在庫から使う。納車は工場の1日につくれる両数で順番に
+create or replace function public._mp_maker_order(p_maker bigint, bu uuid, bc int, p_types text[], p_dry boolean) returns jsonb
+language plpgsql set search_path = public as $$
+declare s mp_sc; b mp_blds; op record; n int := coalesce(array_length(p_types, 1), 0); list numeric; steel numeric; have numeric; slf boolean; cost bigint;
+        capd int; t0 timestamptz; fin timestamptz; hrs int; bname text;
+begin
+  select * into s from mp_sc where bld = p_maker and prod = 'railcar' for update;
+  if not found then raise exception '鉄道車両工場が見つかりません'; end if;
+  select * into b from mp_blds where id = p_maker;
+  select * into op from _mp_sc_op(p_maker, now());
+  if not op.ok or op.gv then raise exception '「%」は、いま動いていません（持ち主が自分で使うか、会社が借りると動きます）', b.name; end if;
+  if n = 0 then raise exception '形式をえらんでください'; end if;
+  if exists (select 1 from unnest(p_types) z join mp_types y on y.code = z where y.role = 'Bus') then raise exception '鉄道車両工場ではバスはつくれません'; end if;
+  select coalesce(sum(y.price), 0), coalesce(sum(round(y.mass * 0.8)), 0) into list, steel from unnest(p_types) z join mp_types y on y.code = z;
+  have := coalesce((select st.qty from mp_stock st where st.bld = p_maker and st.good = 'steel'), 0);
+  slf := _mp_same(op.pu, op.pc, false, bu, bc, false);
+  cost := case when slf then round(list * _mp_rate('rc_parts')) else round(list * round(s.lv::numeric, 2)) end;
+  capd := greatest(1, floor(op.m2 / _mp_rate('rc_m2')))::int;
+  t0 := greatest(now(), coalesce(s.q_until, now()));
+  fin := t0 + make_interval(secs => n * 86400.0 / capd);
+  hrs := greatest(3, ceil(extract(epoch from fin - now()) / 3600))::int;
+  if have < steel then raise exception '「%」の鉄鋼が足りません（いる %t・在庫 %t）', b.name, steel, round(have, 1); end if;
+  if p_dry then
+    return jsonb_build_object('cost', cost, 'hours', hrs, 'steel', steel, 'have', round(have, 1), 'maker', b.name, 'self', slf, 'list', list);
+  end if;
+  bname := _mp_pname(bu, bc, false);
+  if slf then
+    perform _mp_pay(bu, bc, false, cost, 'car', format('鉄道車両工場「%s」で車両 %s両（部品・組み立て）', b.name, n));
+  else
+    perform _mp_pay(bu, bc, false, cost, 'car', format('鉄道車両工場「%s」に車両 %s両を注文', b.name, n));
+    perform _mp_earn(op.pu, op.pc, false, cost, 'sales', format('車両 %s両の売上（%s）', n, bname));
+    perform _mp_soft_pay(op.pu, op.pc, false, round(list * _mp_rate('rc_parts'))::bigint, 'goods', '車両の部品・組み立て');
+    perform _notice(coalesce(op.pu, (select c.owner from companies c where c.id = op.pc)),
+                    format('【国土】「%s」に車両 %s両の注文が入りました（%s・%s X）。', b.name, n, bname, _fmt(cost)));
+  end if;
+  update mp_stock set qty = greatest(0, qty - steel) where bld = p_maker and good = 'steel';
+  update mp_sc set q_until = fin where bld = p_maker;
+  insert into mp_sclog(at, bld, k, good, qty, amt) values (now(), p_maker, 'use', 'steel', steel, 0), (now(), p_maker, 'rc', 'railcar', n, case when slf then 0 else cost end);
+  return jsonb_build_object('cost', cost, 'hours', hrs, 'steel', steel, 'maker', b.name, 'self', slf);
+end $$;
+
+-- 前からある学校の建物（国の大学など）の事業の行。何度流しても同じ
+do $$
+declare b record;
+begin
+  for b in select bl.id from mp_blds bl where not exists (select 1 from mp_sc s where s.bld = bl.id) loop
+    perform _mp_sc_init(b.id);
+  end loop;
+end $$;
+
+
 -- 毎時2分：国土の時計（pg_cron があるとき）
 do $$
 begin
@@ -22492,32 +23086,34 @@ begin
             '_hc_pay','_hc_do_train','_hc_daily','_hc_monthly','_hc_after_races','_hc_json','_hx_info','hx_admin_state','hx_admin_create',
             'hx_admin_cancel','hx_state','_hx_sold','_hx_bid','_hx_buynow','hx_bid','hx_buynow','_hx_ai_val','_hx_ai_tick',
             'hc_train','hc_feed','hc_mode','hc_vet','hc_release','_hc_tick',
-            '_mp_addr','_mp_admin','_mp_angdiff','_mp_at','_mp_ban','_mp_bb','_mp_bld_check','_mp_bld_defname',
-            '_mp_bld_dem','_mp_bld_hit','_mp_bld_make','_mp_bld_people','_mp_bld_plan','_mp_bld_presets','_mp_bld_refresh','_mp_bld_shape',
-            '_mp_bld_tick_day','_mp_bld_tick_hour','_mp_bus_path','_mp_busy_cells','_mp_carnum','_mp_catch','_mp_cell','_mp_chg',
-            '_mp_chimoku','_mp_cho_at','_mp_cho_set_tiles','_mp_cho_text','_mp_cmuls','_mp_cval','_mp_day_ok','_mp_dens',
-            '_mp_dep_cells','_mp_dep_dim','_mp_dep_tiles','_mp_dep_tiles_g','_mp_dia_snap','_mp_dispatch','_mp_earn','_mp_edec',
-            '_mp_end','_mp_end_ang','_mp_fmtn','_mp_form_drop','_mp_form_perf','_mp_form_routes','_mp_form_rule','_mp_form_rule_t',
-            '_mp_form_runs','_mp_g','_mp_geom_ok','_mp_gov_build','_mp_hm_parse','_mp_hms','_mp_home_text','_mp_hourf',
-            '_mp_kinds_of','_mp_kprio','_mp_land_fee','_mp_land_need','_mp_land_std','_mp_land_stop','_mp_lease_del','_mp_lease_quote',
-            '_mp_lease_set','_mp_leg_from','_mp_leg_time','_mp_len','_mp_line_cells','_mp_lock','_mp_lvmap_build','_mp_mcval',
-            '_mp_mine','_mp_minr','_mp_mvalue','_mp_npc_name','_mp_occ_set','_mp_ok','_mp_okey','_mp_op_of_form',
-            '_mp_parcel_label','_mp_parcel_vals','_mp_party','_mp_pay','_mp_pick_trk','_mp_pkey','_mp_placeholder_names','_mp_pname',
-            '_mp_pref_road','_mp_pref_type','_mp_proj','_mp_pub_cells','_mp_pub_of','_mp_rail_path','_mp_rate','_mp_renet',
-            '_mp_resample','_mp_resched','_mp_rev','_mp_road_mul','_mp_road_v','_mp_road_w','_mp_room','_mp_route_catch',
-            '_mp_route_sta','_mp_route_uses','_mp_routes_fix','_mp_run','_mp_run_check','_mp_run_mark','_mp_same','_mp_seg_blocked',
-            '_mp_seg_cells_arr','_mp_seg_chain','_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells',
-            '_mp_sta_trk','_mp_struct_cells','_mp_sub','_mp_t49_from_tiles','_mp_t5','_mp_ters','_mp_thin','_mp_thru_link',
-            '_mp_thru_ok','_mp_tick','_mp_tick_day','_mp_tick_hour','_mp_tiles','_mp_tmul','_mp_today','_mp_train_calc',
-            '_mp_train_json','_mp_train_times','_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim','_mp_vruns','_mp_world',
-            '_mp_zname','_mp_zone_rule','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_lvset','mp_admin_place_at','mp_admin_rates','mp_admin_rename',
-            'mp_admin_state','mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote',
-            'mp_bld_set','mp_boot','mp_car_log','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_gone',
-            'mp_cars_list','mp_cho_get','mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia','mp_dia_undo','mp_form_del',
-            'mp_form_order','mp_form_set','mp_home_clear','mp_home_get','mp_home_set','mp_kinds_list','mp_kinds_set','mp_land_buy',
-            'mp_land_decide','mp_land_req','mp_land_req_del','mp_land_reqs','mp_ledger_page','mp_op_del','mp_op_export','mp_op_import',
-            'mp_op_save','mp_ops_list','mp_parcel_buy','mp_parcel_merge','mp_parcel_rent','mp_parcel_sell','mp_parcel_split','mp_poll',
-            'mp_route_del','mp_route_pat','mp_route_save','mp_routes_list','mp_seg_build','mp_seg_del','mp_seg_edit','mp_seg_join',
+            '_mp_addr','_mp_admin','_mp_angdiff','_mp_at','_mp_bal','_mp_ban','_mp_bb','_mp_bld_check',
+            '_mp_bld_defname','_mp_bld_dem','_mp_bld_hit','_mp_bld_make','_mp_bld_people','_mp_bld_plan','_mp_bld_presets','_mp_bld_refresh',
+            '_mp_bld_shape','_mp_bld_tick_day','_mp_bld_tick_hour','_mp_bus_path','_mp_busy_cells','_mp_carnum','_mp_catch','_mp_cell',
+            '_mp_chg','_mp_chimoku','_mp_cho_at','_mp_cho_set_tiles','_mp_cho_text','_mp_cmuls','_mp_cval','_mp_day_ok',
+            '_mp_dens','_mp_dep_cells','_mp_dep_dim','_mp_dep_tiles','_mp_dep_tiles_g','_mp_dia_snap','_mp_dispatch','_mp_earn',
+            '_mp_edec','_mp_end','_mp_end_ang','_mp_fmtn','_mp_fmtq','_mp_form_drop','_mp_form_perf','_mp_form_routes',
+            '_mp_form_rule','_mp_form_rule_t','_mp_form_runs','_mp_g','_mp_geom_ok','_mp_goods','_mp_gov_build','_mp_hm_parse',
+            '_mp_hms','_mp_home_text','_mp_hourf','_mp_kinds_of','_mp_kprio','_mp_land_fee','_mp_land_need','_mp_land_std',
+            '_mp_land_stop','_mp_lease_del','_mp_lease_quote','_mp_lease_set','_mp_leg_from','_mp_leg_time','_mp_len','_mp_line_cells',
+            '_mp_lock','_mp_lvmap_build','_mp_maker_order','_mp_mcval','_mp_mine','_mp_minr','_mp_mvalue','_mp_npc_name',
+            '_mp_occ_set','_mp_ok','_mp_okey','_mp_op_of_form','_mp_parcel_label','_mp_parcel_vals','_mp_party','_mp_pay',
+            '_mp_pick_trk','_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_pref_road','_mp_pref_type','_mp_proj','_mp_pub_cells',
+            '_mp_pub_of','_mp_rail_path','_mp_rate','_mp_renet','_mp_resample','_mp_resched','_mp_rev','_mp_road_mul',
+            '_mp_road_v','_mp_road_w','_mp_room','_mp_route_catch','_mp_route_sta','_mp_route_uses','_mp_routes_fix','_mp_run',
+            '_mp_run_check','_mp_run_mark','_mp_same','_mp_sc_info','_mp_sc_init','_mp_sc_kinds','_mp_sc_op','_mp_sc_owes',
+            '_mp_sc_recipes','_mp_sc_riders','_mp_sc_school_calc','_mp_sc_tick_hour','_mp_seg_blocked','_mp_seg_cells_arr','_mp_seg_chain','_mp_seg_join2',
+            '_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_sta_trk','_mp_struct_cells','_mp_sub',
+            '_mp_t49_from_tiles','_mp_t5','_mp_ters','_mp_thin','_mp_thru_link','_mp_thru_ok','_mp_tick','_mp_tick_day',
+            '_mp_tick_hour','_mp_tiles','_mp_tmul','_mp_today','_mp_train_calc','_mp_train_json','_mp_train_times','_mp_unit_mr',
+            '_mp_use_name','_mp_value','_mp_vlim','_mp_vruns','_mp_world','_mp_zname','_mp_zone_rule','mp_admin_cho_merge',
+            'mp_admin_cho_split','mp_admin_lvset','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state','mp_admin_zone','mp_area',
+            'mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set','mp_boot','mp_car_log',
+            'mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_gone','mp_cars_list','mp_cho_get','mp_chunk_get',
+            'mp_dep_build','mp_dep_edit','mp_dia','mp_dia_undo','mp_form_del','mp_form_order','mp_form_set','mp_home_clear',
+            'mp_home_get','mp_home_set','mp_kinds_list','mp_kinds_set','mp_land_buy','mp_land_decide','mp_land_req','mp_land_req_del',
+            'mp_land_reqs','mp_ledger_page','mp_makers','mp_op_del','mp_op_export','mp_op_import','mp_op_save','mp_ops_list',
+            'mp_parcel_buy','mp_parcel_merge','mp_parcel_rent','mp_parcel_sell','mp_parcel_split','mp_poll','mp_route_del','mp_route_pat',
+            'mp_route_save','mp_routes_list','mp_sc_list','mp_sc_set','mp_seg_build','mp_seg_del','mp_seg_edit','mp_seg_join',
             'mp_seg_opts','mp_seg_speed','mp_seg_split','mp_spot','mp_sta_build','mp_sta_edit','mp_sta_trk','mp_sta_trk_set',
             'mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list','mp_thru_req','mp_train_autoform','mp_train_bulk','mp_train_del',
             'mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market','mp_unit_mine','mp_unit_own','mp_unit_set','mp_xfer_accept',

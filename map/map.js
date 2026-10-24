@@ -2051,12 +2051,13 @@ function openMenu() {
     <button class="mp-item" style="text-align:left" data-k="thru"><b>🔀 乗り入れ</b><br><small>ほかの人・会社の線路に列車を走らせる（申請・許可・線路使用料）</small></button>
     <button class="mp-item" style="text-align:left" data-k="blds"><b>🏢 自分の建物</b><br><small>部屋の入居・家賃の水準・テナント（${esc(asName())}）</small></button>
     <button class="mp-item" style="text-align:left" data-k="tenants"><b>🔑 テナント募集</b><br><small>会社で部屋を借りる・借りている部屋</small></button>
+    <button class="mp-item" style="text-align:left" data-k="sc"><b>🏭 学校と工場</b><br><small>生徒・授業料／つくるもの・在庫・仕入れ（トラック）・売上・市場の値段</small></button>
     <button class="mp-item" style="text-align:left" data-k="home"><b>🏠 自分の住所</b><br><small>${S.boot.home ? `<span translate="no">${esc(S.boot.home.text)}</span>` : 'まだ決めていません'}</small></button>
     <button class="mp-item" style="text-align:left" data-k="landreq"><b>📨 土地の申請</b><br><small>他人の土地を使う申請・とどいた申請への返事（許可・ことわる）</small></button>
     <button class="mp-item" style="text-align:left" data-k="ledger"><b>💴 お金の記録</b><br><small>運賃・家賃・維持費・使用料・工事費（${esc(asName())}）</small></button>
     ${S.admin ? `<button class="mp-item" style="text-align:left" data-k="admin"><b>🛠 管理</b><br><small>値段の設定・用途地域・ようす</small></button>` : ''}
     <button class="mp-item" style="text-align:left" data-k="help"><b>❓ あそびかた</b></button></div>`], b => {
-    b.querySelectorAll('[data-k]').forEach(x => x.onclick = () => { m.close(); ({ cars: () => openCars(), routes: openRoutes, ops: () => openOps(), xfer: () => openXfers(), thru: () => openThru(), blds: openMyBlds, tenants: openTenants, home: openHome, landreq: () => openLandReqs(), ledger: openLedger, admin: openAdmin, help: openHelp })[x.dataset.k](); });
+    b.querySelectorAll('[data-k]').forEach(x => x.onclick = () => { m.close(); ({ cars: () => openCars(), routes: openRoutes, ops: () => openOps(), xfer: () => openXfers(), thru: () => openThru(), blds: openMyBlds, tenants: openTenants, sc: () => openSC(), home: openHome, landreq: () => openLandReqs(), ledger: openLedger, admin: openAdmin, help: openHelp })[x.dataset.k](); });
   });
 }
 // 自分の住所（t54i）：見る・地図で見る・消す
@@ -2085,6 +2086,9 @@ function openHelp() {
     <p><b>建物</b>：自分の筆に、プリセット（一戸建て・アパート・マンション・タワーマンション・店舗つき住宅・雑居ビル・オフィスビル・超高層ビル・ショッピングセンター・工場・倉庫・港湾施設・田畑・駐車場・立体駐車場）から、形と階数をえらんで建てます。広さと高さは用途地域の建ぺい率・容積率まで。細い形（塔状・板状）ほど高くできます。</p>
     <p><b>部屋とテナント</b>：部屋ごとに「入居募集」（町の人やお店が入って家賃）・「テナント募集」（会社に貸す。会社が借りると、1時間ごとに会社から家賃）・「自分で使う」（店・事務所などは売上が入る）をえらびます。家賃の水準を上げると、入りにくく出ていきやすくなります。人が多いところ・乗り降りの多い駅の近くは入りやすく、店の売上も多くなります。会社は ≡ →「テナント募集」から部屋を借りられます。</p>
     <p><b>自社のオフィス</b>：自分の建物の部屋をえらんで「自社のオフィスにする」で、自分の別の会社をすぐ入れられます。家賃は自分で決めます（0 X でもよい）。店・事務所などの売上は、入った会社に入ります。退去すると入居募集にもどります。</p>
+    <p><b>学校</b>：小学校・中学校・高校・大学・専門学校を建てられます。延床面積で定員が決まり、まわりの人（その年ごろの人）から生徒が通ってきます（同じ種類の学校が近くにあると分けあう。高校・大学・専門学校は駅やバス停が近いとふえる）。自分で使うか会社が借りると、授業料（先生の給料などをひいた分）が1時間ごとに入ります。授業料の水準（50〜200%）が高いと生徒が減ります。生徒は近くの駅・バス停の乗る人にふえます。麦畑キャンパスも同じです。</p>
+    <p><b>特殊工場と物流</b>：材料からものをつくる工場です。小麦（田畑）→ 製粉工場 → 食品工場 → お店／鉄鉱石（港）→ 製鉄所 → 自動車工場／原油（港）→ 石油化学工場 → 半導体・家電工場。材料は1時間ごとに、近くの工場・田畑・港の在庫からトラックで自動で仕入れます（市場の値段＋運送費：1tごとに積みおろし＋距離）。輸入（値段の1.2倍）のほうが安いとき・足りないときは輸入。売れのこり（6時間分をこえる分）は市場へ（0.85倍）。食品は近くのお店へ、自動車・家電・半導体は市場へ。田畑・港湾施設は、建物の「つくるもの」で小麦・鉄鉱石・原油をえらぶと物流に入ります。≡ →「学校と工場」で一覧と市場の値段。</p>
+    <p><b>鉄道車両工場</b>：鉄鋼（近くの製鉄所から）で鉄道車両をつくります。≡ →「車両と編成」で注文するときにメーカーとしてえらべます。工場を動かしている名義の注文は部品代（定価の45%）と鉄鋼だけ。ほかの人・会社には値段の水準（定価の40〜150%）で売れます。1日につくれる両数は延床面積で決まり、注文が多いと納車が先になります。</p>
     <p><b>自分の住所</b>：地図で区画か建物をタップ →「ここを自分の住所に」（建物なら部屋もえらべます）。住所はあなたのページ（人のページ）でみんなに見えます。地図には🏠が出ます（自分にだけ）。≡ →「自分の住所」で見る・消す。</p>
     <p><b>風の芽大学</b>：風の芽大学中央駅のまわりは、風の芽大学 麦畑キャンパス（約140ha）。本部・図書館・学部・研究所・大学病院・附属学校・学生寮・グラウンド・実験農場（麦畑）などがならぶ、国の建物です。</p>
     <p><b>線路・道路</b>：点をおくと、なめらかな線になります。他人の土地や国の土地の上につくると、毎日使用料がかかります（国・府県・市の道路の上はかかりません）。まちの中は工事費が高くなります。</p>
@@ -2105,10 +2109,11 @@ function openHelp() {
 /* ---- 車両と編成 ---- */
 async function openCars(depFocus) {
   const m = modal(['車両と編成', '<p class="muted small">読みこんでいます…</p>']);
-  const st = { dep: depFocus || null, pick: [], form: null, mode: 'view', seq: [] };   // seq：編成で注文する形式の列
+  const st = { dep: depFocus || null, pick: [], form: null, mode: 'view', seq: [], maker: null, mk: [] };   // seq：編成で注文する形式の列。maker：鉄道車両工場（t54k）
   const load = async () => {
-    const d = await api('mp_cars_list', { p_as: S.as }); if (!d) return;
-    st.d = d;
+    const [d, mk] = await Promise.all([api('mp_cars_list', { p_as: S.as }), api('mp_makers', {})]); if (!d) return;
+    st.d = d; st.mk = mk || [];
+    if (st.maker && !st.mk.some(x => x.id === st.maker)) st.maker = null;
     if (!st.dep || !d.depots.some(x => x.id === st.dep)) st.dep = d.depots.length ? d.depots[0].id : null;
     draw();
   };
@@ -2133,6 +2138,9 @@ async function openCars(depFocus) {
             <button class="btn" data-w="inspect">検査</button><button class="btn" data-w="renew">更新工事</button><button class="btn" data-move>転属</button><button class="btn" data-scrap>廃車</button>
             ${dep.kind === 'rail' && st.pick.every(id => { const c = d.cars.find(x => x.id === id); return c && !c.form && !c.xfer; }) ? '<button class="btn" data-give2>ゆずる</button>' : ''}<button class="btn" data-hist>車歴</button><button class="btn" data-clear>えらびなおす</button></div>`
         : '<small class="muted">車両をタップしてえらぶと、編成・改造・検査・転属・廃車ができます。編成は、えらんだ順（先頭から）になります</small>'}</div>
+      ${dep.kind === 'rail' ? `<h4 style="margin:14px 0 4px">メーカー</h4>
+        <div class="mp-row"><select class="mp-inp" data-maker style="width:auto;max-width:100%"><option value="">国のメーカー（定価・6時間で納車）</option>${st.mk.map(x => `<option value="${x.id}" translate="no" ${st.maker === x.id ? 'selected' : ''}>${esc(x.name)}（${esc(x.who)}）・${esc(x.as === S.as ? T(`部品代 ${Math.round(x.parts * 100)}%`) : T(`定価の${Math.round(x.lv * 100)}%`))}・${esc(T(`1日${x.capd}両`))}・${esc(T(`鉄鋼 ${x.steel}t`))}${x.wait ? '・' + esc(T(`待ち ${x.wait}時間`)) : ''}</option>`).join('')}</select></div>
+        <p class="muted small" style="margin:2px 0 0">${st.mk.length ? '鉄道車両工場をえらぶと、その工場の鉄鋼でつくります（納車は工場の1日につくれる両数で順番に）。自分の工場なら部品代だけ' : '鉄道車両工場（人・会社の工場）は、まだありません'}</p>` : ''}
       ${dep.kind === 'rail' ? `<h4 style="margin:14px 0 4px">編成で注文する</h4>
         <div class="mp-row small" style="align-items:center"><span>形式を先頭から順に</span>${typeOpts.map(t => `<button class="btn" style="flex:none;padding:4px 10px" data-sq="${t.code}">${esc(t.label)}${t.face ? `<small>（${esc(T(t.face))}）</small>` : ''}</button>`).join('')}</div>
         <div class="mp-row small" style="align-items:center"><span>よく使う形</span>${[4, 6, 8, 10].map(n => `<button class="btn" style="flex:none;padding:4px 10px" data-sqn="${n}">${n}両</button>`).join('')}</div>
@@ -2148,6 +2156,9 @@ async function openCars(depFocus) {
       const tnote = () => { const t = d.types.find(x => x.code === b.querySelector('[data-type]').value); if (!t) return; const s = (S.boot.series || []).find(x => x.code === t.series);
         b.querySelector('[data-tnote]').innerHTML = `${s ? `<span>${esc(s.name)}</span>：` : ''}<span>${esc(t.note)}</span><br><span>長さ${t.len}m・定員${t.cap}人（座席${t.seats}）・${t.mass}t</span>${t.power ? `<span>・${t.power}kW</span>` : ''}<span>・最高${t.vmax}km/h・維持費 1日 ${fmt(t.upkeep)} X</span>`; };
       tnote(); b.querySelector('[data-type]').onchange = tnote;
+      const mkSel = b.querySelector('[data-maker]'); if (mkSel) mkSel.onchange = () => { st.maker = Number(mkSel.value) || null; };
+      const maker = () => dep.kind === 'rail' ? st.maker : null;
+      const mkLine = r => r.maker ? '\n' + T(`メーカー：${r.maker}（鉄鋼 ${r.steel}t）`) : '';
       b.querySelectorAll('[data-dep]').forEach(x => x.onclick = () => { st.dep = Number(x.dataset.dep); st.pick = []; st.form = null; draw(); });
       b.querySelectorAll('[data-car]').forEach(x => x.onclick = () => { const id = Number(x.dataset.car); const i = st.pick.indexOf(id); if (i >= 0) st.pick.splice(i, 1); else st.pick.push(id); draw(); });
       b.querySelectorAll('[data-reform]').forEach(x => x.onclick = () => { const f = Number(x.dataset.reform); st.form = f; st.pick = cars.filter(c => c.form === f).sort((a, c) => a.pos - c.pos).map(c => c.id); draw(); });
@@ -2185,9 +2196,9 @@ async function openCars(depFocus) {
       if (q('[data-sqc]')) q('[data-sqc]').onclick = () => { st.seq = []; draw(); };
       if (q('[data-ford]')) q('[data-ford]').onclick = async () => {
         const no = q('[data-fno]').value.trim(); if (!no) return toast('編成番号を入れてください');
-        const r = await api('mp_form_order', { p_types: st.seq, p_name: no, p_depot: st.dep, p_as: S.as, p_dry: true }); if (!r) return;
-        if (!confirm(T(`編成「${no}」${r.n}両：${r.nums.join('・')}\n${fmt(r.cost)} X（維持費 1日 ${fmt(r.upkeep)} X）。${r.hours}時間で納車`))) return;
-        if (await api('mp_form_order', { p_types: st.seq, p_name: no, p_depot: st.dep, p_as: S.as, p_dry: false }, '注文しました')) { st.seq = []; load(); }
+        const r = await api('mp_form_order', { p_types: st.seq, p_name: no, p_depot: st.dep, p_as: S.as, p_dry: true, p_maker: maker() }); if (!r) return;
+        if (!confirm(T(`編成「${no}」${r.n}両：${r.nums.join('・')}\n${fmt(r.cost)} X（維持費 1日 ${fmt(r.upkeep)} X）。${r.hours}時間で納車`) + mkLine(r))) return;
+        if (await api('mp_form_order', { p_types: st.seq, p_name: no, p_depot: st.dep, p_as: S.as, p_dry: false, p_maker: maker() }, '注文しました')) { st.seq = []; load(); }
       };
       b.querySelectorAll('[data-give]').forEach(x => x.onclick = () => giveForm(d.forms.find(f => f.id === Number(x.dataset.give)), load));
       if (q('[data-give2]')) q('[data-give2]').onclick = () => giveCars(st.pick.map(id => d.cars.find(c => c.id === id)).filter(Boolean), () => { st.pick = []; load(); });
@@ -2195,13 +2206,34 @@ async function openCars(depFocus) {
       q('[data-gone]').onclick = async () => { const r = await api('mp_cars_gone', { p_as: S.as }); if (r) carLog('廃車した車両', r); };
       q('[data-order]').onclick = async () => {
         const t = q('[data-type]').value, n = Number(q('[data-n]').value) || 1;
-        const r = await api('mp_car_order', { p_type: t, p_n: n, p_depot: st.dep, p_as: S.as, p_dry: true }); if (!r) return;
-        if (!confirm(T(`${r.nums.join('・')}\n${fmt(r.cost)} X（維持費 1日 ${fmt(r.upkeep)} X）。${r.hours}時間で納車`))) return;
-        if (await api('mp_car_order', { p_type: t, p_n: n, p_depot: st.dep, p_as: S.as, p_dry: false }, '注文しました')) load();
+        const r = await api('mp_car_order', { p_type: t, p_n: n, p_depot: st.dep, p_as: S.as, p_dry: true, p_maker: maker() }); if (!r) return;
+        if (!confirm(T(`${r.nums.join('・')}\n${fmt(r.cost)} X（維持費 1日 ${fmt(r.upkeep)} X）。${r.hours}時間で納車`) + mkLine(r))) return;
+        if (await api('mp_car_order', { p_type: t, p_n: n, p_depot: st.dep, p_as: S.as, p_dry: false, p_maker: maker() }, '注文しました')) load();
       };
     });
   };
   load();
+}
+
+/* ---- 学校と工場（t54k）：自分（名義）の学校・工場・田畑・港と、市場の値段 ---- */
+async function openSC() {
+  const m = modal(['学校と工場', '<p class="muted small">読みこんでいます…</p>'], null, 'mp-wide');
+  const d = await api('mp_sc_list', { p_as: S.as }); if (!d) return m.close();
+  const sum = (b, ks) => ks.reduce((a, k) => a + Number((b.day || {})[k] || 0), 0);
+  const what = b => b.grp ? `<span>生徒 ${fmt(b.n || 0)} / ${fmt(b.cap || 0)}人</span>` : b.prod === 'railcar' ? '<span>鉄道車両</span>' : `<span>${esc(GN(b.prod))}</span>`;
+  const stock = b => gSort(b.stock).map(([g, q]) => qG(g, q)).join('・');
+  m.set('学校と工場', `<p class="small" style="margin:0 0 6px">${esc(asName())}</p>
+    <div class="mp-list">${d.blds.map(b => `<div class="mp-item"><b>${esc(b.name || kindName(b.kind))}</b> <small><span>${esc(kindName(b.kind))}</span>${b.owner ? '' : '<span>（借りている）</span>'}</small>
+        <small><br>${what(b)}・${b.op ? `<span>${esc(b.who || '')}</span>` : b.npc ? '<span>町の学校法人</span>' : '<span class="mp-warn">止まっています</span>'}${stock(b) ? `<br><span>在庫</span> ${stock(b)}` : ''}
+        <br>${b.grp ? `<span>24時間の授業料 ${X(sum(b, ['fee']))}</span>` : `<span>24時間：売上 ${X(sum(b, ['sell', 'shop', 'mkt', 'rc']))}</span>・<span>費用 ${X(sum(b, ['buy', 'imp', 'ship', 'cost']))}</span>`}</small>
+        <div class="mp-row"><button class="btn" data-go="${b.id}" data-xy="${b.x},${b.y}">地図で見る</button></div></div>`).join('')
+      || '<p class="muted small">学校・工場はまだありません。自分の筆をタップ →「建物を建てる」の「学校」「工場・港・倉庫・田畑」から建てられます</p>'}</div>
+    <h4 style="margin:12px 0 4px">市場の値段</h4>
+    <div class="mp-kv">${GORDER.filter(k => (d.goods || {})[k]).map(k => { const g = d.goods[k]; return `<b>${esc(g.n)}</b><span>${X(g.p)}<small>（1${esc(g.u)}）</small></span>`; }).join('')}</div>
+    <p class="muted small"><span>小麦（田畑）→ 製粉工場 → 食品工場 → お店</span><br><span>鉄鉱石（港）→ 製鉄所 → 自動車工場・鉄道車両工場</span><br><span>原油（港）→ 石油化学工場 → 半導体・家電工場</span><br>
+      <span>材料は近くの在庫からトラックで（市場の値段＋運送費）。輸入は値段の1.2倍、売れのこりは市場へ 0.85倍。</span></p>`, b => {
+    b.querySelectorAll('[data-go]').forEach(x => x.onclick = () => { const [cx, cy] = x.dataset.xy.split(',').map(Number); m.close(); setCam((cx + 0.5) / 5, (cy + 0.5) / 5, Math.max(S.cam.z, 30)); openBld(Number(x.dataset.go)); });
+  });
 }
 
 /* ---- 系統 ---- */
@@ -2898,7 +2930,8 @@ async function openLandReqs() {
 }
 
 /* ---- お金の記録 ---- */
-const LK = { fare: '運賃', rent: '家賃', sales: '売上', tenant: 'テナントの家賃（はらう）', lease: '使用料（はらう）', lease_in: '使用料（受けとり）', upkeep: '維持費', tax: '固定資産税', land: '土地', bld: '建物', car: '車両', rail: '線路の工事', road: '道路の工事', sta: '駅', dep: '車庫', owed: '未払い' };
+const LK = { fare: '運賃', rent: '家賃', sales: '売上', tenant: 'テナントの家賃（はらう）', lease: '使用料（はらう）', lease_in: '使用料（受けとり）', upkeep: '維持費', tax: '固定資産税', land: '土地', bld: '建物', car: '車両', rail: '線路の工事', road: '道路の工事', sta: '駅', dep: '車庫', owed: '未払い',
+  tuition: '授業料', goods: '仕入れ・材料', ship: '運送費' };
 async function openLedger() {
   const m = modal(['お金の記録', '<p class="muted small">読みこんでいます…</p>']);
   let rows = [], before = null, head = null;
@@ -2924,7 +2957,11 @@ const RATE_NAME = { land_P: '地価のもと：平地', land_F: '地価のもと
   stop: 'バス停', dep_S: '車両基地 S', dep_M: '車両基地 M', dep_L: '車両基地 L', bdep_S: '営業所 S', bdep_M: '営業所 M', up_rail: '維持費：線路1マス・1日', up_road: '維持費：私道1マス・1日',
   up_sta: '維持費：駅・1日', up_stop: '維持費：バス停・1日', up_dep: '維持費：車両基地・1日', up_bdep: '維持費：営業所・1日', g_rail: '鉄道に乗る人（駅のまわりの人の・1日）', g_bus: 'バスに乗る人（同）',
   fare_base: '運賃：はじめ', fare_km: '運賃：1kmごと', bus_fare: 'バス運賃', bus_km: 'バス：3kmをこえて1kmごと', catch_rail: '駅のまわり（マス）', catch_bus: 'バス停のまわり（マス）',
-  max_tiles: '一度にひける線（マス）', grow: 'まちの成長（1日）', grow_sta: '駅の近くのまちの成長（1日）', urb_k: 'まちの中の工事費の倍率', urb_sta: 'まちの中の駅の工事費の倍率' };
+  max_tiles: '一度にひける線（マス）', grow: 'まちの成長（1日）', grow_sta: '駅の近くのまちの成長（1日）', urb_k: 'まちの中の工事費の倍率', urb_sta: 'まちの中の駅の工事費の倍率',
+  p_wheat: '値段：小麦（1t）', p_flour: '値段：小麦粉（1t）', p_food: '値段：食品（1t）', p_ore: '値段：鉄鉱石（1t）', p_steel: '値段：鉄鋼（1t）', p_car: '値段：自動車（1台）',
+  p_crude: '値段：原油（1kL）', p_chem: '値段：化学品（1t）', p_elec: '値段：家電・半導体（1t）', truck_base: 'トラック：積みおろし（1t）', truck_km: 'トラック：1t・1km',
+  sc_imp: '輸入（値段の何倍）', sc_mkt: '市場に売る（値段の何倍）', sc_keep: '売らずにのこす在庫（何日分）', sc_shop: 'お店のもうけ（食品の値段の）', sc_food: 'お店の食品（床1㎡・1日・t）', sc_food_km: '食品をお店に運ぶ（km まで）',
+  rc_parts: '鉄道車両工場：部品代（定価の）', rc_m2: '鉄道車両工場：1両・1日あたりの床（㎡）' };
 async function openAdmin() {
   const m = modal(['国土の管理', '<p class="muted small">読みこんでいます…</p>']);
   const st = await api('mp_admin_state', {}); const rates = await api('mp_admin_rates', { p_set: null }); if (!st || !rates) return;
@@ -3068,9 +3105,24 @@ const BK = {
   ulib: ['#6f8a5e', '#efeadf', '#d3c9b6'], uhall: ['#8c4a3c', '#eadccd', '#cdb9a3'], ugym: ['#7fa0b8', '#e8edf1', '#c5d0d8'],
   uunion: ['#d39a5c', '#f4eadc', '#dbc8b0'], udorm: ['#a39d90', '#f1eee8', '#d4cfc5'], uhosp: ['#e4e8ec', '#ffffff', '#d7dde3'],
   umus: ['#6e7a8a', '#ece8e0', '#cfc8bb'], uschool: ['#c9b48a', '#f3eee2', '#d8cfb9'], ugh: ['#bfe3dc', '#e8f5f3', '#bcd9d4'],
-  ufield: ['#93c56a'], ufarm: ['#e2c666'], ugreen: ['#c3dfae'], uave: ['#e6dfcf']
+  ufield: ['#93c56a'], ufarm: ['#e2c666'], ugreen: ['#c3dfae'], uave: ['#e6dfcf'],
+  // 学校（t54k）：小学校・中学校・高校・大学・専門学校
+  es: ['#d9b77e', '#f4ead8', '#dccbaa'], jhs: ['#c9a16a', '#f2e6d2', '#d8c4a2'], hs: ['#b98e5e', '#efe2d0', '#d2bc9c'], univ: ['#a65a46', '#efe2d4', '#d4bfaa'],
+  voc: ['#b7a2c9', '#efe9f4', '#cfc3da'],
+  // 特殊工場（t54k）：製粉・食品・製鉄・自動車・石油化学・半導体と家電・鉄道車両
+  mill: ['#d8c9a3', '#f1ead8', '#d6c9ac'], foodf: ['#e3b98a', '#f6e9d8', '#dcc6a8'], steelw: ['#7d7f86', '#c9cbd0', '#9a9ca3'], carf: ['#9fb4c8', '#dfe7ef', '#b2c1cf'],
+  petro: ['#c7c2a0', '#ebe7d2', '#cfcab0'], elecf: ['#b8d0d8', '#e7f0f3', '#c5d6dc'], railf: ['#8f9e8a', '#dce3d9', '#b4bfb0']
 };
-const USE_NAME = { home: '住居', shop: '店舗', office: '事務所', factory: '工場', warehouse: '倉庫', port: '港湾', farm: '田畑', parking: '駐車場', plaza: '広場' };
+const USE_NAME = { home: '住居', shop: '店舗', office: '事務所', factory: '工場', warehouse: '倉庫', port: '港湾', farm: '田畑', parking: '駐車場', plaza: '広場', school: '学校' };
+const CAT_NAME = { home: '住まい', biz: 'お店・オフィス', school: '学校', ind: '工場・港・倉庫・田畑', park: '駐車場' };
+const SCH_K = new Set(['es', 'jhs', 'hs', 'univ', 'voc']), FAC_K = new Set(['mill', 'foodf', 'steelw', 'carf', 'petro', 'elecf', 'railf']);
+// 品目（t54k）：名前・単位・量のことば
+const GN = g => ((S.boot.goods || {})[g] || {}).n || g, GU = g => ((S.boot.goods || {})[g] || {}).u || 't';
+const U_DAI = String.fromCharCode(0x53f0), SYM_SCH = String.fromCharCode(0x6587);   // 台（車の数・整数）・文（学校の地図記号）
+const qtyS = (q, u) => (u === U_DAI || q >= 100 ? fmt(Math.round(q)) : q >= 1 ? (Math.round(q * 10) / 10).toFixed(1) : (Math.round(q * 1000) / 1000).toFixed(3)) + u;
+const qG = (g, q) => `<span>${esc(GN(g))} ${qtyS(q, GU(g))}</span>`;
+const GORDER = ['wheat', 'flour', 'food', 'ore', 'steel', 'car', 'crude', 'chem', 'elec'];   // 品目のならび（つながりの順）
+const gSort = o => Object.entries(o || {}).sort((a, b) => GORDER.indexOf(a[0]) - GORDER.indexOf(b[0]));
 const SHAPE_NAME = { full: 'ぜんぶ', slab: '板状', tower: '塔状', L: 'L字', ko: 'コの字', ro: 'ロの字' };
 const MODE_NAME = { npc: '入居募集', corp: 'テナント募集', self: '自分で使う' };
 const kindName = k => { const p = (S.boot.bld || []).find(b => b.k === k); return p ? p.n : k; };
@@ -3144,11 +3196,26 @@ function drawBlds(g, it, z, v) {
     if (selP && b.parcel === selP) { g.strokeStyle = '#d23'; g.lineWidth = 3 / z; g.stroke(walls && b.floors > 0 ? b.edge : b.baseEdge); }
   }
   screenT(g);
+  if (z >= 9 && z < 24) for (const b of bs) {
+    if (!SCH_K.has(b.kind) && !FAC_K.has(b.kind)) continue;
+    const X = sx(walls && b.floors > 0 ? b.lx : b.cx), Y = sy(walls && b.floors > 0 ? b.ly : b.cy);
+    if (SCH_K.has(b.kind)) {
+      g.font = 'bold 12px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.lineWidth = 3; g.strokeStyle = 'rgba(255,255,255,.92)'; g.strokeText(SYM_SCH, X, Y); g.fillStyle = '#5a3d0c'; g.fillText(SYM_SCH, X, Y);
+    } else gearSym(g, X, Y, 5);
+  }
   if (z >= 24) for (const b of bs.slice().reverse()) {
     if (!b.name && b.floors <= 0) continue;
     const t = (b.name || '') + (b.floors > 0 ? (b.name ? ' ' : '') + b.floors + 'F' : '');
     label(g, t, sx(walls ? b.lx : b.cx), sy(walls ? b.ly : b.cy), { size: b.kind === 'cityhall' || b.kind === 'uhq' ? 12 : 10, color: b.own === 2 ? '#123c8c' : b.own === 3 ? '#5a3d0c' : '#333', bg: 'rgba(255,255,255,.82)' });
   }
+}
+// 工場の記号（歯車）
+function gearSym(g, X, Y, r) {
+  g.save(); g.translate(X, Y); g.beginPath();
+  for (let k = 0; k < 32; k++) { const a = k * Math.PI / 16, rr = k % 4 < 2 ? r * 1.4 : r; if (k) g.lineTo(rr * Math.cos(a), rr * Math.sin(a)); else g.moveTo(rr, 0); }
+  g.closePath(); g.lineWidth = 3; g.strokeStyle = 'rgba(255,255,255,.92)'; g.stroke(); g.fillStyle = '#4a4f57'; g.fill();
+  g.beginPath(); g.arc(0, 0, r * 0.45, 0, Math.PI * 2); g.fillStyle = '#fff'; g.fill(); g.restore();
 }
 // グラウンド：大きいものは陸上のトラック（だ円）、小さいものはコートの白線
 function drawField(g, b, z) {
@@ -3187,11 +3254,21 @@ async function bldStart(P) {
   const m = modal(['建物を建てる', '<p class="muted small">読みこんでいます…</p>']);
   const ops = await api('mp_bld_options', { p_parcel: P.id, p_as: S.as }); if (!ops) return m.close();
   const pr = k => S.boot.bld.find(b => b.k === k) || {};
-  m.set('建物を建てる', `<p class="small" style="margin:0 0 6px"><span>${esc(P.ban)}</span>・<span>${fmt(P.n * 100)}㎡</span></p>
-    <div class="mp-list">${ops.map(o => { const p = pr(o.k); return `<button class="mp-item" style="text-align:left${o.ok ? '' : ';opacity:.55'}" data-k="${o.k}" ${o.ok ? '' : 'disabled'}>
+  // 学校の定員・工場の1日の量（いちばん大きく建てたとき）
+  const extra = (p, o) => {
+    if (p.sc) { const k = (S.boot.sck || {})[p.sc]; return `<br><span>生徒が通う・授業料</span>${k && o.ok ? `・<span>定員 ${fmt(Math.floor(o.total_m2 / k.spp))}人まで</span>` : ''}`; }
+    if (p.mk === 'railcar') return `<br><span>鉄鋼 → 鉄道車両</span>${o.ok ? `・<span>1日に ${Math.max(1, Math.floor(o.total_m2 / ((S.boot.scr || {}).rc_m2 || 5000)))}両まで</span>` : ''}`;
+    if (p.mk) { const rc = (S.boot.rcp || {})[p.mk] || {}, ins = Object.keys(rc.in || {});
+      return `<br><span>${ins.map(g => esc(GN(g))).join('・')} → ${esc(GN(p.mk))}</span>${o.ok && rc.r ? `・<span>1日の生産 ${qtyS(rc.r * o.total_m2, GU(p.mk))}</span>` : ''}`; }
+    return '';
+  };
+  const item = o => { const p = pr(o.k); return `<button class="mp-item" style="text-align:left${o.ok ? '' : ';opacity:.55'}" data-k="${o.k}" ${o.ok ? '' : 'disabled'}>
       <b>${esc(p.n || o.k)}</b> ${o.ok ? `<span class="mp-cost">${X(o.cost)}</span>` : ''}
-      <small><br>${o.ok ? `<span>${p.f1 > 0 ? `${p.f0}〜${o.f1}階` : '平ら'}</span>・<span>部屋 ${fmt(o.units)}</span>・<span>家賃の目安 1日 ${X(o.rent_day)}</span>` : `<span>${esc(o.why || '')}</span>`}</small></button>`; }).join('')}</div>
-    <p class="muted small">工事費は床1㎡ごと。家賃の目安は満室・相場のとき。用途地域の建ぺい率・容積率で、建てられる広さと高さが決まります</p>`, b => {
+      <small><br>${o.ok ? `<span>${p.f1 > 0 ? `${p.f0}〜${o.f1}階` : '平ら'}</span>・<span>部屋 ${fmt(o.units)}</span>・<span>家賃の目安 1日 ${X(o.rent_day)}</span>` : `<span>${esc(o.why || '')}</span>`}${extra(p, o)}</small></button>`; };
+  const cats = ['home', 'biz', 'school', 'ind', 'park'], catOf = o => { const c = pr(o.k).cat; return cats.includes(c) ? c : 'ind'; };
+  m.set('建物を建てる', `<p class="small" style="margin:0 0 6px"><span>${esc(P.ban)}</span>・<span>${fmt(P.n * 100)}㎡</span></p>
+    ${cats.map(c => { const os = ops.filter(o => catOf(o) === c); return os.length ? `<h4 style="margin:10px 0 4px">${CAT_NAME[c]}</h4><div class="mp-list">${os.map(item).join('')}</div>` : ''; }).join('')}
+    <p class="muted small">工事費は床1㎡ごと。家賃の目安は満室・相場のとき。用途地域の建ぺい率・容積率で、建てられる広さと高さが決まります。学校・特殊工場は、建てると「自分で使う」になります（入居募集・テナント募集にも変えられます）</p>`, b => {
     b.querySelectorAll('[data-k]').forEach(x => x.onclick = () => { m.close(); bldDesign(P, pr(x.dataset.k), ops.find(o => o.k === x.dataset.k)); });
   });
 }
@@ -3290,6 +3367,7 @@ async function openBld(bid) {
         ${d.mine ? `<b>入居</b><span>${d.day.occ} / ${d.day.n}</span><b>家賃</b><span>1日 ${X(d.day.rent)}</span>
           <b>家賃の水準</b><span><input type="range" min="50" max="200" step="5" value="${Math.round(d.rent_lv * 100)}" class="mp-lv" style="width:55%;vertical-align:middle"> <b class="mp-lvn">${Math.round(d.rent_lv * 100)}%</b> <button class="btn" data-lvset style="padding:2px 8px">決める</button></span>` : ''}
       </div>
+      ${scBlock(d)}
       ${d.gov ? `<p class="muted small" style="margin:2px 0 6px">国の建物です（税・家賃はありません）</p>` : ''}
       ${d.mine ? `<p class="muted small" style="margin:2px 0 6px">家賃の水準は入居募集の部屋の家賃（相場の何%か）。高いと入りにくく、出ていきやすくなります。店・事務所などを自分で使うか会社が借りると、売上が入ります</p>
         <div class="mp-row" data-bulk><small data-n>${sel.size}室えらんでいます</small>
@@ -3301,6 +3379,7 @@ async function openBld(bid) {
         <summary><b>${f > 0 ? T(`${f}階`) : T('地上')}</b> <small><span>${us.length}室</span>・<span>入居 ${us.filter(u => u.tk || u.mode === 'self').length}</span></small></summary>
         ${us.map(row).join('')}</details>`; }).join('')}</div>
       ${d.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button><button class="btn" data-del style="color:#c33">こわす</button></div>` : ''}`, b => {
+      scBind(b, d, load);
       const nEl = b.querySelector('[data-n]');
       const upd = () => { if (nEl) nEl.textContent = T(`${sel.size}室えらんでいます`); };
       b.querySelectorAll('[data-c]').forEach(x => x.onchange = () => { const id = Number(x.dataset.c); if (x.checked) sel.add(id); else sel.delete(id); upd(); });
@@ -3330,6 +3409,75 @@ async function openBld(bid) {
     });
   };
   load();
+}
+/* ---- 建物の事業（t54k）：学校（生徒・授業料）・工場（つくるもの・在庫・仕入れ・売上）・田畑と港（つくるもの）・鉄道車両工場 ---- */
+function scBlock(d) {
+  const s = d.sc; if (!s) return '';
+  const opRow = s.gov ? '' : `<b>動かしている</b><span>${s.op ? `<span>${esc(s.who || '')}</span>` : s.npc ? '<span>町の学校法人（入居募集）</span>'
+    : '<span class="mp-warn">止まっています</span> <small>（自分で使うか、会社が借りると動きます）</small>'}</span>`;
+  if (s.kind === 'school') {
+    const k = (S.boot.sck || {})[s.grp] || {}, lv = Math.round((s.lv || 1) * 100);
+    return `<h4 style="margin:12px 0 4px">🏫 <span>${esc(k.n || '学校')}</span></h4><div class="mp-kv">
+      <b>生徒</b><span><span>${fmt(s.n || 0)}人</span> / <span>定員 ${fmt(s.cap || 0)}人</span></span>
+      ${s.pool != null ? `<b>通える人</b><span><span>${fmt(s.pool)}人</span>${k.acc ? ` <small>（${s.acc >= 1 ? '駅が近い' : s.acc >= 0.8 ? 'バス停が近い' : '駅・バス停が遠い'}）</small>` : ''}</span>` : ''}
+      ${(s.sta || []).length ? `<b>近くの駅</b><span>${s.sta.map(n => `<span translate="no">${esc(n)}</span>`).join('・')}</span>` : ''}
+      ${opRow}
+      ${s.gov ? '' : `<b>授業料</b><span><span>1人 1日 ${X(s.fee)}</span> <small>（水準 ${lv}%）</small></span>`}
+      ${s.can && s.day != null ? `<b>24時間の授業料</b><span>${X(s.day)}</span>` : ''}
+      ${s.can ? `<b>授業料の水準</b><span><input type="range" min="50" max="200" step="5" value="${lv}" class="mp-sclv" style="width:55%;vertical-align:middle"> <b class="mp-sclvn">${lv}%</b> <button class="btn" data-sclv style="padding:2px 8px">決める</button></span>` : ''}
+      </div>
+      <p class="muted small" style="margin:2px 0 6px"><span>生徒は、まわりの人（その年ごろの人）から通ってきます。同じ種類の学校が近くにあると分けあいます。</span>${k.acc ? '<span>駅・バス停が近いと生徒がふえます。</span>' : ''}<span>生徒は近くの駅・バス停の乗る人にふえます（次の日から）。</span>${s.gov ? '' : '<span>自分で使うか会社が借りると、授業料（先生の給料などをひいた分）が1時間ごとに入ります。水準が高いと生徒が減ります。</span>'}</p>`;
+  }
+  const st = s.stock || {}, stock = Object.keys(st).length ? gSort(st).map(([g, q]) => qG(g, q)).join('・') : '<span class="muted">なし</span>';
+  const prodSel = s.can && s.opts ? `<b>つくるもの</b><span><select class="mp-inp" data-scprod style="width:auto"><option value="">ふつう（いままでどおり）</option>${s.opts.map(g => `<option value="${g}" ${s.prod === g ? 'selected' : ''}>${esc(GN(g))}</option>`).join('')}</select> <button class="btn" data-scprodset style="padding:2px 8px">決める</button></span>` : '';
+  if (s.kind === 'none') {
+    return s.can ? `<h4 style="margin:12px 0 4px">🚚 <span>物流</span></h4><div class="mp-kv">${prodSel}</div>
+      <p class="muted small" style="margin:2px 0 6px">${s.opts.includes('wheat') ? '<span>「小麦」にすると、つくった小麦を近くの製粉工場に売ります（売れのこりは市場へ）。</span>' : '<span>「鉄鉱石」「原油」にすると、船で仕入れて近くの製鉄所・石油化学工場に売ります（売れのこりは市場へ）。</span>'}<span>「ふつう」は、いままでどおりの売上です。</span></p>` : '';
+  }
+  const day = s.day || {}, A = k => (day[k] || {}).a || 0, Q = k => (day[k] || {}).q || {};
+  const qs = k => gSort(Q(k)).map(([g, q]) => qG(g, q)).join('・');
+  const sales = A('sell') + A('shop') + A('mkt') + A('rc'), costs = A('buy') + A('imp') + A('ship') + A('cost');
+  const dayRows = s.can ? `<b>24時間</b><span>
+      ${Object.keys(Q('make')).length ? `<span>つくった</span> ${qs('make')}<br>` : ''}
+      ${A('buy') ? `<span>仕入れ</span> ${X(A('buy'))} <small>（${qs('buy')}）</small><br>` : ''}${A('imp') ? `<span>輸入</span> ${X(A('imp'))} <small>（${qs('imp')}）</small><br>` : ''}
+      ${A('sell') ? `<span>工場に売った</span> ${X(A('sell'))}<br>` : ''}${A('shop') ? `<span>お店に売った</span> ${X(A('shop'))}<br>` : ''}${A('mkt') ? `<span>市場に売った</span> ${X(A('mkt'))}<br>` : ''}${A('rc') ? `<span>車両の売上</span> ${X(A('rc'))}<br>` : ''}
+      ${A('ship') ? `<span>運送費</span> ${X(A('ship'))}<br>` : ''}${A('cost') ? `<span>材料・人件費など</span> ${X(A('cost'))}<br>` : ''}
+      <b><span>売上 ${X(sales)}</span>・<span>費用 ${X(costs)}</span></b></span>` : '';
+  const flows = s.can && (s.flows || []).length ? `<b>仕入れ先・売り先</b><span>${s.flows.map(f => `<span>${f.k === 'buy' ? '←' : '→'} <span translate="no">${esc(f.peer)}</span> ${qG(f.g, f.q)} <small>（${f.km}km・${X(f.a)}）</small></span>`).join('<br>')}</span>` : '';
+  const impRow = s.can && s.kind !== 'raw' ? `<b>輸入</b><span><label class="small"><input type="checkbox" data-scimp ${s.imp ? 'checked' : ''}> <span>近くで買えないときは輸入する（値段の${Math.round(((S.boot.scr || {}).imp || 1.2) * 100)}%）</span></label></span>` : '';
+  if (s.kind === 'railcar') {
+    const lv = Math.round((s.lv || 0.9) * 100);
+    return `<h4 style="margin:12px 0 4px">🚃 <span>鉄道車両工場</span></h4><div class="mp-kv">
+      <b>つくるもの</b><span><span>鉄道車両（鉄鋼から）</span>・<span>1日に ${s.capd}両まで</span></span>
+      <b>在庫</b><span>${stock}</span>
+      ${opRow}
+      <b>注文の待ち</b><span>${s.wait > 0 ? `あと${s.wait}時間` : 'なし'}</span>
+      <b>値段</b><span><span>定価の${lv}%</span> <small>（自分の注文は部品代 ${Math.round((s.parts || 0.45) * 100)}%）</small></span>
+      ${s.can ? `<b>値段の水準</b><span><input type="range" min="40" max="150" step="5" value="${lv}" class="mp-sclv" style="width:55%;vertical-align:middle"> <b class="mp-sclvn">${lv}%</b> <button class="btn" data-sclv style="padding:2px 8px">決める</button></span>` : ''}
+      ${impRow}${dayRows}</div>
+      <p class="muted small" style="margin:2px 0 6px"><span>≡ →「車両と編成」で車両を注文するときに、この工場をえらべます（1両に、車両の重さの8割の鉄鋼を使います）。</span><span>工場を動かしている名義の注文は、部品代と鉄鋼だけ。ほかの人・会社には値段の水準で売ります（部品代は工場が払います）。</span><span>鉄鋼は、近くの製鉄所からトラックで仕入れます（3日分）。</span></p>`;
+  }
+  const rc = (S.boot.rcp || {})[s.prod] || {}, ins = Object.entries(s.ins || rc.in || {});
+  const what = ins.length ? `${ins.map(([g, k]) => qG(g, k)).join('・')} → ${qG(s.prod, 1)}` : `<span>${esc(GN(s.prod))}</span>`;
+  return `<h4 style="margin:12px 0 4px">${s.kind === 'raw' ? '🚚' : '🏭'} <span>${s.kind === 'raw' ? '物流' : '工場'}</span></h4><div class="mp-kv">
+    ${prodSel || `<b>つくるもの</b><span>${what}</span>`}
+    ${s.per_day != null ? `<b>1日の生産</b><span>${qtyS(s.per_day, GU(s.prod))}</span>` : ''}
+    <b>在庫</b><span>${stock}</span>
+    ${opRow}${impRow}${dayRows}${flows}</div>
+    <p class="muted small" style="margin:2px 0 6px">${s.kind === 'raw' ? `<span>${s.prod === 'wheat' ? 'つくった小麦は、近くの製粉工場がトラックで買います（種・肥料などは値段の2割）。' : '船で仕入れた分（値段の6割）を、近くの工場がトラックで買います。'}</span>`
+      : '<span>材料は1時間ごとに、近くの工場・田畑・港の在庫からトラックで仕入れます（市場の値段＋運送費）。輸入のほうが安いとき・足りないときは輸入します。</span>'}<span>売れのこり（6時間分をこえる分）は市場へ（値段の85%）。</span>${s.prod === 'food' ? '<span>食品は近くのお店へ（人・会社が使っているお店には小売のもうけ）。</span>' : ''}${['car', 'elec'].includes(s.prod) ? '<span>できたものは市場へ（値段のまま）。</span>' : ''}<span>未払いがあると止まります。</span></p>`;
+}
+function scBind(b, d, load) {
+  const s = d.sc; if (!s || !s.can) return;
+  const as = d.own_as || s.as || S.as, q = k => b.querySelector(k);
+  const lv = q('.mp-sclv'); if (lv) { lv.oninput = () => { q('.mp-sclvn').textContent = lv.value + '%'; };
+    q('[data-sclv]').onclick = async () => { if (await api('mp_sc_set', { p_bld: d.id, p_prod: null, p_imp: null, p_lv: Number(lv.value) / 100, p_as: as }, s.kind === 'school' ? '授業料の水準を変えました' : '値段の水準を変えました')) load(); }; }
+  const im = q('[data-scimp]'); if (im) im.onchange = async () => { if (await api('mp_sc_set', { p_bld: d.id, p_prod: null, p_imp: im.checked, p_lv: null, p_as: as }, '変えました')) load(); else im.checked = !im.checked; };
+  const ps = q('[data-scprodset]'); if (ps) ps.onclick = async () => {
+    const v = q('[data-scprod]').value;
+    if (!confirm(T(v ? `つくるものを「${GN(v)}」にします。よろしいですか？` : 'つくるものを「ふつう」にもどします（在庫は市場に売ります）。よろしいですか？'))) return;
+    if (await api('mp_sc_set', { p_bld: d.id, p_prod: v, p_imp: null, p_lv: null, p_as: as }, '変えました')) load();
+  };
 }
 // 自社のオフィス：入れられる自分の会社（建物の持ち主の会社はのぞく）
 function ownCorps(d) { return (S.boot.as || []).filter(a => a.as !== 'me' && a.as !== 'gov' && a.as !== d.own_as); }
@@ -3379,7 +3527,7 @@ async function openTenants() {
       const near = await api('mp_unit_market', { p_box: box, p_use: use || null }) || [];
       const all = near.length ? near : await api('mp_unit_market', { p_box: null, p_use: use || null }) || [];
       m.set('テナント募集', `${head}
-        <div class="mp-row"><select class="mp-inp" data-use style="width:auto">${['', 'shop', 'office', 'factory', 'warehouse', 'port', 'parking', 'farm'].map(u => `<option value="${u}" ${u === use ? 'selected' : ''}>${u ? USE_NAME[u] : T('ぜんぶの用途')}</option>`).join('')}</select>
+        <div class="mp-row"><select class="mp-inp" data-use style="width:auto">${['', 'shop', 'office', 'factory', 'warehouse', 'port', 'parking', 'farm', 'school'].map(u => `<option value="${u}" ${u === use ? 'selected' : ''}>${u ? USE_NAME[u] : T('ぜんぶの用途')}</option>`).join('')}</select>
           <small class="muted">${near.length ? T('いま見ているあたり') : T('ぜんぶの地域')}</small></div>
         ${corps.length ? '' : '<p class="mp-warn">テナントとして借りられるのは会社だけです</p>'}
         <div class="mp-list">${all.map(x => `<div class="mp-item"><b>${esc(x.bname || x.kname)}</b> <span>${esc(x.room)}</span>
@@ -3416,5 +3564,5 @@ async function openMyBlds() {
     b.querySelectorAll('[data-b]').forEach(x => x.onclick = () => { const [cx, cy] = x.dataset.xy.split(',').map(Number); m.close(); setCam((cx + 0.5) / 5, (cy + 0.5) / 5, Math.max(S.cam.z, 30)); openBld(Number(x.dataset.b)); });
   });
 }
-window.MapApp = { open, pause, state: S, spline, setCam, landReqs: () => openLandReqs(), xfers: () => openXfers(), goto: (x, y) => homeGo(x, y), thru: () => openThru() };
+window.MapApp = { open, pause, state: S, spline, setCam, landReqs: () => openLandReqs(), xfers: () => openXfers(), goto: (x, y) => homeGo(x, y), thru: () => openThru(), bld: id => openBld(id), sc: () => openSC() };
 })();
