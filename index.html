@@ -80,6 +80,24 @@ body{padding-bottom:calc(84px + env(safe-area-inset-bottom))}
 h2{font-size:18px;margin:18px 0 10px}
 h3{font-size:15px;margin:16px 0 8px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin:12px 0}
+.axf{margin:4px 0 10px}
+.axf-top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.axf-seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+.axf-seg button{border:0;background:var(--panel);color:var(--ink);padding:5px 12px;font-weight:700;font-size:12px}
+.axf-seg button.on{background:var(--ink);color:var(--panel)}
+.axf-kpi{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px;margin:2px 0 4px}
+.axf-kpi>span>span{color:var(--muted)}
+.axf-leg{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;font-size:12px;color:var(--muted);margin:2px 0 4px}
+.axf-leg span:not(.axf-k){margin-right:8px}
+.axf-k{display:inline-block;width:10px;height:10px;border-radius:3px;vertical-align:-1px;margin-right:4px}
+.axf-k.axf-l{height:2px;width:14px;border-radius:1px;background:var(--ink);vertical-align:3px}
+.axf-plot{position:relative;touch-action:pan-y}
+.axf-tip{position:absolute;top:0;z-index:2;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:6px 9px;font-size:12px;line-height:1.6;box-shadow:0 2px 10px rgba(0,0,0,.15);pointer-events:none;white-space:nowrap}
+.axf-tab summary{cursor:pointer;font-size:12px;color:var(--muted);margin-top:4px}
+.axf-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:4px}
+.axf-table th,.axf-table td{border-top:1px solid var(--line);padding:4px 5px;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.axf-table th{color:var(--muted);font-weight:600}
+.axf-table td:first-child,.axf-table th:first-child{text-align:left}
 .muted{color:var(--muted)}
 .small{font-size:12px}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -995,7 +1013,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=f0269e90","zh-TW":"zh-TW.js?v=0e409ce7","zh-CN":"zh-CN.js?v=f37ea2ec","ko":"ko.js?v=5af2c89b","ko-Hani":"ko-Hani.js?v=28136965"};
+  window.AX_LANGS = {"en":"en.js?v=0e3eab4f","zh-TW":"zh-TW.js?v=abe727c0","zh-CN":"zh-CN.js?v=c53833d1","ko":"ko.js?v=955a17b7","ko-Hani":"ko-Hani.js?v=92efe76b"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -1575,6 +1593,9 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <div class="row"><input id="newPass" type="password" autocomplete="new-password" minlength="6" placeholder="新しいパスワード（6文字以上）" class="grow" style="padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg)"><button class="btn main" id="passSave">決める</button></div>
     <p class="muted small" style="margin:6px 0 0">パスワードを決めると、次からはメールを待たずにログインできます。</p>
   </div>
+  <div class="card" data-sub="hist"><h3 style="margin-top:0">収支グラフ</h3>
+    <p class="muted small" style="margin:-4px 0 6px">所持金の出入りを1日ごとに（上が入ったお金、下が出たお金、線は差し引き）。グラフをさわると、その日の数字が出ます。</p>
+    <div id="histFlow"></div></div>
   <div class="card" data-sub="hist"><h3 style="margin-top:0">お金の動き</h3>
     <p class="muted small" style="margin:-4px 0 6px">所持金がかわったことを、すべて記録しています（消えません）。新しい順です。</p>
     <ul class="rank mh" id="hist"></ul>
@@ -4870,7 +4891,7 @@ const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
-const MAPV = '68';
+const MAPV = '69';
 let mapLoading = null;
 function mapScripts() {
   if (window.MapApp) return Promise.resolve();
@@ -5181,6 +5202,8 @@ function ownSections(c) {
         渡していない注文の代金は <b>${fmt(c.owed)} X</b>。会社のお金が足りれば「廃業」、足りなければ「倒産」です（倒産では代金を割合で返し、株は消えます）。</p>`]);
   const clm = CL_MORE[c.cid] || { items: [], more: c.ledger.length >= 20 };
   S.push(['ledger', 'お金の出入り', c.ledger.length ? esc((c.ledger[0].memo || c.ledger[0].kind).slice(0, 20)) : 'まだありません', 0, `
+      <p class="small" style="margin:0 0 4px"><b>収支グラフ</b> <span class="muted">（1日ごと。上が入ったお金、下が出たお金、線は差し引き）</span></p>
+      <div data-cflow="${esc(c.cid)}"></div>
       <p class="muted small" style="margin:0 0 6px">会社のお金の出入りは、すべて記録しています（消えません）。新しい順です。</p>
       ${c.ledger.map(l => `<div class="line"><span class="grow">${esc(numT(l.memo || l.kind))}<small>${l.at}・残り ${fmt(l.balance_after)} X</small></span>
         <b class="num" style="color:${l.amount >= 0 ? 'var(--win)' : 'var(--lose)'}">${l.amount >= 0 ? '+' : ''}${fmt(l.amount)}</b></div>`).join('') || '<p class="muted small" style="margin:0">まだありません</p>'}
@@ -5251,6 +5274,8 @@ function ownRender() {
   if (c && OWsec === 'ind') OWip = indPicker($('#owInd'), c.industries, { lock: indLock(c.kind), official: c.official });
   if (c && OWsec === 'srv') { OWsrv = { cid: c.cid, list: c.servers.map(sv => ({ ...sv })) }; srvEdDraw(); }
   if (c && OWsec === 'desk') deskCorpList(c.cid, $('#owDesk'));
+  const cf = c && OWsec === 'ledger' && document.querySelector('[data-cflow]');   // 会社の収支グラフ（t54l）
+  if (cf) axFlow.mount(cf, { key: 'corp', ranges: [7, 30, 90], def: 30, load: d => call('corp_days', { p_cid: cf.dataset.cflow, p_days: d }) });
 }
 // サーバー欄の編集（保存するまで手元で持つ）
 function srvEdDraw() {
@@ -7902,6 +7927,94 @@ function csvSave(name, head, rows) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' })); a.download = name;
   document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
+/* 収支グラフ（t54l）：1日ごとの入ったお金（上）・出たお金（下）と、差し引きの線。期間をえらぶ・タップでその日の数字・表でも見られる。
+   国土（≡ → お金の記録）・自分（お金の動き）・会社（お金の出入り）で使う。window.axFlow.mount(el, { load: days => データ, ranges, def, key, names }) */
+window.axFlow = (function () {
+  const NS = 'http://www.w3.org/2000/svg';
+  const lum = s => { const c = String(s).match(/\d+(\.\d+)?/g) || [255, 255, 255]; return (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255; };
+  const dark = () => lum(getComputedStyle(document.body).backgroundColor) < 0.45;
+  const L = () => document.documentElement.lang || 'ja';
+  const cmp = v => { try { return new Intl.NumberFormat(L(), { notation: 'compact', maximumFractionDigits: 1 }).format(v); } catch (e) { return String(Math.round(v)); } };
+  const ymd = (y, m, d) => { const t = new Date(Date.UTC(y, m - 1, d)); return t.getUTCFullYear() + '-' + String(t.getUTCMonth() + 1).padStart(2, '0') + '-' + String(t.getUTCDate()).padStart(2, '0'); };
+  const md = s => { const [y, m, d] = s.split('-').map(Number); try { return new Intl.DateTimeFormat(L(), { month: 'numeric', day: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(y, m - 1, d))); } catch (e) { return m + '/' + d; } };
+  const sg = v => (v > 0 ? '+' : v < 0 ? '−' : '') + fmt(Math.abs(v));
+  // 日をうめる（記録のない日は 0）
+  function fill(data) {
+    const by = new Map((data.days || []).map(x => [x.d, x])), [y, m, d] = String(data.from).split('-').map(Number), out = [];
+    for (let i = 0; i < (data.n || 30); i++) { const k = ymd(y, m, d + i), x = by.get(k) || {}; out.push({ d: k, i: Number(x.in || 0), o: Number(x.out || 0), bal: x.bal != null ? Number(x.bal) : null }); }
+    return out;
+  }
+  function nice(span) { const p = Math.pow(10, Math.floor(Math.log10(span || 1))), f = (span || 1) / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p; }
+  function el(tag, at) { const e = document.createElementNS(NS, tag); for (const k in at) e.setAttribute(k, at[k]); return e; }
+  function draw(box, rows, opt) {
+    const plot = box.querySelector('.axf-plot'), tip = box.querySelector('.axf-tip');
+    plot.querySelectorAll('svg').forEach(s => s.remove());
+    const dk = dark(box), cIn = dk ? '#3987e5' : '#2a78d6', cOut = dk ? '#e66767' : '#e34948';
+    const net = rows.map(x => x.i + x.o), hi = Math.max(0, ...rows.map(x => x.i), ...net), lo = Math.min(0, ...rows.map(x => x.o), ...net);
+    const st = nice((hi - lo) / 4 || 1), top = Math.ceil(hi / st) * st || st, bot = Math.floor(lo / st) * st;
+    const lw = Math.max(cmp(top).length, cmp(bot).length);   // 左の目もりの文字の長さで、左のあきを決める
+    const W = Math.max(280, plot.clientWidth || 320), H = 190, l = Math.max(30, Math.round(lw * 6.4 + 10)), r = 14, t = 10, b = 22, n = rows.length, bw0 = (W - l - r) / n;
+    const Y = v => t + (top - v) / (top - bot || 1) * (H - t - b), X = i => l + (i + 0.5) * bw0, Y0 = Y(0);
+    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', height: H, translate: 'no', role: 'img' });
+    svg.style.display = 'block'; svg.style.overflow = 'visible';
+    const hl = el('rect', { x: 0, y: t, width: bw0, height: H - t - b, fill: 'var(--line)', opacity: 0 }); svg.appendChild(hl);
+    for (let v = bot; v <= top + st / 2; v += st) {
+      const y = Y(v); svg.appendChild(el('line', { x1: l, x2: W - r, y1: y, y2: y, stroke: Math.abs(v) < st / 2 ? 'var(--muted)' : 'var(--line)', 'stroke-width': 1, opacity: Math.abs(v) < st / 2 ? 0.7 : 1 }));
+      const tx = el('text', { x: l - 6, y: y + 3.5, 'text-anchor': 'end', 'font-size': 10, fill: 'var(--muted)' }); tx.textContent = Math.abs(v) < st / 2 ? '0' : cmp(v); svg.appendChild(tx);
+    }
+    const bw = Math.min(24, Math.max(1, bw0 - 2)), rr = bw >= 8 ? 4 : 0;
+    rows.forEach((x, i) => {
+      const x0 = X(i) - bw / 2, x1 = x0 + bw;
+      if (x.i > 0) { const y = Math.min(Y(x.i), Y0 - 0.8), k = Math.min(rr, Y0 - y); svg.appendChild(el('path', { d: `M${x0},${Y0}V${y + k}Q${x0},${y} ${x0 + k},${y}H${x1 - k}Q${x1},${y} ${x1},${y + k}V${Y0}Z`, fill: cIn })); }
+      if (x.o < 0) { const y = Math.max(Y(x.o), Y0 + 0.8), k = Math.min(rr, y - Y0); svg.appendChild(el('path', { d: `M${x0},${Y0}V${y - k}Q${x0},${y} ${x0 + k},${y}H${x1 - k}Q${x1},${y} ${x1},${y - k}V${Y0}Z`, fill: cOut })); }
+    });
+    // 差し引きの線（2px）と、さいごの日の点・数字
+    svg.appendChild(el('polyline', { points: net.map((v, i) => `${X(i)},${Y(v)}`).join(' '), fill: 'none', stroke: 'var(--ink)', 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round', opacity: 0.8 }));
+    const lx = X(n - 1), ly = Y(net[n - 1]);
+    svg.appendChild(el('circle', { cx: lx, cy: ly, r: 4, fill: 'var(--ink)', stroke: 'var(--panel)', 'stroke-width': 2 }));
+    const lt = el('text', { x: lx - 8, y: ly - 8, 'text-anchor': 'end', 'font-size': 11, 'font-weight': 700, fill: 'var(--ink)' }); lt.textContent = (net[n - 1] > 0 ? '+' : '') + cmp(net[n - 1]); svg.appendChild(lt);
+    for (const i of [...new Set([0, Math.floor((n - 1) / 2), n - 1])]) { const tx = el('text', { x: X(i), y: H - 6, 'text-anchor': i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle', 'font-size': 10, fill: 'var(--muted)' }); tx.textContent = md(rows[i].d); svg.appendChild(tx); }
+    // さわった日：その日の数字
+    const hit = el('rect', { x: l, y: 0, width: W - l - r, height: H, fill: 'transparent' }); svg.appendChild(hit);
+    const show = ev => {
+      const bx = svg.getBoundingClientRect(), px = (ev.clientX - bx.left) * W / bx.width, i = Math.max(0, Math.min(n - 1, Math.floor((px - l) / bw0))), x = rows[i];
+      hl.setAttribute('x', l + i * bw0); hl.setAttribute('width', bw0); hl.setAttribute('opacity', 0.6);
+      tip.innerHTML = `<b>${esc(md(x.d))}</b><br><span class="axf-k" style="background:${cIn}"></span><span>収入</span> ${sg(x.i)} X<br><span class="axf-k" style="background:${cOut}"></span><span>支出</span> ${sg(x.o)} X<br><span class="axf-k axf-l"></span><span>差し引き</span> <b>${sg(x.i + x.o)} X</b>${x.bal != null ? `<br><span>残り</span> ${fmt(x.bal)} X` : ''}`;
+      tip.hidden = false; const tw = tip.offsetWidth, cx = (X(i) / W) * bx.width; tip.style.left = Math.max(0, Math.min(bx.width - tw, cx + 10 > bx.width - tw ? cx - tw - 10 : cx + 10)) + 'px';
+    };
+    hit.addEventListener('pointermove', show); hit.addEventListener('pointerdown', show);
+    hit.addEventListener('pointerleave', ev => { if (ev.pointerType === 'mouse') { tip.hidden = true; hl.setAttribute('opacity', 0); } });
+    plot.insertBefore(svg, tip);
+  }
+  function mount(box, opt) {
+    const ranges = opt.ranges || [7, 30, 90]; let days = opt.def || 30;
+    try { const v = Number(localStorage.getItem('axf_' + (opt.key || ''))); if (ranges.includes(v)) days = v; } catch (e) {}
+    box.classList.add('axf');
+    box.innerHTML = `<div class="axf-top"><div class="axf-seg">${ranges.map(d => `<button data-axd="${d}">${d}日間</button>`).join('')}</div><span class="muted small" data-axs></span></div>
+      <div class="axf-kpi" data-axk></div>
+      <div class="axf-leg"><span class="axf-k" data-axci></span><span>収入</span><span class="axf-k" data-axco></span><span>支出</span><span class="axf-k axf-l"></span><span>差し引き</span></div>
+      <div class="axf-plot"><div class="axf-tip" hidden></div></div>
+      <details class="axf-tab"><summary>表で見る</summary><div data-axt></div></details>`;
+    const go = async () => {
+      box.querySelectorAll('[data-axd]').forEach(x => x.classList.toggle('on', Number(x.dataset.axd) === days));
+      box.querySelector('[data-axs]').textContent = '…';
+      let data; try { data = await opt.load(days); } catch (e) { data = null; }
+      box.querySelector('[data-axs]').textContent = '';
+      if (!data) return;
+      const rows = fill(data), si = rows.reduce((a, x) => a + x.i, 0), so = rows.reduce((a, x) => a + x.o, 0), dk = dark(box);
+      box.querySelector('[data-axci]').style.background = dk ? '#3987e5' : '#2a78d6'; box.querySelector('[data-axco]').style.background = dk ? '#e66767' : '#e34948';
+      box.querySelector('[data-axk]').innerHTML = `<span><span>収入</span> <b>${sg(si)} X</b></span><span><span>支出</span> <b>${sg(so)} X</b></span><span><span>差し引き</span> <b style="color:${si + so >= 0 ? 'var(--win)' : 'var(--lose)'}">${sg(si + so)} X</b></span>`;
+      draw(box, rows, opt);
+      const kk = Object.entries(data.k || {}).filter(([, v]) => v).sort((a, c) => Math.abs(c[1]) - Math.abs(a[1]));
+      box.querySelector('[data-axt]').innerHTML = `<table class="axf-table"><tr><th>日付</th><th>収入</th><th>支出</th><th>差し引き</th>${rows.some(x => x.bal != null) ? '<th>残り</th>' : ''}</tr>
+        ${rows.slice().reverse().map(x => `<tr><td>${esc(md(x.d))}</td><td>${sg(x.i)}</td><td>${sg(x.o)}</td><td><b>${sg(x.i + x.o)}</b></td>${rows.some(z => z.bal != null) ? `<td>${x.bal != null ? fmt(x.bal) : ''}</td>` : ''}</tr>`).join('')}</table>
+        ${kk.length ? `<p class="small" style="margin:8px 0 2px"><b>種類ごと</b>（この期間）</p><table class="axf-table">${kk.map(([k, v]) => `<tr><td style="text-align:left">${esc((opt.names || {})[k] || k)}</td><td><b>${sg(v)}</b></td></tr>`).join('')}</table>` : ''}`;
+    };
+    box.querySelectorAll('[data-axd]').forEach(x => x.onclick = () => { days = Number(x.dataset.axd); try { localStorage.setItem('axf_' + (opt.key || ''), String(days)); } catch (e) {} go(); });
+    go();
+  }
+  return { mount };
+})();
 $('#histMore').onclick = mhMore;
 $('#histCsv').onclick = async () => {
   const b = $('#histCsv'); b.disabled = true;
@@ -7924,6 +8037,7 @@ async function moreLoad() {
       + row(ck.debt === 0, ck.debt === 0 ? '税金の滞納がない' : `税金の滞納がある（${fmt(ck.debt)} X。納めればOK）`)
       + row(ck.mail, ck.mail ? `メールで認証ずみ（${ck.mail_at}。${ck.mail_until}まで有効）` : (ck.mail_at ? `メールの認証が切れました（${ck.mail_at}に認証）` : 'メールでの認証がまだ'));
     MH.items = hs.items; MH.more = hs.more; mhRender();
+    axFlow.mount($('#histFlow'), { key: 'me', ranges: [7, 30, 90], def: 30, load: d => call('money_days', { p_days: d }) });
   } catch (e) { toast(e.message); }
 }
 $('#mailVerify').onclick = async () => {

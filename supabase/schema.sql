@@ -14593,6 +14593,36 @@ begin
     from (select * from corp_ledger where company_id = c.id and (p_before is null or id < p_before) order by id desc limit lim) z;
   return jsonb_build_object('items', items, 'more', jsonb_array_length(items) >= lim);
 end $$;
+-- 収支グラフ（t54l）：自分の所持金の出入り（1日ごと・日本時間）。p_days 日（90日まで）。bal はその日の終わりの所持金（自分にだけ）
+create or replace function public.money_days(p_days int default 30) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); nd int := least(greatest(coalesce(p_days, 30), 1), 90);
+        d0 date := (now() at time zone 'Asia/Tokyo')::date - (least(greatest(coalesce(p_days, 30), 1), 90) - 1); t0 timestamptz;
+begin
+  t0 := d0::timestamp at time zone 'Asia/Tokyo';
+  return jsonb_build_object('from', d0, 'n', nd,
+    'days', (select coalesce(jsonb_agg(jsonb_build_object('d', z.d, 'in', z.i, 'out', z.o, 'bal', z.b) order by z.d), '[]'::jsonb) from (
+              select (m.at at time zone 'Asia/Tokyo')::date d, coalesce(sum(m.delta) filter (where m.delta > 0), 0) i, coalesce(sum(m.delta) filter (where m.delta < 0), 0) o,
+                     (array_agg(m.bal order by m.id desc))[1] b
+                from money_log m where m.user_id = u and m.at >= t0 group by 1) z));
+end $$;
+-- 収支グラフ（t54l）：会社のお金の出入り（社長だけ。1日ごと・日本時間）と、期間の種類ごとの合計
+create or replace function public.corp_days(p_cid text, p_days int default 30) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); c companies; nd int := least(greatest(coalesce(p_days, 30), 1), 90);
+        d0 date := (now() at time zone 'Asia/Tokyo')::date - (least(greatest(coalesce(p_days, 30), 1), 90) - 1); t0 timestamptz;
+begin
+  c := _my_corp(u, p_cid);
+  t0 := d0::timestamp at time zone 'Asia/Tokyo';
+  return jsonb_build_object('from', d0, 'n', nd,
+    'days', (select coalesce(jsonb_agg(jsonb_build_object('d', z.d, 'in', z.i, 'out', z.o, 'bal', z.b) order by z.d), '[]'::jsonb) from (
+              select (l.created_at at time zone 'Asia/Tokyo')::date d, coalesce(sum(l.amount) filter (where l.amount > 0), 0) i, coalesce(sum(l.amount) filter (where l.amount < 0), 0) o,
+                     (array_agg(l.balance_after order by l.id desc))[1] b
+                from corp_ledger l where l.company_id = c.id and l.created_at >= t0 group by 1) z),
+    'k', (select coalesce(jsonb_object_agg(z.k, z.s), '{}'::jsonb) from (
+              select l.kind k, sum(l.amount) s from corp_ledger l where l.company_id = c.id and l.created_at >= t0 group by 1) z));
+end $$;
+
 
 -- 決まりの数字（画面にも出す）
 create or replace function public._kb_own_c() returns jsonb
@@ -17086,6 +17116,23 @@ create table if not exists public.mp_sclog (       -- つくった・使った�
 create index if not exists mp_sclog_b on public.mp_sclog (bld, at);
 create index if not exists mp_sclog_at on public.mp_sclog (at);
 alter table public.mp_sclog enable row level security;
+-- t54l：1980年ごろのバス・トラック（トラックは営業所に置く。積める重さ load t）
+alter table public.mp_types add column if not exists load real not null default 0;
+insert into public.mp_series(code, name, kind, note, ord) values
+  ('BUS80', '1980年ごろの路線バス', 'bus', '1980年ごろの性能（加速がゆっくり。燃料の分、維持費が高め）', 110),
+  ('TRK80', '1980年ごろのトラック', 'truck', '1980年ごろの性能。営業所に置くと、自分の工場の荷物を運送費なしで運ぶ（1日に 積める重さ × 300t・km）', 120)
+on conflict (code) do nothing;
+insert into public.mp_types(code, series, label, role, face, num_from, num_to, len, cap, seats, mass, power, panto, cab, vmax, acc, dec, elec, heat, ac, toilet, price, upkeep, life, note, ord, load) values
+  ('BK80', 'BUS80', 'BK80', 'Bus', '', 1, 9999, 10.5, 75, 28, 9.5, 150, 0, true, 80, 3.0, 4.0, false, true, true, false, 17000000, 18000, 300, '1980年ごろの大型路線バス（冷房つき・加速はゆっくり）', 110, 0),
+  ('BK80N', 'BUS80', 'BK80N', 'Bus', '', 1, 9999, 10.5, 75, 28, 9.2, 150, 0, true, 80, 3.0, 4.0, false, true, false, false, 14000000, 16000, 300, '1980年ごろの大型路線バス（冷房なし・夏は乗る人が少し減る）', 111, 0),
+  ('BM80', 'BUS80', 'BM80', 'Bus', '', 1, 9999, 9.0, 60, 25, 7.6, 125, 0, true, 80, 3.2, 4.0, false, true, true, false, 13000000, 14000, 300, '1980年ごろの中型路線バス（冷房つき）', 112, 0),
+  ('BS80', 'BUS80', 'BS80', 'Bus', '', 1, 9999, 7.0, 29, 25, 4.3, 85, 0, true, 90, 3.6, 4.5, false, true, true, false, 6500000, 8000, 300, '1980年ごろのマイクロバス（冷房つき・小回りがきく）', 113, 0),
+  ('BT80', 'BUS80', 'BT80', 'Bus', '', 1, 9999, 12.0, 55, 53, 11.5, 240, 0, true, 100, 3.0, 4.0, false, true, true, true, 28000000, 22000, 300, '1980年ごろの観光バス（冷房・トイレつき・座席が多い。長い系統向き）', 114, 0),
+  ('TK2', 'TRK80', 'TK2', 'Truck', '', 1, 9999, 4.7, 3, 3, 2.3, 60, 0, true, 100, 4.0, 5.0, false, true, false, false, 1800000, 3000, 300, '1980年ごろの小型トラック（2t積み）', 120, 2),
+  ('TK4', 'TRK80', 'TK4', 'Truck', '', 1, 9999, 8.0, 3, 3, 4.5, 120, 0, true, 90, 3.0, 4.5, false, true, false, false, 4000000, 5000, 300, '1980年ごろの中型トラック（4t積み）', 121, 4),
+  ('TK10', 'TRK80', 'TK10', 'Truck', '', 1, 9999, 11.9, 2, 2, 9.0, 210, 0, true, 85, 2.5, 4.0, false, true, false, false, 8500000, 9000, 300, '1980年ごろの大型トラック（10t積み）', 122, 10),
+  ('TT20', 'TRK80', 'TT20', 'Truck', '', 1, 9999, 16.5, 2, 2, 14.0, 250, 0, true, 80, 2.0, 3.5, false, true, false, false, 14000000, 14000, 300, '1980年ごろのトレーラー（20t積み）', 123, 20)
+on conflict (code) do nothing;
 alter table public.mp_chunks enable row level security;
 alter table public.mp_places enable row level security;
 alter table public.mp_centers enable row level security;
@@ -17141,7 +17188,8 @@ language sql stable set search_path = public as $$
     ) || jsonb_build_object(
       -- t54k：品目の値段（1t・1kL・1台）・トラック（1t あたり：積みおろし＋1km）・輸入（値段の何倍）・市場に売る（何倍）・お店の食品・鉄道車両工場
       'p_wheat', 40000, 'p_flour', 70000, 'p_food', 200000, 'p_ore', 25000, 'p_steel', 90000, 'p_car', 1500000, 'p_crude', 60000, 'p_chem', 120000, 'p_elec', 1000000,
-      'truck_base', 500, 'truck_km', 60, 'sc_imp', 1.2, 'sc_mkt', 0.85, 'sc_shop', 0.3, 'sc_food', 0.0002, 'sc_food_km', 30, 'sc_keep', 0.25, 'rc_parts', 0.45, 'rc_m2', 5000
+      'truck_base', 500, 'truck_km', 60, 'sc_imp', 1.2, 'sc_mkt', 0.85, 'sc_shop', 0.3, 'sc_food', 0.0002, 'sc_food_km', 30, 'sc_keep', 0.25, 'rc_parts', 0.45, 'rc_m2', 5000,
+      'rd_m2', 3000, 'trk_tkm', 300
     )) ->> k)::numeric)
 $$;
 create or replace function public._mp_ok(u uuid) returns void
@@ -17361,7 +17409,7 @@ language sql immutable as $$ select (ag and bg) or (not ag and not bg and au is 
 -- 記録の種類：運賃・家賃・使用料・維持費・税は「国土の事業」（所得に入る。維持費・使用料・税は所得からひく）。工事・土地・車両は「国土の買いもの」
 --   t54k：授業料・仕入れ（材料）・運送費も「国土の事業」
 create or replace function public._mp_g(k text) returns text
-language sql immutable as $$ select case when k in ('fare', 'rent', 'lease_in', 'upkeep', 'lease', 'tax', 'sales', 'tuition', 'goods', 'ship') then 'map_in' else 'map' end $$;
+language sql immutable as $$ select case when k in ('fare', 'rent', 'lease_in', 'upkeep', 'lease', 'tax', 'sales', 'tuition', 'goods', 'ship', 'fee') then 'map_in' else 'map' end $$;
 -- 払う（国庫へ）：工事費・維持費・税・国の土地
 create or replace function public._mp_pay(pu uuid, pc int, gv boolean, amt bigint, k text, memo text) returns void
 language plpgsql set search_path = public as $$
@@ -17452,7 +17500,7 @@ begin
     'ver', coalesce((select max(ver) from mp_changes), 0),
     'world', _mp_world(),
     'bld', _mp_bld_presets(), 'goods', _mp_goods(), 'sck', _mp_sc_kinds(), 'rcp', _mp_sc_recipes(),
-    'scr', jsonb_build_object('rc_m2', _mp_rate('rc_m2'), 'rc_parts', _mp_rate('rc_parts'), 'imp', _mp_rate('sc_imp'), 'mkt', _mp_rate('sc_mkt')), 'zr', (select jsonb_object_agg(z, _mp_zone_rule(z)) from unnest(array['a','b','c','d','e','f','g','h','i']) z),
+    'scr', jsonb_build_object('rc_m2', _mp_rate('rc_m2'), 'rd_m2', _mp_rate('rd_m2'), 'rc_parts', _mp_rate('rc_parts'), 'imp', _mp_rate('sc_imp'), 'mkt', _mp_rate('sc_mkt'), 'trk', _mp_rate('trk_tkm')), 'zr', (select jsonb_object_agg(z, _mp_zone_rule(z)) from unnest(array['a','b','c','d','e','f','g','h','i']) z),
     'home', (select jsonb_build_object('text', _mp_home_text(h), 'x', h.x, 'y', h.y, 'bld', h.bld) from mp_homes h where h.u = _me())) into r;
   return r;
 end $$;
@@ -18309,7 +18357,7 @@ begin
   if p_n < 1 or p_n > 20 then raise exception '一度に1〜20両です'; end if;
   select * into d from mp_depots where id = p_depot;
   if not found or not _mp_same(d.own_u, d.own_c, false, pa.pu, pa.pc, false) then raise exception '車籍を置く車庫をえらんでください（この名義の車庫）'; end if;
-  if (t.role = 'Bus') <> (d.kind = 'bus') then raise exception '%', case when t.role = 'Bus' then 'バスは営業所に置きます' else '電車は車両基地に置きます' end; end if;
+  if (t.role in ('Bus', 'Truck')) <> (d.kind = 'bus') then raise exception '%', case when t.role = 'Truck' then 'トラックは営業所に置きます' when t.role = 'Bus' then 'バスは営業所に置きます' else '電車は車両基地に置きます' end; end if;
   select count(*) into have from mp_cars where depot = p_depot;
   if have + p_n > d.cap then raise exception '車庫がいっぱいです（%両まで・いま%両）', d.cap, have; end if;
   k := _mp_okey(pa.pu, pa.pc);
@@ -18317,7 +18365,7 @@ begin
   s := coalesce(s, 0);
   if t.num_from + s + p_n - 1 > t.num_to then raise exception 'この形式の車番がいっぱいです（%〜%）', t.num_from, t.num_to; end if;
   cost := t.price * p_n;
-  hrs := case when t.role = 'Bus' then 3 else 6 end;
+  hrs := case when t.role in ('Bus', 'Truck') then 3 else 6 end;
   if p_maker is not null then   -- 鉄道車両工場（払い・鉄鋼はここで）
     mk := _mp_maker_order(p_maker, pa.pu, pa.pc, array_fill(p_type, array[p_n]), p_dry);
     cost := (mk ->> 'cost')::bigint; hrs := (mk ->> 'hours')::int;
@@ -18454,7 +18502,7 @@ begin
     if p_kind = 'toilet' and c.role not in ('Tc', 'T') then skip := skip || ' ' || c.num || '（トイレは Tc・T に）'; continue; end if;
     one := case p_kind when 'ac' then 8000000 when 'heat' then 2000000 when 'toilet' then 5000000 when 'inspect' then round(c.tprice * 0.03)
                        when 'renew' then round(c.tprice * 0.3) end;
-    if c.role = 'Bus' and p_kind in ('ac', 'toilet') then one := round(one * 0.3); end if;
+    if c.role in ('Bus', 'Truck') and p_kind in ('ac', 'toilet') then one := round(one * 0.3); end if;
     cost := cost + one; n := n + 1;
     if not p_dry then
       update mp_cars set busy_until = now() + make_interval(hours => hrs), busy_kind = p_kind,
@@ -19332,7 +19380,7 @@ begin
   if oid_ is not null then return oid_; end if;
   select * into f from mp_forms where id = fid;
   if not found then return null; end if;
-  rail := coalesce((select bool_and(t.role <> 'Bus') from mp_cars c join mp_types t on t.code = c.type where c.form = fid), true);
+  rail := coalesce((select bool_and(t.role not in ('Bus', 'Truck')) from mp_cars c join mp_types t on t.code = c.type where c.form = fid), true);
   nm := f.name;
   while exists (select 1 from mp_ops o where o.own_u is not distinct from f.own_u and o.own_c is not distinct from f.own_c and o.num = nm) loop k := k + 1; nm := left(f.name, 16) || '-' || k; end loop;
   insert into mp_ops(own_u, own_c, kind, num, form) values (f.own_u, f.own_c, case when rail then 'rail' else 'bus' end, nm, fid) returning id into oid_;
@@ -19821,6 +19869,23 @@ begin
       'cars', (select count(*) from mp_cars where own_u is not distinct from pa.pu and own_c is not distinct from pa.pc)));
 end $$;
 
+-- 収支グラフ（t54l）：1日ごと（日本時間）の入ったお金・出たお金と、期間の種類ごとの合計。p_days 日（60日まで：記録は60日のこる）
+create or replace function public.mp_ledger_days(p_as text, p_days int) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); pa record; nd int := least(greatest(coalesce(p_days, 30), 1), 60);
+        d0 date := (now() at time zone 'Asia/Tokyo')::date - (least(greatest(coalesce(p_days, 30), 1), 60) - 1); t0 timestamptz;
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  t0 := d0::timestamp at time zone 'Asia/Tokyo';
+  return jsonb_build_object('from', d0, 'n', nd,
+    'days', (select coalesce(jsonb_agg(jsonb_build_object('d', z.d, 'in', z.i, 'out', z.o) order by z.d), '[]'::jsonb) from (
+              select (l.created_at at time zone 'Asia/Tokyo')::date d, coalesce(sum(l.amount) filter (where l.amount > 0), 0) i, coalesce(sum(l.amount) filter (where l.amount < 0), 0) o
+                from mp_ledger l where l.pu is not distinct from pa.pu and l.pc is not distinct from pa.pc and not l.gv and l.created_at >= t0 group by 1) z),
+    'k', (select coalesce(jsonb_object_agg(z.k, z.s), '{}'::jsonb) from (
+              select l.k, sum(l.amount) s from mp_ledger l where l.pu is not distinct from pa.pu and l.pc is not distinct from pa.pc and not l.gv and l.created_at >= t0 group by 1) z));
+end $$;
+
 /* ---------- 管理者 ---------- */
 create or replace function public._mp_admin(u uuid) returns void
 language plpgsql stable set search_path = public as $$
@@ -19844,7 +19909,7 @@ begin
     'lease','lease_gov','prop_tax','rail','road','dbl_mul','elec','sta_base','sta_m','stop','dep_S','dep_M','dep_L','bdep_S','bdep_M',
     'up_rail','up_road','up_sta','up_stop','up_dep','up_bdep','g_rail','g_bus','fare_base','fare_km','bus_fare','bus_km','catch_rail','catch_bus',
     'max_tiles','grow','grow_sta','urb_k','urb_sta',
-    'p_wheat','p_flour','p_food','p_ore','p_steel','p_car','p_crude','p_chem','p_elec','truck_base','truck_km','sc_imp','sc_mkt','sc_shop','sc_food','sc_food_km','sc_keep','rc_parts','rc_m2']) kk);
+    'p_wheat','p_flour','p_food','p_ore','p_steel','p_car','p_crude','p_chem','p_elec','truck_base','truck_km','sc_imp','sc_mkt','sc_shop','sc_food','sc_food_km','sc_keep','rc_parts','rc_m2','rd_m2','trk_tkm']) kk);
 end $$;
 -- 用途地域を塗る（p_z が null なら、もとにもどす）
 create or replace function public.mp_admin_zone(p_tiles int[], p_z text) returns jsonb
@@ -20527,13 +20592,16 @@ end $$;
 
 -- 建物の住む人・働く人（半径 r マスの中。入っている部屋・自分で使う部屋）
 create or replace function public._mp_bld_people(px real, py real, r real) returns real
-language sql stable set search_path = public as $$
-  select coalesce(sum(case x.use when 'home' then 2.3 when 'office' then x.m2 / 12.0 when 'shop' then x.m2 / 25.0 when 'factory' then x.m2 / 60.0
-                              when 'warehouse' then x.m2 / 200.0 when 'port' then x.m2 / 150.0 else 0 end), 0)::real
-    from mp_blds b join mp_units x on x.bld = b.id
-   where (x.t_kind is not null or x.mode = 'self') and b.cells[1] between (px - r) * 5 and (px + r) * 5 and b.cells[2] between (py - r) * 5 and (py + r) * 5
-     and (b.cells[1] / 5.0 - px) ^ 2 + (b.cells[2] / 5.0 - py) ^ 2 <= r * r
-$$;
+language plpgsql stable set search_path = public as $$
+begin
+  return (select coalesce(sum(case x.use when 'home' then 2.3 when 'office' then x.m2 / 12.0 when 'shop' then x.m2 / 25.0 when 'factory' then x.m2 / 60.0
+                                when 'warehouse' then x.m2 / 200.0 when 'port' then x.m2 / 150.0
+                                when 'parking' then case when _mp_bld_pmap() -> b.kind ? 'pp' then x.m2 / 400.0 else 0 end else 0 end
+                        * coalesce((_mp_bld_pmap() -> b.kind ->> 'pp')::real, 1)), 0)::real   -- t54l：建物の種類ごとの人の多さ（pp）
+      from mp_blds b join mp_units x on x.bld = b.id
+     where (x.t_kind is not null or x.mode = 'self') and b.cells[1] between (px - r) * 5 and (px + r) * 5 and b.cells[2] between (py - r) * 5 and (py + r) * 5
+       and (b.cells[1] / 5.0 - px) ^ 2 + (b.cells[2] / 5.0 - py) ^ 2 <= r * r);
+end $$;
 
 /* ---------- 使用料（区画ごと）：作る人と土地の持ち主がちがうとき。国が作るものと、公道の上はなし ---------- */
 -- 他人の筆の使用料の標準（1区画・1日）：筆の地価の平均 × lease
@@ -20915,33 +20983,285 @@ end $$;
 create or replace function public._mp_bld_presets() returns jsonb
 language sql immutable as $$
   select '[
-   {"k":"house","n":"一戸建て","use":"home","one":true,"z":"abcehi","cpm":300,"f0":1,"f1":3,"min":1,"max":6,"sh":["full","L"],"cat":"home"},
-   {"k":"apart","n":"アパート","use":"home","u":40,"z":"abce","cpm":320,"f0":2,"f1":3,"min":2,"max":12,"sh":["full","slab","L"],"cat":"home"},
-   {"k":"mansion","n":"マンション","use":"home","u":70,"z":"bcde","cpm":600,"f0":4,"f1":15,"min":4,"max":60,"sh":["slab","L","ko","ro","full"],"opt":["shop1"],"cat":"home"},
-   {"k":"tower","n":"タワーマンション","use":"home","u":75,"z":"cd","cpm":900,"f0":20,"f1":45,"min":16,"max":200,"sh":["tower"],"opt":["shop1"],"cat":"home"},
-   {"k":"shop","n":"店舗つき住宅","use":"home","u":50,"g1":"shop","z":"abcde","cpm":350,"f0":1,"f1":3,"min":1,"max":6,"sh":["full"],"cat":"home"},
-   {"k":"zakkyo","n":"雑居ビル","use":"office","u":60,"g1":"shop","g2":"shop","z":"cd","cpm":650,"f0":3,"f1":10,"min":2,"max":12,"sh":["full","slab"],"cat":"biz"},
-   {"k":"office","n":"オフィスビル","use":"office","u":0,"z":"cd","cpm":800,"f0":5,"f1":30,"min":6,"max":120,"sh":["full","slab","L","tower"],"opt":["shop1"],"cat":"biz"},
-   {"k":"sky","n":"超高層ビル","use":"office","u":0,"g1":"shop","g2":"shop","z":"d","cpm":1100,"f0":30,"f1":60,"min":25,"max":400,"sh":["tower"],"cat":"biz"},
-   {"k":"mall","n":"ショッピングセンター","use":"shop","u":200,"z":"cde","cpm":450,"f0":1,"f1":4,"min":20,"max":1600,"sh":["full","slab","ro"],"cat":"biz"},
-   {"k":"factory","n":"工場","use":"factory","one":true,"z":"ef","cpm":250,"f0":1,"f1":2,"min":10,"max":1600,"sh":["full","slab"],"cat":"ind"},
-   {"k":"warehouse","n":"倉庫","use":"warehouse","one":true,"z":"efg","cpm":200,"f0":1,"f1":3,"min":4,"max":800,"sh":["full","slab"],"cat":"ind"},
-   {"k":"port","n":"港湾施設","use":"port","one":true,"z":"g","cpm":500,"f0":1,"f1":1,"min":10,"max":1600,"sh":["full"],"sea":true,"cat":"ind"},
-   {"k":"farm","n":"田畑","use":"farm","one":true,"z":"h","cpm":10,"f0":0,"f1":0,"min":4,"max":1600,"sh":["full"],"cat":"ind"},
-   {"k":"parking","n":"駐車場","use":"parking","one":true,"z":"abcdefgh","cpm":30,"f0":0,"f1":0,"min":1,"max":400,"sh":["full"],"cat":"park"},
-   {"k":"pkbld","n":"立体駐車場","use":"parking","u":0,"z":"bcdef","cpm":400,"f0":2,"f1":8,"min":6,"max":400,"sh":["full","slab"],"cat":"park"},
-   {"k":"es","n":"小学校","use":"school","one":true,"z":"abce","cpm":350,"f0":1,"f1":4,"min":10,"max":400,"sh":["full","slab","L","ko"],"sc":"es","cat":"school"},
-   {"k":"jhs","n":"中学校","use":"school","one":true,"z":"abce","cpm":350,"f0":1,"f1":4,"min":10,"max":400,"sh":["full","slab","L","ko"],"sc":"jhs","cat":"school"},
-   {"k":"hs","n":"高校","use":"school","one":true,"z":"abcde","cpm":400,"f0":1,"f1":6,"min":12,"max":600,"sh":["full","slab","L","ko"],"sc":"hs","cat":"school"},
-   {"k":"univ","n":"大学","use":"school","one":true,"z":"abcdeh","cpm":500,"f0":1,"f1":20,"min":20,"max":1600,"sh":["full","slab","L","ko","ro","tower"],"sc":"univ","cat":"school"},
-   {"k":"voc","n":"専門学校","use":"school","one":true,"z":"bcde","cpm":600,"f0":2,"f1":15,"min":3,"max":200,"sh":["full","slab","tower"],"sc":"voc","cat":"school"},
-   {"k":"mill","n":"製粉工場","use":"factory","one":true,"z":"efg","cpm":300,"f0":1,"f1":4,"min":10,"max":1600,"sh":["full","slab"],"mk":"flour","cat":"ind"},
-   {"k":"foodf","n":"食品工場","use":"factory","one":true,"z":"ef","cpm":300,"f0":1,"f1":4,"min":10,"max":1600,"sh":["full","slab"],"mk":"food","cat":"ind"},
-   {"k":"steelw","n":"製鉄所","use":"factory","one":true,"z":"fg","cpm":400,"f0":1,"f1":3,"min":40,"max":1600,"sh":["full","slab"],"mk":"steel","cat":"ind"},
-   {"k":"carf","n":"自動車工場","use":"factory","one":true,"z":"ef","cpm":350,"f0":1,"f1":3,"min":30,"max":1600,"sh":["full","slab"],"mk":"car","cat":"ind"},
-   {"k":"petro","n":"石油化学工場","use":"factory","one":true,"z":"fg","cpm":450,"f0":1,"f1":3,"min":30,"max":1600,"sh":["full","slab"],"mk":"chem","cat":"ind"},
-   {"k":"elecf","n":"半導体・家電工場","use":"factory","one":true,"z":"ef","cpm":500,"f0":1,"f1":5,"min":10,"max":1600,"sh":["full","slab"],"mk":"elec","cat":"ind"},
-   {"k":"railf","n":"鉄道車両工場","use":"factory","one":true,"z":"ef","cpm":350,"f0":1,"f1":2,"min":30,"max":1600,"sh":["full","slab"],"mk":"railcar","cat":"ind"},
+   {"k":"house","n":"一戸建て","use":"home","one":true,"z":"abcehi","cpm":300,"f0":1,"f1":3,"min":1,"max":6,"sh":["full","L"],"cat":"home","c":"#c47b4e"},
+   {"k":"apart","n":"アパート","use":"home","u":40,"z":"abce","cpm":320,"f0":2,"f1":3,"min":2,"max":12,"sh":["full","slab","L"],"cat":"home","c":"#9aa7b3"},
+   {"k":"mansion","n":"マンション","use":"home","u":70,"z":"bcde","cpm":600,"f0":4,"f1":15,"min":4,"max":60,"sh":["slab","L","ko","ro","full"],"opt":["shop1"],"cat":"home","c":"#d9d4cc"},
+   {"k":"tower","n":"タワーマンション","use":"home","u":75,"z":"cd","cpm":900,"f0":20,"f1":45,"min":16,"max":200,"sh":["tower"],"opt":["shop1"],"cat":"home","c":"#cfd6de"},
+   {"k":"shop","n":"店舗つき住宅","use":"home","u":50,"g1":"shop","z":"abcde","cpm":350,"f0":1,"f1":3,"min":1,"max":6,"sh":["full"],"cat":"home","c":"#e6a06e"},
+   {"k":"zakkyo","n":"雑居ビル","use":"office","u":60,"g1":"shop","g2":"shop","z":"cd","cpm":650,"f0":3,"f1":10,"min":2,"max":12,"sh":["full","slab"],"cat":"biz","c":"#c9b8a6"},
+   {"k":"office","n":"オフィスビル","use":"office","u":0,"z":"cd","cpm":800,"f0":5,"f1":30,"min":6,"max":120,"sh":["full","slab","L","tower"],"opt":["shop1"],"cat":"biz","c":"#aebdd0"},
+   {"k":"sky","n":"超高層ビル","use":"office","u":0,"g1":"shop","g2":"shop","z":"d","cpm":1100,"f0":30,"f1":60,"min":25,"max":400,"sh":["tower"],"cat":"biz","c":"#9fb3cc","fx":{"office":0.04,"shop":0.03}},
+   {"k":"mall","n":"ショッピングセンター","use":"shop","u":200,"z":"cde","cpm":450,"f0":1,"f1":4,"min":20,"max":1600,"sh":["full","slab","ro"],"cat":"shop","c":"#e8d2b0","fx":{"shop":0.06}},
+   {"k":"factory","n":"工場","use":"factory","one":true,"z":"ef","cpm":250,"f0":1,"f1":2,"min":10,"max":1600,"sh":["full","slab"],"cat":"ind","c":"#b8b8b0","fx":{"home":-0.03}},
+   {"k":"warehouse","n":"倉庫","use":"warehouse","one":true,"z":"efg","cpm":200,"f0":1,"f1":3,"min":4,"max":800,"sh":["full","slab"],"cat":"logi","c":"#c2b59b"},
+   {"k":"port","n":"港湾施設","use":"port","one":true,"z":"g","cpm":500,"f0":1,"f1":1,"min":10,"max":1600,"sh":["full"],"sea":true,"cat":"port","c":"#9ab3c0","opts":["ore","crude"]},
+   {"k":"farm","n":"田畑","use":"farm","one":true,"z":"h","cpm":10,"f0":0,"f1":0,"min":4,"max":1600,"sh":["full"],"cat":"farm","c":"#a9cf73","opts":["wheat"],"pat":"rows"},
+   {"k":"parking","n":"駐車場","use":"parking","one":true,"z":"abcdefgh","cpm":30,"f0":0,"f1":0,"min":1,"max":400,"sh":["full"],"cat":"park","c":"#bdbdbd","pat":"lines"},
+   {"k":"pkbld","n":"立体駐車場","use":"parking","u":0,"z":"bcdef","cpm":400,"f0":2,"f1":8,"min":6,"max":400,"sh":["full","slab"],"cat":"park","c":"#b0b0b0"},
+   {"k":"es","n":"小学校","use":"school","one":true,"z":"abce","cpm":350,"f0":1,"f1":4,"min":10,"max":400,"sh":["full","slab","L","ko"],"sc":"es","cat":"school","c":"#d9b77e"},
+   {"k":"jhs","n":"中学校","use":"school","one":true,"z":"abce","cpm":350,"f0":1,"f1":4,"min":10,"max":400,"sh":["full","slab","L","ko"],"sc":"jhs","cat":"school","c":"#c9a16a"},
+   {"k":"hs","n":"高校","use":"school","one":true,"z":"abcde","cpm":400,"f0":1,"f1":6,"min":12,"max":600,"sh":["full","slab","L","ko"],"sc":"hs","cat":"school","c":"#b98e5e"},
+   {"k":"univ","n":"大学","use":"school","one":true,"z":"abcdeh","cpm":500,"f0":1,"f1":20,"min":20,"max":1600,"sh":["full","slab","L","ko","ro","tower"],"sc":"univ","cat":"school","c":"#a65a46","fx":{"home":0.08,"shop":0.04}},
+   {"k":"voc","n":"専門学校","use":"school","one":true,"z":"bcde","cpm":600,"f0":2,"f1":15,"min":3,"max":200,"sh":["full","slab","tower"],"sc":"voc","cat":"school","c":"#b7a2c9"},
+   {"k":"mill","n":"製粉工場","use":"factory","one":true,"z":"efg","cpm":300,"f0":1,"f1":4,"min":10,"max":1600,"sh":["full","slab"],"mk":"flour","cat":"ind","c":"#d8c9a3"},
+   {"k":"foodf","n":"食品工場","use":"factory","one":true,"z":"ef","cpm":300,"f0":1,"f1":4,"min":10,"max":1600,"sh":["full","slab"],"mk":"food","cat":"ind","c":"#e3b98a"},
+   {"k":"steelw","n":"製鉄所","use":"factory","one":true,"z":"fg","cpm":400,"f0":1,"f1":3,"min":40,"max":1600,"sh":["full","slab"],"mk":"steel","cat":"ind","c":"#7d7f86","fx":{"home":-0.05}},
+   {"k":"carf","n":"自動車工場","use":"factory","one":true,"z":"ef","cpm":350,"f0":1,"f1":3,"min":30,"max":1600,"sh":["full","slab"],"mk":"car","cat":"ind","c":"#9fb4c8"},
+   {"k":"petro","n":"石油化学工場","use":"factory","one":true,"z":"fg","cpm":450,"f0":1,"f1":3,"min":30,"max":1600,"sh":["full","slab"],"mk":"chem","cat":"ind","c":"#c7c2a0","fx":{"home":-0.05}},
+   {"k":"elecf","n":"半導体・家電工場","use":"factory","one":true,"z":"ef","cpm":500,"f0":1,"f1":5,"min":10,"max":1600,"sh":["full","slab"],"mk":"elec","cat":"ind","c":"#b8d0d8"},
+   {"k":"railf","n":"鉄道車両工場","use":"factory","one":true,"z":"ef","cpm":350,"f0":1,"f1":2,"min":30,"max":1600,"sh":["full","slab"],"mk":"railcar","cat":"ind","c":"#8f9e8a"},
+   {"k":"hira","n":"平屋","use":"home","one":true,"z":"abcehi","cpm":280,"f0":1,"f1":1,"min":1,"max":8,"sh":["full","L"],"cat":"home","c":"#b9845a","dm":1.05},
+   {"k":"nisetai","n":"二世帯住宅","use":"home","u":0,"z":"abce","cpm":320,"f0":2,"f1":3,"min":2,"max":8,"sh":["full","L"],"cat":"home","c":"#b77e57","rl":1.1,"dn":["{}ハイツ","{}荘","コーポ{}"]},
+   {"k":"sankai","n":"三階建て住宅","use":"home","one":true,"z":"abcde","cpm":330,"f0":3,"f1":3,"min":1,"max":4,"sh":["full"],"cat":"home","c":"#a9704c","rl":1.05},
+   {"k":"kyosho","n":"狭小住宅","use":"home","one":true,"z":"bcde","cpm":360,"f0":2,"f1":3,"min":1,"max":2,"sh":["full"],"cat":"home","c":"#9b6a4e","rl":0.95,"dm":1.1},
+   {"k":"kodate","n":"建売住宅","use":"home","one":true,"z":"abce","cpm":270,"f0":2,"f1":2,"min":1,"max":4,"sh":["full","L"],"cat":"home","c":"#c98a5c","rl":0.95,"dm":1.1},
+   {"k":"chumon","n":"注文住宅","use":"home","one":true,"z":"abce","cpm":400,"f0":2,"f1":3,"min":2,"max":8,"sh":["full","L"],"cat":"home","c":"#b5654a","rl":1.2,"dm":0.95},
+   {"k":"eco","n":"エコハウス","use":"home","one":true,"z":"abce","cpm":450,"f0":2,"f1":2,"min":2,"max":8,"sh":["full","L"],"cat":"home","c":"#5d7f6a","rl":1.15},
+   {"k":"yokan","n":"洋館","use":"home","one":true,"z":"abhi","cpm":650,"f0":2,"f1":3,"min":4,"max":20,"sh":["full","L","ko"],"cat":"home","c":"#8c5a4a","rl":1.6,"dm":0.75},
+   {"k":"gotei","n":"豪邸","use":"home","one":true,"z":"abhi","cpm":900,"f0":1,"f1":3,"min":8,"max":40,"sh":["full","L","ko","ro"],"cat":"home","c":"#6b4b3a","rl":2.2,"dm":0.6},
+   {"k":"wafu","n":"和風邸宅","use":"home","one":true,"z":"abhi","cpm":800,"f0":1,"f1":2,"min":6,"max":30,"sh":["full","L","ko"],"cat":"home","c":"#4f5a58","rl":1.9,"dm":0.65},
+   {"k":"kominka","n":"古民家","use":"home","one":true,"z":"abhi","cpm":200,"f0":1,"f1":2,"min":3,"max":20,"sh":["full","L"],"cat":"home","c":"#6d5c48","rl":0.8,"dm":0.8},
+   {"k":"machiya","n":"町家","use":"home","u":50,"g1":"shop","z":"bcd","cpm":380,"f0":2,"f1":2,"min":1,"max":4,"sh":["full"],"cat":"home","c":"#5b4636","rl":1.1},
+   {"k":"log","n":"ログハウス","use":"home","one":true,"z":"ahi","cpm":300,"f0":1,"f1":2,"min":2,"max":10,"sh":["full"],"cat":"home","c":"#9b6b3c","rl":1.1,"dm":0.7},
+   {"k":"villa","n":"別荘","use":"home","one":true,"z":"hi","cpm":500,"f0":1,"f1":2,"min":4,"max":30,"sh":["full","L"],"cat":"home","c":"#7aa0a8","rl":1.5,"dm":0.5},
+   {"k":"nagaya","n":"長屋","use":"home","u":35,"z":"abce","cpm":250,"f0":1,"f1":2,"min":2,"max":12,"sh":["slab","full"],"cat":"home","c":"#7b6a58","rl":0.7,"dm":1.1,"dn":["{}長屋"]},
+   {"k":"bunka","n":"文化住宅","use":"home","u":30,"z":"abce","cpm":240,"f0":2,"f1":2,"min":2,"max":12,"sh":["full","slab"],"cat":"home","c":"#a08f78","rl":0.65,"dm":1.15,"dn":["{}文化","{}荘"]},
+   {"k":"mokuapa","n":"木造アパート","use":"home","u":35,"z":"abce","cpm":280,"f0":2,"f1":2,"min":2,"max":12,"sh":["full","slab","L"],"cat":"home","c":"#b39a7a","rl":0.85,"dm":1.05,"dn":["{}ハイツ","{}荘","コーポ{}"]},
+   {"k":"tekkotsu","n":"鉄骨アパート","use":"home","u":40,"z":"abce","cpm":340,"f0":2,"f1":3,"min":2,"max":16,"sh":["full","slab","L"],"cat":"home","c":"#9fa7ad","rl":0.95,"dn":["{}ハイツ","{}荘","コーポ{}"]},
+   {"k":"gakusei","n":"学生アパート","use":"home","u":20,"z":"bcde","cpm":320,"f0":2,"f1":4,"min":2,"max":16,"sh":["full","slab","L"],"cat":"home","c":"#a7b4bf","rl":0.8,"pp":1.2,"dn":["{}荘","コーポ{}"]},
+   {"k":"designapa","n":"デザイナーズアパート","use":"home","u":45,"z":"abcde","cpm":480,"f0":2,"f1":3,"min":2,"max":12,"sh":["full","slab","L"],"cat":"home","c":"#e8e3da","rl":1.35,"dm":0.9,"dn":["{}ハイツ","{}荘","コーポ{}"]},
+   {"k":"share","n":"シェアハウス","use":"home","u":14,"z":"abcde","cpm":360,"f0":2,"f1":3,"min":2,"max":8,"sh":["full"],"cat":"home","c":"#d1b48c","rl":0.9,"dm":1.1,"dn":["シェアハウス{}"]},
+   {"k":"shataku","n":"社宅","use":"home","u":60,"z":"bcde","cpm":450,"f0":3,"f1":6,"min":6,"max":60,"sh":["slab","L","ko","ro","full"],"cat":"home","c":"#c8c2b5","rl":0.8,"dm":1.2,"dn":["{}社宅"]},
+   {"k":"ryo","n":"社員寮","use":"home","u":18,"z":"bcdef","cpm":400,"f0":2,"f1":6,"min":4,"max":40,"sh":["full","slab"],"cat":"home","c":"#bfb6a6","rl":0.6,"dm":1.2,"pp":1.2,"dn":["{}寮"]},
+   {"k":"gakuryo","n":"学生寮","use":"home","u":16,"z":"abcde","cpm":420,"f0":2,"f1":8,"min":4,"max":60,"sh":["full","slab"],"cat":"home","c":"#c4b9a3","rl":0.6,"pp":1.2,"dn":["{}学生寮"]},
+   {"k":"senior","n":"高齢者向け住宅","use":"home","u":45,"z":"abcde","cpm":600,"f0":2,"f1":6,"min":4,"max":60,"sh":["slab","L","ko","ro","full"],"cat":"home","c":"#d6cbb8","rl":1.2,"dm":1.1,"pp":0.6,"dn":["{}シニアレジデンス"]},
+   {"k":"danchi","n":"団地","use":"home","u":50,"z":"bcde","cpm":420,"f0":4,"f1":5,"min":20,"max":600,"sh":["slab","L","full"],"cat":"home","c":"#d9d6cc","rl":0.75,"dm":1.15,"dn":["{}団地"]},
+   {"k":"koei","n":"公営住宅","use":"home","u":55,"z":"bcde","cpm":430,"f0":3,"f1":10,"min":10,"max":400,"sh":["slab","L","full"],"cat":"home","c":"#d2cfc4","rl":0.6,"dm":1.3,"dn":["{}住宅"]},
+   {"k":"lowman","n":"低層マンション","use":"home","u":70,"z":"abcde","cpm":600,"f0":2,"f1":4,"min":4,"max":60,"sh":["slab","L","ko","ro","full"],"cat":"home","c":"#e2ddd4","rl":1.15,"dm":0.95,"dn":["{}ハイツ","{}荘","コーポ{}"]},
+   {"k":"midman","n":"中層マンション","use":"home","u":70,"z":"bcde","cpm":620,"f0":5,"f1":9,"min":6,"max":100,"sh":["slab","L","ko","ro","full"],"cat":"home","c":"#dcd7ce","dn":["{}マンション","{}レジデンス","{}パレス"]},
+   {"k":"highman","n":"高層マンション","use":"home","u":70,"z":"bcd","cpm":700,"f0":10,"f1":19,"min":10,"max":160,"sh":["slab","L","full","tower"],"opt":["shop1"],"cat":"home","c":"#d5d9de","rl":1.05,"dn":["{}マンション","{}レジデンス","{}パレス"]},
+   {"k":"luxman","n":"高級マンション","use":"home","u":110,"z":"abcd","cpm":950,"f0":3,"f1":15,"min":8,"max":120,"sh":["slab","L","ko","ro","full"],"cat":"home","c":"#c9c1b4","rl":1.7,"dm":0.75,"dn":["{}マンション","{}レジデンス","{}パレス"]},
+   {"k":"designman","n":"デザイナーズマンション","use":"home","u":60,"z":"bcd","cpm":800,"f0":3,"f1":10,"min":4,"max":60,"sh":["slab","L","ko","ro","full"],"cat":"home","c":"#ebe8e2","rl":1.35,"dm":0.9,"dn":["{}マンション","{}レジデンス","{}パレス"]},
+   {"k":"petman","n":"ペット可マンション","use":"home","u":70,"z":"bcde","cpm":650,"f0":3,"f1":10,"min":4,"max":60,"sh":["slab","L","ko","ro","full"],"cat":"home","c":"#d8cfc0","rl":1.1,"dm":1.1,"dn":["{}マンション","{}レジデンス","{}パレス"]},
+   {"k":"oneroom","n":"ワンルームマンション","use":"home","u":22,"z":"bcd","cpm":650,"f0":3,"f1":12,"min":2,"max":40,"sh":["full","slab"],"cat":"home","c":"#cfd2d4","rl":1.0,"dm":1.15,"pp":1.1,"dn":["{}マンション","{}レジデンス","{}パレス"]},
+   {"k":"family","n":"ファミリーマンション","use":"home","u":85,"z":"bcde","cpm":620,"f0":4,"f1":14,"min":6,"max":120,"sh":["slab","L","ko","ro","full"],"cat":"home","c":"#dfd8cb","dm":1.05,"pp":1.1,"dn":["{}マンション","{}レジデンス","{}パレス"]},
+   {"k":"smartman","n":"スマートマンション","use":"home","u":65,"z":"bcde","cpm":750,"f0":5,"f1":15,"min":6,"max":120,"sh":["slab","L","ko","ro","full"],"cat":"home","c":"#d2dbe0","rl":1.2,"dn":["{}マンション","{}レジデンス","{}パレス"]},
+   {"k":"okushon","n":"億ション","use":"home","u":150,"z":"cd","cpm":1300,"f0":5,"f1":30,"min":10,"max":120,"sh":["slab","L","full","tower"],"cat":"home","c":"#b8ad9c","rl":2.6,"dm":0.55,"dn":["{}タワー","{}タワーレジデンス"]},
+   {"k":"servapa","n":"サービスアパートメント","use":"home","u":50,"z":"cd","cpm":900,"f0":5,"f1":20,"min":6,"max":80,"sh":["slab","full","tower"],"cat":"home","c":"#c7cdd2","rl":1.5,"dm":0.85,"dn":["{}サービスアパートメント"]},
+   {"k":"supertower","n":"超高層マンション","use":"home","u":75,"z":"cd","cpm":1050,"f0":40,"f1":60,"min":30,"max":300,"sh":["tower"],"opt":["shop1"],"cat":"home","c":"#c4ccd6","rl":1.25,"dn":["{}タワー","{}タワーレジデンス"]},
+   {"k":"menshin","n":"免震タワーマンション","use":"home","u":75,"z":"cd","cpm":1150,"f0":25,"f1":50,"min":25,"max":300,"sh":["tower"],"cat":"home","c":"#bcc6d1","rl":1.35,"dm":0.95,"dn":["{}タワー","{}タワーレジデンス"]},
+   {"k":"stantower","n":"駅前タワーマンション","use":"home","u":70,"z":"cd","cpm":1000,"f0":25,"f1":45,"min":16,"max":200,"sh":["tower"],"opt":["shop1"],"cat":"home","c":"#c8d0d9","rl":1.2,"dm":1.1,"dn":["{}タワー","{}タワーレジデンス"]},
+   {"k":"tenpoman","n":"店舗つきマンション","use":"home","u":65,"g1":"shop","z":"bcde","cpm":620,"f0":4,"f1":12,"min":4,"max":60,"sh":["slab","L","ko","ro","full"],"cat":"home","c":"#d6cec2","rl":1.0,"dn":["{}マンション","{}レジデンス","{}パレス"]},
+   {"k":"getaba","n":"下駄ばきアパート","use":"home","u":40,"g1":"shop","z":"bcde","cpm":400,"f0":3,"f1":5,"min":2,"max":16,"sh":["full","slab","L"],"cat":"home","c":"#b7aa98","rl":0.9,"dn":["{}マンション","{}レジデンス","{}パレス"]},
+   {"k":"kanban","n":"看板建築","use":"home","u":50,"g1":"shop","z":"bcd","cpm":380,"f0":2,"f1":3,"min":1,"max":4,"sh":["full"],"cat":"home","c":"#8a9a8a"},
+   {"k":"shotennaga","n":"商店長屋","use":"home","u":40,"g1":"shop","z":"bcd","cpm":300,"f0":2,"f1":2,"min":2,"max":12,"sh":["slab","full"],"cat":"home","c":"#8f7a62","rl":0.85,"dn":["{}長屋"]},
+   {"k":"complexres","n":"複合マンション","use":"home","mix":[[0.15,"shop"],[0.4,"office"],[1,"home"]],"us":{"shop":60,"office":0,"home":70},"z":"cd","cpm":750,"f0":6,"f1":20,"min":8,"max":120,"sh":["slab","L","ko","ro","full","tower"],"cat":"home","c":"#d1d4d0","rl":1.05,"dn":["{}プレイス"]},
+   {"k":"konbini","n":"コンビニ","use":"shop","one":true,"z":"abcdeh","cpm":300,"f0":1,"f1":1,"min":2,"max":12,"sh":["full"],"cat":"shop","c":"#f0f0ee","rl":1.1,"dm":1.2,"dn":["{}コンビニ"]},
+   {"k":"super","n":"スーパー","use":"shop","one":true,"z":"bcde","cpm":330,"f0":1,"f1":2,"min":10,"max":200,"sh":["full"],"cat":"shop","c":"#e9d8b4","rl":1.0,"dm":1.1,"fx":{"home":0.05},"dn":["{}スーパー"]},
+   {"k":"bigsuper","n":"大型スーパー","use":"shop","one":true,"z":"cde","cpm":380,"f0":1,"f1":3,"min":40,"max":600,"sh":["full","slab"],"cat":"shop","c":"#e2cfa8","dm":1.0,"fx":{"home":0.06,"shop":0.03},"dn":["{}大型スーパー"]},
+   {"k":"drug","n":"ドラッグストア","use":"shop","one":true,"z":"bcde","cpm":320,"f0":1,"f1":2,"min":4,"max":60,"sh":["full"],"cat":"shop","c":"#e7eef2","dm":1.1,"dn":["{}ドラッグストア"]},
+   {"k":"kaitenzushi","n":"回転寿司","use":"shop","one":true,"z":"bcde","cpm":400,"f0":1,"f1":2,"min":4,"max":20,"sh":["full"],"cat":"shop","c":"#e4c9a8","rl":1.05,"dm":1.15,"dn":["{}回転寿司"]},
+   {"k":"dollar","n":"100円ショップ","use":"shop","one":true,"z":"bcde","cpm":320,"f0":1,"f1":2,"min":4,"max":40,"sh":["full"],"cat":"shop","c":"#f2e0c2","rl":0.85,"dm":1.25,"dn":["{}100円ショップ"]},
+   {"k":"books","n":"書店","use":"shop","one":true,"z":"bcd","cpm":380,"f0":1,"f1":3,"min":2,"max":30,"sh":["full"],"cat":"shop","c":"#d8c6a6","rl":0.9,"dm":0.95,"dn":["{}書店"]},
+   {"k":"kaden","n":"家電量販店","use":"shop","one":true,"z":"cde","cpm":420,"f0":1,"f1":6,"min":20,"max":400,"sh":["full","slab"],"cat":"shop","c":"#dfe4ea","fx":{"shop":0.03},"dn":["{}家電"]},
+   {"k":"homecenter","n":"ホームセンター","use":"shop","one":true,"z":"cdef","cpm":280,"f0":1,"f1":2,"min":60,"max":1200,"sh":["full","slab"],"cat":"shop","c":"#e6d9c0","rl":0.8,"dm":1.1,"dn":["{}ホームセンター"]},
+   {"k":"fashion","n":"衣料品店","use":"shop","one":true,"z":"bcd","cpm":420,"f0":1,"f1":3,"min":2,"max":40,"sh":["full"],"cat":"shop","c":"#ead7da","rl":1.05,"dn":["{}衣料品店"]},
+   {"k":"depart","n":"百貨店","use":"shop","u":300,"z":"cd","cpm":900,"f0":5,"f1":12,"min":60,"max":800,"sh":["full","slab"],"cat":"shop","c":"#d8c3a5","rl":1.3,"dm":0.95,"fx":{"shop":0.12,"office":0.04},"dn":["{}百貨店","{}デパート"]},
+   {"k":"fashionbldg","n":"ファッションビル","use":"shop","u":60,"z":"cd","cpm":850,"f0":5,"f1":12,"min":10,"max":200,"sh":["full","slab","tower"],"cat":"shop","c":"#e3cfd6","rl":1.3,"dm":0.95,"fx":{"shop":0.06},"dn":["{}ファッションビル"]},
+   {"k":"ekibiru","n":"駅ビル","use":"shop","mix":[[0.5,"shop"],[1,"office"]],"us":{"shop":80,"office":0},"z":"cd","cpm":850,"f0":3,"f1":12,"min":10,"max":200,"sh":["full","slab"],"cat":"shop","c":"#d6ccbd","rl":1.25,"dm":1.1,"fx":{"shop":0.08},"dn":["{}駅ビル"]},
+   {"k":"famires","n":"ファミリーレストラン","use":"shop","one":true,"z":"bcde","cpm":380,"f0":1,"f1":2,"min":4,"max":30,"sh":["full"],"cat":"shop","c":"#efc89a","dn":["{}ファミリーレストラン"]},
+   {"k":"ramen","n":"ラーメン屋","use":"shop","one":true,"z":"bcd","cpm":350,"f0":1,"f1":2,"min":1,"max":4,"sh":["full"],"cat":"shop","c":"#d9a066","rl":1.1,"dm":1.1,"dn":["{}ラーメン屋"]},
+   {"k":"soba","n":"そば屋","use":"shop","one":true,"z":"bcd","cpm":350,"f0":1,"f1":2,"min":1,"max":4,"sh":["full"],"cat":"shop","c":"#9c7a52","dn":["{}そば屋"]},
+   {"k":"sushi","n":"寿司屋","use":"shop","one":true,"z":"bcd","cpm":500,"f0":1,"f1":2,"min":1,"max":6,"sh":["full"],"cat":"shop","c":"#c9b08a","rl":1.4,"dm":0.85,"dn":["{}寿司屋"]},
+   {"k":"kissa","n":"喫茶店","use":"shop","one":true,"z":"bcd","cpm":350,"f0":1,"f1":2,"min":1,"max":4,"sh":["full"],"cat":"shop","c":"#a47b55","rl":0.95,"dn":["{}喫茶店"]},
+   {"k":"cafe","n":"カフェ","use":"shop","one":true,"z":"bcd","cpm":450,"f0":1,"f1":2,"min":1,"max":6,"sh":["full"],"cat":"shop","c":"#b88a5e","rl":1.2,"dn":["{}カフェ"]},
+   {"k":"izakaya","n":"居酒屋","use":"shop","one":true,"z":"bcd","cpm":380,"f0":1,"f1":3,"min":1,"max":8,"sh":["full"],"cat":"shop","c":"#a8613e","rl":1.05,"dm":1.05,"dn":["{}居酒屋"]},
+   {"k":"yakiniku","n":"焼肉店","use":"shop","one":true,"z":"bcd","cpm":420,"f0":1,"f1":2,"min":2,"max":10,"sh":["full"],"cat":"shop","c":"#8f4a35","rl":1.15,"dn":["{}焼肉店"]},
+   {"k":"fastfood","n":"ファストフード店","use":"shop","one":true,"z":"bcde","cpm":400,"f0":1,"f1":2,"min":2,"max":10,"sh":["full"],"cat":"shop","c":"#e9b44c","rl":1.05,"dm":1.15,"dn":["{}ファストフード店"]},
+   {"k":"bakery","n":"パン屋","use":"shop","one":true,"z":"abcd","cpm":380,"f0":1,"f1":2,"min":1,"max":4,"sh":["full"],"cat":"shop","c":"#dcb07a","dn":["{}パン屋"]},
+   {"k":"cake","n":"ケーキ屋","use":"shop","one":true,"z":"abcd","cpm":420,"f0":1,"f1":2,"min":1,"max":4,"sh":["full"],"cat":"shop","c":"#efd1d6","rl":1.15,"dm":0.9,"dn":["{}ケーキ屋"]},
+   {"k":"wagashi","n":"和菓子屋","use":"shop","one":true,"z":"bcd","cpm":380,"f0":1,"f1":2,"min":1,"max":4,"sh":["full"],"cat":"shop","c":"#b98f7a","dn":["{}和菓子屋"]},
+   {"k":"flower","n":"花屋","use":"shop","one":true,"z":"bcd","cpm":300,"f0":1,"f1":1,"min":1,"max":3,"sh":["full"],"cat":"shop","c":"#e6b8c8","rl":0.9,"dn":["{}花屋"]},
+   {"k":"yaoya","n":"八百屋","use":"shop","one":true,"z":"bcd","cpm":280,"f0":1,"f1":2,"min":1,"max":4,"sh":["full"],"cat":"shop","c":"#9fbf6f","rl":0.85,"dm":1.05,"dn":["{}八百屋"]},
+   {"k":"sakanaya","n":"魚屋","use":"shop","one":true,"z":"bcd","cpm":300,"f0":1,"f1":2,"min":1,"max":4,"sh":["full"],"cat":"shop","c":"#8fb3c4","rl":0.85,"dn":["{}魚屋"]},
+   {"k":"nikuya","n":"肉屋","use":"shop","one":true,"z":"bcd","cpm":300,"f0":1,"f1":2,"min":1,"max":4,"sh":["full"],"cat":"shop","c":"#c47f74","rl":0.85,"dn":["{}肉屋"]},
+   {"k":"sakaya","n":"酒屋","use":"shop","one":true,"z":"bcd","cpm":320,"f0":1,"f1":2,"min":1,"max":6,"sh":["full"],"cat":"shop","c":"#a3866a","rl":0.95,"dn":["{}酒屋"]},
+   {"k":"zakka","n":"雑貨店","use":"shop","one":true,"z":"bcd","cpm":380,"f0":1,"f1":2,"min":1,"max":6,"sh":["full"],"cat":"shop","c":"#e0cdb5","rl":1.05,"dn":["{}雑貨店"]},
+   {"k":"stationery","n":"文房具店","use":"shop","one":true,"z":"bcd","cpm":320,"f0":1,"f1":2,"min":1,"max":4,"sh":["full"],"cat":"shop","c":"#c8cfd8","rl":0.85,"dn":["{}文房具店"]},
+   {"k":"toy","n":"おもちゃ屋","use":"shop","one":true,"z":"bcd","cpm":350,"f0":1,"f1":2,"min":1,"max":8,"sh":["full"],"cat":"shop","c":"#f0c56a","rl":0.95,"dn":["{}おもちゃ屋"]},
+   {"k":"megane","n":"メガネ・時計店","use":"shop","one":true,"z":"bcd","cpm":450,"f0":1,"f1":2,"min":1,"max":4,"sh":["full"],"cat":"shop","c":"#b9c2cc","rl":1.2,"dm":0.85,"dn":["{}メガネ・時計店"]},
+   {"k":"bicycle","n":"自転車店","use":"shop","one":true,"z":"bcd","cpm":300,"f0":1,"f1":2,"min":1,"max":6,"sh":["full"],"cat":"shop","c":"#9fb6a0","rl":0.9,"dn":["{}自転車店"]},
+   {"k":"furuhon","n":"古本屋","use":"shop","one":true,"z":"bcd","cpm":280,"f0":1,"f1":2,"min":1,"max":6,"sh":["full"],"cat":"shop","c":"#a69276","rl":0.8,"dn":["{}古本屋"]},
+   {"k":"shichiya","n":"質屋","use":"shop","one":true,"z":"bcd","cpm":400,"f0":1,"f1":2,"min":1,"max":4,"sh":["full"],"cat":"shop","c":"#8d8476","rl":1.1,"dm":0.8,"dn":["{}質屋"]},
+   {"k":"pharmacy","n":"調剤薬局","use":"shop","one":true,"z":"abcde","cpm":380,"f0":1,"f1":2,"min":1,"max":6,"sh":["full"],"cat":"shop","c":"#dfeaf0","rl":1.1,"dm":1.05,"dn":["{}調剤薬局"]},
+   {"k":"biyou","n":"美容室","use":"shop","one":true,"z":"bcd","cpm":400,"f0":1,"f1":2,"min":1,"max":4,"sh":["full"],"cat":"shop","c":"#e9c9d3","rl":1.05,"dn":["{}美容室"]},
+   {"k":"riyou","n":"理容室","use":"shop","one":true,"z":"bcd","cpm":320,"f0":1,"f1":2,"min":1,"max":3,"sh":["full"],"cat":"shop","c":"#c2d0e0","rl":0.85,"dn":["{}理容室"]},
+   {"k":"cleaning","n":"クリーニング店","use":"shop","one":true,"z":"bcd","cpm":300,"f0":1,"f1":2,"min":1,"max":3,"sh":["full"],"cat":"shop","c":"#d3e2ea","rl":0.85,"dn":["{}クリーニング店"]},
+   {"k":"dealer","n":"カーディーラー","use":"shop","one":true,"z":"cdef","cpm":450,"f0":1,"f1":2,"min":10,"max":100,"sh":["full"],"cat":"shop","c":"#c9d4de","rl":1.3,"dm":0.8,"dn":["{}自動車販売"]},
+   {"k":"gas","n":"ガソリンスタンド","use":"shop","one":true,"z":"bcdefgh","cpm":350,"f0":1,"f1":1,"min":6,"max":40,"sh":["full"],"cat":"shop","c":"#e4dfcf","rl":1.0,"dn":["{}給油所"]},
+   {"k":"arcadeshop","n":"商店街（アーケード）","use":"shop","u":40,"z":"bcd","cpm":400,"f0":1,"f1":2,"min":6,"max":120,"sh":["slab","full"],"cat":"shop","c":"#d9c3a1","rl":0.95,"dm":1.1,"fx":{"shop":0.05},"dn":["{}商店街"]},
+   {"k":"outlet","n":"アウトレットモール","use":"shop","u":120,"z":"cdeh","cpm":400,"f0":1,"f1":2,"min":200,"max":1600,"sh":["full","slab","ro"],"cat":"shop","c":"#e7d6bd","rl":0.9,"fx":{"hotel":0.05},"dn":["{}アウトレット"]},
+   {"k":"michinoeki","n":"道の駅","use":"shop","u":60,"z":"hi","cpm":300,"f0":1,"f1":1,"min":20,"max":400,"sh":["full","slab"],"cat":"shop","c":"#cdb98f","rl":0.8,"dm":1.2,"dn":["道の駅 {}"]},
+   {"k":"ichiba","n":"市場","use":"shop","u":25,"z":"cdeg","cpm":250,"f0":1,"f1":1,"min":10,"max":200,"sh":["full","slab"],"cat":"shop","c":"#c9b48e","rl":0.8,"dm":1.15,"dn":["{}市場"]},
+   {"k":"yatai","n":"屋台村","use":"shop","u":12,"z":"bcd","cpm":200,"f0":1,"f1":1,"min":4,"max":60,"sh":["full"],"cat":"shop","c":"#b7865c","rl":0.75,"dm":1.2,"dn":["{}屋台村"]},
+   {"k":"smalloffice","n":"小さなオフィスビル","use":"office","u":0,"z":"cde","cpm":600,"f0":3,"f1":6,"min":2,"max":20,"sh":["full","slab"],"cat":"biz","c":"#b9c4cf","rl":0.9,"dn":["{}ビル"]},
+   {"k":"pencil","n":"ペンシルビル","use":"office","u":0,"g1":"shop","z":"cd","cpm":800,"f0":5,"f1":12,"min":1,"max":4,"sh":["full"],"cat":"biz","c":"#c0c8d0","rl":0.95,"dn":["{}ビル"]},
+   {"k":"midoffice","n":"中規模オフィスビル","use":"office","u":0,"z":"cd","cpm":820,"f0":8,"f1":20,"min":10,"max":160,"sh":["full","slab","L"],"cat":"biz","c":"#aab8c8","dn":["{}ビル","{}センタービル"]},
+   {"k":"bigoffice","n":"大規模オフィスビル","use":"office","u":0,"z":"d","cpm":900,"f0":15,"f1":35,"min":40,"max":400,"sh":["full","slab","L","tower"],"opt":["shop1"],"cat":"biz","c":"#a2b2c5","rl":1.1,"dn":["{}センタービル","{}ビルディング"]},
+   {"k":"hq","n":"本社ビル","use":"office","u":0,"z":"cd","cpm":1000,"f0":10,"f1":40,"min":20,"max":300,"sh":["full","slab","tower"],"cat":"biz","c":"#8fa2b8","rl":1.25,"dm":0.9,"dn":["{}本社ビル"]},
+   {"k":"intelligent","n":"インテリジェントビル","use":"office","u":0,"z":"cd","cpm":1150,"f0":10,"f1":40,"min":20,"max":300,"sh":["full","slab","tower"],"cat":"biz","c":"#9cb6cc","rl":1.35,"dm":0.95,"dn":["{}インテリジェントビル"]},
+   {"k":"skyoffice","n":"超高層オフィスビル","use":"office","u":0,"g1":"shop","g2":"shop","z":"d","cpm":1300,"f0":40,"f1":70,"min":40,"max":600,"sh":["tower"],"cat":"biz","c":"#8ea8c4","rl":1.3,"fx":{"office":0.05,"shop":0.04},"dn":["{}タワー","{}スカイタワー"]},
+   {"k":"complex","n":"複合ビル","use":"office","u":0,"mix":[[0.25,"shop"],[1,"office"]],"us":{"shop":60,"office":0},"z":"cd","cpm":900,"f0":6,"f1":25,"min":8,"max":200,"sh":["full","slab","tower"],"cat":"biz","c":"#b3bfca","rl":1.1,"dn":["{}スクエア"]},
+   {"k":"it","n":"ITオフィス","use":"office","u":0,"z":"cd","cpm":850,"f0":5,"f1":20,"min":6,"max":120,"sh":["full","slab"],"cat":"biz","c":"#a8c3cf","rl":1.1,"dm":1.1,"pp":1.2,"dn":["{}ITオフィス"]},
+   {"k":"startup","n":"スタートアップビル","use":"office","u":30,"z":"cd","cpm":650,"f0":3,"f1":8,"min":2,"max":40,"sh":["full","slab"],"cat":"biz","c":"#bccad0","rl":0.95,"dm":1.15,"dn":["{}スタートアップビル"]},
+   {"k":"coworking","n":"コワーキングスペース","use":"office","u":20,"z":"cd","cpm":700,"f0":2,"f1":8,"min":2,"max":40,"sh":["full","slab"],"cat":"biz","c":"#c7d3d8","rl":1.15,"dm":1.05,"pp":1.3,"dn":["{}コワーキングスペース"]},
+   {"k":"rentalmtg","n":"貸会議室ビル","use":"office","u":40,"z":"cd","cpm":700,"f0":3,"f1":12,"min":2,"max":60,"sh":["full","slab"],"cat":"biz","c":"#bdc6cf","dn":["{}貸会議室ビル"]},
+   {"k":"lawoffice","n":"法律事務所ビル","use":"office","u":60,"z":"cd","cpm":750,"f0":3,"f1":10,"min":2,"max":40,"sh":["full","slab"],"cat":"biz","c":"#a9b1bb","rl":1.15,"dn":["{}法律事務所ビル"]},
+   {"k":"ad","n":"広告代理店ビル","use":"office","u":0,"z":"cd","cpm":950,"f0":6,"f1":25,"min":10,"max":200,"sh":["full","slab","tower"],"cat":"biz","c":"#b6a9c4","rl":1.2,"dn":["{}広告代理店ビル"]},
+   {"k":"publisher","n":"出版社","use":"office","u":0,"z":"cd","cpm":800,"f0":4,"f1":12,"min":4,"max":80,"sh":["full","slab"],"cat":"biz","c":"#b5b0a5","dn":["{}出版"]},
+   {"k":"newspaper","n":"新聞社","use":"office","u":0,"z":"cd","cpm":900,"f0":6,"f1":20,"min":10,"max":200,"sh":["full","slab"],"cat":"biz","c":"#a7a39a","rl":1.05,"dn":["{}新聞社"]},
+   {"k":"tvstation","n":"放送局","use":"office","u":0,"z":"cd","cpm":1100,"f0":5,"f1":30,"min":40,"max":600,"sh":["full","slab","tower"],"cat":"biz","c":"#9bb0c6","rl":1.3,"dm":0.8,"fx":{"office":0.05},"dn":["{}放送センター"]},
+   {"k":"bankhq","n":"銀行の本店","use":"office","u":0,"z":"cd","cpm":1150,"f0":8,"f1":30,"min":20,"max":300,"sh":["full","slab","tower"],"cat":"biz","c":"#94a1ad","rl":1.35,"dm":0.85,"fx":{"office":0.05},"dn":["{}銀行本店"]},
+   {"k":"bankbranch","n":"銀行の支店","use":"office","u":0,"z":"bcd","cpm":800,"f0":2,"f1":5,"min":2,"max":30,"sh":["full"],"cat":"biz","c":"#a5b0ba","rl":1.1,"dn":["{}支店"]},
+   {"k":"shinkin","n":"信用金庫","use":"office","u":0,"z":"bcd","cpm":700,"f0":2,"f1":4,"min":2,"max":30,"sh":["full"],"cat":"biz","c":"#a9b6b0","dn":["{}信用金庫"]},
+   {"k":"securities","n":"証券会社","use":"office","u":0,"z":"cd","cpm":1000,"f0":6,"f1":25,"min":6,"max":160,"sh":["full","slab"],"cat":"biz","c":"#9eaabd","rl":1.25,"dn":["{}証券ビル"]},
+   {"k":"insurance","n":"保険会社","use":"office","u":0,"z":"cd","cpm":950,"f0":8,"f1":30,"min":10,"max":300,"sh":["full","slab","tower"],"cat":"biz","c":"#a3b4c0","rl":1.1,"dn":["{}生命ビル"]},
+   {"k":"postoffice","n":"郵便局","use":"office","u":0,"z":"abcde","cpm":600,"f0":1,"f1":4,"min":4,"max":60,"sh":["full","slab"],"cat":"biz","c":"#d98a7a","rl":0.9,"dm":1.2,"dn":["{}郵便局"]},
+   {"k":"travel","n":"旅行代理店ビル","use":"office","u":0,"z":"cd","cpm":700,"f0":2,"f1":6,"min":2,"max":30,"sh":["full","slab"],"cat":"biz","c":"#b9cbd6","rl":0.95,"fx":{"hotel":0.03},"dn":["{}旅行代理店ビル"]},
+   {"k":"lab","n":"研究所","use":"office","u":0,"z":"cdef","cpm":750,"f0":2,"f1":8,"min":20,"max":800,"sh":["full","slab"],"cat":"biz","c":"#b7c2b7","rl":0.9,"dm":1.05,"dn":["{}研究所"]},
+   {"k":"datacenter","n":"データセンター","use":"office","u":0,"z":"cdef","cpm":1100,"f0":2,"f1":6,"min":20,"max":600,"sh":["full","slab"],"cat":"biz","c":"#7f8d99","rl":1.2,"dm":1.1,"pp":0.1,"dn":["{}データセンター"]},
+   {"k":"callcenter","n":"コールセンター","use":"office","u":0,"z":"cde","cpm":650,"f0":3,"f1":10,"min":10,"max":200,"sh":["full","slab"],"cat":"biz","c":"#b0bcc8","rl":0.85,"dm":1.1,"pp":1.5,"dn":["{}コールセンター"]},
+   {"k":"bizhotel","n":"ビジネスホテル","use":"hotel","one":true,"z":"cde","cpm":700,"f0":5,"f1":15,"min":3,"max":60,"sh":["full","slab","tower"],"sc":"bizhotel","cat":"hotel","c":"#c9b9a8","dn":["ホテル{}","{}ホテル"]},
+   {"k":"stahotel","n":"駅前ホテル","use":"hotel","one":true,"z":"cd","cpm":750,"f0":6,"f1":20,"min":4,"max":80,"sh":["full","slab","tower"],"sc":"stahotel","cat":"hotel","c":"#c2b4a4","dn":["{}駅前ホテル"]},
+   {"k":"cityhotel","n":"シティホテル","use":"hotel","one":true,"z":"cd","cpm":900,"f0":8,"f1":30,"min":20,"max":300,"sh":["full","slab","L","tower"],"sc":"cityhotel","cat":"hotel","c":"#b8a48c","dn":["{}シティホテル","ホテル{}"]},
+   {"k":"luxhotel","n":"高級ホテル","use":"hotel","one":true,"z":"cd","cpm":1400,"f0":10,"f1":50,"min":30,"max":400,"sh":["tower","full","slab"],"sc":"luxhotel","cat":"hotel","c":"#a38d6f","fx":{"shop":0.04},"dn":["ホテル{}","グランドホテル{}"]},
+   {"k":"resort","n":"リゾートホテル","use":"hotel","one":true,"z":"abhi","cpm":900,"f0":3,"f1":15,"min":40,"max":1600,"sh":["slab","L","ko","full"],"sc":"resort","cat":"hotel","c":"#d6c6a2","fx":{"shop":0.03},"dn":["{}リゾートホテル"]},
+   {"k":"ryokan","n":"旅館","use":"hotel","one":true,"z":"abchi","cpm":650,"f0":1,"f1":4,"min":6,"max":200,"sh":["L","ko","full"],"sc":"ryokan","cat":"hotel","c":"#6f6658","dn":["旅館 {}","{}旅館"]},
+   {"k":"onsenryokan","n":"温泉旅館","use":"hotel","one":true,"z":"hi","cpm":800,"f0":2,"f1":8,"min":10,"max":400,"sh":["L","ko","full"],"sc":"onsenryokan","cat":"hotel","c":"#5f5a52","dn":["{}温泉旅館"]},
+   {"k":"minshuku","n":"民宿","use":"hotel","one":true,"z":"abhi","cpm":350,"f0":1,"f1":3,"min":2,"max":30,"sh":["full","L"],"sc":"minshuku","cat":"hotel","c":"#8c7a62","dn":["民宿 {}"]},
+   {"k":"pension","n":"ペンション","use":"hotel","one":true,"z":"ahi","cpm":450,"f0":2,"f1":3,"min":3,"max":30,"sh":["full","L"],"sc":"pension","cat":"hotel","c":"#b5876a","dn":["ペンション {}"]},
+   {"k":"capsule","n":"カプセルホテル","use":"hotel","one":true,"z":"cd","cpm":650,"f0":3,"f1":10,"min":1,"max":20,"sh":["full"],"sc":"capsule","cat":"hotel","c":"#b9c0c6","dn":["{}カプセルホテル"]},
+   {"k":"guesthouse","n":"ゲストハウス","use":"hotel","one":true,"z":"bcd","cpm":400,"f0":2,"f1":4,"min":1,"max":10,"sh":["full"],"sc":"guesthouse","cat":"hotel","c":"#c4a98a","dn":["ゲストハウス {}"]},
+   {"k":"condo","n":"コンドミニアム","use":"hotel","one":true,"z":"cdh","cpm":900,"f0":5,"f1":30,"min":10,"max":200,"sh":["slab","L","tower","full"],"sc":"condo","cat":"hotel","c":"#cbc3b3","dn":["{}コンドミニアム"]},
+   {"k":"clinic","n":"診療所","use":"hospital","one":true,"z":"abcde","cpm":600,"f0":1,"f1":4,"min":1,"max":10,"sh":["full"],"sc":"clinic","cat":"med","c":"#e3ecef","dn":["{}クリニック"]},
+   {"k":"dental","n":"歯科医院","use":"hospital","one":true,"z":"abcde","cpm":600,"f0":1,"f1":3,"min":1,"max":6,"sh":["full"],"sc":"dental","cat":"med","c":"#e9f0f2","dn":["{}歯科医院"]},
+   {"k":"pedi","n":"小児科医院","use":"hospital","one":true,"z":"abcde","cpm":550,"f0":1,"f1":3,"min":1,"max":8,"sh":["full"],"sc":"pedi","cat":"med","c":"#f0e7d8","fx":{"home":0.03},"dn":["{}こどもクリニック"]},
+   {"k":"eye","n":"眼科","use":"hospital","one":true,"z":"abcde","cpm":600,"f0":1,"f1":3,"min":1,"max":8,"sh":["full"],"sc":"eye","cat":"med","c":"#dfe8ef","dn":["{}眼科"]},
+   {"k":"vet","n":"動物病院","use":"hospital","one":true,"z":"abcde","cpm":550,"f0":1,"f1":2,"min":1,"max":8,"sh":["full"],"sc":"vet","cat":"med","c":"#e2ead9","dn":["{}動物病院"]},
+   {"k":"obgyn","n":"産婦人科","use":"hospital","one":true,"z":"bcde","cpm":800,"f0":2,"f1":6,"min":4,"max":40,"sh":["full","slab"],"sc":"obgyn","cat":"med","c":"#f0dfe2","dn":["{}レディースクリニック"]},
+   {"k":"hospital","n":"総合病院","use":"hospital","one":true,"z":"bcde","cpm":1000,"f0":4,"f1":15,"min":30,"max":600,"sh":["full","slab","L","tower"],"sc":"hospital","cat":"med","c":"#e8eef2","fx":{"home":0.05,"shop":0.03},"dn":["{}総合病院"]},
+   {"k":"erhosp","n":"救急病院","use":"hospital","one":true,"z":"bcde","cpm":1100,"f0":4,"f1":12,"min":20,"max":400,"sh":["full","slab","L"],"sc":"erhosp","cat":"med","c":"#e6e1e1","fx":{"home":0.04},"dn":["{}救急病院"]},
+   {"k":"bighosp","n":"大病院","use":"hospital","one":true,"z":"bcdeh","cpm":1200,"f0":8,"f1":30,"min":80,"max":1600,"sh":["full","slab","L","ko","tower"],"sc":"bighosp","cat":"med","c":"#dfe7ec","fx":{"home":0.06,"shop":0.04},"dn":["{}医療センター"]},
+   {"k":"nursing","n":"老人ホーム","use":"hospital","one":true,"z":"abcdeh","cpm":600,"f0":2,"f1":8,"min":6,"max":200,"sh":["full","slab","L"],"sc":"nursing","cat":"med","c":"#e4dccd","dn":["{}老人ホーム"]},
+   {"k":"care","n":"介護施設","use":"hospital","one":true,"z":"abcdeh","cpm":550,"f0":1,"f1":4,"min":4,"max":120,"sh":["full","slab","L"],"sc":"care","cat":"med","c":"#ded7c8","dn":["{}介護センター"]},
+   {"k":"dayserv","n":"デイサービスセンター","use":"hospital","one":true,"z":"abcde","cpm":450,"f0":1,"f1":2,"min":2,"max":30,"sh":["full"],"sc":"dayserv","cat":"med","c":"#e8e0cf","dn":["デイサービス{}"]},
+   {"k":"cinema","n":"映画館","use":"leisure","one":true,"z":"cde","cpm":800,"f0":2,"f1":8,"min":10,"max":200,"sh":["full","slab"],"sc":"cinema","cat":"fun","c":"#5c5f6e","dn":["{}シネマ"]},
+   {"k":"theater","n":"劇場","use":"leisure","one":true,"z":"cd","cpm":1000,"f0":3,"f1":10,"min":20,"max":300,"sh":["full","slab"],"sc":"theater","cat":"fun","c":"#8a4f45","fx":{"shop":0.03},"dn":["{}劇場"]},
+   {"k":"hall","n":"コンサートホール","use":"leisure","one":true,"z":"cd","cpm":1000,"f0":3,"f1":10,"min":20,"max":400,"sh":["full","slab"],"sc":"hall","cat":"fun","c":"#9b7b63","dn":["{}ホール"]},
+   {"k":"livehouse","n":"ライブハウス","use":"leisure","one":true,"z":"cd","cpm":600,"f0":1,"f1":4,"min":2,"max":20,"sh":["full"],"sc":"livehouse","cat":"fun","c":"#4f4a55","dn":["ライブハウス{}"]},
+   {"k":"bowling","n":"ボウリング場","use":"leisure","one":true,"z":"cde","cpm":500,"f0":1,"f1":3,"min":10,"max":200,"sh":["full","slab"],"sc":"bowling","cat":"fun","c":"#c96d5a","dn":["{}ボウル"]},
+   {"k":"arcade","n":"ゲームセンター","use":"leisure","one":true,"z":"cd","cpm":550,"f0":1,"f1":4,"min":2,"max":60,"sh":["full"],"sc":"arcade","cat":"fun","c":"#d77fb0","dn":["ゲーム{}"]},
+   {"k":"karaoke","n":"カラオケ店","use":"leisure","one":true,"z":"cd","cpm":600,"f0":2,"f1":8,"min":2,"max":40,"sh":["full"],"sc":"karaoke","cat":"fun","c":"#c98bd6","dn":["カラオケ{}"]},
+   {"k":"pachinko","n":"パチンコ店","use":"leisure","one":true,"z":"cde","cpm":600,"f0":1,"f1":3,"min":6,"max":120,"sh":["full","slab"],"sc":"pachinko","cat":"fun","c":"#e3a83a","fx":{"home":-0.03},"dn":["{}ホール"]},
+   {"k":"batting","n":"バッティングセンター","use":"leisure","one":true,"z":"cdefh","cpm":300,"f0":1,"f1":1,"min":10,"max":120,"sh":["full"],"sc":"batting","cat":"fun","c":"#7fae7a","dn":["{}バッティングセンター"]},
+   {"k":"sportsclub","n":"スポーツクラブ","use":"leisure","one":true,"z":"bcd","cpm":700,"f0":2,"f1":6,"min":4,"max":80,"sh":["full","slab"],"sc":"sportsclub","cat":"fun","c":"#7aa3c8","dn":["{}スポーツクラブ"]},
+   {"k":"pool","n":"屋内プール","use":"leisure","one":true,"z":"bcde","cpm":800,"f0":1,"f1":3,"min":10,"max":200,"sh":["full","slab"],"sc":"pool","cat":"fun","c":"#7cc2d8","dn":["{}プール"]},
+   {"k":"skate","n":"スケートリンク","use":"leisure","one":true,"z":"cde","cpm":800,"f0":1,"f1":2,"min":20,"max":200,"sh":["full","slab"],"sc":"skate","cat":"fun","c":"#a9d4e6","dn":["{}スケートリンク"]},
+   {"k":"superonsen","n":"スーパー銭湯","use":"leisure","one":true,"z":"cdeh","cpm":600,"f0":1,"f1":3,"min":10,"max":200,"sh":["full","slab"],"sc":"superonsen","cat":"fun","c":"#b78d6c","dn":["{}の湯"]},
+   {"k":"sento","n":"銭湯","use":"leisure","one":true,"z":"abcde","cpm":400,"f0":1,"f1":2,"min":1,"max":8,"sh":["full"],"sc":"sento","cat":"fun","c":"#7d9bb0","dn":["{}湯"]},
+   {"k":"wedding","n":"結婚式場","use":"leisure","one":true,"z":"bcdh","cpm":1000,"f0":2,"f1":6,"min":10,"max":200,"sh":["full","L","ko"],"sc":"wedding","cat":"fun","c":"#efe6da","dn":["{}迎賓館","{}会館"]},
+   {"k":"arena","n":"アリーナ","use":"leisure","one":true,"z":"cde","cpm":900,"f0":2,"f1":5,"min":60,"max":800,"sh":["full","ro"],"sc":"arena","cat":"fun","c":"#a7b0b8","fx":{"shop":0.04,"hotel":0.04},"dn":["{}アリーナ"]},
+   {"k":"baseball","n":"野球場","use":"leisure","one":true,"z":"cdeh","cpm":700,"f0":1,"f1":2,"min":300,"max":1600,"sh":["ro","full"],"sc":"baseball","cat":"fun","c":"#6fa35a","fx":{"shop":0.05,"hotel":0.05},"dn":["{}球場","{}スタジアム"]},
+   {"k":"soccer","n":"サッカースタジアム","use":"leisure","one":true,"z":"cdeh","cpm":700,"f0":1,"f1":2,"min":300,"max":1600,"sh":["ro","full"],"sc":"soccer","cat":"fun","c":"#5f9a62","fx":{"shop":0.05,"hotel":0.05},"dn":["{}スタジアム"]},
+   {"k":"convention","n":"展示場","use":"leisure","one":true,"z":"cdefg","cpm":700,"f0":1,"f1":4,"min":100,"max":1600,"sh":["full","slab"],"sc":"convention","cat":"fun","c":"#b7c0c9","fx":{"hotel":0.12,"shop":0.04},"dn":["{}国際展示場","{}メッセ"]},
+   {"k":"aquarium","n":"水族館","use":"leisure","one":true,"z":"cdg","cpm":1200,"f0":2,"f1":5,"min":30,"max":400,"sh":["full","slab","L"],"sc":"aquarium","cat":"fun","c":"#5f9fc2","fx":{"hotel":0.08},"dn":["{}水族館"]},
+   {"k":"artmuseum","n":"美術館","use":"leisure","one":true,"z":"abcde","cpm":1100,"f0":2,"f1":5,"min":20,"max":400,"sh":["full","L","ko"],"sc":"artmuseum","cat":"fun","c":"#d0c8bc","dn":["{}美術館"]},
+   {"k":"museum","n":"博物館","use":"leisure","one":true,"z":"abcde","cpm":1000,"f0":2,"f1":6,"min":20,"max":400,"sh":["full","L","ko"],"sc":"museum","cat":"fun","c":"#bcb3a4","dn":["{}博物館"]},
+   {"k":"science","n":"科学館","use":"leisure","one":true,"z":"bcde","cpm":1000,"f0":2,"f1":5,"min":20,"max":300,"sh":["full","L"],"sc":"science","cat":"fun","c":"#a7bccb","dn":["{}科学館"]},
+   {"k":"shrine","n":"神社","use":"leisure","one":true,"z":"abcdehi","cpm":600,"f0":1,"f1":1,"min":4,"max":400,"sh":["full","L"],"sc":"shrine","cat":"fun","c":"#c0392b","dn":["{}神社"]},
+   {"k":"temple","n":"寺","use":"leisure","one":true,"z":"abcdehi","cpm":700,"f0":1,"f1":2,"min":6,"max":600,"sh":["full","L","ko"],"sc":"temple","cat":"fun","c":"#5a5550","dn":["{}寺","{}院"]},
+   {"k":"church","n":"教会","use":"leisure","one":true,"z":"abcde","cpm":800,"f0":1,"f1":3,"min":2,"max":60,"sh":["full"],"sc":"church","cat":"fun","c":"#d9d4cc","dn":["{}教会"]},
+   {"k":"golfrange","n":"ゴルフ練習場","use":"leisure","one":true,"z":"cdefh","cpm":120,"f0":0,"f1":0,"min":40,"max":600,"sh":["full"],"sc":"golfrange","cat":"fun","c":"#86bf6a","pat":"lawn","dn":["{}ゴルフガーデン"]},
+   {"k":"golf","n":"ゴルフ場","use":"leisure","one":true,"z":"hi","cpm":60,"f0":0,"f1":0,"min":400,"max":1600,"sh":["full"],"sc":"golf","cat":"fun","c":"#78b05e","fx":{"hotel":0.05},"pat":"golf","dn":["{}カントリークラブ"]},
+   {"k":"tennis","n":"テニスコート","use":"leisure","one":true,"z":"abcdeh","cpm":100,"f0":0,"f1":0,"min":6,"max":200,"sh":["full"],"sc":"tennis","cat":"fun","c":"#5f9e6e","pat":"court","dn":["{}テニスクラブ"]},
+   {"k":"athletics","n":"陸上競技場","use":"leisure","one":true,"z":"bcdeh","cpm":200,"f0":0,"f1":0,"min":200,"max":1600,"sh":["full"],"sc":"athletics","cat":"fun","c":"#93c56a","pat":"track","dn":["{}陸上競技場"]},
+   {"k":"amuse","n":"遊園地","use":"leisure","one":true,"z":"cdeh","cpm":300,"f0":0,"f1":0,"min":400,"max":1600,"sh":["full"],"sc":"amuse","cat":"fun","c":"#e6c3d6","fx":{"hotel":0.15,"shop":0.04},"pat":"amuse","dn":["{}ランド","{}遊園地"]},
+   {"k":"zoo","n":"動物園","use":"leisure","one":true,"z":"abcdeh","cpm":150,"f0":0,"f1":0,"min":200,"max":1600,"sh":["full"],"sc":"zoo","cat":"fun","c":"#a9c98a","fx":{"hotel":0.06},"pat":"trees","dn":["{}動物園"]},
+   {"k":"botanical","n":"植物園","use":"leisure","one":true,"z":"abcdeh","cpm":100,"f0":0,"f1":0,"min":100,"max":1600,"sh":["full"],"sc":"botanical","cat":"fun","c":"#9fcf8f","pat":"trees","dn":["{}植物園"]},
+   {"k":"camp","n":"キャンプ場","use":"leisure","one":true,"z":"hi","cpm":30,"f0":0,"f1":0,"min":100,"max":1600,"sh":["full"],"sc":"camp","cat":"fun","c":"#7fb070","pat":"trees","dn":["{}キャンプ場"]},
+   {"k":"fishing","n":"釣り堀","use":"leisure","one":true,"z":"cdeh","cpm":80,"f0":0,"f1":0,"min":10,"max":200,"sh":["full"],"sc":"fishing","cat":"fun","c":"#7fb8d4","pat":"water","dn":["{}釣り堀"]},
+   {"k":"ski","n":"スキー場","use":"leisure","one":true,"z":"i","cpm":80,"f0":0,"f1":0,"min":400,"max":1600,"sh":["full"],"sc":"ski","cat":"fun","c":"#eef3f6","fx":{"hotel":0.1},"pat":"snow","dn":["{}スキー場"]},
+   {"k":"nursery","n":"保育園","use":"school","one":true,"z":"abcde","cpm":450,"f0":1,"f1":2,"min":2,"max":20,"sh":["full","L"],"sc":"nursery","cat":"school","c":"#f2d49b","fx":{"home":0.03},"dn":["{}保育園"]},
+   {"k":"kinder","n":"幼稚園","use":"school","one":true,"z":"abcde","cpm":450,"f0":1,"f1":2,"min":3,"max":30,"sh":["full","L"],"sc":"kinder","cat":"school","c":"#f5c98a","fx":{"home":0.03},"dn":["{}幼稚園"]},
+   {"k":"esjhs","n":"小中一貫校","use":"school","one":true,"z":"abce","cpm":380,"f0":2,"f1":5,"min":20,"max":600,"sh":["full","slab","L","ko"],"sc":"esjhs","cat":"school","c":"#d4b07a","fx":{"home":0.04},"dn":["{}学園"]},
+   {"k":"jhshs","n":"中高一貫校","use":"school","one":true,"z":"abcde","cpm":420,"f0":2,"f1":6,"min":20,"max":600,"sh":["full","slab","L","ko"],"sc":"jhshs","cat":"school","c":"#b9935f","dn":["{}学院","{}学園"]},
+   {"k":"techhs","n":"工業高校","use":"school","one":true,"z":"bcdef","cpm":400,"f0":2,"f1":5,"min":30,"max":800,"sh":["full","slab","L"],"sc":"techhs","cat":"school","c":"#a98e6c","dn":["{}工業高校"]},
+   {"k":"comhs","n":"商業高校","use":"school","one":true,"z":"bcde","cpm":400,"f0":2,"f1":5,"min":20,"max":600,"sh":["full","slab","L"],"sc":"comhs","cat":"school","c":"#b49a72","dn":["{}商業高校"]},
+   {"k":"jc","n":"短期大学","use":"school","one":true,"z":"abcde","cpm":500,"f0":2,"f1":8,"min":20,"max":600,"sh":["full","slab","L","ko"],"sc":"jc","cat":"school","c":"#b07a5e","dn":["{}短期大学"]},
+   {"k":"cram","n":"学習塾","use":"school","one":true,"z":"bcd","cpm":500,"f0":2,"f1":5,"min":1,"max":10,"sh":["full"],"sc":"cram","cat":"school","c":"#c8b3d6","dn":["{}ゼミナール"]},
+   {"k":"prep","n":"予備校","use":"school","one":true,"z":"cd","cpm":650,"f0":4,"f1":12,"min":4,"max":60,"sh":["full","slab"],"sc":"prep","cat":"school","c":"#b2a3c9","dn":["{}予備校"]},
+   {"k":"eikaiwa","n":"英会話教室","use":"school","one":true,"z":"bcd","cpm":500,"f0":1,"f1":3,"min":1,"max":6,"sh":["full"],"sc":"eikaiwa","cat":"school","c":"#a9c3df","dn":["{}英会話スクール"]},
+   {"k":"music","n":"音楽学校","use":"school","one":true,"z":"bcde","cpm":700,"f0":2,"f1":6,"min":6,"max":100,"sh":["full","slab","L"],"sc":"music","cat":"school","c":"#c7a9b8","dn":["{}音楽学院"]},
+   {"k":"cook","n":"調理師学校","use":"school","one":true,"z":"bcde","cpm":650,"f0":2,"f1":6,"min":4,"max":80,"sh":["full","slab"],"sc":"cook","cat":"school","c":"#d9b48f","dn":["{}調理師学校"]},
+   {"k":"driving","n":"自動車教習所","use":"school","one":true,"z":"cdefh","cpm":80,"f0":0,"f1":0,"min":100,"max":1600,"sh":["full"],"sc":"driving","cat":"school","c":"#c9c9c9","pat":"course","dn":["{}自動車教習所"]},
+   {"k":"machikoba","n":"町工場","use":"factory","one":true,"z":"bcef","cpm":220,"f0":1,"f1":2,"min":1,"max":10,"sh":["full","slab"],"cat":"ind","c":"#a9a49a","rl":0.9,"dm":1.1,"fx":{"home":-0.02},"dn":["{}製作所"]},
+   {"k":"print","n":"印刷工場","use":"factory","one":true,"z":"cef","cpm":280,"f0":1,"f1":3,"min":6,"max":200,"sh":["full","slab"],"cat":"ind","c":"#b4b8bd","dn":["{}印刷"]},
+   {"k":"textile","n":"繊維工場","use":"factory","one":true,"z":"ef","cpm":240,"f0":1,"f1":2,"min":20,"max":800,"sh":["full","slab"],"cat":"ind","c":"#c2b8c6","rl":0.9,"dn":["{}紡績"]},
+   {"k":"paper","n":"製紙工場","use":"factory","one":true,"z":"fg","cpm":260,"f0":1,"f1":2,"min":60,"max":1600,"sh":["full","slab"],"cat":"ind","c":"#c9c4b5","rl":0.95,"fx":{"home":-0.05},"dn":["{}製紙"]},
+   {"k":"machine","n":"機械工場","use":"factory","one":true,"z":"ef","cpm":280,"f0":1,"f1":2,"min":20,"max":1200,"sh":["full","slab"],"cat":"ind","c":"#a6adb3","rl":1.05,"dn":["{}機械"]},
+   {"k":"metal","n":"金属加工工場","use":"factory","one":true,"z":"ef","cpm":270,"f0":1,"f1":2,"min":10,"max":600,"sh":["full","slab"],"cat":"ind","c":"#9ca3a8","fx":{"home":-0.04},"dn":["{}金属"]},
+   {"k":"parts","n":"部品工場","use":"factory","one":true,"z":"ef","cpm":280,"f0":1,"f1":3,"min":10,"max":600,"sh":["full","slab"],"cat":"ind","c":"#adb5ba","rl":1.05,"dn":["{}工業"]},
+   {"k":"precision","n":"精密機械工場","use":"factory","one":true,"z":"ef","cpm":380,"f0":1,"f1":4,"min":10,"max":600,"sh":["full","slab"],"cat":"ind","c":"#c3ccd3","rl":1.25,"dm":0.95,"dn":["{}精機"]},
+   {"k":"pharma","n":"薬品工場","use":"factory","one":true,"z":"ef","cpm":420,"f0":1,"f1":4,"min":20,"max":800,"sh":["full","slab"],"cat":"ind","c":"#d6e2e6","rl":1.3,"dn":["{}製薬"]},
+   {"k":"cosme","n":"化粧品工場","use":"factory","one":true,"z":"ef","cpm":380,"f0":1,"f1":3,"min":10,"max":400,"sh":["full","slab"],"cat":"ind","c":"#e6d3dc","rl":1.2,"dn":["{}化粧品"]},
+   {"k":"beverage","n":"飲料工場","use":"factory","one":true,"z":"ef","cpm":300,"f0":1,"f1":3,"min":40,"max":1200,"sh":["full","slab"],"cat":"ind","c":"#b9d1db","rl":1.05,"dn":["{}飲料"]},
+   {"k":"beer","n":"ビール工場","use":"factory","one":true,"z":"efh","cpm":320,"f0":1,"f1":3,"min":60,"max":1600,"sh":["full","slab"],"cat":"ind","c":"#d8b26a","rl":1.1,"fx":{"hotel":0.02},"dn":["{}ビール"]},
+   {"k":"sake","n":"酒蔵","use":"factory","one":true,"z":"bcefh","cpm":350,"f0":1,"f1":2,"min":4,"max":100,"sh":["full","L"],"cat":"ind","c":"#4d4a46","rl":1.15,"dm":0.9,"dn":["{}酒造"]},
+   {"k":"confect","n":"製菓工場","use":"factory","one":true,"z":"ef","cpm":300,"f0":1,"f1":3,"min":20,"max":800,"sh":["full","slab"],"cat":"ind","c":"#e9cfae","rl":1.05,"dn":["{}製菓"]},
+   {"k":"breadf","n":"パン工場","use":"factory","one":true,"z":"ef","cpm":290,"f0":1,"f1":2,"min":10,"max":400,"sh":["full","slab"],"cat":"ind","c":"#e4c491","dn":["{}製パン"]},
+   {"k":"frozen","n":"冷凍食品工場","use":"factory","one":true,"z":"ef","cpm":330,"f0":1,"f1":2,"min":20,"max":800,"sh":["full","slab"],"cat":"ind","c":"#c8dbe4","rl":1.05,"dn":["{}食品"]},
+   {"k":"furniture","n":"家具工場","use":"factory","one":true,"z":"ef","cpm":260,"f0":1,"f1":2,"min":10,"max":600,"sh":["full","slab"],"cat":"ind","c":"#a98c6c","rl":0.95,"dn":["{}木工"]},
+   {"k":"glass","n":"ガラス工場","use":"factory","one":true,"z":"ef","cpm":290,"f0":1,"f1":2,"min":20,"max":800,"sh":["full","slab"],"cat":"ind","c":"#bcd6da","dn":["{}硝子"]},
+   {"k":"cement","n":"セメント工場","use":"factory","one":true,"z":"fg","cpm":260,"f0":1,"f1":2,"min":100,"max":1600,"sh":["full","slab"],"cat":"ind","c":"#b8b6b0","rl":0.9,"fx":{"home":-0.06},"dn":["{}セメント"]},
+   {"k":"recycle","n":"リサイクル工場","use":"factory","one":true,"z":"efg","cpm":260,"f0":1,"f1":2,"min":20,"max":600,"sh":["full","slab"],"cat":"ind","c":"#9fb39a","rl":0.9,"fx":{"home":-0.03},"dn":["{}リサイクルセンター"]},
+   {"k":"garbage","n":"ごみ処理場","use":"factory","one":true,"z":"fg","cpm":450,"f0":1,"f1":3,"min":60,"max":1200,"sh":["full","slab"],"cat":"ind","c":"#8f969c","rl":0.8,"dm":1.3,"fx":{"home":-0.08},"dn":["{}クリーンセンター"]},
+   {"k":"thermal","n":"火力発電所","use":"factory","one":true,"z":"fg","cpm":500,"f0":1,"f1":3,"min":200,"max":1600,"sh":["full","slab"],"cat":"ind","c":"#7c8288","rl":1.3,"pp":0.2,"fx":{"home":-0.05},"dn":["{}火力発電所"]},
+   {"k":"shipyard","n":"造船所","use":"factory","one":true,"z":"g","cpm":350,"f0":1,"f1":2,"min":200,"max":1600,"sh":["full","slab"],"sea":true,"cat":"ind","c":"#8ea2ae","rl":1.2,"dn":["{}造船所"]},
+   {"k":"water","n":"浄水場","use":"factory","one":true,"z":"efghi","cpm":300,"f0":0,"f1":0,"min":100,"max":1600,"sh":["full"],"cat":"ind","c":"#9cc4d6","rl":0.9,"pp":0.1,"pat":"water","dn":["{}浄水場"]},
+   {"k":"solar","n":"太陽光発電所","use":"factory","one":true,"z":"efghi","cpm":80,"f0":0,"f1":0,"min":40,"max":1600,"sh":["full"],"cat":"ind","c":"#3d5a80","pp":0.02,"pat":"solar","dn":["{}メガソーラー"]},
+   {"k":"wind","n":"風力発電所","use":"factory","one":true,"z":"ghi","cpm":120,"f0":0,"f1":0,"min":40,"max":1600,"sh":["full"],"cat":"ind","c":"#cfe3c4","pp":0.01,"pat":"wind","dn":["{}ウインドファーム"]},
+   {"k":"smallwh","n":"小さな倉庫","use":"warehouse","one":true,"z":"cdefg","cpm":180,"f0":1,"f1":2,"min":1,"max":20,"sh":["full","slab"],"cat":"logi","c":"#c7bba3","rl":0.95,"dn":["{}倉庫"]},
+   {"k":"whbldg","n":"倉庫ビル","use":"warehouse","one":true,"z":"cdefg","cpm":300,"f0":3,"f1":8,"min":20,"max":600,"sh":["full","slab"],"cat":"logi","c":"#b9ae98","dn":["{}倉庫ビル"]},
+   {"k":"dc","n":"物流センター","use":"warehouse","one":true,"z":"efg","cpm":280,"f0":1,"f1":5,"min":100,"max":1600,"sh":["full","slab"],"cat":"logi","c":"#c4b9a5","rl":1.15,"dm":1.1,"pp":1.5,"dn":["{}ロジスティクスセンター"]},
+   {"k":"coldwh","n":"冷凍倉庫","use":"warehouse","one":true,"z":"efg","cpm":380,"f0":1,"f1":4,"min":20,"max":800,"sh":["full","slab"],"cat":"logi","c":"#cfe0e6","rl":1.35,"dn":["{}冷蔵倉庫"]},
+   {"k":"delivery","n":"配送センター","use":"warehouse","one":true,"z":"cdef","cpm":240,"f0":1,"f1":2,"min":20,"max":600,"sh":["full","slab"],"cat":"logi","c":"#cdbf9f","rl":1.05,"dm":1.1,"dn":["{}配送センター"]},
+   {"k":"truckterm","n":"トラックターミナル","use":"warehouse","one":true,"z":"efg","cpm":200,"f0":1,"f1":1,"min":60,"max":1200,"sh":["full","slab"],"cat":"logi","c":"#b6ab92","dn":["{}トラックターミナル"]},
+   {"k":"trunk","n":"トランクルーム","use":"warehouse","u":10,"z":"bcde","cpm":250,"f0":1,"f1":4,"min":1,"max":20,"sh":["full","slab"],"cat":"logi","c":"#d2c7b1","rl":1.2,"dn":["{}トランクルーム"]},
+   {"k":"wholesale","n":"卸売市場","use":"warehouse","one":true,"z":"cdeg","cpm":300,"f0":1,"f1":3,"min":60,"max":1200,"sh":["full","slab"],"cat":"logi","c":"#c8b48e","fx":{"shop":0.04},"dn":["{}卸売市場"]},
+   {"k":"oiltank","n":"油槽所","use":"warehouse","one":true,"z":"g","cpm":350,"f0":1,"f1":1,"min":40,"max":1200,"sh":["full","slab"],"cat":"logi","c":"#d9d9d2","rl":1.1,"pp":0.2,"dn":["{}油槽所"]},
+   {"k":"container","n":"コンテナヤード","use":"warehouse","one":true,"z":"g","cpm":60,"f0":0,"f1":0,"min":100,"max":1600,"sh":["full"],"cat":"logi","c":"#c26a4a","pat":"container","dn":["{}コンテナヤード"]},
+   {"k":"fishport","n":"漁港","use":"port","one":true,"z":"gh","cpm":300,"f0":1,"f1":1,"min":6,"max":400,"sh":["full"],"sea":true,"cat":"port","c":"#8fb0bf","rl":0.8,"dm":1.1,"dn":["{}漁港"]},
+   {"k":"ferry","n":"フェリーターミナル","use":"port","one":true,"z":"g","cpm":600,"f0":1,"f1":3,"min":20,"max":600,"sh":["full"],"sea":true,"cat":"port","c":"#a7c0cf","pp":1.5,"fx":{"hotel":0.04},"dn":["{}フェリーターミナル"]},
+   {"k":"containerport","n":"コンテナふ頭","use":"port","one":true,"z":"g","cpm":450,"f0":1,"f1":1,"min":100,"max":1600,"sh":["full"],"sea":true,"cat":"port","c":"#8c9fae","rl":1.15,"opts":["ore","crude"],"dn":["{}コンテナふ頭"]},
+   {"k":"oilport","n":"石油基地","use":"port","one":true,"z":"g","cpm":500,"f0":1,"f1":1,"min":40,"max":1600,"sh":["full"],"sea":true,"cat":"port","c":"#b7b9b1","rl":1.1,"opts":["crude"],"rb":1.3,"dn":["{}石油基地"]},
+   {"k":"marina","n":"マリーナ","use":"port","one":true,"z":"gh","cpm":400,"f0":1,"f1":1,"min":10,"max":400,"sh":["full"],"sea":true,"cat":"port","c":"#9fc7d8","rl":1.2,"dm":0.8,"fx":{"hotel":0.04},"dn":["{}マリーナ"]},
+   {"k":"mugi","n":"麦畑","use":"farm","one":true,"z":"h","cpm":10,"f0":0,"f1":0,"min":4,"max":1600,"sh":["full"],"cat":"farm","c":"#e2c666","opts":["wheat"],"rb":1.3,"pat":"rows","dn":["{}麦畑"]},
+   {"k":"hatake","n":"畑","use":"farm","one":true,"z":"h","cpm":8,"f0":0,"f1":0,"min":2,"max":1600,"sh":["full"],"cat":"farm","c":"#b9a36a","opts":["wheat"],"pat":"rows"},
+   {"k":"paddy","n":"田んぼ","use":"farm","one":true,"z":"h","cpm":12,"f0":0,"f1":0,"min":4,"max":1600,"sh":["full"],"cat":"farm","c":"#8fc28a","rl":1.05,"pat":"paddy"},
+   {"k":"kaju","n":"果樹園","use":"farm","one":true,"z":"hi","cpm":20,"f0":0,"f1":0,"min":4,"max":1600,"sh":["full"],"cat":"farm","c":"#88b05e","rl":1.3,"dm":0.9,"pat":"trees","dn":["{}果樹園"]},
+   {"k":"cha","n":"茶畑","use":"farm","one":true,"z":"hi","cpm":15,"f0":0,"f1":0,"min":4,"max":1600,"sh":["full"],"cat":"farm","c":"#6f9f55","rl":1.2,"pat":"rows","dn":["{}茶園"]},
+   {"k":"vineyard","n":"ぶどう畑","use":"farm","one":true,"z":"hi","cpm":20,"f0":0,"f1":0,"min":4,"max":1600,"sh":["full"],"cat":"farm","c":"#7f8f4e","rl":1.25,"pat":"rows","dn":["{}ワイナリー"]},
+   {"k":"flowerfield","n":"花畑","use":"farm","one":true,"z":"hi","cpm":15,"f0":0,"f1":0,"min":4,"max":1600,"sh":["full"],"cat":"farm","c":"#e9b6cf","rl":1.1,"fx":{"hotel":0.03},"pat":"flowers","dn":["{}フラワーパーク"]},
+   {"k":"ranch","n":"牧場","use":"farm","one":true,"z":"hi","cpm":10,"f0":0,"f1":0,"min":40,"max":1600,"sh":["full"],"cat":"farm","c":"#b8d48c","rl":0.9,"pat":"lawn","dn":["{}牧場"]},
+   {"k":"forestry","n":"植林地","use":"farm","one":true,"z":"i","cpm":5,"f0":0,"f1":0,"min":40,"max":1600,"sh":["full"],"cat":"farm","c":"#5d8a4f","rl":0.6,"pat":"trees"},
+   {"k":"greenhouse","n":"ビニールハウス","use":"farm","one":true,"z":"h","cpm":60,"f0":1,"f1":1,"min":2,"max":400,"sh":["full","slab"],"cat":"farm","c":"#e8f1ee","rl":1.6},
+   {"k":"chicken","n":"養鶏場","use":"farm","one":true,"z":"h","cpm":80,"f0":1,"f1":1,"min":10,"max":400,"sh":["full","slab"],"cat":"farm","c":"#d9cfb6","rl":1.2,"fx":{"home":-0.04},"dn":["{}養鶏場"]},
+   {"k":"coinpark","n":"コインパーキング","use":"parking","one":true,"z":"abcdefgh","cpm":40,"f0":0,"f1":0,"min":1,"max":60,"sh":["full"],"cat":"park","c":"#c4c4c4","rl":1.2,"dm":0.95,"pat":"lines"},
+   {"k":"tsukigime","n":"月極駐車場","use":"parking","one":true,"z":"abcdefgh","cpm":25,"f0":0,"f1":0,"min":2,"max":200,"sh":["full"],"cat":"park","c":"#bababa","rl":0.9,"dm":1.1,"pat":"lines"},
+   {"k":"bigpark","n":"大型駐車場","use":"parking","one":true,"z":"cdefgh","cpm":25,"f0":0,"f1":0,"min":60,"max":1600,"sh":["full"],"cat":"park","c":"#b5b5b5","rl":0.85,"pat":"lines"},
+   {"k":"bikepark","n":"自転車置き場","use":"parking","one":true,"z":"bcd","cpm":20,"f0":0,"f1":0,"min":1,"max":40,"sh":["full"],"cat":"park","c":"#c9c3b5","rl":0.7,"dm":1.3,"pat":"lines"},
+   {"k":"mechpark","n":"機械式駐車場","use":"parking","u":0,"z":"cd","cpm":600,"f0":3,"f1":10,"min":1,"max":20,"sh":["full"],"cat":"park","c":"#a9adb1","rl":1.3,"dn":["{}パーキングタワー"]},
+   {"k":"busterm","n":"バスターミナル","use":"parking","u":0,"z":"cd","cpm":400,"f0":1,"f1":2,"min":20,"max":400,"sh":["full","slab"],"cat":"park","c":"#b9c2c9","pp":20,"fx":{"shop":0.03},"dn":["{}バスターミナル"]},
    {"k":"cityhall","n":"市役所","use":"office","u":0,"z":"abcdefghi","cpm":1200,"f0":1,"f1":80,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
    {"k":"plaza","n":"広場","use":"plaza","one":true,"z":"abcdefghi","cpm":40,"f0":0,"f1":0,"min":1,"max":1600,"sh":["full"],"gov":true},
    {"k":"uhq","n":"大学の本部","use":"school","u":0,"z":"abcdefghi","cpm":900,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true,"sc":"univ"},
@@ -20962,6 +21282,9 @@ language sql immutable as $$
    {"k":"uave","n":"並木道","use":"plaza","one":true,"z":"abcdefghi","cpm":40,"f0":0,"f1":0,"min":1,"max":1600,"sh":["full"],"gov":true}
   ]'::jsonb
 $$;
+-- プリセットを k で引けるように（t54l）
+create or replace function public._mp_bld_pmap() returns jsonb
+language sql immutable as $$ select jsonb_object_agg(x ->> 'k', x) from jsonb_array_elements(_mp_bld_presets()) x $$;
 -- 用途地域の決まり：建ぺい率 cv・容積率 far・いちばん高い階 mf
 create or replace function public._mp_zone_rule(z text) returns jsonb
 language sql immutable as $$
@@ -20974,7 +21297,8 @@ $$;
 create or replace function public._mp_unit_mr(use text, lvm2 numeric) returns numeric
 language sql immutable as $$
   select round((case use when 'home' then 0.40 when 'shop' then 0.64 when 'office' then 0.56 when 'factory' then 0.24 when 'warehouse' then 0.20
-                 when 'port' then 0.28 when 'farm' then 0.06 when 'parking' then 0.24 when 'school' then 0.30 else 0.4 end * sqrt(greatest(lvm2, 1)))::numeric, 3)
+                 when 'port' then 0.28 when 'farm' then 0.06 when 'parking' then 0.24 when 'school' then 0.30
+                 when 'hotel' then 0.45 when 'hospital' then 0.40 when 'leisure' then 0.45 else 0.4 end * sqrt(greatest(lvm2, 1)))::numeric, 3)
 $$;
 -- 部屋の名前（101号室・全体）
 create or replace function public._mp_room(f int, no int, one boolean) returns text
@@ -20983,7 +21307,8 @@ language sql immutable as $$ select case when one then '全体' else (f * 100 + 
 create or replace function public._mp_use_name(use text) returns text
 language sql immutable as $$
   select case use when 'home' then '住居' when 'shop' then '店舗' when 'office' then '事務所' when 'factory' then '工場' when 'warehouse' then '倉庫'
-    when 'port' then '港湾' when 'farm' then '田畑' when 'parking' then '駐車場' when 'school' then '学校' else use end
+    when 'port' then '港湾' when 'farm' then '田畑' when 'parking' then '駐車場' when 'school' then '学校'
+    when 'hotel' then '宿泊' when 'hospital' then '医療・福祉' when 'leisure' then '娯楽' else use end
 $$;
 
 /* ---------- 形：筆の区画から、建物の区画をえらぶ（いちばん多くて nmax） ---------- */
@@ -21038,7 +21363,11 @@ begin
   for f in 1..greatest(fl, 1) loop
     use := case when f = 1 and pr ? 'g1' then pr ->> 'g1' when f = 1 and position('shop1' in coalesce(opt, '')) > 0 and pr -> 'opt' ? 'shop1' then 'shop'
                 when f = 2 and pr ? 'g2' then pr ->> 'g2' else pr ->> 'use' end;
-    u := case when use = pr ->> 'use' then coalesce((pr ->> 'u')::int, 0) when use = 'shop' then case when pr ->> 'k' in ('sky', 'office') then 150 else 50 end else 60 end;
+    if pr ? 'mix' then   -- 階ごとの用途（t54l）：下から階のわりあいで
+      use := coalesce((select m ->> 1 from jsonb_array_elements(pr -> 'mix') with ordinality z(m, o) where (f - 0.5) / greatest(fl, 1) <= (m ->> 0)::real order by o limit 1), pr ->> 'use');
+    end if;
+    u := case when pr -> 'us' ? use then (pr -> 'us' ->> use)::int
+              when use = pr ->> 'use' then coalesce((pr ->> 'u')::int, 0) when use = 'shop' then case when pr ->> 'k' in ('sky', 'office') then 150 else 50 end else 60 end;
     k := case when u = 0 then case when fm2 >= 1200 then 2 else 1 end else greatest(1, fm2 / u) end;
     k := least(k, greatest(1, 600 / greatest(fl, 1)));
     for i in 1..k loop
@@ -21066,20 +21395,36 @@ begin
     'shop', round(least(2, greatest(0.15, 0.25 + 0.5 * den + 1.0 * sta))::numeric, 3),
     'factory', 0.8, 'warehouse', 0.8, 'port', 0.9, 'farm', 1.0,
     'school', round(least(2, greatest(0.15, 0.3 + 0.6 * den + 0.4 * sta))::numeric, 3),
+    'hotel', round(least(2, greatest(0.15, 0.25 + 0.3 * den + 1.0 * sta))::numeric, 3),
+    'hospital', round(least(2, greatest(0.15, 0.3 + 0.7 * den + 0.3 * sta))::numeric, 3),
+    'leisure', round(least(2, greatest(0.15, 0.25 + 0.5 * den + 0.8 * sta))::numeric, 3),
     'parking', round(least(2, greatest(0.15, 0.3 + 0.5 * den + 0.5 * sta))::numeric, 3), 'den', round(den::numeric, 3), 'sta', round(sta::numeric, 3));
 end $$;
 -- 建物の入りやすさ・相場を見なおす
 create or replace function public._mp_bld_refresh(bid bigint) returns void
 language plpgsql set search_path = public as $$
-declare b mp_blds; p mp_parcels; cx real; cy real; z text; lv numeric;
+declare b mp_blds; p mp_parcels; cx real; cy real; z text; lv numeric; pr jsonb; dm0 jsonb; fx jsonb; rl numeric; dmul real;
 begin
   select * into b from mp_blds where id = bid; if not found then return; end if;
   select * into p from mp_parcels where id = b.parcel;
   select avg(b.cells[2 * i - 1] + 0.5) / 5, avg(b.cells[2 * i] + 0.5) / 5 into cx, cy from generate_series(1, array_length(b.cells, 1) / 2) i;
   z := (select c.z from _mp_cell(floor(cx)::int, floor(cy)::int) c);
   lv := p.val::numeric / greatest(p.n * 100, 1);
-  update mp_blds set dem = _mp_bld_dem(cx, cy, z),
-    mr = (select jsonb_object_agg(u, _mp_unit_mr(u, lv)) from unnest(array['home', 'shop', 'office', 'factory', 'warehouse', 'port', 'farm', 'parking', 'school']) u)
+  pr := _mp_bld_pmap() -> b.kind;
+  rl := coalesce((pr ->> 'rl')::numeric, 1); dmul := coalesce((pr ->> 'dm')::real, 1);
+  -- まわり（750m）の建物の効果（t54l）
+  select coalesce(jsonb_object_agg(q.k, round(greatest(-0.3, least(0.3, q.v))::numeric, 3)), '{}'::jsonb) into fx
+    from (select e.key k, sum(e.value::text::real) v
+            from mp_blds b2, jsonb_each(coalesce(_mp_bld_pmap() -> b2.kind -> 'fx', '{}'::jsonb)) e
+           where b2.id <> bid and b2.cells[1] between (cx - 15) * 5 and (cx + 15) * 5 and b2.cells[2] between (cy - 15) * 5 and (cy + 15) * 5
+             and (b2.cells[1] / 5.0 - cx) ^ 2 + (b2.cells[2] / 5.0 - cy) ^ 2 <= 225
+           group by e.key) q;
+  dm0 := _mp_bld_dem(cx, cy, z);
+  dm0 := (select jsonb_object_agg(e.key, case when e.key in ('den', 'sta') then e.value
+                                             else to_jsonb(round(least(2, greatest(0.1, (e.value::text::real + coalesce((fx ->> e.key)::real, 0)) * dmul))::numeric, 3)) end)
+            from jsonb_each(dm0) e) || jsonb_build_object('fx', fx);
+  update mp_blds set dem = dm0,
+    mr = (select jsonb_object_agg(u, round(_mp_unit_mr(u, lv) * rl, 3)) from unnest(array['home', 'shop', 'office', 'factory', 'warehouse', 'port', 'farm', 'parking', 'school', 'hotel', 'hospital', 'leisure']) u)
    where id = bid;
 end $$;
 
@@ -21105,6 +21450,9 @@ begin
     when 'farm' then fam[1 + a % array_length(fam, 1)] || '農園'
     when 'parking' then '月極の利用者'
     when 'school' then '学校法人' || nm[1 + b % array_length(nm, 1)] || '学園'
+    when 'hotel' then 'ホテル' || nm[1 + b % array_length(nm, 1)]
+    when 'hospital' then '医療法人' || nm[1 + b % array_length(nm, 1)] || '会'
+    when 'leisure' then '株式会社' || nm[1 + b % array_length(nm, 1)] || 'レジャー'
     else fam[1 + a % array_length(fam, 1)] || 'さん' end;
 end $$;
 -- 建物のはじめの名前（町・大字の名前＋種類ごとの名前）
@@ -21124,7 +21472,12 @@ begin
                   when 'mill' then array['製粉工場'] when 'foodf' then array['食品工場'] when 'steelw' then array['製鉄所'] when 'carf' then array['自動車工場']
                   when 'petro' then array['石油化学工場'] when 'elecf' then array['電子工場'] when 'railf' then array['車両工場']
                   else array[]::text[] end;
-  if coalesce(array_length(sf, 1), 0) = 0 or base = '' then return ''; end if;
+  if coalesce(array_length(sf, 1), 0) = 0 then   -- t54l：プリセットの dn
+    sf := array(select jsonb_array_elements_text(coalesce(_mp_bld_pmap() -> kind -> 'dn', '[]'::jsonb)));
+    if coalesce(array_length(sf, 1), 0) = 0 or base = '' then return ''; end if;
+    return replace(sf[1 + abs(hashtext(seed::text)) % array_length(sf, 1)], '{}', base);
+  end if;
+  if base = '' then return ''; end if;
   return base || sf[1 + abs(hashtext(seed::text)) % array_length(sf, 1)];
 end $$;
 
@@ -21149,7 +21502,7 @@ begin
     zr := _mp_zone_rule(z); cv := least(cv, (zr ->> 'cv')::real); far := least(far, (zr ->> 'far')::real); mf := least(mf, (zr ->> 'mf')::int);
   end loop;
   if coalesce((pr ->> 'sea')::boolean, false) and not exists (select 1 from generate_series(_mp_t5(x0) - 2, _mp_t5(x1) + 2) gx, generate_series(_mp_t5(y0) - 2, _mp_t5(y1) + 2) gy, lateral _mp_cell(gx, gy) cc where cc.t in ('S', 'D')) then
-    raise exception '港湾施設は海のそばに建てます';
+    raise exception '%は海のそばに建てます', pr ->> 'n';
   end if;
   -- 道路・線路・駅・車庫のかかっていない区画
   pcs := array(select v from (select pc.x, pc.y, row_number() over (order by pc.y, pc.x) rn from mp_pcells pc where pc.parcel = p.id
@@ -21172,7 +21525,7 @@ begin
   end if;
   plan := _mp_bld_plan(pr, fl, fm2, p_opt);
   lv := p.val::numeric / greatest(p.n * 100, 1);
-  select coalesce(sum(_mp_unit_mr(e ->> 'use', lv) * (e ->> 'm2')::int), 0) into rent from jsonb_array_elements(plan) e;
+  select coalesce(sum(_mp_unit_mr(e ->> 'use', lv) * (e ->> 'm2')::int), 0) * coalesce((pr ->> 'rl')::numeric, 1) into rent from jsonb_array_elements(plan) e;
   return jsonb_build_object('kind', p_kind, 'name', pr ->> 'n', 'shape', coalesce(p_shape, 'full'), 'cells', to_jsonb(cs), 'fm2', fm2, 'f0', f0, 'f1', f1, 'floors', fl,
     'units', jsonb_array_length(plan), 'uses', (select jsonb_object_agg(us, n) from (select e ->> 'use' us, count(*) n from jsonb_array_elements(plan) e group by 1) q),
     'total_m2', case when fl = 0 then fm2 else fm2 * fl end, 'cost', round(case when fl = 0 then fm2 else fm2 * fl end * (pr ->> 'cpm')::numeric)::bigint,
@@ -21190,26 +21543,68 @@ begin
   q := _mp_bld_check(p, p_kind, p_shape, p_floors, p_opt);
   return q - 'plan';
 end $$;
--- この筆に建てられるプリセット（いちばん高くできる形・階）と、建てられないわけ
-create or replace function public.mp_bld_options(p_parcel bigint, p_as text) returns jsonb
+-- この筆に建てられるプリセット（いちばん高くできる形・階）と、建てられないわけ。p_cat：建てる画面の分け方（null ならぜんぶ）
+--   t54l：土地のようす（用途地域・あいている区画・海のそば）と形ごとの区画の数は1回だけ数える（種類が多いので）
+drop function if exists public.mp_bld_options(bigint, text);
+create or replace function public.mp_bld_options(p_parcel bigint, p_as text, p_cat text default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); pa record; p mp_parcels; pr jsonb; out jsonb := '[]'::jsonb; q jsonb; best jsonb; why text; sh text;
+declare u uuid := _me(); pa record; p mp_parcels; pr jsonb; out jsonb := '[]'::jsonb; zs text; zl text[]; zr jsonb; cv real := 1; far real := 99; mf int := 99;
+        x0 int; y0 int; x1 int; y1 int; pcs int[]; npcs int; seaok boolean; nmax int; shc jsonb := '{}'::jsonb; sh text; cnt int; fm2 int; f0 int; f1 int; fl int;
+        best jsonb; why text; plan jsonb; lv numeric; rent numeric; tot int; zz text;
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
   select * into p from mp_parcels where id = p_parcel;
   if not found or not _mp_same(p.own_u, p.own_c, false, pa.pu, pa.pc, false) then raise exception 'あなた（この名義）の土地ではありません'; end if;
-  for pr in select * from jsonb_array_elements(_mp_bld_presets()) b where not coalesce((b ->> 'gov')::boolean, false) loop
+  x0 := (p.bb[1])[0]; y0 := (p.bb[1])[1]; x1 := (p.bb[0])[0] - 1; y1 := (p.bb[0])[1] - 1;
+  zl := array(select distinct c.z from (select distinct _mp_t5(x) tx, _mp_t5(y) ty from mp_pcells where parcel = p.id) t, lateral _mp_cell(t.tx, t.ty) c);
+  foreach zz in array zl loop
+    zr := _mp_zone_rule(zz); cv := least(cv, (zr ->> 'cv')::real); far := least(far, (zr ->> 'far')::real); mf := least(mf, (zr ->> 'mf')::int);
+  end loop;
+  seaok := exists (select 1 from generate_series(_mp_t5(x0) - 2, _mp_t5(x1) + 2) gx, generate_series(_mp_t5(y0) - 2, _mp_t5(y1) + 2) gy, lateral _mp_cell(gx, gy) cc where cc.t in ('S', 'D'));
+  pcs := array(select v from (select pc.x, pc.y, row_number() over (order by pc.y, pc.x) rn from mp_pcells pc where pc.parcel = p.id
+                                and not exists (select 1 from _mp_busy_cells(x0, y0, x1, y1) bc where bc.x = pc.x and bc.y = pc.y)) q,
+                lateral unnest(array[q.x, q.y]) with ordinality uu(v, o) order by q.rn, uu.o);
+  npcs := coalesce(array_length(pcs, 1), 0) / 2;
+  nmax := greatest(1, floor(p.n * cv + 0.5)::int);
+  lv := p.val::numeric / greatest(p.n * 100, 1);
+  for pr in select b from jsonb_array_elements(_mp_bld_presets()) b where not coalesce((b ->> 'gov')::boolean, false) and (p_cat is null or b ->> 'cat' = p_cat) loop
     best := null; why := null;
-    for sh in select jsonb_array_elements_text(pr -> 'sh') loop
-      begin
-        q := _mp_bld_check(p, pr ->> 'k', sh, 999, '');
-        if best is null or (q ->> 'total_m2')::int > (best ->> 'total_m2')::int then best := q; end if;
-      exception when others then why := coalesce(why, sqlerrm);
-      end;
-    end loop;
-    out := out || jsonb_build_array(jsonb_build_object('k', pr ->> 'k', 'ok', best is not null, 'why', case when best is null then why end,
-             'shape', best -> 'shape', 'f1', best -> 'f1', 'total_m2', best -> 'total_m2', 'cost', best -> 'cost', 'rent_day', best -> 'rent_day', 'units', best -> 'units'));
+    if p.n < (pr ->> 'min')::int then why := format('%sには %s区画（%s㎡）以上の土地がいります', pr ->> 'n', pr ->> 'min', (pr ->> 'min')::int * 100);
+    elsif p.n > (pr ->> 'max')::int then why := format('%sは %s区画（%s㎡）までの土地に建てます（分筆してください）', pr ->> 'n', pr ->> 'max', (pr ->> 'max')::int * 100);
+    else
+      zs := (select string_agg(_mp_zname(z1), '・') from unnest(zl) z1 where position(z1 in (pr ->> 'z')) = 0);
+      if zs is not null then why := format('用途地域で建てられません（%s）', zs);
+      elsif coalesce((pr ->> 'sea')::boolean, false) and not seaok then why := format('%sは海のそばに建てます', pr ->> 'n');
+      elsif npcs = 0 then why := '道路・線路・駅・車庫がかかっている土地には建てられません';
+      end if;
+    end if;
+    if why is null then
+      f0 := (pr ->> 'f0')::int; f1 := (pr ->> 'f1')::int;
+      if f1 = 0 then
+        best := jsonb_build_object('shape', 'full', 'fl', 0, 'fm2', npcs * 100);
+      else
+        for sh in select jsonb_array_elements_text(pr -> 'sh') loop
+          if not shc ? sh then shc := shc || jsonb_build_object(sh, coalesce(array_length(_mp_bld_shape(pcs, sh, nmax), 1), 0) / 2); end if;
+          cnt := (shc ->> sh)::int;
+          if cnt = 0 then why := coalesce(why, 'この土地の形では、その形の建物は建てられません'); continue; end if;
+          fm2 := cnt * 85;
+          fl := least(f1, mf, floor(p.n * 100 * far / fm2)::int);
+          if fl < f0 then why := coalesce(why, format('この土地では%sは%s階までしか建てられません（%sは%s階から。用途地域の容積率）', pr ->> 'n', greatest(fl, 0), pr ->> 'n', f0)); continue; end if;
+          if best is null or fm2 * fl > (best ->> 'fm2')::int * (best ->> 'fl')::int then best := jsonb_build_object('shape', sh, 'fl', fl, 'fm2', fm2); end if;
+        end loop;
+      end if;
+    end if;
+    if best is not null then
+      fl := (best ->> 'fl')::int; fm2 := (best ->> 'fm2')::int;
+      plan := _mp_bld_plan(pr, fl, fm2, '');
+      select coalesce(sum(_mp_unit_mr(e ->> 'use', lv) * (e ->> 'm2')::int), 0) * coalesce((pr ->> 'rl')::numeric, 1) into rent from jsonb_array_elements(plan) e;
+      tot := case when fl = 0 then fm2 else fm2 * fl end;
+      out := out || jsonb_build_array(jsonb_build_object('k', pr ->> 'k', 'ok', true, 'shape', best -> 'shape', 'f1', fl, 'total_m2', tot,
+               'cost', round(tot * (pr ->> 'cpm')::numeric), 'rent_day', round(rent), 'units', jsonb_array_length(plan)));
+    else
+      out := out || jsonb_build_array(jsonb_build_object('k', pr ->> 'k', 'ok', false, 'why', why));
+    end if;
   end loop;
   return out;
 end $$;
@@ -21258,14 +21653,14 @@ begin
   return (q - 'plan') || jsonb_build_object('id', bid, 'bname', (select name from mp_blds where id = bid));
 end $$;
 
-/* ---------- 国の建物（t54g：市役所・広場など。管理者が SQL でつくる） ----------
+/* ---------- 国の建物（t54g：市役所・広場など。t54l：各地の神社・お寺。管理者が SQL でつくる） ----------
    p_cells：筆にする区画 [X0, Y0, …]（あいている国の土地・同じ町字）。p_bcells：建物の区画（null なら筆ぜんぶ）。工事費は国庫から。税・家賃はなし */
 create or replace function public._mp_gov_build(p_cells int[], p_kind text, p_floors int, p_shape text, p_bcells int[], p_name text) returns bigint
 language plpgsql set search_path = public as $$
 declare n int := coalesce(array_length(p_cells, 1), 0) / 2; pr jsonb; x0 int; y0 int; x1 int; y1 int; ck text; nck int; bad int; pid bigint; bid bigint; cs int[]; nb int; fm2 int; cost bigint;
 begin
   select b into pr from jsonb_array_elements(_mp_bld_presets()) b where b ->> 'k' = p_kind;
-  if pr is null or not coalesce((pr ->> 'gov')::boolean, false) then raise exception '国の建物の種類ではありません'; end if;
+  if pr is null or not (coalesce((pr ->> 'gov')::boolean, false) or p_kind in ('shrine', 'temple', 'church')) then raise exception '国の建物の種類ではありません'; end if;   -- 神社・寺・教会も（t54l：各地の神社・お寺）
   if n = 0 then raise exception '区画がありません'; end if;
   create temp table _gb (x int, y int) on commit drop;
   insert into _gb select distinct p_cells[2 * i - 1], p_cells[2 * i] from generate_series(1, n) i;
@@ -21421,7 +21816,7 @@ begin
     if not exists (select 1 from mp_parcels p where p.id = x.parcel and not p.gov and _mp_same(p.own_u, p.own_c, false, pa.pu, pa.pc, false)) then
       raise exception 'あなた（この名義）の建物ではありません';
     end if;
-    if x.use not in ('shop', 'office', 'factory', 'warehouse', 'port', 'farm', 'parking', 'school') then raise exception '住居には会社は入れません（店・事務所などの部屋をえらんでください）'; end if;
+    if x.use not in ('shop', 'office', 'factory', 'warehouse', 'port', 'farm', 'parking', 'school', 'hotel', 'hospital', 'leisure') then raise exception '住居には会社は入れません（店・事務所などの部屋をえらんでください）'; end if;
     if x.t_kind = 'corp' and x.t_c is distinct from tc.pc then raise exception 'ほかの会社が入っている部屋があります（先に退去してもらってください）'; end if;
     update mp_units set mode = 'corp', ask = round((x.mr ->> x.use)::numeric * x.m2)::bigint, t_kind = 'corp', t_c = tc.pc, t_name = null, rent = p_rent,
                         since = case when x.t_kind = 'corp' then since else now() end
@@ -21459,7 +21854,7 @@ begin
   if not found then raise exception '部屋が見つかりません'; end if;
   if x.mode <> 'corp' then raise exception 'この部屋はテナント募集をしていません'; end if;
   if x.t_kind is not null then raise exception 'もう会社が入っています'; end if;
-  if x.use not in ('shop', 'office', 'factory', 'warehouse', 'port', 'farm', 'parking', 'school') then raise exception '住居には会社は入れません'; end if;
+  if x.use not in ('shop', 'office', 'factory', 'warehouse', 'port', 'farm', 'parking', 'school', 'hotel', 'hospital', 'leisure') then raise exception '住居には会社は入れません'; end if;
   select * into b from mp_blds where id = x.bld;
   select * into p from mp_parcels where id = b.parcel;
   if _mp_same(p.own_u, p.own_c, false, pa.pu, pa.pc, false) then raise exception '自分の建物です（「自分で使う」にしてください）'; end if;
@@ -21548,7 +21943,7 @@ begin
   for o in select case when x.t_kind = 'corp' then null else p.own_u end pu, case when x.t_kind = 'corp' then x.t_c else p.own_c end pc,
                   sum((b.mr ->> x.use)::numeric * x.m2 * 1.3 * least(1.8, greatest(0.3, coalesce((b.dem ->> x.use)::real, 0.5))) * (0.85 + 0.3 * random())) amt, count(*) n
              from mp_units x join mp_blds b on b.id = x.bld join mp_parcels p on p.id = b.parcel
-            where x.use not in ('home', 'school') and b.built_at < h - interval '1 hour' and ((x.mode = 'self' and x.t_kind is null) or (x.t_kind = 'corp' and x.t_c is not null and x.since < h))
+            where x.use not in ('home', 'school', 'hotel', 'hospital', 'leisure') and b.built_at < h - interval '1 hour' and ((x.mode = 'self' and x.t_kind is null) or (x.t_kind = 'corp' and x.t_c is not null and x.since < h))
               and not exists (select 1 from mp_sc sc where sc.bld = b.id and sc.prod is not null)   -- t54k：特殊工場・つくるものを決めた田畑・港は、物流で売る
             group by 1, 2 loop
     amt := round(o.amt / 24.0);
@@ -21682,7 +22077,7 @@ begin
   if pa.gv then raise exception '車両は人か会社で持ちます'; end if;
   if nc = 0 then raise exception '形式をえらんでください'; end if;
   if exists (select 1 from unnest(p_types) x where not exists (select 1 from mp_types y where y.code = x and y.on_sale)) then raise exception 'その形式は注文できません'; end if;
-  if exists (select 1 from unnest(p_types) x join mp_types y on y.code = x where y.role = 'Bus') then raise exception 'バスは1台ずつ注文してください'; end if;
+  if exists (select 1 from unnest(p_types) x join mp_types y on y.code = x where y.role in ('Bus', 'Truck')) then raise exception 'バス・トラックは1台ずつ注文してください'; end if;
   why := _mp_form_rule_t(p_types);
   if why is not null then raise exception '%', why; end if;
   if nm = '' then raise exception '編成番号を入れてください'; end if;
@@ -22119,7 +22514,7 @@ begin
                'cars', case when x.form is not null then (select jsonb_agg(c.num order by c.pos) from mp_cars c where c.form = f.id)
                             else (select jsonb_agg(c.num order by array_position(x.cars, c.id)) from mp_cars c where c.id = any(x.cars)) end,
                'loose', x.form is null, 'n', case when x.form is null then coalesce(array_length(x.cars, 1), 0) else (select count(*) from mp_cars c where c.form = f.id) end,
-               'rail', coalesce((select bool_and(ty.role <> 'Bus') from mp_cars c join mp_types ty on ty.code = c.type where (x.form is not null and c.form = x.form) or c.id = any(x.cars)), true),
+               'rail', coalesce((select bool_and(ty.role not in ('Bus', 'Truck')) from mp_cars c join mp_types ty on ty.code = c.type where (x.form is not null and c.form = x.form) or c.id = any(x.cars)), true),
                'from', _mp_pname(x.from_u, x.from_c, false), 'to', _mp_pname(x.to_u, x.to_c, false), 'to_as', case when x.to_u is not null then 'me' else (select cid from companies where id = x.to_c) end,
                'price', x.price, 'msg', x.msg, 'st', x.st, 'at', x.created_at) j
                from mp_xfers x left join mp_forms f on f.id = x.form
@@ -22152,7 +22547,7 @@ begin
     if ncar = 0 or (select count(*) from mp_cars where id = any(x.cars) and own_u is not distinct from x.from_u and own_c is not distinct from x.from_c and form is null) <> ncar then
       raise exception 'この車両は、もう相手のものではないか、編成に入っています';
     end if;
-    rail := coalesce((select bool_and(ty.role <> 'Bus') from mp_cars cc join mp_types ty on ty.code = cc.type where cc.id = any(x.cars)), true);
+    rail := coalesce((select bool_and(ty.role not in ('Bus', 'Truck')) from mp_cars cc join mp_types ty on ty.code = cc.type where cc.id = any(x.cars)), true);
     select * into d from mp_depots where id = p_depot;
     if not found or not _mp_same(d.own_u, d.own_c, false, x.to_u, x.to_c, false) then raise exception '車籍を置く車庫をえらんでください（受けとる名義の車庫）'; end if;
     if (d.kind = 'rail') <> rail then raise exception '%', case when rail then '電車は車両基地に置きます' else 'バスは営業所に置きます' end; end if;
@@ -22181,7 +22576,7 @@ begin
   if not found or not (f.own_u is not distinct from x.from_u and f.own_c is not distinct from x.from_c) then raise exception 'この編成は、もう相手のものではありません'; end if;
   ncar := (select count(*) from mp_cars where form = f.id);
   if ncar = 0 then raise exception 'この編成には車両がありません'; end if;
-  rail := coalesce((select bool_and(ty.role <> 'Bus') from mp_cars cc join mp_types ty on ty.code = cc.type where cc.form = f.id), true);
+  rail := coalesce((select bool_and(ty.role not in ('Bus', 'Truck')) from mp_cars cc join mp_types ty on ty.code = cc.type where cc.form = f.id), true);
   select * into d from mp_depots where id = p_depot;
   if not found or not _mp_same(d.own_u, d.own_c, false, x.to_u, x.to_c, false) then raise exception '車籍を置く車庫をえらんでください（受けとる名義の車庫）'; end if;
   if (d.kind = 'rail') <> rail then raise exception '%', case when rail then '電車は車両基地に置きます' else 'バスは営業所に置きます' end; end if;
@@ -22535,16 +22930,90 @@ language sql immutable as $$
     "railcar": {"in":{"steel":0},   "rc":true}
   }'::jsonb
 $$;
--- 学校の種類：生徒1人の床 spp（㎡）・通える範囲 r（マス）・その年ごろの人のわりあい age・授業料（1人・1日。先生の給料などをひいた分）fee・
---   駅・バス停の乗る人に足す人数（生徒1人あたり）w・駅で通えるかで生徒が変わる acc
+-- 施設の種類（t54k は学校だけ。t54l で宿泊・医療と福祉・娯楽も）：用途 use・1人の床 spp（㎡）・通える範囲 r（マス）・まわりの人のうち来る人のわりあい age・
+--   近くの駅（750m）の1日の乗り降りのうち来る人のわりあい rs・1人・1日の売上（費用をひいた分）fee・地価で値段が変わる loc・
+--   駅・バス停の乗る人に足す人数（1人あたり）w・駅で通えるかで変わる acc・多い月 pk（1.3倍）・少ない月 op（0.75倍）。presets54l.py でつくる
 create or replace function public._mp_sc_kinds() returns jsonb
 language sql immutable as $$
   select '{
-    "es":   {"n":"小学校",   "spp":10, "r":16,  "age":0.06,  "fee":200, "w":0.05, "acc":false},
-    "jhs":  {"n":"中学校",   "spp":11, "r":30,  "age":0.03,  "fee":230, "w":0.1,  "acc":false},
-    "hs":   {"n":"高校",     "spp":12, "r":100, "age":0.03,  "fee":320, "w":0.8,  "acc":true},
-    "univ": {"n":"大学",     "spp":18, "r":300, "age":0.035, "fee":650, "w":1.0,  "acc":true},
-    "voc":  {"n":"専門学校", "spp":9,  "r":200, "age":0.012, "fee":500, "w":0.9,  "acc":true}
+    "es": {"n":"小学校","use":"school","spp":10,"r":16,"age":0.06,"rs":0,"fee":200,"w":0.05,"acc":false,"loc":false},
+    "jhs": {"n":"中学校","use":"school","spp":11,"r":30,"age":0.03,"rs":0,"fee":230,"w":0.1,"acc":false,"loc":false},
+    "hs": {"n":"高校","use":"school","spp":12,"r":100,"age":0.03,"rs":0,"fee":320,"w":0.8,"acc":true,"loc":false},
+    "univ": {"n":"大学","use":"school","spp":18,"r":300,"age":0.035,"rs":0,"fee":650,"w":1.0,"acc":true,"loc":false},
+    "voc": {"n":"専門学校","use":"school","spp":9,"r":200,"age":0.012,"rs":0,"fee":500,"w":0.9,"acc":true,"loc":false},
+    "nursery": {"n":"保育園","use":"school","spp":8,"r":10,"age":0.02,"rs":0,"fee":400,"w":0.05,"acc":false,"loc":false},
+    "kinder": {"n":"幼稚園","use":"school","spp":8,"r":12,"age":0.02,"rs":0,"fee":300,"w":0.05,"acc":false,"loc":false},
+    "esjhs": {"n":"小中一貫校","use":"school","spp":10,"r":30,"age":0.04,"rs":0,"fee":220,"w":0.1,"acc":false,"loc":false},
+    "jhshs": {"n":"中高一貫校","use":"school","spp":12,"r":100,"age":0.015,"rs":0,"fee":380,"w":0.7,"acc":true,"loc":false},
+    "techhs": {"n":"工業高校","use":"school","spp":14,"r":120,"age":0.008,"rs":0,"fee":320,"w":0.8,"acc":true,"loc":false},
+    "comhs": {"n":"商業高校","use":"school","spp":12,"r":120,"age":0.008,"rs":0,"fee":320,"w":0.8,"acc":true,"loc":false},
+    "jc": {"n":"短期大学","use":"school","spp":15,"r":200,"age":0.006,"rs":0,"fee":550,"w":0.9,"acc":true,"loc":false},
+    "cram": {"n":"学習塾","use":"school","spp":5,"r":20,"age":0.02,"rs":0,"fee":250,"w":0.2,"acc":false,"loc":false},
+    "prep": {"n":"予備校","use":"school","spp":6,"r":150,"age":0.004,"rs":0,"fee":600,"w":0.9,"acc":true,"loc":false},
+    "driving": {"n":"自動車教習所","use":"school","spp":60,"r":150,"age":0.001,"rs":0,"fee":1500,"w":0.5,"acc":true,"loc":false},
+    "eikaiwa": {"n":"英会話教室","use":"school","spp":6,"r":40,"age":0.004,"rs":0,"fee":400,"w":0.4,"acc":true,"loc":false},
+    "music": {"n":"音楽学校","use":"school","spp":12,"r":150,"age":0.002,"rs":0,"fee":600,"w":0.8,"acc":true,"loc":false},
+    "cook": {"n":"調理師学校","use":"school","spp":10,"r":150,"age":0.002,"rs":0,"fee":550,"w":0.8,"acc":true,"loc":false},
+    "bizhotel": {"n":"ビジネスホテル","use":"hotel","spp":25,"r":60,"age":0.0015,"rs":0.012,"fee":1000,"w":1.0,"acc":true,"loc":true},
+    "cityhotel": {"n":"シティホテル","use":"hotel","spp":40,"r":100,"age":0.001,"rs":0.01,"fee":1800,"w":1.0,"acc":true,"loc":true},
+    "luxhotel": {"n":"高級ホテル","use":"hotel","spp":70,"r":200,"age":0.0004,"rs":0.004,"fee":4000,"w":0.8,"acc":true,"loc":true},
+    "resort": {"n":"リゾートホテル","use":"hotel","spp":60,"r":300,"age":0.0005,"rs":0.002,"fee":3000,"w":0.5,"acc":false,"loc":true,"pk":[7,8],"op":[1,2]},
+    "ryokan": {"n":"旅館","use":"hotel","spp":35,"r":200,"age":0.0006,"rs":0.004,"fee":1600,"w":0.8,"acc":true,"loc":true,"pk":[9,10,11]},
+    "onsenryokan": {"n":"温泉旅館","use":"hotel","spp":40,"r":300,"age":0.0005,"rs":0.003,"fee":2200,"w":0.6,"acc":false,"loc":true,"pk":[12,1,2],"op":[7,8]},
+    "minshuku": {"n":"民宿","use":"hotel","spp":30,"r":200,"age":0.0004,"rs":0.002,"fee":900,"w":0.6,"acc":false,"loc":true,"pk":[7,8]},
+    "pension": {"n":"ペンション","use":"hotel","spp":35,"r":200,"age":0.0003,"rs":0.002,"fee":1200,"w":0.5,"acc":false,"loc":true,"pk":[7,8,12]},
+    "capsule": {"n":"カプセルホテル","use":"hotel","spp":6,"r":40,"age":0.0008,"rs":0.01,"fee":300,"w":1.0,"acc":true,"loc":true},
+    "guesthouse": {"n":"ゲストハウス","use":"hotel","spp":12,"r":100,"age":0.0004,"rs":0.005,"fee":450,"w":1.0,"acc":true,"loc":true},
+    "stahotel": {"n":"駅前ホテル","use":"hotel","spp":28,"r":60,"age":0.001,"rs":0.015,"fee":1100,"w":1.0,"acc":true,"loc":true},
+    "condo": {"n":"コンドミニアム","use":"hotel","spp":50,"r":200,"age":0.0003,"rs":0.003,"fee":2200,"w":0.6,"acc":false,"loc":true,"pk":[7,8]},
+    "clinic": {"n":"診療所","use":"hospital","spp":8,"r":16,"age":0.02,"rs":0,"fee":400,"w":0.2,"acc":false,"loc":false},
+    "dental": {"n":"歯科医院","use":"hospital","spp":10,"r":16,"age":0.008,"rs":0,"fee":450,"w":0.1,"acc":false,"loc":false},
+    "vet": {"n":"動物病院","use":"hospital","spp":12,"r":30,"age":0.003,"rs":0,"fee":500,"w":0.1,"acc":false,"loc":false},
+    "hospital": {"n":"総合病院","use":"hospital","spp":25,"r":100,"age":0.01,"rs":0,"fee":1200,"w":0.6,"acc":true,"loc":false},
+    "bighosp": {"n":"大病院","use":"hospital","spp":30,"r":200,"age":0.006,"rs":0,"fee":1600,"w":0.8,"acc":true,"loc":false},
+    "erhosp": {"n":"救急病院","use":"hospital","spp":30,"r":120,"age":0.004,"rs":0,"fee":1500,"w":0.4,"acc":true,"loc":false},
+    "pedi": {"n":"小児科医院","use":"hospital","spp":10,"r":20,"age":0.006,"rs":0,"fee":350,"w":0.1,"acc":false,"loc":false,"pk":[12,1,2]},
+    "eye": {"n":"眼科","use":"hospital","spp":10,"r":30,"age":0.005,"rs":0,"fee":400,"w":0.2,"acc":false,"loc":false},
+    "obgyn": {"n":"産婦人科","use":"hospital","spp":20,"r":60,"age":0.002,"rs":0,"fee":900,"w":0.3,"acc":false,"loc":false},
+    "nursing": {"n":"老人ホーム","use":"hospital","spp":40,"r":60,"age":0.002,"rs":0,"fee":1300,"w":0.05,"acc":false,"loc":false},
+    "care": {"n":"介護施設","use":"hospital","spp":35,"r":40,"age":0.002,"rs":0,"fee":1100,"w":0.05,"acc":false,"loc":false},
+    "dayserv": {"n":"デイサービスセンター","use":"hospital","spp":15,"r":20,"age":0.004,"rs":0,"fee":500,"w":0.05,"acc":false,"loc":false},
+    "cinema": {"n":"映画館","use":"leisure","spp":3,"r":100,"age":0.004,"rs":0.01,"fee":120,"w":0.8,"acc":true,"loc":true},
+    "theater": {"n":"劇場","use":"leisure","spp":4,"r":200,"age":0.001,"rs":0.005,"fee":200,"w":0.9,"acc":true,"loc":true},
+    "hall": {"n":"コンサートホール","use":"leisure","spp":4,"r":200,"age":0.001,"rs":0.005,"fee":180,"w":0.9,"acc":true,"loc":true},
+    "livehouse": {"n":"ライブハウス","use":"leisure","spp":3,"r":100,"age":0.001,"rs":0.008,"fee":150,"w":0.9,"acc":true,"loc":true},
+    "bowling": {"n":"ボウリング場","use":"leisure","spp":8,"r":60,"age":0.002,"rs":0.003,"fee":300,"w":0.5,"acc":false,"loc":true},
+    "arcade": {"n":"ゲームセンター","use":"leisure","spp":3,"r":40,"age":0.005,"rs":0.01,"fee":120,"w":0.5,"acc":true,"loc":true},
+    "karaoke": {"n":"カラオケ店","use":"leisure","spp":4,"r":40,"age":0.005,"rs":0.01,"fee":160,"w":0.6,"acc":true,"loc":true},
+    "pachinko": {"n":"パチンコ店","use":"leisure","spp":4,"r":40,"age":0.004,"rs":0.008,"fee":200,"w":0.4,"acc":false,"loc":true},
+    "batting": {"n":"バッティングセンター","use":"leisure","spp":10,"r":40,"age":0.001,"rs":0.002,"fee":300,"w":0.3,"acc":false,"loc":true,"pk":[3,4,5,7,8]},
+    "golfrange": {"n":"ゴルフ練習場","use":"leisure","spp":30,"r":60,"age":0.001,"rs":0,"fee":500,"w":0.2,"acc":false,"loc":true},
+    "golf": {"n":"ゴルフ場","use":"leisure","spp":500,"r":400,"age":0.0003,"rs":0,"fee":8000,"w":0.2,"acc":false,"loc":false,"pk":[3,4,5,9,10,11],"op":[12,1,2]},
+    "tennis": {"n":"テニスコート","use":"leisure","spp":60,"r":40,"age":0.0008,"rs":0,"fee":600,"w":0.2,"acc":false,"loc":false,"pk":[3,4,5,9,10,11],"op":[12,1,2]},
+    "sportsclub": {"n":"スポーツクラブ","use":"leisure","spp":8,"r":40,"age":0.006,"rs":0.003,"fee":250,"w":0.4,"acc":true,"loc":true},
+    "pool": {"n":"屋内プール","use":"leisure","spp":10,"r":40,"age":0.003,"rs":0,"fee":300,"w":0.3,"acc":false,"loc":false,"pk":[7,8]},
+    "skate": {"n":"スケートリンク","use":"leisure","spp":12,"r":100,"age":0.001,"rs":0.002,"fee":400,"w":0.5,"acc":true,"loc":false,"pk":[12,1,2],"op":[7,8]},
+    "baseball": {"n":"野球場","use":"leisure","spp":4,"r":300,"age":0.0015,"rs":0.004,"fee":150,"w":1.2,"acc":true,"loc":false,"pk":[3,4,5,7,8,9],"op":[12,1,2]},
+    "soccer": {"n":"サッカースタジアム","use":"leisure","spp":4,"r":300,"age":0.0012,"rs":0.004,"fee":150,"w":1.2,"acc":true,"loc":false,"op":[12,1]},
+    "arena": {"n":"アリーナ","use":"leisure","spp":5,"r":200,"age":0.001,"rs":0.004,"fee":180,"w":1.0,"acc":true,"loc":true},
+    "athletics": {"n":"陸上競技場","use":"leisure","spp":8,"r":200,"age":0.0008,"rs":0.002,"fee":120,"w":1.0,"acc":true,"loc":false,"pk":[3,4,5,9,10,11]},
+    "amuse": {"n":"遊園地","use":"leisure","spp":15,"r":400,"age":0.002,"rs":0.004,"fee":700,"w":1.0,"acc":true,"loc":false,"pk":[3,4,5,7,8],"op":[12,1,2]},
+    "aquarium": {"n":"水族館","use":"leisure","spp":6,"r":300,"age":0.0015,"rs":0.004,"fee":300,"w":0.9,"acc":true,"loc":true,"pk":[7,8]},
+    "zoo": {"n":"動物園","use":"leisure","spp":30,"r":300,"age":0.0015,"rs":0.003,"fee":400,"w":0.9,"acc":true,"loc":false,"pk":[3,4,5,9,10,11],"op":[12,1,2]},
+    "botanical": {"n":"植物園","use":"leisure","spp":40,"r":200,"age":0.0008,"rs":0.001,"fee":300,"w":0.7,"acc":true,"loc":false,"pk":[3,4,5]},
+    "artmuseum": {"n":"美術館","use":"leisure","spp":8,"r":200,"age":0.001,"rs":0.003,"fee":250,"w":0.9,"acc":true,"loc":true},
+    "museum": {"n":"博物館","use":"leisure","spp":8,"r":200,"age":0.001,"rs":0.003,"fee":220,"w":0.9,"acc":true,"loc":false},
+    "science": {"n":"科学館","use":"leisure","spp":8,"r":200,"age":0.001,"rs":0.002,"fee":220,"w":0.8,"acc":true,"loc":false,"pk":[7,8]},
+    "superonsen": {"n":"スーパー銭湯","use":"leisure","spp":6,"r":60,"age":0.004,"rs":0.003,"fee":300,"w":0.4,"acc":false,"loc":true,"pk":[12,1,2]},
+    "sento": {"n":"銭湯","use":"leisure","spp":4,"r":12,"age":0.01,"rs":0,"fee":120,"w":0.05,"acc":false,"loc":false,"pk":[12,1,2]},
+    "wedding": {"n":"結婚式場","use":"leisure","spp":30,"r":200,"age":0.0003,"rs":0.002,"fee":1500,"w":0.8,"acc":true,"loc":true,"pk":[5,6,10,11]},
+    "convention": {"n":"展示場","use":"leisure","spp":8,"r":300,"age":0.0008,"rs":0.006,"fee":200,"w":1.0,"acc":true,"loc":true},
+    "camp": {"n":"キャンプ場","use":"leisure","spp":100,"r":400,"age":0.0004,"rs":0,"fee":1500,"w":0.3,"acc":false,"loc":false,"pk":[7,8],"op":[12,1,2]},
+    "fishing": {"n":"釣り堀","use":"leisure","spp":30,"r":40,"age":0.0005,"rs":0,"fee":500,"w":0.2,"acc":false,"loc":false},
+    "shrine": {"n":"神社","use":"leisure","spp":10,"r":40,"age":0.01,"rs":0.002,"fee":80,"w":0.3,"acc":false,"loc":false,"pk":[1]},
+    "temple": {"n":"寺","use":"leisure","spp":10,"r":40,"age":0.006,"rs":0.002,"fee":100,"w":0.3,"acc":false,"loc":false,"pk":[8,11]},
+    "church": {"n":"教会","use":"leisure","spp":8,"r":40,"age":0.004,"rs":0,"fee":80,"w":0.2,"acc":false,"loc":false,"pk":[12]},
+    "ski": {"n":"スキー場","use":"leisure","spp":400,"r":400,"age":0.0006,"rs":0,"fee":4000,"w":0.3,"acc":false,"loc":false,"pk":[12,1,2],"op":[5,6,7,8,9,10]}
   }'::jsonb
 $$;
 -- 量のことば（12.5t・3台・1,234kL）
@@ -22600,34 +23069,50 @@ begin
   end if;
 end $$;
 
-/* ---------- 学校：生徒（1時間ごと） ---------- */
+/* ---------- 施設：利用する人（学校の生徒・宿泊客・患者・来場者）（1時間ごと） ---------- */
 create or replace function public._mp_sc_school_calc(h timestamptz) returns void
 language plpgsql set search_path = public as $$
-declare kd jsonb := _mp_sc_kinds();
+declare kd jsonb := _mp_sc_kinds(); mo int := extract(month from h at time zone 'Asia/Tokyo')::int;
 begin
+  -- 駅の1日の乗り降り（系統の24時間の乗った人 × 2 を、止まる駅で分ける）
+  drop table if exists _sflow;
+  create temp table _sflow on commit drop as
+    select st.id, st.x / 100.0 sx, st.y / 100.0 sy, sum(coalesce(hs.s, 0) * 2.0 / greatest(array_length(r.stops, 1), 1)) flow
+      from mp_routes r join mp_stations st on st.id = any(r.stops)
+      left join lateral (select sum(hh.served) s from mp_hours hh where hh.route = r.id and hh.hour > h - interval '24 hours') hs on true
+     where r.ok group by st.id, st.x, st.y;
   drop table if exists _scs;
   create temp table _scs on commit drop as
     select s.bld, s.grp, s.x, s.y, s.lv, op.ok, op.npc, op.gv, op.m2,
-           case when op.ok or op.npc then floor(op.m2 / (kd -> s.grp ->> 'spp')::real)::int else 0 end cap, 0::real pool, 1::real acc
-      from mp_sc s, lateral _mp_sc_op(s.bld, h) op where s.grp is not null and kd ? s.grp;
-  -- 駅で通えるか（高校・大学・専門学校）：列車の走る駅が 750m 以内 → 1・バス停が 500m 以内 → 0.8・どちらもない → 0.5
-  update _scs t set acc = case when not (kd -> t.grp ->> 'acc')::boolean then 1
+           case when op.ok or op.npc then floor(op.m2 / (kd -> s.grp ->> 'spp')::real)::int else 0 end cap, 0::real pool, 1::real acc,
+           coalesce((b.dem -> 'fx' ->> (kd -> s.grp ->> 'use'))::real, 0) fxv, p.val::numeric / greatest(p.n * 100, 1) lvm2
+      from mp_sc s join mp_blds b on b.id = s.bld join mp_parcels p on p.id = b.parcel, lateral _mp_sc_op(s.bld, h) op
+     where s.grp is not null and kd ? s.grp;
+  -- 駅で通えるか：列車の走る駅が 750m 以内 → 1・バス停が 500m 以内 → 0.8・どちらもない → 0.5（acc の種類だけ）
+  update _scs t set acc = case when not coalesce((kd -> t.grp ->> 'acc')::boolean, false) then 1
       when exists (select 1 from mp_stations st where st.kind = 'rail' and st.x between (t.x - 15) * 100 and (t.x + 15) * 100 and st.y between (t.y - 15) * 100 and (t.y + 15) * 100
                      and (st.x / 100.0 - t.x) ^ 2 + (st.y / 100.0 - t.y) ^ 2 <= 225 and exists (select 1 from mp_routes r where r.ok and st.id = any(r.stops))) then 1
       when exists (select 1 from mp_stations st where st.kind = 'bus' and st.x between (t.x - 10) * 100 and (t.x + 10) * 100 and st.y between (t.y - 10) * 100 and (t.y + 10) * 100
                      and (st.x / 100.0 - t.x) ^ 2 + (st.y / 100.0 - t.y) ^ 2 <= 100 and exists (select 1 from mp_routes r where r.ok and st.id = any(r.stops))) then 0.8
       else 0.5 end
    where cap > 0;
-  update _scs t set pool = _mp_catch(t.x, t.y, (kd -> t.grp ->> 'r')::real) * (kd -> t.grp ->> 'age')::real * t.acc where cap > 0;
-  -- 同じ種類の学校で分けあう（通える範囲の中の定員のわりあい）。人・会社の学校は、授業料の水準が高いと減る
-  update mp_sc s set st = jsonb_build_object('n', q.n, 'cap', q.cap, 'pool', round(q.pool), 'acc', q.acc, 'at', h)
-    from (select t.bld, t.cap, t.pool, t.acc,
+  -- 来る人：まわりの人 × わりあい ＋ 近くの駅の乗り降り × わりあい。駅で通えるか・まわりの建物の効果（fx）・季節
+  update _scs t set pool = (_mp_catch(t.x, t.y, (kd -> t.grp ->> 'r')::real) * (kd -> t.grp ->> 'age')::real
+                            + coalesce((kd -> t.grp ->> 'rs')::real, 0) * coalesce((select sum(f.flow) from _sflow f where f.sx between t.x - 15 and t.x + 15 and f.sy between t.y - 15 and t.y + 15
+                                                                                     and (f.sx - t.x) ^ 2 + (f.sy - t.y) ^ 2 <= 225), 0))
+                           * t.acc * greatest(0.1, 1 + t.fxv)
+                           * case when coalesce(kd -> t.grp -> 'pk', '[]'::jsonb) @> to_jsonb(mo) then 1.3 when coalesce(kd -> t.grp -> 'op', '[]'::jsonb) @> to_jsonb(mo) then 0.75 else 1 end
+   where cap > 0;
+  -- 同じ種類の施設で分けあう（通える範囲の中の定員のわりあい）。人・会社の施設は、値段の水準が高いと減る。値段（1人・1日）：地価が高いと高い（loc の種類）
+  update mp_sc s set st = jsonb_build_object('n', q.n, 'cap', q.cap, 'pool', round(q.pool), 'acc', q.acc, 'at', h, 'fee', round((kd -> q.grp ->> 'fee')::numeric * round(q.lv::numeric, 2) * q.locf))
+    from (select t.bld, t.grp, t.lv, t.cap, t.pool, t.acc,
+                 case when coalesce((kd -> t.grp ->> 'loc')::boolean, false) then greatest(0.6, least(8, sqrt(t.lvm2 / 2500.0))) else 1 end locf,
                  case when t.cap = 0 then 0 else least(t.cap, floor(t.pool * t.cap
                    / greatest(1, (select sum(u.cap) from _scs u where u.grp = t.grp and u.cap > 0 and (u.x - t.x) ^ 2 + (u.y - t.y) ^ 2 <= ((kd -> t.grp ->> 'r')::real) ^ 2))
                    * power(case when t.ok and not t.gv then greatest(t.lv, 0.5) else 1 end, -1.5)))::int end n
             from _scs t) q
    where s.bld = q.bld;
-  drop table if exists _scs;
+  drop table if exists _scs; drop table if exists _sflow;
 end $$;
 -- 駅・バス停のまわりの学校の生徒（乗る人に足す）。1つの学校のまわりに駅がいくつもあるときは分ける
 create or replace function public._mp_sc_riders(sx int, sy int, skind text, rr real) returns real
@@ -22652,16 +23137,20 @@ declare gd jsonb := _mp_goods(); rc jsonb := _mp_sc_recipes(); kd jsonb := _mp_s
         fkm numeric := _mp_rate('sc_food_km'); smul numeric := _mp_rate('sc_shop'); rcm2 numeric := _mp_rate('rc_m2'); keep numeric := _mp_rate('sc_keep');
         fa record; cb record; sp record; gk text; kq numeric; need numeric; qq numeric; have numeric; mk numeric; uc numeric; amt bigint; shp bigint; bal numeric;
         gp numeric; wt numeric; buf numeric; tq numeric; ta numeric; ts numeric; nn int; mul numeric;
+        rdm2 numeric := _mp_rate('rd_m2'); trkkm numeric := _mp_rate('trk_tkm'); capl numeric; ownq numeric; tr2 record;
 begin
   -- 学校：生徒
   perform _mp_sc_school_calc(h);
-  -- 学校：授業料（人・会社が動かしている学校）
-  for fa in select scx.bld, scx.lv, scx.grp, (scx.st ->> 'n')::int sn, blx.name, opx.pu, opx.pc
+  -- 施設の売上（人・会社が動かしている施設）：学校は授業料、宿泊は宿泊料、医療・福祉は診療報酬など、娯楽は入場料など
+  for fa in select scx.bld, scx.grp, (scx.st ->> 'n')::int sn, coalesce((scx.st ->> 'fee')::numeric, (kd -> scx.grp ->> 'fee')::numeric) fee, kd -> scx.grp ->> 'use' fuse,
+                   coalesce(nullif(blx.name, ''), kd -> scx.grp ->> 'n') name, opx.pu, opx.pc
               from mp_sc scx join mp_blds blx on blx.id = scx.bld, lateral _mp_sc_op(scx.bld, h) opx
              where scx.grp is not null and opx.ok and not opx.gv and coalesce((scx.st ->> 'n')::int, 0) > 0 loop
-    amt := round(fa.sn * (kd -> fa.grp ->> 'fee')::numeric * round(fa.lv::numeric, 2) / 24);
+    amt := round(fa.sn * fa.fee / 24);
     if amt > 0 then
-      perform _mp_earn(fa.pu, fa.pc, false, amt, 'tuition', format('授業料：%s（%s人）', fa.name, fa.sn));
+      perform _mp_earn(fa.pu, fa.pc, false, amt, case when fa.fuse = 'school' then 'tuition' else 'fee' end,
+                       format(case fa.fuse when 'school' then '授業料：%s（%s人）' when 'hotel' then '宿泊料：%s（%s人）' when 'hospital' then '診療報酬など：%s（%s人）'
+                                           else '入場料など：%s（%s人）' end, fa.name, fa.sn));
       insert into mp_sclog(at, bld, k, qty, amt) values (h, fa.bld, 'fee', fa.sn, amt);
     end if;
   end loop;
@@ -22669,9 +23158,9 @@ begin
   -- この1時間に動いている工場・田畑・港（人・会社が動かしているもの）
   drop table if exists _sco;
   create temp table _sco on commit drop as
-    select scx.bld, scx.prod, scx.imp, scx.lv, scx.x, scx.y,
-           coalesce(nullif(blx.name, ''), (select pr ->> 'n' from jsonb_array_elements(_mp_bld_presets()) pr where pr ->> 'k' = blx.kind), '') name,
-           opx.pu, opx.pc, opx.m2, _mp_sc_owes(opx.pu, opx.pc) owes
+    select scx.bld, scx.prod, scx.imp, scx.lv, scx.x, scx.y, blx.kind,
+           coalesce(nullif(blx.name, ''), _mp_bld_pmap() -> blx.kind ->> 'n', '') name,
+           opx.pu, opx.pc, opx.m2 * coalesce((_mp_bld_pmap() -> blx.kind ->> 'rb')::numeric, 1) m2, _mp_sc_owes(opx.pu, opx.pc) owes
       from mp_sc scx join mp_blds blx on blx.id = scx.bld, lateral _mp_sc_op(scx.bld, h) opx
      where scx.prod is not null and rc ? scx.prod and opx.ok and not opx.gv;
 
@@ -22695,12 +23184,25 @@ begin
     if amt > 0 then insert into mp_sclog(at, bld, k, good, qty, amt) values (h, fa.bld, 'cost', fa.prod, 0, amt); end if;
   end loop;
 
-  -- 2) 仕入れ（トラック）：材料のいる工場が、近くの工場・田畑・港の在庫から買う（市場の値段＋運送費）。輸入のほうが安いとき・足りないときは輸入
+  -- 自分のトラック（t54l）：名義ごとの1時間の輸送力（t・km）。積める重さ × trk_tkm ÷ 24。納車まち・工事中・状態が20より悪いものはのぞく。
+  --   1t 運ぶごとに（距離 + 10km）分を使う（積みおろし）。動いているトラックターミナル1つごとに +10%（3つまで）
+  drop table if exists _trk;
+  create temp table _trk on commit drop as
+    select cx.own_u pu, cx.own_c pc, (sum(tx.load) * trkkm / 24.0)::numeric cap, 0::numeric used, count(*) n
+      from mp_cars cx join mp_types tx on tx.code = cx.type
+     where tx.role = 'Truck' and tx.load > 0 and (cx.busy_until is null or cx.busy_until <= h) and cx.cond >= 20
+     group by cx.own_u, cx.own_c;
+  update _trk t2 set cap = t2.cap * (1 + 0.1 * least(3, (select count(*) from mp_blds bt, lateral _mp_sc_op(bt.id, h) ot
+                                                         where bt.kind = 'truckterm' and ot.ok and not ot.gv and ot.pu is not distinct from t2.pu and ot.pc is not distinct from t2.pc)));
+
+  -- 2) 仕入れ（トラック）：材料のいる工場が、近くの工場・田畑・港の在庫から買う（市場の値段＋運送費）。輸入のほうが安いとき・足りないときは輸入。
+  --   自分のトラックで運べる分は運送費なし
   for cb in select * from _sco o where not o.owes and (rc -> o.prod -> 'in') <> '{}'::jsonb order by random() loop
     for gk, kq in select e.key, e.value::text::numeric from jsonb_each(rc -> cb.prod -> 'in') e loop
       if cb.prod = 'railcar' then need := greatest(1, floor(cb.m2 / rcm2)) * 3 * 35;   -- 3日分（1両 35t くらい）
       else need := (rc -> cb.prod ->> 'r')::numeric * cb.m2 * kq;                         -- 1日分
       end if;
+      if cb.prod = 'car' then need := need + greatest(1, floor(cb.m2 / rdm2)) * 2 * 10; end if;   -- 自動車工場：バス・トラックの注文の分（2日分・1台 10t くらい）
       need := round(need - coalesce((select stk.qty from mp_stock stk where stk.bld = cb.bld and stk.good = gk), 0), 4);
       if need <= 0.001 then continue; end if;
       gp := (gd -> gk ->> 'p')::numeric; wt := (gd -> gk ->> 'wt')::numeric;
@@ -22713,7 +23215,14 @@ begin
         bal := _mp_bal(cb.pu, cb.pc) - 2;
         qq := floor(least(need, sp.qty, greatest(bal, 0) / uc) * 1000) / 1000;
         exit when qq <= 0;
-        amt := round(qq * gp); shp := round(qq * wt * (tb + tk * sp.km));
+        -- 自分のトラックで運べる分（運送費なし）
+        ownq := 0; capl := coalesce((select t2.cap - t2.used from _trk t2 where t2.pu is not distinct from cb.pu and t2.pc is not distinct from cb.pc), 0);
+        if capl > 0.001 then
+          ownq := least(qq, capl / (sp.km + 10));
+          update _trk t2 set used = t2.used + ownq * (sp.km + 10) where t2.pu is not distinct from cb.pu and t2.pc is not distinct from cb.pc;
+          insert into mp_sclog(at, bld, k, good, qty, amt, peer, km) values (h, cb.bld, 'own', gk, ownq, 0, sp.bld, sp.km);
+        end if;
+        amt := round(qq * gp); shp := round((qq - ownq) * wt * (tb + tk * sp.km));
         update mp_stock stk set qty = greatest(0, stk.qty - qq) where stk.bld = sp.bld and stk.good = gk;
         insert into mp_stock(bld, good, qty) values (cb.bld, gk, qq) on conflict (bld, good) do update set qty = mp_stock.qty + excluded.qty;
         perform _mp_pay(cb.pu, cb.pc, false, amt, 'goods', format('仕入れ：%s %s（%s から・%skm）', gd -> gk ->> 'n', _mp_fmtq(qq, gd -> gk ->> 'u'), sp.name, round(sp.km, 1)));
@@ -22758,7 +23267,13 @@ begin
         exit when sp.km > fkm;
         qq := least(have, sp.dem);
         update _shop shx set dem = shx.dem - qq where shx.id = sp.id;
-        have := have - qq; tq := tq + qq; ta := ta + qq * gp; ts := ts + qq * wt * (tb + tk * sp.km); nn := nn + 1;
+        -- 自分のトラックで運べる分（運送費なし）
+        ownq := 0; capl := coalesce((select t2.cap - t2.used from _trk t2 where t2.pu is not distinct from fa.pu and t2.pc is not distinct from fa.pc), 0);
+        if capl > 0.001 then
+          ownq := least(qq, capl / (sp.km + 10));
+          update _trk t2 set used = t2.used + ownq * (sp.km + 10) where t2.pu is not distinct from fa.pu and t2.pc is not distinct from fa.pc;
+        end if;
+        have := have - qq; tq := tq + qq; ta := ta + qq * gp; ts := ts + (qq - ownq) * wt * (tb + tk * sp.km); nn := nn + 1;
         if sp.pl then insert into _marg values (sp.pu, sp.pc, qq * gp * smul); end if;
         exit when have <= 0.00001;
       end loop;
@@ -22792,8 +23307,15 @@ begin
     if amt > 0 then perform _mp_earn(fa.pu, fa.pc, false, amt, 'sales', format('市場に売った：%s %s', gd -> fa.good ->> 'n', _mp_fmtq(qq, gd -> fa.good ->> 'u'))); end if;
     insert into mp_sclog(at, bld, k, good, qty, amt) values (h, fa.bld, 'mkt', fa.good, qq, amt);
   end loop;
+  -- 自分のトラックのいたみ（その1時間に使ったわりあいで。寿命をすぎると2倍）
+  for tr2 in select * from _trk t2 where t2.used > 0 loop
+    update mp_cars c set cond = greatest(0, c.cond - 0.035 * least(1, tr2.used / greatest(tr2.cap, 0.001))
+                                             * case when now() - c.born > make_interval(days => (select ty.life from mp_types ty where ty.code = c.type) * (1 + c.renewed)) then 2 else 1 end)
+     where c.own_u is not distinct from tr2.pu and c.own_c is not distinct from tr2.pc and (c.busy_until is null or c.busy_until <= h) and c.cond >= 20
+       and c.type in (select ty.code from mp_types ty where ty.role = 'Truck');
+  end loop;
   delete from mp_stock stk where stk.qty <= 0.0001;
-  drop table if exists _sco;
+  drop table if exists _sco; drop table if exists _trk;
 end $$;
 
 /* ---------- 建物の事業（建物のシートに出す） ---------- */
@@ -22806,7 +23328,7 @@ begin
   select * into b from mp_blds where id = bid; if not found then return null; end if;
   select * into p from mp_parcels where id = b.parcel;
   select * into s from mp_sc where bld = bid;
-  if s.bld is null and b.kind not in ('farm', 'port') then return null; end if;
+  if s.bld is null and not coalesce(_mp_bld_pmap() -> b.kind ? 'opts', false) then return null; end if;
   me_cs := array(select id from companies where owner = u);
   select * into x from mp_units where bld = bid order by floor, no limit 1;
   can := not p.gov and (coalesce(p.own_u = u or p.own_c = any(me_cs), false) or coalesce(x.t_kind = 'corp' and x.t_c = any(me_cs), false));
@@ -22814,13 +23336,13 @@ begin
   o := jsonb_build_object('can', can, 'op', op.ok, 'npc', op.npc, 'gov', p.gov, 'm2', op.m2,
          'who', case when op.ok and not op.gv then _mp_pname(op.pu, op.pc, false) end,
          'as', case when can and op.ok and not op.gv then case when op.pu = u then 'me' when op.pc = any(me_cs) then (select c.cid from companies c where c.id = op.pc) end end);
-  if b.kind = 'farm' then o := o || '{"opts": ["wheat"]}'::jsonb; elsif b.kind = 'port' then o := o || '{"opts": ["ore", "crude"]}'::jsonb; end if;
+  if _mp_bld_pmap() -> b.kind ? 'opts' then o := o || jsonb_build_object('opts', _mp_bld_pmap() -> b.kind -> 'opts'); end if;
   if s.bld is null then return o || jsonb_build_object('kind', 'none'); end if;
-  -- 学校
+  -- 施設（学校・宿泊・医療と福祉・娯楽）
   if s.grp is not null then
-    return o || jsonb_build_object('kind', 'school', 'grp', s.grp, 'cap', coalesce((s.st ->> 'cap')::int, floor(op.m2 / (kd -> s.grp ->> 'spp')::real)::int),
+    return o || jsonb_build_object('kind', 'fac', 'use', kd -> s.grp ->> 'use', 'grp', s.grp, 'cap', coalesce((s.st ->> 'cap')::int, floor(op.m2 / (kd -> s.grp ->> 'spp')::real)::int),
       'n', coalesce((s.st ->> 'n')::int, 0), 'pool', (s.st ->> 'pool')::int, 'acc', (s.st ->> 'acc')::real, 'lv', s.lv,
-      'fee', round((kd -> s.grp ->> 'fee')::numeric * round(s.lv::numeric, 2)),
+      'fee', coalesce((s.st ->> 'fee')::numeric, round((kd -> s.grp ->> 'fee')::numeric * round(s.lv::numeric, 2))),
       'day', case when can then (select coalesce(sum(l.amt), 0) from mp_sclog l where l.bld = bid and l.k = 'fee' and l.at > now() - interval '24 hours') end,
       'sta', (select coalesce(jsonb_agg(z.name order by z.d), '[]'::jsonb) from (
                 select st.name, (st.x / 100.0 - s.x) ^ 2 + (st.y / 100.0 - s.y) ^ 2 d from mp_stations st
@@ -22835,7 +23357,12 @@ begin
     capd := greatest(1, floor(op.m2 / _mp_rate('rc_m2')))::int;
     o := o || jsonb_build_object('capd', capd, 'parts', _mp_rate('rc_parts'), 'wait', greatest(0, ceil(extract(epoch from coalesce(s.q_until, now()) - now()) / 3600))::int);
   elsif rc ? s.prod then
-    o := o || jsonb_build_object('per_day', round((rc -> s.prod ->> 'r')::numeric * op.m2, 3), 'ins', rc -> s.prod -> 'in', 'oc', rc -> s.prod -> 'oc');
+    o := o || jsonb_build_object('per_day', round((rc -> s.prod ->> 'r')::numeric * op.m2 * coalesce((_mp_bld_pmap() -> b.kind ->> 'rb')::numeric, 1), 3),
+                                 'ins', rc -> s.prod -> 'in', 'oc', rc -> s.prod -> 'oc', 'rb', _mp_bld_pmap() -> b.kind -> 'rb');
+    if s.prod = 'car' then   -- 自動車工場：バス・トラックの注文（t54l）
+      o := o || jsonb_build_object('rd', jsonb_build_object('capd', greatest(1, floor(op.m2 / _mp_rate('rd_m2')))::int, 'parts', _mp_rate('rc_parts'), 'lv', s.lv,
+                                   'wait', greatest(0, ceil(extract(epoch from coalesce(s.q_until, now()) - now()) / 3600))::int));
+    end if;
   end if;
   if can then
     o := o || jsonb_build_object(
@@ -22872,8 +23399,8 @@ begin
   end if;
   select * into s from mp_sc where bld = b.id for update;
   if p_prod is not null then
-    if b.kind not in ('farm', 'port') then raise exception 'つくるものを変えられるのは田畑と港湾施設だけです'; end if;
-    if p_prod <> '' and not ((b.kind = 'farm' and p_prod = 'wheat') or (b.kind = 'port' and p_prod in ('ore', 'crude'))) then raise exception 'その建物では、それはつくれません'; end if;
+    if not coalesce(_mp_bld_pmap() -> b.kind ? 'opts', false) then raise exception 'この建物では、つくるものはえらべません'; end if;
+    if p_prod <> '' and not (_mp_bld_pmap() -> b.kind -> 'opts' ? p_prod) then raise exception 'その建物では、それはつくれません'; end if;
     if p_prod is distinct from coalesce(s.prod, '') then
       -- いままでの在庫は市場へ（動かしている人・会社に。動いていなければ持ち主に）
       select * into op from _mp_sc_op(b.id, now());
@@ -22898,8 +23425,11 @@ begin
   end if;
   if p_lv is not null then
     if s.grp is not null then
-      if p_lv < 0.5 or p_lv > 2 then raise exception '授業料の水準は50%%〜200%%です'; end if;
-    elsif s.prod = 'railcar' then
+      if p_lv < 0.5 or p_lv > 2 then
+        if _mp_sc_kinds() -> s.grp ->> 'use' = 'school' then raise exception '授業料の水準は50%%〜200%%です'; end if;
+        raise exception '値段の水準は50%%〜200%%です';
+      end if;
+    elsif s.prod in ('railcar', 'car') then
       if p_lv < 0.4 or p_lv > 1.5 then raise exception '車両の値段は定価の40%%〜150%%です'; end if;
     else raise exception 'この建物には水準はありません'; end if;
     update mp_sc set lv = round(p_lv::numeric, 2) where bld = b.id;
@@ -22915,6 +23445,10 @@ begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
   return jsonb_build_object('goods', _mp_goods(),
+    -- 自分のトラック（t54l）：台数・積める重さ・走れる台数・動かしているトラックターミナル
+    'trk', (select jsonb_build_object('n', count(*), 'load', coalesce(sum(t.load), 0), 'ok', count(*) filter (where c.cond >= 20 and (c.busy_until is null or c.busy_until <= now())),
+                  'tt', (select count(*) from mp_blds bt, lateral _mp_sc_op(bt.id, now()) ot where bt.kind = 'truckterm' and ot.ok and not ot.gv and ot.pu is not distinct from pa.pu and ot.pc is not distinct from pa.pc))
+              from mp_cars c join mp_types t on t.code = c.type where t.role = 'Truck' and c.own_u is not distinct from pa.pu and c.own_c is not distinct from pa.pc),
     'blds', (select coalesce(jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'kind', b.kind, 'prod', s.prod, 'grp', s.grp, 'x', b.cells[1], 'y', b.cells[2],
                'op', op.ok, 'npc', op.npc, 'owner', _mp_same(p.own_u, p.own_c, false, pa.pu, pa.pc, false), 'who', case when op.ok then _mp_pname(op.pu, op.pc, false) end,
                'n', (s.st ->> 'n')::int, 'cap', (s.st ->> 'cap')::int,
@@ -22928,41 +23462,43 @@ begin
 end $$;
 
 /* ---------- 鉄道車両工場：車両の注文を受ける ---------- */
--- 動いている鉄道車両工場（車両を注文するときにえらぶ）
+-- 動いている鉄道車両工場（電車）・自動車工場（バス・トラック。t54l）。車両を注文するときにえらぶ。kind：rail・road
 create or replace function public.mp_makers() returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me_g(); me_cs int[];
 begin
   perform _mp_ok(u);
   me_cs := array(select id from companies where owner = u);
-  return (select coalesce(jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'who', _mp_pname(op.pu, op.pc, false),
+  return (select coalesce(jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'who', _mp_pname(op.pu, op.pc, false), 'kind', case when s.prod = 'car' then 'road' else 'rail' end,
             'as', case when op.pu = u then 'me' when op.pc = any(me_cs) then (select c.cid from companies c where c.id = op.pc) end,
-            'lv', s.lv, 'capd', greatest(1, floor(op.m2 / _mp_rate('rc_m2')))::int, 'parts', _mp_rate('rc_parts'),
+            'lv', s.lv, 'capd', greatest(1, floor(op.m2 / _mp_rate(case when s.prod = 'car' then 'rd_m2' else 'rc_m2' end)))::int, 'parts', _mp_rate('rc_parts'),
             'steel', round(coalesce((select st.qty from mp_stock st where st.bld = b.id and st.good = 'steel'), 0), 1),
             'wait', greatest(0, ceil(extract(epoch from coalesce(s.q_until, now()) - now()) / 3600))::int,
             'x', b.cells[1], 'y', b.cells[2]) order by b.id), '[]'::jsonb)
            from mp_sc s join mp_blds b on b.id = s.bld, lateral _mp_sc_op(b.id, now()) op
-          where s.prod = 'railcar' and op.ok and not op.gv);
+          where s.prod in ('railcar', 'car') and op.ok and not op.gv);
 end $$;
 -- 注文を受ける（mp_car_order・mp_form_order から）。注文する名義（bu・bc）と工場を動かしている名義が同じなら部品代（定価 × rc_parts）だけ。
 --   ちがえば 定価 × 水準 を工場へ（工場は部品代を国庫へ）。鉄鋼（車両の重さ × 0.8t）を在庫から使う。納車は工場の1日につくれる両数で順番に
 create or replace function public._mp_maker_order(p_maker bigint, bu uuid, bc int, p_types text[], p_dry boolean) returns jsonb
 language plpgsql set search_path = public as $$
 declare s mp_sc; b mp_blds; op record; n int := coalesce(array_length(p_types, 1), 0); list numeric; steel numeric; have numeric; slf boolean; cost bigint;
-        capd int; t0 timestamptz; fin timestamptz; hrs int; bname text;
+        capd int; t0 timestamptz; fin timestamptz; hrs int; bname text; rd boolean;
 begin
-  select * into s from mp_sc where bld = p_maker and prod = 'railcar' for update;
-  if not found then raise exception '鉄道車両工場が見つかりません'; end if;
+  select * into s from mp_sc where bld = p_maker and prod in ('railcar', 'car') for update;
+  if not found then raise exception '車両をつくる工場が見つかりません'; end if;
+  rd := s.prod = 'car';   -- 自動車工場：バス・トラック
   select * into b from mp_blds where id = p_maker;
   select * into op from _mp_sc_op(p_maker, now());
   if not op.ok or op.gv then raise exception '「%」は、いま動いていません（持ち主が自分で使うか、会社が借りると動きます）', b.name; end if;
   if n = 0 then raise exception '形式をえらんでください'; end if;
-  if exists (select 1 from unnest(p_types) z join mp_types y on y.code = z where y.role = 'Bus') then raise exception '鉄道車両工場ではバスはつくれません'; end if;
+  if not rd and exists (select 1 from unnest(p_types) z join mp_types y on y.code = z where y.role in ('Bus', 'Truck')) then raise exception '鉄道車両工場ではバス・トラックはつくれません'; end if;
+  if rd and exists (select 1 from unnest(p_types) z join mp_types y on y.code = z where y.role not in ('Bus', 'Truck')) then raise exception '自動車工場でつくれるのはバスとトラックだけです'; end if;
   select coalesce(sum(y.price), 0), coalesce(sum(round(y.mass * 0.8)), 0) into list, steel from unnest(p_types) z join mp_types y on y.code = z;
   have := coalesce((select st.qty from mp_stock st where st.bld = p_maker and st.good = 'steel'), 0);
   slf := _mp_same(op.pu, op.pc, false, bu, bc, false);
   cost := case when slf then round(list * _mp_rate('rc_parts')) else round(list * round(s.lv::numeric, 2)) end;
-  capd := greatest(1, floor(op.m2 / _mp_rate('rc_m2')))::int;
+  capd := greatest(1, floor(op.m2 / _mp_rate(case when rd then 'rd_m2' else 'rc_m2' end)))::int;
   t0 := greatest(now(), coalesce(s.q_until, now()));
   fin := t0 + make_interval(secs => n * 86400.0 / capd);
   hrs := greatest(3, ceil(extract(epoch from fin - now()) / 3600))::int;
@@ -22972,17 +23508,17 @@ begin
   end if;
   bname := _mp_pname(bu, bc, false);
   if slf then
-    perform _mp_pay(bu, bc, false, cost, 'car', format('鉄道車両工場「%s」で車両 %s両（部品・組み立て）', b.name, n));
+    perform _mp_pay(bu, bc, false, cost, 'car', format(case when rd then '自動車工場「%s」でバス・トラック %s台（部品・組み立て）' else '鉄道車両工場「%s」で車両 %s両（部品・組み立て）' end, b.name, n));
   else
-    perform _mp_pay(bu, bc, false, cost, 'car', format('鉄道車両工場「%s」に車両 %s両を注文', b.name, n));
-    perform _mp_earn(op.pu, op.pc, false, cost, 'sales', format('車両 %s両の売上（%s）', n, bname));
+    perform _mp_pay(bu, bc, false, cost, 'car', format(case when rd then '自動車工場「%s」にバス・トラック %s台を注文' else '鉄道車両工場「%s」に車両 %s両を注文' end, b.name, n));
+    perform _mp_earn(op.pu, op.pc, false, cost, 'sales', format(case when rd then 'バス・トラック %s台の売上（%s）' else '車両 %s両の売上（%s）' end, n, bname));
     perform _mp_soft_pay(op.pu, op.pc, false, round(list * _mp_rate('rc_parts'))::bigint, 'goods', '車両の部品・組み立て');
     perform _notice(coalesce(op.pu, (select c.owner from companies c where c.id = op.pc)),
-                    format('【国土】「%s」に車両 %s両の注文が入りました（%s・%s X）。', b.name, n, bname, _fmt(cost)));
+                    format(case when rd then '【国土】「%s」にバス・トラック %s台の注文が入りました（%s・%s X）。' else '【国土】「%s」に車両 %s両の注文が入りました（%s・%s X）。' end, b.name, n, bname, _fmt(cost)));
   end if;
   update mp_stock set qty = greatest(0, qty - steel) where bld = p_maker and good = 'steel';
   update mp_sc set q_until = fin where bld = p_maker;
-  insert into mp_sclog(at, bld, k, good, qty, amt) values (now(), p_maker, 'use', 'steel', steel, 0), (now(), p_maker, 'rc', 'railcar', n, case when slf then 0 else cost end);
+  insert into mp_sclog(at, bld, k, good, qty, amt) values (now(), p_maker, 'use', 'steel', steel, 0), (now(), p_maker, 'rc', case when rd then 'road' else 'railcar' end, n, case when slf then 0 else cost end);
   return jsonb_build_object('cost', cost, 'hours', hrs, 'steel', steel, 'maker', b.name, 'self', slf);
 end $$;
 
@@ -23079,7 +23615,7 @@ begin
             'bt_lobby_set','bt_bet','bt_react',
             '_lot_seed','_lot_prize','_lot_tier_name','_rnd','_lot_next_at','_lot_tick','_lot_draw','lot_buy','lot_state','dm_list','dm_thread','dm_send','_sp_json','support_list','support_thread','support_open','support_send','support_close',
             'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse',
-            'money_history','corp_ledger_page','_kb_bid_min','_kb_can_run','_kb_colors','_kb_give_horse','_kb_hint','_kb_hjson','_kb_own_c','_kb_own_open','_kb_own_tick','_kb_owned_n','_kb_owner_row','_kb_prog_day','_kb_release','_kb_sale_at','_kb_sale_day','_kb_sales_tick','_kb_take_regs','_kb_upkeep_tick','owner_bid','owner_buy','owner_name','owner_reg','owner_retire','owner_sell','owner_silks','owner_state',
+            'money_history','corp_ledger_page','money_days','corp_days','_kb_bid_min','_kb_can_run','_kb_colors','_kb_give_horse','_kb_hint','_kb_hjson','_kb_own_c','_kb_own_open','_kb_own_tick','_kb_owned_n','_kb_owner_row','_kb_prog_day','_kb_release','_kb_sale_at','_kb_sale_day','_kb_sales_tick','_kb_take_regs','_kb_upkeep_tick','owner_bid','owner_buy','owner_name','owner_reg','owner_retire','owner_sell','owner_silks','owner_state',
             'fi_cast','fi_consign','fi_hook','fi_join','fi_land','fi_state',
             '_pr_bonus','_pr_check_sel','_pr_hit','_pr_make_day','_pr_make_race','_pr_margin','_pr_month','_pr_name','_pr_new_racer','_pr_odds','_pr_open','_pr_prob','_pr_rate','_pr_seed','_pr_settle','_pr_status','_pr_tick','_pr_wx','pr_bet','pr_day','pr_odds','pr_race','pr_racer',
             '_gt_today','_gt_kinds','_gt_pool','_gt_label','_gt_ensure','_gt_xpb','_gt_need','_gt_lv','_gt_titles','_gt_title','_gt_tiers','_gt_tier','_gt_tname',
@@ -23092,37 +23628,37 @@ begin
             'hx_admin_cancel','hx_state','_hx_sold','_hx_bid','_hx_buynow','hx_bid','hx_buynow','_hx_ai_val','_hx_ai_tick',
             'hc_train','hc_feed','hc_mode','hc_vet','hc_release','_hc_tick',
             '_mp_addr','_mp_admin','_mp_angdiff','_mp_at','_mp_bal','_mp_ban','_mp_bb','_mp_bld_check',
-            '_mp_bld_defname','_mp_bld_dem','_mp_bld_hit','_mp_bld_make','_mp_bld_people','_mp_bld_plan','_mp_bld_presets','_mp_bld_refresh',
-            '_mp_bld_shape','_mp_bld_tick_day','_mp_bld_tick_hour','_mp_bus_path','_mp_busy_cells','_mp_carnum','_mp_catch','_mp_cell',
-            '_mp_chg','_mp_chimoku','_mp_cho_at','_mp_cho_set_tiles','_mp_cho_text','_mp_cmuls','_mp_cval','_mp_day_ok',
-            '_mp_dens','_mp_dep_cells','_mp_dep_dim','_mp_dep_tiles','_mp_dep_tiles_g','_mp_dia_snap','_mp_dispatch','_mp_earn',
-            '_mp_edec','_mp_end','_mp_end_ang','_mp_fmtn','_mp_fmtq','_mp_form_drop','_mp_form_perf','_mp_form_routes',
-            '_mp_form_rule','_mp_form_rule_t','_mp_form_runs','_mp_g','_mp_geom_ok','_mp_goods','_mp_gov_build','_mp_hm_parse',
-            '_mp_hms','_mp_home_text','_mp_hourf','_mp_kinds_of','_mp_kprio','_mp_land_fee','_mp_land_need','_mp_land_std',
-            '_mp_land_stop','_mp_lease_del','_mp_lease_quote','_mp_lease_set','_mp_leg_from','_mp_leg_time','_mp_len','_mp_line_cells',
-            '_mp_lock','_mp_lvmap_build','_mp_maker_order','_mp_mcval','_mp_mine','_mp_minr','_mp_mvalue','_mp_npc_name',
-            '_mp_occ_set','_mp_ok','_mp_okey','_mp_op_of_form','_mp_parcel_label','_mp_parcel_vals','_mp_party','_mp_pay',
-            '_mp_pick_trk','_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_pref_road','_mp_pref_type','_mp_proj','_mp_pub_cells',
-            '_mp_pub_of','_mp_rail_path','_mp_rate','_mp_renet','_mp_resample','_mp_resched','_mp_rev','_mp_road_mul',
-            '_mp_road_v','_mp_road_w','_mp_room','_mp_route_catch','_mp_route_sta','_mp_route_uses','_mp_routes_fix','_mp_run',
-            '_mp_run_check','_mp_run_mark','_mp_same','_mp_sc_info','_mp_sc_init','_mp_sc_kinds','_mp_sc_op','_mp_sc_owes',
-            '_mp_sc_recipes','_mp_sc_riders','_mp_sc_school_calc','_mp_sc_tick_hour','_mp_seg_blocked','_mp_seg_cells_arr','_mp_seg_chain','_mp_seg_join2',
-            '_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_sta_trk','_mp_struct_cells','_mp_sub',
-            '_mp_t49_from_tiles','_mp_t5','_mp_ters','_mp_thin','_mp_thru_link','_mp_thru_ok','_mp_tick','_mp_tick_day',
-            '_mp_tick_hour','_mp_tiles','_mp_tmul','_mp_today','_mp_train_calc','_mp_train_json','_mp_train_times','_mp_unit_mr',
-            '_mp_use_name','_mp_value','_mp_vlim','_mp_vruns','_mp_world','_mp_zname','_mp_zone_rule','mp_admin_cho_merge',
-            'mp_admin_cho_split','mp_admin_lvset','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state','mp_admin_zone','mp_area',
-            'mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set','mp_boot','mp_car_log',
-            'mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_gone','mp_cars_list','mp_cho_get','mp_chunk_get',
-            'mp_dep_build','mp_dep_edit','mp_dia','mp_dia_undo','mp_form_del','mp_form_order','mp_form_set','mp_home_clear',
-            'mp_home_get','mp_home_set','mp_kinds_list','mp_kinds_set','mp_land_buy','mp_land_decide','mp_land_req','mp_land_req_del',
-            'mp_land_reqs','mp_ledger_page','mp_makers','mp_op_del','mp_op_export','mp_op_import','mp_op_save','mp_ops_list',
-            'mp_parcel_buy','mp_parcel_merge','mp_parcel_rent','mp_parcel_sell','mp_parcel_split','mp_poll','mp_route_del','mp_route_pat',
-            'mp_route_save','mp_routes_list','mp_sc_list','mp_sc_set','mp_seg_build','mp_seg_del','mp_seg_edit','mp_seg_join',
-            'mp_seg_opts','mp_seg_speed','mp_seg_split','mp_spot','mp_sta_build','mp_sta_edit','mp_sta_trk','mp_sta_trk_set',
-            'mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list','mp_thru_req','mp_train_autoform','mp_train_bulk','mp_train_del',
-            'mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market','mp_unit_mine','mp_unit_own','mp_unit_set','mp_xfer_accept',
-            'mp_xfer_close','mp_xfer_list','mp_xfer_offer') loop
+            '_mp_bld_defname','_mp_bld_dem','_mp_bld_hit','_mp_bld_make','_mp_bld_people','_mp_bld_plan','_mp_bld_pmap','_mp_bld_presets',
+            '_mp_bld_refresh','_mp_bld_shape','_mp_bld_tick_day','_mp_bld_tick_hour','_mp_bus_path','_mp_busy_cells','_mp_carnum','_mp_catch',
+            '_mp_cell','_mp_chg','_mp_chimoku','_mp_cho_at','_mp_cho_set_tiles','_mp_cho_text','_mp_cmuls','_mp_cval',
+            '_mp_day_ok','_mp_dens','_mp_dep_cells','_mp_dep_dim','_mp_dep_tiles','_mp_dep_tiles_g','_mp_dia_snap','_mp_dispatch',
+            '_mp_earn','_mp_edec','_mp_end','_mp_end_ang','_mp_fmtn','_mp_fmtq','_mp_form_drop','_mp_form_perf',
+            '_mp_form_routes','_mp_form_rule','_mp_form_rule_t','_mp_form_runs','_mp_g','_mp_geom_ok','_mp_goods','_mp_gov_build',
+            '_mp_hm_parse','_mp_hms','_mp_home_text','_mp_hourf','_mp_kinds_of','_mp_kprio','_mp_land_fee','_mp_land_need',
+            '_mp_land_std','_mp_land_stop','_mp_lease_del','_mp_lease_quote','_mp_lease_set','_mp_leg_from','_mp_leg_time','_mp_len',
+            '_mp_line_cells','_mp_lock','_mp_lvmap_build','_mp_maker_order','_mp_mcval','_mp_mine','_mp_minr','_mp_mvalue',
+            '_mp_npc_name','_mp_occ_set','_mp_ok','_mp_okey','_mp_op_of_form','_mp_parcel_label','_mp_parcel_vals','_mp_party',
+            '_mp_pay','_mp_pick_trk','_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_pref_road','_mp_pref_type','_mp_proj',
+            '_mp_pub_cells','_mp_pub_of','_mp_rail_path','_mp_rate','_mp_renet','_mp_resample','_mp_resched','_mp_rev',
+            '_mp_road_mul','_mp_road_v','_mp_road_w','_mp_room','_mp_route_catch','_mp_route_sta','_mp_route_uses','_mp_routes_fix',
+            '_mp_run','_mp_run_check','_mp_run_mark','_mp_same','_mp_sc_info','_mp_sc_init','_mp_sc_kinds','_mp_sc_op',
+            '_mp_sc_owes','_mp_sc_recipes','_mp_sc_riders','_mp_sc_school_calc','_mp_sc_tick_hour','_mp_seg_blocked','_mp_seg_cells_arr','_mp_seg_chain',
+            '_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_sta_trk','_mp_struct_cells',
+            '_mp_sub','_mp_t49_from_tiles','_mp_t5','_mp_ters','_mp_thin','_mp_thru_link','_mp_thru_ok','_mp_tick',
+            '_mp_tick_day','_mp_tick_hour','_mp_tiles','_mp_tmul','_mp_today','_mp_train_calc','_mp_train_json','_mp_train_times',
+            '_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim','_mp_vruns','_mp_world','_mp_zname','_mp_zone_rule',
+            'mp_admin_cho_merge','mp_admin_cho_split','mp_admin_lvset','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state','mp_admin_zone',
+            'mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set','mp_boot',
+            'mp_car_log','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_gone','mp_cars_list','mp_cho_get',
+            'mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia','mp_dia_undo','mp_form_del','mp_form_order','mp_form_set',
+            'mp_home_clear','mp_home_get','mp_home_set','mp_kinds_list','mp_kinds_set','mp_land_buy','mp_land_decide','mp_land_req',
+            'mp_land_req_del','mp_land_reqs','mp_ledger_days','mp_ledger_page','mp_makers','mp_op_del','mp_op_export','mp_op_import',
+            'mp_op_save','mp_ops_list','mp_parcel_buy','mp_parcel_merge','mp_parcel_rent','mp_parcel_sell','mp_parcel_split','mp_poll',
+            'mp_route_del','mp_route_pat','mp_route_save','mp_routes_list','mp_sc_list','mp_sc_set','mp_seg_build','mp_seg_del',
+            'mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_speed','mp_seg_split','mp_spot','mp_sta_build','mp_sta_edit',
+            'mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list','mp_thru_req','mp_train_autoform',
+            'mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market','mp_unit_mine','mp_unit_own',
+            'mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
       execute format('revoke all on function %s from authenticated', f.sig);

@@ -878,6 +878,12 @@ const CSS = `
 .mp-seg button.on{background:#1f5fbf;color:#fff}
 .mp-cost{font-weight:800;font-size:15px}
 .mp-warn{color:#c33;font-size:12px;font-weight:700}
+.mp-fts{margin-top:3px;line-height:1.9}
+.mp-ft{display:inline-block;border-radius:6px;padding:0 6px;margin:0 4px 0 0;font-size:11px;font-weight:700;line-height:1.7;background:rgba(120,120,120,.13);color:var(--muted,#555)}
+.mp-ft.up{background:rgba(46,150,80,.14);color:#23864a}
+.mp-ft.dn{background:rgba(205,60,50,.12);color:#c0392b}
+.mp-ft.in{background:rgba(31,95,191,.12);color:#1f5fbf}
+.mp-sw{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-1px;margin-right:6px;border:1px solid rgba(0,0,0,.18)}
 .mp-tag,.mp-item .mp-tag{display:inline-block;border:1px solid #7b4fd8;color:#7b4fd8;border-radius:6px;padding:0 5px;font-size:11px;font-weight:700}
 .mp-list{display:flex;flex-direction:column;gap:6px;margin:6px 0}
 .mp-item{border:1px solid var(--line,#ddd);border-radius:10px;padding:8px 10px;background:var(--panel,#fff)}
@@ -2104,7 +2110,7 @@ function openMenu() {
     <button class="mp-item" style="text-align:left" data-k="thru"><b>🔀 乗り入れ</b><br><small>ほかの人・会社の線路に列車を走らせる（申請・許可・線路使用料）</small></button>
     <button class="mp-item" style="text-align:left" data-k="blds"><b>🏢 自分の建物</b><br><small>部屋の入居・家賃の水準・テナント（${esc(asName())}）</small></button>
     <button class="mp-item" style="text-align:left" data-k="tenants"><b>🔑 テナント募集</b><br><small>会社で部屋を借りる・借りている部屋</small></button>
-    <button class="mp-item" style="text-align:left" data-k="sc"><b>🏭 学校と工場</b><br><small>生徒・授業料／つくるもの・在庫・仕入れ（トラック）・売上・市場の値段</small></button>
+    <button class="mp-item" style="text-align:left" data-k="sc"><b>🏭 施設と工場</b><br><small>学校・ホテル・病院・娯楽の客と売上／つくるもの・在庫・トラック・市場の値段</small></button>
     <button class="mp-item" style="text-align:left" data-k="home"><b>🏠 自分の住所</b><br><small>${S.boot.home ? `<span translate="no">${esc(S.boot.home.text)}</span>` : 'まだ決めていません'}</small></button>
     <button class="mp-item" style="text-align:left" data-k="landreq"><b>📨 土地の申請</b><br><small>他人の土地を使う申請・とどいた申請への返事（許可・ことわる）</small></button>
     <button class="mp-item" style="text-align:left" data-k="ledger"><b>💴 お金の記録</b><br><small>運賃・家賃・維持費・使用料・工事費（${esc(asName())}）</small></button>
@@ -2136,11 +2142,13 @@ function openHelp() {
     <p><b>地図</b>：瑠璃市中里区がまん中。北西が山、南東が海です。指2本で拡大・縮小、ドラッグで動かします。タップすると住所（町字・地番）・地目・用途地域・地価がわかります。線は県・市区町村・町字の境界です。</p>
     <p><b>土地</b>：国の土地は区画（10m四方・100㎡）でえらんで買えます。道路の部分は国の土地（公衆用道路）なので買えません。買った土地は「筆」になり、地番がつきます（住所は町字＋地番）。となりあう自分の筆は合筆、筆の一部は分筆できます。売りに出ている筆は、その値段（＋取得税3%）。毎日、評価額の0.01%の固定資産税。</p>
     <p><b>地価と評価額</b>：瑠璃市の中心（中里区）は地価が高く（1㎡ 約10億 X）、まわり5kmで、なだらかにふつうの地価にもどります。国の土地を買う値段は地価、固定資産税・家賃・使用料・取得税は評価額（ふつうの地価）で計算します。瑠璃市役所と市民広場は国の建物です。</p>
-    <p><b>建物</b>：自分の筆に、プリセット（一戸建て・アパート・マンション・タワーマンション・店舗つき住宅・雑居ビル・オフィスビル・超高層ビル・ショッピングセンター・工場・倉庫・港湾施設・田畑・駐車場・立体駐車場）から、形と階数をえらんで建てます。広さと高さは用途地域の建ぺい率・容積率まで。細い形（塔状・板状）ほど高くできます。</p>
+    <p><b>建物</b>：自分の筆に、約280種類のプリセットから、形と階数をえらんで建てます（住まい・お店・オフィス・宿泊・医療と福祉・娯楽・学校・工場・倉庫と物流・港・田畑と農業・駐車場の12に分けてあり、名前でさがせます）。種類ごとに特徴があります（家賃の高さ・入りやすさ・人の多さ・まわりの建物への影響など。建てる画面に緑は有利・赤は不利で出ます）。広さと高さは用途地域の建ぺい率・容積率まで。細い形（塔状・板状）ほど高くできます。</p>
+    <p><b>宿泊・医療と福祉・娯楽</b>：ホテル・旅館（宿泊料）、病院・診療所・老人ホーム（診療報酬など）、映画館・スタジアム・遊園地・神社・寺など（入場料など）を建てられます。客は、まわりの人と近くの駅の乗り降りする人から来て、同じ種類の施設が近くにあると分けあいます。地価が高いところは値段も高く、季節で客の多い月・少ない月があります。自分で使うか会社が借りると、1時間ごとに売上が入ります（水準 50〜200%）。</p>
     <p><b>部屋とテナント</b>：部屋ごとに「入居募集」（町の人やお店が入って家賃）・「テナント募集」（会社に貸す。会社が借りると、1時間ごとに会社から家賃）・「自分で使う」（店・事務所などは売上が入る）をえらびます。家賃の水準を上げると、入りにくく出ていきやすくなります。人が多いところ・乗り降りの多い駅の近くは入りやすく、店の売上も多くなります。会社は ≡ →「テナント募集」から部屋を借りられます。</p>
     <p><b>自社のオフィス</b>：自分の建物の部屋をえらんで「自社のオフィスにする」で、自分の別の会社をすぐ入れられます。家賃は自分で決めます（0 X でもよい）。店・事務所などの売上は、入った会社に入ります。退去すると入居募集にもどります。</p>
     <p><b>学校</b>：小学校・中学校・高校・大学・専門学校を建てられます。延床面積で定員が決まり、まわりの人（その年ごろの人）から生徒が通ってきます（同じ種類の学校が近くにあると分けあう。高校・大学・専門学校は駅やバス停が近いとふえる）。自分で使うか会社が借りると、授業料（先生の給料などをひいた分）が1時間ごとに入ります。授業料の水準（50〜200%）が高いと生徒が減ります。生徒は近くの駅・バス停の乗る人にふえます。麦畑キャンパスも同じです。</p>
-    <p><b>特殊工場と物流</b>：材料からものをつくる工場です。小麦（田畑）→ 製粉工場 → 食品工場 → お店／鉄鉱石（港）→ 製鉄所 → 自動車工場／原油（港）→ 石油化学工場 → 半導体・家電工場。材料は1時間ごとに、近くの工場・田畑・港の在庫からトラックで自動で仕入れます（市場の値段＋運送費：1tごとに積みおろし＋距離）。輸入（値段の1.2倍）のほうが安いとき・足りないときは輸入。売れのこり（6時間分をこえる分）は市場へ（0.85倍）。食品は近くのお店へ、自動車・家電・半導体は市場へ。田畑・港湾施設は、建物の「つくるもの」で小麦・鉄鉱石・原油をえらぶと物流に入ります。≡ →「学校と工場」で一覧と市場の値段。</p>
+    <p><b>特殊工場と物流</b>：材料からものをつくる工場です。小麦（田畑）→ 製粉工場 → 食品工場 → お店／鉄鉱石（港）→ 製鉄所 → 自動車工場／原油（港）→ 石油化学工場 → 半導体・家電工場。材料は1時間ごとに、近くの工場・田畑・港の在庫からトラックで自動で仕入れます（市場の値段＋運送費：1tごとに積みおろし＋距離）。輸入（値段の1.2倍）のほうが安いとき・足りないときは輸入。売れのこり（6時間分をこえる分）は市場へ（0.85倍）。食品は近くのお店へ、自動車・家電・半導体は市場へ。田畑・港湾施設は、建物の「つくるもの」で小麦・鉄鉱石・原油をえらぶと物流に入ります。≡ →「施設と工場」で一覧と市場の値段。</p>
+    <p><b>バス・トラック</b>：1980年ごろの性能のバス（路線バス・観光バスなど）とトラック（2t・4t・10t・トレーラー）を、バスの営業所で注文できます。自動車工場（人・会社の工場）をメーカーにえらぶと、その工場の鉄鋼でつくります（自分の工場なら部品代だけ）。トラックは自分の工場・田畑・港の荷物を運び、そのぶん運送費がかかりません（1台で1時間に 積める重さ×300km÷24 t・km。トラックターミナルで +10%）。</p>
     <p><b>鉄道車両工場</b>：鉄鋼（近くの製鉄所から）で鉄道車両をつくります。≡ →「車両と編成」で注文するときにメーカーとしてえらべます。工場を動かしている名義の注文は部品代（定価の45%）と鉄鋼だけ。ほかの人・会社には値段の水準（定価の40〜150%）で売れます。1日につくれる両数は延床面積で決まり、注文が多いと納車が先になります。</p>
     <p><b>自分の住所</b>：地図で区画か建物をタップ →「ここを自分の住所に」（建物なら部屋もえらべます）。住所はあなたのページ（人のページ）でみんなに見えます。地図には🏠が出ます（自分にだけ）。≡ →「自分の住所」で見る・消す。</p>
     <p><b>風の芽大学</b>：風の芽大学中央駅のまわりは、風の芽大学 麦畑キャンパス（約140ha）。本部・図書館・学部・研究所・大学病院・附属学校・学生寮・グラウンド・実験農場（麦畑）などがならぶ、国の建物です。</p>
@@ -2170,12 +2178,13 @@ async function openCars(depFocus) {
     if (!st.dep || !d.depots.some(x => x.id === st.dep)) st.dep = d.depots.length ? d.depots[0].id : null;
     draw();
   };
-  const carChip = (c, on) => `<span class="mp-car ${on ? 'on' : ''} ${c.busy ? 'busy' : ''}" data-car="${c.id}">${c.xfer ? '<small class="mp-warn">譲渡中</small> ' : ''}${c.role && c.role !== 'Bus' ? `<small class="muted">${esc(c.role)}</small> ` : ''}${esc(c.num)}<span class="n">${c.busy ? esc({ deliver: '納車まち', move: '転属中', ac: '冷房工事', heat: '暖房工事', toilet: 'トイレ工事', inspect: '検査中', renew: '更新工事' }[c.busy] || c.busy) : `<span>状態${c.cond}</span>${c.ac ? '❄' : ''}${c.toilet ? '🚻' : ''}`}</span></span>`;
+  const carChip = (c, on) => `<span class="mp-car ${on ? 'on' : ''} ${c.busy ? 'busy' : ''}" data-car="${c.id}">${c.xfer ? '<small class="mp-warn">譲渡中</small> ' : ''}${c.role === 'Truck' ? '<small class="muted">トラック</small> ' : c.role && c.role !== 'Bus' ? `<small class="muted">${esc(c.role)}</small> ` : ''}${esc(c.num)}<span class="n">${c.busy ? esc({ deliver: '納車まち', move: '転属中', ac: '冷房工事', heat: '暖房工事', toilet: 'トイレ工事', inspect: '検査中', renew: '更新工事' }[c.busy] || c.busy) : `<span>状態${c.cond}</span>${c.ac ? '❄' : ''}${c.toilet ? '🚻' : ''}`}</span></span>`;
   const draw = () => {
     const d = st.d, deps = d.depots, dep = deps.find(x => x.id === st.dep);
     if (!deps.length) return m.set('車両と編成', `<p class="small">まず地図で車庫（🏭）をつくってください。車両は車庫に車籍をおきます（${esc(asName())}）。</p>`);
     const cars = d.cars.filter(c => c.depot === st.dep), forms = d.forms.filter(f => f.depot === st.dep), loose = cars.filter(c => !c.form);
-    const typeOpts = d.types.filter(t => (t.role === 'Bus') === (dep.kind === 'bus'));
+    const road = dep.kind === 'bus', typeOpts = d.types.filter(t => (t.role === 'Bus' || t.role === 'Truck') === road);   // 営業所：バス・トラック（t54l）
+    const mks = st.mk.filter(x => (x.kind || 'rail') === (road ? 'road' : 'rail')), trucks = loose.filter(c => c.role === 'Truck');
     m.set('車両と編成', `
       <div class="tabs-s">${deps.map(x => `<button data-dep="${x.id}" class="${x.id === st.dep ? 'on' : ''}">${esc(x.name)} ${x.n}/${x.cap}</button>`).join('')}</div>
       <h4 style="margin:12px 0 4px">編成（${forms.length}）</h4>
@@ -2184,16 +2193,19 @@ async function openCars(depFocus) {
         <small><span>${p.n}両・${p.len}m・定員${fmt(p.cap)}人・加速 ${p.acc}km/h/s・最高${p.vmax}km/h</span>${p.ac ? '<span>・冷房</span>' : ''}${p.toilet ? '<span>・トイレ</span>' : ''}<span>・状態${p.cond}・列車 ${f.trains}本</span></small>
         <div class="mp-cars">${fc.map(c => carChip(c, st.pick.includes(c.id))).join('')}</div>
         <div class="mp-row">${dep.kind === 'rail' ? `<button class="btn" data-reform="${f.id}">組みかえる</button><button class="btn" data-split="${f.id}">ばらす</button>` : ''}${f.xfer ? '' : `<button class="btn" data-give="${f.id}">ゆずる</button>`}</div></div>`; }).join('') || '<p class="muted small">まだありません</p>'}
-      ${dep.kind === 'rail' ? `<h4 style="margin:12px 0 4px">編成に入っていない車両（${loose.length}）</h4><div class="mp-cars">${loose.map(c => carChip(c, st.pick.includes(c.id))).join('') || '<span class="muted small">なし</span>'}</div>` : ''}
+      ${dep.kind === 'rail' ? `<h4 style="margin:12px 0 4px">編成に入っていない車両（${loose.length}）</h4><div class="mp-cars">${loose.map(c => carChip(c, st.pick.includes(c.id))).join('') || '<span class="muted small">なし</span>'}</div>`
+        : `<h4 style="margin:12px 0 4px">🚚 トラック（${trucks.length}）</h4><div class="mp-cars">${trucks.map(c => carChip(c, st.pick.includes(c.id))).join('') || '<span class="muted small">なし</span>'}</div>
+          <p class="muted small" style="margin:2px 0 0">トラックは、${esc(asName())}の工場・田畑・港の荷物を運びます（そのぶん運送費がかかりません）。1台で1時間に「積める重さ × ${fmt((S.boot.scr || {}).trk || 300)}km ÷ 24」t・km（1t 運ぶごとに 距離＋10km 分）。トラックターミナルを動かしていると +10%（3つまで）。状態が20より悪いと走りません</p>`}
       <div class="mp-item" style="margin-top:8px">${st.pick.length ? `<b>えらんだ車両（${st.pick.length}）</b>：${st.pick.map(id => esc((d.cars.find(c => c.id === id) || {}).num || '')).join(' → ')}
           <div class="mp-row">${dep.kind === 'rail' ? `<input class="mp-inp" style="flex:1 1 120px" data-fname placeholder="編成番号（例：R1）" value="${esc(st.form ? (d.forms.find(f => f.id === st.form) || {}).name || '' : '')}"><button class="btn main" data-mkform>${st.form ? 'この順に組みかえる' : 'この順で編成にする'}</button>` : ''}</div>
-          <div class="mp-row"><button class="btn" data-w="ac">冷房をつける</button><button class="btn" data-w="heat">暖房をつける</button><button class="btn" data-w="toilet">トイレをつける</button>
+          <div class="mp-row"><button class="btn" data-w="ac">冷房をつける</button><button class="btn" data-w="heat">暖房をつける</button>${st.pick.every(id => (d.cars.find(c => c.id === id) || {}).role === 'Truck') ? '' : '<button class="btn" data-w="toilet">トイレをつける</button>'}
             <button class="btn" data-w="inspect">検査</button><button class="btn" data-w="renew">更新工事</button><button class="btn" data-move>転属</button><button class="btn" data-scrap>廃車</button>
             ${dep.kind === 'rail' && st.pick.every(id => { const c = d.cars.find(x => x.id === id); return c && !c.form && !c.xfer; }) ? '<button class="btn" data-give2>ゆずる</button>' : ''}<button class="btn" data-hist>車歴</button><button class="btn" data-clear>えらびなおす</button></div>`
         : '<small class="muted">車両をタップしてえらぶと、編成・改造・検査・転属・廃車ができます。編成は、えらんだ順（先頭から）になります</small>'}</div>
-      ${dep.kind === 'rail' ? `<h4 style="margin:14px 0 4px">メーカー</h4>
-        <div class="mp-row"><select class="mp-inp" data-maker style="width:auto;max-width:100%"><option value="">国のメーカー（定価・6時間で納車）</option>${st.mk.map(x => `<option value="${x.id}" translate="no" ${st.maker === x.id ? 'selected' : ''}>${esc(x.name)}（${esc(x.who)}）・${esc(x.as === S.as ? T(`部品代 ${Math.round(x.parts * 100)}%`) : T(`定価の${Math.round(x.lv * 100)}%`))}・${esc(T(`1日${x.capd}両`))}・${esc(T(`鉄鋼 ${x.steel}t`))}${x.wait ? '・' + esc(T(`待ち ${x.wait}時間`)) : ''}</option>`).join('')}</select></div>
-        <p class="muted small" style="margin:2px 0 0">${st.mk.length ? '鉄道車両工場をえらぶと、その工場の鉄鋼でつくります（納車は工場の1日につくれる両数で順番に）。自分の工場なら部品代だけ' : '鉄道車両工場（人・会社の工場）は、まだありません'}</p>` : ''}
+      <h4 style="margin:14px 0 4px">メーカー</h4>
+        <div class="mp-row"><select class="mp-inp" data-maker style="width:auto;max-width:100%"><option value="">${road ? '国のメーカー（定価・3時間で納車）' : '国のメーカー（定価・6時間で納車）'}</option>${mks.map(x => `<option value="${x.id}" translate="no" ${st.maker === x.id ? 'selected' : ''}>${esc(x.name)}（${esc(x.who)}）・${esc(x.as === S.as ? T(`部品代 ${Math.round(x.parts * 100)}%`) : T(`定価の${Math.round(x.lv * 100)}%`))}・${esc(road ? T(`1日${x.capd}台`) : T(`1日${x.capd}両`))}・${esc(T(`鉄鋼 ${x.steel}t`))}${x.wait ? '・' + esc(T(`待ち ${x.wait}時間`)) : ''}</option>`).join('')}</select></div>
+        <p class="muted small" style="margin:2px 0 0">${road ? (mks.length ? '自動車工場をえらぶと、その工場の鉄鋼でバス・トラックをつくります（納車は工場の1日につくれる台数で順番に）。自分の工場なら部品代だけ' : '自動車工場（人・会社の工場）は、まだありません。バス・トラックは1980年ごろの性能です')
+          : (mks.length ? '鉄道車両工場をえらぶと、その工場の鉄鋼でつくります（納車は工場の1日につくれる両数で順番に）。自分の工場なら部品代だけ' : '鉄道車両工場（人・会社の工場）は、まだありません')}</p>
       ${dep.kind === 'rail' ? `<h4 style="margin:14px 0 4px">編成で注文する</h4>
         <div class="mp-row small" style="align-items:center"><span>形式を先頭から順に</span>${typeOpts.map(t => `<button class="btn" style="flex:none;padding:4px 10px" data-sq="${t.code}">${esc(t.label)}${t.face ? `<small>（${esc(T(t.face))}）</small>` : ''}</button>`).join('')}</div>
         <div class="mp-row small" style="align-items:center"><span>よく使う形</span>${[4, 6, 8, 10].map(n => `<button class="btn" style="flex:none;padding:4px 10px" data-sqn="${n}">${n}両</button>`).join('')}</div>
@@ -2207,10 +2219,10 @@ async function openCars(depFocus) {
       <p class="muted small">${esc(asName())}・納車まで電車は6時間、バスは3時間。車番は形式ごとに順番につきます</p>
       <div class="mp-row"><button class="btn" data-gone>廃車した車両</button></div>`, b => {
       const tnote = () => { const t = d.types.find(x => x.code === b.querySelector('[data-type]').value); if (!t) return; const s = (S.boot.series || []).find(x => x.code === t.series);
-        b.querySelector('[data-tnote]').innerHTML = `${s ? `<span>${esc(s.name)}</span>：` : ''}<span>${esc(t.note)}</span><br><span>長さ${t.len}m・定員${t.cap}人（座席${t.seats}）・${t.mass}t</span>${t.power ? `<span>・${t.power}kW</span>` : ''}<span>・最高${t.vmax}km/h・維持費 1日 ${fmt(t.upkeep)} X</span>`; };
+        b.querySelector('[data-tnote]').innerHTML = `${s ? `<span>${esc(s.name)}</span>：` : ''}<span>${esc(t.note)}</span><br>${t.role === 'Truck' ? `<span>長さ${t.len}m・積める重さ ${t.load}t・${t.mass}t</span>` : `<span>長さ${t.len}m・定員${t.cap}人（座席${t.seats}）・${t.mass}t</span>`}${t.power ? `<span>・${t.power}kW</span>` : ''}<span>・最高${t.vmax}km/h・維持費 1日 ${fmt(t.upkeep)} X</span>`; };
       tnote(); b.querySelector('[data-type]').onchange = tnote;
       const mkSel = b.querySelector('[data-maker]'); if (mkSel) mkSel.onchange = () => { st.maker = Number(mkSel.value) || null; };
-      const maker = () => dep.kind === 'rail' ? st.maker : null;
+      const maker = () => mks.some(x => x.id === st.maker) ? st.maker : null;
       const mkLine = r => r.maker ? '\n' + T(`メーカー：${r.maker}（鉄鋼 ${r.steel}t）`) : '';
       b.querySelectorAll('[data-dep]').forEach(x => x.onclick = () => { st.dep = Number(x.dataset.dep); st.pick = []; st.form = null; draw(); });
       b.querySelectorAll('[data-car]').forEach(x => x.onclick = () => { const id = Number(x.dataset.car); const i = st.pick.indexOf(id); if (i >= 0) st.pick.splice(i, 1); else st.pick.push(id); draw(); });
@@ -2270,17 +2282,21 @@ async function openCars(depFocus) {
 
 /* ---- 学校と工場（t54k）：自分（名義）の学校・工場・田畑・港と、市場の値段 ---- */
 async function openSC() {
-  const m = modal(['学校と工場', '<p class="muted small">読みこんでいます…</p>'], null, 'mp-wide');
+  const m = modal(['施設と工場', '<p class="muted small">読みこんでいます…</p>'], null, 'mp-wide');
   const d = await api('mp_sc_list', { p_as: S.as }); if (!d) return m.close();
   const sum = (b, ks) => ks.reduce((a, k) => a + Number((b.day || {})[k] || 0), 0);
-  const what = b => b.grp ? `<span>生徒 ${fmt(b.n || 0)} / ${fmt(b.cap || 0)}人</span>` : b.prod === 'railcar' ? '<span>鉄道車両</span>' : `<span>${esc(GN(b.prod))}</span>`;
+  const ui = b => FAC_UI[((S.boot.sck || {})[b.grp] || {}).use] || FAC_UI.school;
+  const what = b => b.grp ? `<span>${ui(b).who} ${fmt(b.n || 0)} / ${fmt(b.cap || 0)}人</span>` : b.prod === 'railcar' ? '<span>鉄道車両</span>' : `<span>${esc(GN(b.prod))}</span>`;
   const stock = b => gSort(b.stock).map(([g, q]) => qG(g, q)).join('・');
-  m.set('学校と工場', `<p class="small" style="margin:0 0 6px">${esc(asName())}</p>
+  const tk = d.trk || {}, cap = (tk.load || 0) * (((S.boot.scr || {}).trk) || 300) / 24 * (1 + 0.1 * Math.min(3, tk.tt || 0));
+  m.set('施設と工場', `<p class="small" style="margin:0 0 6px">${esc(asName())}</p>
+    <div class="mp-item"><b>🚚 自分のトラック</b> <small><span>${fmt(tk.n || 0)}台</span>${tk.n ? `・<span>積める重さ ${fmt(tk.load || 0)}t</span>・<span>1時間に ${fmt(Math.round(cap))}t・km まで運べる</span>${tk.tt ? `・<span>トラックターミナル ${tk.tt}（+${Math.min(3, tk.tt) * 10}%）</span>` : ''}${tk.ok < tk.n ? `・<span class="mp-warn">走れない ${tk.n - tk.ok}台</span>` : ''}` : ''}</small>
+      <small><br>${tk.n ? '自分の工場・田畑・港の荷物（仕入れ・お店への食品）は、運べるぶん運送費がかかりません' : 'トラックはバスの営業所で注文できます（≡ →「車両と編成」）。あると自分の荷物の運送費がかかりません'}</small></div>
     <div class="mp-list">${d.blds.map(b => `<div class="mp-item"><b>${esc(b.name || kindName(b.kind))}</b> <small><span>${esc(kindName(b.kind))}</span>${b.owner ? '' : '<span>（借りている）</span>'}</small>
-        <small><br>${what(b)}・${b.op ? `<span>${esc(b.who || '')}</span>` : b.npc ? '<span>町の学校法人</span>' : '<span class="mp-warn">止まっています</span>'}${stock(b) ? `<br><span>在庫</span> ${stock(b)}` : ''}
-        <br>${b.grp ? `<span>24時間の授業料 ${X(sum(b, ['fee']))}</span>` : `<span>24時間：売上 ${X(sum(b, ['sell', 'shop', 'mkt', 'rc']))}</span>・<span>費用 ${X(sum(b, ['buy', 'imp', 'ship', 'cost']))}</span>`}</small>
+        <small><br>${what(b)}・${b.op ? `<span>${esc(b.who || '')}</span>` : b.npc ? `<span>${b.grp ? ui(b).npc : '町の会社'}</span>` : '<span class="mp-warn">止まっています</span>'}${stock(b) ? `<br><span>在庫</span> ${stock(b)}` : ''}
+        <br>${b.grp ? `<span>${ui(b).day} ${X(sum(b, ['fee']))}</span>` : `<span>24時間：売上 ${X(sum(b, ['sell', 'shop', 'mkt', 'rc']))}</span>・<span>費用 ${X(sum(b, ['buy', 'imp', 'ship', 'cost']))}</span>`}</small>
         <div class="mp-row"><button class="btn" data-go="${b.id}" data-xy="${b.x},${b.y}">地図で見る</button></div></div>`).join('')
-      || '<p class="muted small">学校・工場はまだありません。自分の筆をタップ →「建物を建てる」の「学校」「工場・港・倉庫・田畑」から建てられます</p>'}</div>
+      || '<p class="muted small">施設・工場はまだありません。自分の筆をタップ →「建物を建てる」の「学校」「宿泊」「医療・福祉」「娯楽」「工場」などから建てられます</p>'}</div>
     <h4 style="margin:12px 0 4px">市場の値段</h4>
     <div class="mp-kv">${GORDER.filter(k => (d.goods || {})[k]).map(k => { const g = d.goods[k]; return `<b>${esc(g.n)}</b><span>${X(g.p)}<small>（1${esc(g.u)}）</small></span>`; }).join('')}</div>
     <p class="muted small"><span>小麦（田畑）→ 製粉工場 → 食品工場 → お店</span><br><span>鉄鉱石（港）→ 製鉄所 → 自動車工場・鉄道車両工場</span><br><span>原油（港）→ 石油化学工場 → 半導体・家電工場</span><br>
@@ -2984,7 +3000,7 @@ async function openLandReqs() {
 
 /* ---- お金の記録 ---- */
 const LK = { fare: '運賃', rent: '家賃', sales: '売上', tenant: 'テナントの家賃（はらう）', lease: '使用料（はらう）', lease_in: '使用料（受けとり）', upkeep: '維持費', tax: '固定資産税', land: '土地', bld: '建物', car: '車両', rail: '線路の工事', road: '道路の工事', sta: '駅', dep: '車庫', owed: '未払い',
-  tuition: '授業料', goods: '仕入れ・材料', ship: '運送費' };
+  tuition: '授業料', fee: '施設の売上', goods: '仕入れ・材料', ship: '運送費' };
 async function openLedger() {
   const m = modal(['お金の記録', '<p class="muted small">読みこんでいます…</p>']);
   let rows = [], before = null, head = null;
@@ -2995,10 +3011,14 @@ async function openLedger() {
     m.set('お金の記録', `<p class="small" style="margin:0">${esc(asName())}</p>
       <div class="mp-kv"><b>土地</b><span>${a.land}筆・${fmt(a.land_m2 || 0)}㎡（地価 ${X(a.land_val)}）${a.land_val0 != null && a.land_val0 !== a.land_val ? `<br><small>評価額 ${X(a.land_val0)}（税・家賃・使用料のもと）</small>` : ''}</span><b>線路</b><span>${a.rail_km} km</span><b>駅・バス停</b><span>${a.stations}</span><b>車両</b><span>${a.cars}両（台）</span>
         ${head.owed ? `<b>未払い</b><span class="mp-warn">${X(head.owed)}（運賃などから先に引かれます）</span>` : ''}</div>
+      <h4 style="margin:10px 0 4px">収支グラフ</h4><p class="muted small" style="margin:0 0 4px">1日ごと（上が入ったお金、下が出たお金、線は差し引き）。記録は60日のこります</p><div data-mflow></div>
       <h4 style="margin:10px 0 4px">この24時間</h4><div class="mp-kv">${Object.entries(day).map(([k, v]) => `<b>${esc(LK[k] || k)}</b><span style="color:${v >= 0 ? '#1a7f37' : '#c33'}">${v >= 0 ? '+' : ''}${fmt(v)} X</span>`).join('') || '<span class="muted small">なし</span>'}</div>
       <h4 style="margin:10px 0 4px">記録</h4><div class="mp-list">${rows.map(r => `<div class="mp-item"><small>${new Date(r.at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}・${esc(LK[r.k] || r.k)}</small><br>
         ${esc(r.memo || '')} <b style="float:right;color:${r.amount >= 0 ? '#1a7f37' : '#c33'}">${r.amount >= 0 ? '+' : ''}${fmt(r.amount)} X</b></div>`).join('')}</div>
-      ${d.rows.length === 50 ? '<button class="btn wide" data-more>もっと見る</button>' : ''}`, b => { const x = b.querySelector('[data-more]'); if (x) x.onclick = more; });
+      ${d.rows.length === 50 ? '<button class="btn wide" data-more>もっと見る</button>' : ''}`, b => {
+        const x = b.querySelector('[data-more]'); if (x) x.onclick = more;
+        const mf = b.querySelector('[data-mflow]'); if (mf && window.axFlow) window.axFlow.mount(mf, { key: 'map', ranges: [7, 30, 60], def: 30, names: LK, load: dd => api('mp_ledger_days', { p_as: S.as, p_days: dd }) });
+      });
   };
   more();
 }
@@ -3014,7 +3034,7 @@ const RATE_NAME = { land_P: '地価のもと：平地', land_F: '地価のもと
   p_wheat: '値段：小麦（1t）', p_flour: '値段：小麦粉（1t）', p_food: '値段：食品（1t）', p_ore: '値段：鉄鉱石（1t）', p_steel: '値段：鉄鋼（1t）', p_car: '値段：自動車（1台）',
   p_crude: '値段：原油（1kL）', p_chem: '値段：化学品（1t）', p_elec: '値段：家電・半導体（1t）', truck_base: 'トラック：積みおろし（1t）', truck_km: 'トラック：1t・1km',
   sc_imp: '輸入（値段の何倍）', sc_mkt: '市場に売る（値段の何倍）', sc_keep: '売らずにのこす在庫（何日分）', sc_shop: 'お店のもうけ（食品の値段の）', sc_food: 'お店の食品（床1㎡・1日・t）', sc_food_km: '食品をお店に運ぶ（km まで）',
-  rc_parts: '鉄道車両工場：部品代（定価の）', rc_m2: '鉄道車両工場：1両・1日あたりの床（㎡）' };
+  rc_parts: '鉄道車両工場：部品代（定価の）', rc_m2: '鉄道車両工場：1両・1日あたりの床（㎡）', rd_m2: '自動車工場：1台・1日あたりの床（㎡）', trk_tkm: 'トラック：1tで1日に走る km' };
 async function openAdmin() {
   const m = modal(['国土の管理', '<p class="muted small">読みこんでいます…</p>']);
   const st = await api('mp_admin_state', {}); const rates = await api('mp_admin_rates', { p_set: null }); if (!st || !rates) return;
@@ -3166,8 +3186,11 @@ const BK = {
   mill: ['#d8c9a3', '#f1ead8', '#d6c9ac'], foodf: ['#e3b98a', '#f6e9d8', '#dcc6a8'], steelw: ['#7d7f86', '#c9cbd0', '#9a9ca3'], carf: ['#9fb4c8', '#dfe7ef', '#b2c1cf'],
   petro: ['#c7c2a0', '#ebe7d2', '#cfcab0'], elecf: ['#b8d0d8', '#e7f0f3', '#c5d6dc'], railf: ['#8f9e8a', '#dce3d9', '#b4bfb0']
 };
-const USE_NAME = { home: '住居', shop: '店舗', office: '事務所', factory: '工場', warehouse: '倉庫', port: '港湾', farm: '田畑', parking: '駐車場', plaza: '広場', school: '学校' };
-const CAT_NAME = { home: '住まい', biz: 'お店・オフィス', school: '学校', ind: '工場・港・倉庫・田畑', park: '駐車場' };
+const USE_NAME = { home: '住居', shop: '店舗', office: '事務所', factory: '工場', warehouse: '倉庫', port: '港湾', farm: '田畑', parking: '駐車場', plaza: '広場', school: '学校',
+  hotel: '宿泊', hospital: '医療・福祉', leisure: '娯楽' };
+// 建てる画面の分け方（t54l：12）
+const CATS = ['home', 'shop', 'biz', 'hotel', 'med', 'fun', 'school', 'ind', 'logi', 'port', 'farm', 'park'];
+const CAT_NAME = { home: '住まい', shop: 'お店', biz: 'オフィス', hotel: '宿泊', med: '医療・福祉', fun: '娯楽', school: '学校', ind: '工場', logi: '倉庫・物流', port: '港', farm: '田畑・農業', park: '駐車場' };
 const SCH_K = new Set(['es', 'jhs', 'hs', 'univ', 'voc']), FAC_K = new Set(['mill', 'foodf', 'steelw', 'carf', 'petro', 'elecf', 'railf']);
 // 品目（t54k）：名前・単位・量のことば
 const GN = g => ((S.boot.goods || {})[g] || {}).n || g, GU = g => ((S.boot.goods || {})[g] || {}).u || 't';
@@ -3178,7 +3201,12 @@ const GORDER = ['wheat', 'flour', 'food', 'ore', 'steel', 'car', 'crude', 'chem'
 const gSort = o => Object.entries(o || {}).sort((a, b) => GORDER.indexOf(a[0]) - GORDER.indexOf(b[0]));
 const SHAPE_NAME = { full: 'ぜんぶ', slab: '板状', tower: '塔状', L: 'L字', ko: 'コの字', ro: 'ロの字' };
 const MODE_NAME = { npc: '入居募集', corp: 'テナント募集', self: '自分で使う' };
-const kindName = k => { const p = (S.boot.bld || []).find(b => b.k === k); return p ? p.n : k; };
+// プリセット（種類 → プリセット。S.boot が変わったら作りなおす）
+function pOf(k) { if (S._pmapOf !== S.boot) { S._pmapOf = S.boot; S._pmap = new Map(((S.boot && S.boot.bld) || []).map(p => [p.k, p])); } return S._pmap.get(k); }
+const kindName = k => { const p = pOf(k); return p ? p.n : k; };
+// 色（t54l）：プリセットの屋根の色 c から、壁の色（白とまぜる）をつくる
+const mixW = (c, f) => { const n = parseInt(String(c).slice(1), 16); if (!Number.isFinite(n)) return '#eeeeee'; const m = v => Math.round(v + (255 - v) * f).toString(16).padStart(2, '0'); return '#' + m(n >> 16 & 255) + m(n >> 8 & 255) + m(n & 255); };
+function bcol(k) { if (BK[k]) return BK[k]; const p = pOf(k); if (!p || !p.c) return ['#bbb', '#eee', '#ccc']; return (BK[k] = [p.c, mixW(p.c, 0.72), mixW(p.c, 0.5)]); }
 // 高さで屋根をずらす（北西へ。見下ろしている感じ）
 const bldShift = f => { const h = Math.max(0, f) * 3.5; return [-h * 0.25 / 50, -h * 0.45 / 50]; };
 // 建物：[id, 筆, 種類, 階, 区画 [X0, Y0, …], 名前, 入っている%, 1 他人・2 自分]
@@ -3221,25 +3249,18 @@ function drawBlds(g, bs, z, pass) {
   worldT(g);
   for (const b of bs) {
     if ((b.floors > 0) !== (pass === 1)) continue;
-    const col = BK[b.kind] || ['#bbb', '#eee', '#ccc'];
-    if (b.floors <= 0) {   // 田畑・駐車場・広場・グラウンド・緑地（平ら）
-      const pave = b.kind === 'plaza' || b.kind === 'uave', wheat = b.kind === 'ufarm', grass = b.kind === 'ugreen' || b.kind === 'ufield';
+    const col = bcol(b.kind);
+    if (b.floors <= 0) {   // 田畑・駐車場・広場・グラウンド・緑地・ゴルフ場など（平ら）
+      const pat = FLAT_PAT[b.kind] || (pOf(b.kind) || {}).pat, soft = SOFT_PAT.has(pat);
       g.fillStyle = col[0]; g.fill(b.base);
-      if (z >= 14 && !grass) {
-        g.save(); g.clip(b.base); g.strokeStyle = b.kind === 'farm' ? 'rgba(90,130,40,.55)' : wheat ? 'rgba(150,110,30,.45)' : pave ? 'rgba(160,150,130,.45)' : 'rgba(255,255,255,.85)'; g.lineWidth = (b.kind === 'farm' || wheat ? 1 : 1.2) / z;
-        g.beginPath(); const step = b.kind === 'farm' || wheat ? 0.04 : 0.05;
-        for (let x = Math.floor(b.bb[0] / step) * step; x <= b.bb[2]; x += step) { g.moveTo(x, b.bb[1]); g.lineTo(x, b.bb[3]); }
-        if (pave) for (let y = Math.floor(b.bb[1] / step) * step; y <= b.bb[3]; y += step) { g.moveTo(b.bb[0], y); g.lineTo(b.bb[2], y); }   // 広場：石だたみ
-        g.stroke(); g.restore();
-      }
-      if (b.kind === 'ufield' && z >= 9) drawField(g, b, z);
-      g.strokeStyle = b.own === 2 ? '#1f5bd6' : grass || pave || wheat ? 'rgba(60,90,40,.28)' : 'rgba(60,60,60,.55)'; g.lineWidth = (b.own === 2 ? 1.6 : 1) / z; g.stroke(b.baseEdge);
-      if ((pave || b.kind === 'ugreen') && z >= 9) {   // 広場・並木道・緑地の木
-        g.fillStyle = b.kind === 'ugreen' ? 'rgba(80,150,70,.6)' : 'rgba(110,170,90,.55)';
+      if (pat && z >= 9) flatPat(g, b, z, pat);
+      g.strokeStyle = b.own === 2 ? '#1f5bd6' : soft ? 'rgba(60,90,40,.28)' : 'rgba(60,60,60,.55)'; g.lineWidth = (b.own === 2 ? 1.6 : 1) / z; g.stroke(b.baseEdge);
+      if ((pat === 'pave' || pat === 'avenue' || pat === 'green') && z >= 9) {   // 広場・並木道・緑地の木
+        g.fillStyle = pat === 'green' ? 'rgba(80,150,70,.6)' : 'rgba(110,170,90,.55)';
         for (const k of b.set) {
           const [x, y] = k.split(',').map(Number);
-          const edge = b.kind === 'uave' && (!b.set.has((x - 1) + ',' + y) || !b.set.has((x + 1) + ',' + y) || !b.set.has(x + ',' + (y - 1)) || !b.set.has(x + ',' + (y + 1)));
-          if (b.kind === 'uave' ? edge && (x + y) % 2 === 0 : (x * 7 + y * 13) % (b.kind === 'ugreen' ? 4 : 9) === 0) { g.beginPath(); g.arc((x + 0.5) / 5, (y + 0.5) / 5, b.kind === 'ugreen' ? 0.06 : 0.045, 0, Math.PI * 2); g.fill(); }
+          const edge = pat === 'avenue' && (!b.set.has((x - 1) + ',' + y) || !b.set.has((x + 1) + ',' + y) || !b.set.has(x + ',' + (y - 1)) || !b.set.has(x + ',' + (y + 1)));
+          if (pat === 'avenue' ? edge && (x + y) % 2 === 0 : (x * 7 + y * 13) % (pat === 'green' ? 4 : 9) === 0) { g.beginPath(); g.arc((x + 0.5) / 5, (y + 0.5) / 5, pat === 'green' ? 0.06 : 0.045, 0, Math.PI * 2); g.fill(); }
         }
       }
     } else if (walls) {
@@ -3255,21 +3276,153 @@ function drawBlds(g, bs, z, pass) {
   }
   screenT(g);
 }
+// 平らな建物の描きかた（t54l）。キャンパスの種類（t54i）もここで
+const FLAT_PAT = { farm: 'rows', ufarm: 'wheat', plaza: 'pave', uave: 'avenue', ugreen: 'green', ufield: 'field', parking: 'lines' };
+const SOFT_PAT = new Set(['green', 'field', 'pave', 'avenue', 'wheat', 'lawn', 'golf', 'trees', 'flowers', 'paddy', 'track', 'snow']);
+const hsh = (x, y) => (Math.imul(x, 73856093) ^ Math.imul(y, 19349663)) >>> 0;
+function flatPat(g, b, z, pat) {
+  const [x0, y0, x1, y1] = b.bb;
+  const cells = () => [...b.set].map(k => k.split(',').map(Number));
+  const lines = (step, col, lw, both, horiz) => {
+    g.strokeStyle = col; g.lineWidth = lw / z; g.beginPath();
+    if (!horiz) for (let x = Math.floor(x0 / step) * step; x <= x1; x += step) { g.moveTo(x, y0); g.lineTo(x, y1); }
+    if (both || horiz) for (let y = Math.floor(y0 / step) * step; y <= y1; y += step) { g.moveTo(x0, y); g.lineTo(x1, y); }
+    g.stroke();
+  };
+  const dots = (pick, col, r) => {
+    g.fillStyle = col; g.beginPath();
+    for (const [x, y] of cells()) if (pick(x, y)) { const cx = (x + 0.5) / 5, cy = (y + 0.5) / 5; g.moveTo(cx + r, cy); g.arc(cx, cy, r, 0, Math.PI * 2); }
+    g.fill();
+  };
+  g.save(); g.clip(b.base);
+  switch (pat) {
+    case 'rows': if (z >= 14) lines(0.04, 'rgba(90,130,40,.55)', 1); break;                 // 畑のうね
+    case 'wheat': if (z >= 14) lines(0.04, 'rgba(150,110,30,.45)', 1); break;               // 麦畑
+    case 'lines': if (z >= 14) lines(0.05, 'rgba(255,255,255,.85)', 1.2); break;            // 駐車場の白線
+    case 'pave': case 'avenue': if (z >= 14) lines(0.05, 'rgba(160,150,130,.45)', 1.2, true); break;   // 石だたみ
+    case 'paddy': if (z >= 12) lines(0.2, 'rgba(235,225,180,.85)', 1.5, true); break;      // 田んぼのあぜ
+    case 'lawn': if (z >= 12) { g.fillStyle = 'rgba(255,255,255,.13)'; for (let x = Math.floor(x0 / 0.16) * 0.16; x <= x1; x += 0.16) g.fillRect(x, y0, 0.08, y1 - y0); } break;   // 芝のしま
+    case 'golf':                                                                           // フェアウェイ・バンカー・グリーン
+      dots((x, y) => hsh(x, y) % 5 === 0, 'rgba(196,232,160,.85)', 0.16);
+      dots((x, y) => hsh(x, y) % 37 === 3, 'rgba(242,228,176,.95)', 0.05);
+      if (z >= 14) dots((x, y) => hsh(x, y) % 61 === 7, 'rgba(140,215,110,.95)', 0.07);
+      break;
+    case 'court': if (z >= 12) {                                                           // テニスコート（24m × 11m）
+      const cw = 0.24, ch = 0.48, gap = 0.04; g.strokeStyle = 'rgba(255,255,255,.9)'; g.lineWidth = 1.2 / z; g.fillStyle = 'rgba(70,140,95,.95)';
+      for (let x = x0 + gap; x + cw <= x1 + 0.001; x += cw + gap) for (let y = y0 + gap; y + ch <= y1 + 0.001; y += ch + gap) {
+        g.fillRect(x, y, cw, ch); g.strokeRect(x + 0.02, y + 0.02, cw - 0.04, ch - 0.04); g.beginPath(); g.moveTo(x, y + ch / 2); g.lineTo(x + cw, y + ch / 2); g.stroke();
+      } } break;
+    case 'track': case 'field': drawField(g, b, z); break;                                  // 陸上のトラック
+    case 'amuse': {                                                                         // 乗りもの・観覧車
+      dots((x, y) => hsh(x, y) % 23 === 0, 'rgba(240,120,140,.9)', 0.06);
+      dots((x, y) => hsh(x, y) % 29 === 5, 'rgba(90,160,230,.9)', 0.06);
+      dots((x, y) => hsh(x, y) % 31 === 9, 'rgba(250,200,60,.9)', 0.06);
+      const r = Math.min(0.45, Math.min(x1 - x0, y1 - y0) * 0.18);
+      g.strokeStyle = 'rgba(200,60,90,.9)'; g.lineWidth = 2 / z; g.beginPath(); g.arc(b.cx, b.cy, r, 0, Math.PI * 2);
+      for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4; g.moveTo(b.cx, b.cy); g.lineTo(b.cx + r * Math.cos(a), b.cy + r * Math.sin(a)); }
+      g.stroke(); break; }
+    case 'trees': dots((x, y) => (x * 7 + y * 13) % 3 === 0, 'rgba(60,120,60,.55)', 0.075); break;      // 木
+    case 'water': dots((x, y) => hsh(x, y) % 4 === 0, 'rgba(110,170,215,.95)', 0.075); break;          // 池・水槽
+    case 'snow': if (z >= 12) {                                                             // ゲレンデ
+      g.strokeStyle = 'rgba(140,160,185,.6)'; g.lineWidth = 1.2 / z; g.beginPath();
+      for (let k = x0 - (y1 - y0); k <= x1; k += 0.3) { g.moveTo(k, y1); g.lineTo(k + (y1 - y0) * 0.6, y0); }
+      g.stroke(); } break;
+    case 'solar': lines(0.06, 'rgba(225,235,245,.55)', 1, false, true); break;               // パネルの列
+    case 'wind': {                                                                           // 風車
+      g.strokeStyle = 'rgba(255,255,255,.95)'; g.lineWidth = 1.6 / z; g.beginPath();
+      for (const [x, y] of cells()) if (hsh(x, y) % 9 === 0) { const cx = (x + 0.5) / 5, cy = (y + 0.5) / 5; for (let k = 0; k < 3; k++) { const a = k * 2.094 + 0.3; g.moveTo(cx, cy); g.lineTo(cx + 0.09 * Math.cos(a), cy + 0.09 * Math.sin(a)); } }
+      g.stroke(); break; }
+    case 'container': if (z >= 12) {                                                         // コンテナ
+      const C = ['#c0392b', '#2e86c1', '#d4ac0d', '#27ae60', '#8e44ad', '#e67e22'];
+      for (let x = x0 + 0.02; x < x1; x += 0.14) for (let y = y0 + 0.02; y < y1; y += 0.07) { g.fillStyle = C[hsh(Math.round(x * 100), Math.round(y * 100)) % C.length]; g.fillRect(x, y, 0.12, 0.05); }
+    } break;
+    case 'course': {                                                                         // 教習所のコース
+      const ins = 0.12, w = x1 - x0 - 2 * ins, h = y1 - y0 - 2 * ins; if (w <= 0.1 || h <= 0.1) break;
+      g.strokeStyle = 'rgba(105,105,110,.95)'; g.lineWidth = 0.07; g.beginPath();
+      if (typeof g.roundRect === 'function') g.roundRect(x0 + ins, y0 + ins, w, h, Math.min(w, h) * 0.25); else g.rect(x0 + ins, y0 + ins, w, h);
+      g.moveTo(x0 + ins, y0 + ins + h / 2); g.bezierCurveTo(x0 + ins + w * 0.3, y0 + ins + h * 0.2, x0 + ins + w * 0.7, y0 + ins + h * 0.8, x0 + ins + w, y0 + ins + h / 2);
+      g.stroke();
+      if (z >= 16) { g.strokeStyle = 'rgba(255,255,255,.8)'; g.lineWidth = 1 / z; g.setLineDash([0.04, 0.04]); g.stroke(); g.setLineDash([]); }
+      break; }
+    case 'flowers': if (z >= 12) {                                                          // 花
+      const C = ['rgba(236,120,170,.9)', 'rgba(250,210,60,.9)', 'rgba(170,110,210,.9)', 'rgba(255,255,255,.9)'];
+      for (const [x, y] of cells()) for (let i = 0; i < 4; i++) { const h = hsh(x * 4 + i, y * 7 - i); g.fillStyle = C[h % 4]; g.beginPath(); g.arc((x + (h % 97) / 97) / 5, (y + ((h >> 8) % 89) / 89) / 5, 0.022, 0, Math.PI * 2); g.fill(); }
+    } break;
+  }
+  g.restore();
+}
 // 建物の文字の場所（屋根の上）
 const bldPt = (b, z) => { const w = S.b25 && z >= 9 && b.floors > 0; return [sx(w ? b.lx : b.cx), sy(w ? b.ly : b.cy)]; };
-// 施設のしるし（学校の「文」・工場の歯車）。近いときは名前も（文字の層）
+// 地図記号（t54l）：種類 → 記号。施設（学校・宿泊・医療・娯楽）は施設の用途から。工場は歯車、港はいかり、駐車場は P
+const SYM_K = { shrine: 'torii', temple: 'manji', church: 'cross', superonsen: 'onsen', sento: 'onsen', onsenryokan: 'onsen',
+  baseball: 'stadium', soccer: 'stadium', arena: 'stadium', athletics: 'stadium', museum: 'museum', artmuseum: 'museum', science: 'museum', umus: 'museum',
+  aquarium: 'fish', fishing: 'fish', zoo: 'tree', botanical: 'tree', camp: 'tent', amuse: 'wheel', golf: 'flag', golfrange: 'flag', ski: 'mount',
+  hospital: 'hosp', bighosp: 'hosp', erhosp: 'hosp', uhosp: 'hosp', nursing: 'care', care: 'care', dayserv: 'care', uschool: 'sch',
+  postoffice: 'post', cityhall: 'hall', thermal: 'power', solar: 'power', wind: 'power', truckterm: 'truck', busterm: 'bus', water: '', garbage: '' };
+// 重なったときに先に出すもの（小さいほど先）
+const SYM_P = { hall: 0, hosp: 1, sch: 2, torii: 3, manji: 3, cross: 3, stadium: 4, museum: 4, wheel: 4, fish: 5, tree: 5, hotel: 5, onsen: 5, mount: 5,
+  flag: 6, tent: 6, star: 6, post: 6, clinic: 7, care: 7, power: 8, truck: 8, bus: 8, gear: 9, anchor: 9, P: 10 };
+function symOf(b) {
+  if (SYM_K[b.kind] != null) return SYM_K[b.kind] || null;
+  const p = pOf(b.kind) || {};
+  if (p.sc) { const u = ((S.boot.sck || {})[p.sc] || {}).use; return u === 'school' ? 'sch' : u === 'hotel' ? 'hotel' : u === 'hospital' ? 'clinic' : u === 'leisure' ? 'star' : null; }
+  if (SCH_K.has(b.kind)) return 'sch';
+  if (p.cat === 'ind' || FAC_K.has(b.kind)) return 'gear';
+  if (p.cat === 'port') return 'anchor';
+  if (p.use === 'parking' && p.cat === 'park') return 'P';
+  return null;
+}
+const SYM_TXT = { sch: SYM_SCH, manji: String.fromCharCode(0x534d), post: String.fromCharCode(0x3012) };   // 文・卍・〒
+function symDraw(g, k, X, Y) {
+  g.save(); g.translate(X, Y); g.lineJoin = 'round'; g.lineCap = 'round';
+  const W = 'rgba(255,255,255,.95)';
+  const txt = (s, col, size) => { g.font = `bold ${size || 12}px system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineWidth = 3; g.strokeStyle = W; g.strokeText(s, 0, 0.5); g.fillStyle = col; g.fillText(s, 0, 0.5); };
+  const path = (fn, col, lw, fill) => { g.beginPath(); fn(); g.strokeStyle = W; g.lineWidth = (lw || 1.6) + 2.6; g.stroke(); if (fill) { g.fillStyle = fill; g.fill(); } g.strokeStyle = col; g.lineWidth = lw || 1.6; g.stroke(); };
+  const disc = (r, fill, col) => { g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.fillStyle = fill; g.fill(); g.strokeStyle = col; g.lineWidth = 1.5; g.stroke(); };
+  switch (k) {
+    case 'sch': txt(SYM_TXT.sch, '#5a3d0c'); break;
+    case 'manji': txt(SYM_TXT.manji, '#3d3328', 12); break;
+    case 'post': disc(6.5, '#fff', '#c0392b'); g.font = 'bold 9px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#c0392b'; g.fillText(SYM_TXT.post, 0, 0.5); break;
+    case 'hall': for (const [col, lw] of [[W, 3.6], ['#333', 1.6]]) for (const r of [6, 3]) { g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.strokeStyle = col; g.lineWidth = lw; g.stroke(); } break;
+    case 'hosp': disc(6.5, '#fff', '#c62828'); g.fillStyle = '#c62828'; g.fillRect(-1.3, -4.2, 2.6, 8.4); g.fillRect(-4.2, -1.3, 8.4, 2.6); break;
+    case 'clinic': g.fillStyle = W; g.fillRect(-2.7, -5.7, 5.4, 11.4); g.fillRect(-5.7, -2.7, 11.4, 5.4); g.fillStyle = '#d84343'; g.fillRect(-1.4, -4.4, 2.8, 8.8); g.fillRect(-4.4, -1.4, 8.8, 2.8); break;
+    case 'care': path(() => { g.moveTo(-5, 5); g.lineTo(-5, -1); g.lineTo(0, -5.5); g.lineTo(5, -1); g.lineTo(5, 5); g.closePath(); }, '#8a5a2b', 1.5, '#fff'); g.fillStyle = '#8a5a2b'; g.fillRect(-1, 0.5, 2, 4.5); break;
+    case 'hotel': path(() => { g.moveTo(-6, -4); g.lineTo(-6, 5); g.moveTo(-6, 1.5); g.lineTo(6, 1.5); g.lineTo(6, 5); g.moveTo(-6, -1.5); g.lineTo(6, -1.5); }, '#5b3f9a', 1.8); g.fillStyle = '#5b3f9a'; g.fillRect(-4.6, -3.6, 2.6, 2); break;
+    case 'onsen': path(() => { g.moveTo(-5.5, 1); g.quadraticCurveTo(-5.5, 6, 0, 6); g.quadraticCurveTo(5.5, 6, 5.5, 1);
+        for (const x of [-2.6, 0, 2.6]) { g.moveTo(x, 2.5); g.bezierCurveTo(x - 1.6, 0.5, x + 1.6, -1.5, x, -4.5); } }, '#c0392b', 1.5); break;
+    case 'torii': path(() => { g.moveTo(-6.5, -4.5); g.quadraticCurveTo(0, -3.2, 6.5, -4.5); g.moveTo(-4.5, -2); g.lineTo(4.5, -2); g.moveTo(-3.5, -4); g.lineTo(-3.5, 5.5); g.moveTo(3.5, -4); g.lineTo(3.5, 5.5); }, '#c0392b', 1.8); break;
+    case 'cross': path(() => { g.moveTo(0, -6); g.lineTo(0, 6); g.moveTo(-4, -2.5); g.lineTo(4, -2.5); }, '#4a4a6a', 2); break;
+    case 'stadium': g.beginPath(); g.ellipse(0, 0, 6.5, 4.6, 0, 0, Math.PI * 2); g.fillStyle = '#fff'; g.fill(); g.strokeStyle = '#2f6f3e'; g.lineWidth = 1.6; g.stroke(); g.beginPath(); g.ellipse(0, 0, 3.6, 2.2, 0, 0, Math.PI * 2); g.fillStyle = '#5fae6a'; g.fill(); break;
+    case 'museum': path(() => { g.moveTo(-6, -2); g.lineTo(0, -6); g.lineTo(6, -2); g.closePath(); g.moveTo(-6, 5.5); g.lineTo(6, 5.5); for (const x of [-4, 0, 4]) { g.moveTo(x, -1); g.lineTo(x, 4.5); } }, '#4d4a42', 1.5, '#fff'); break;
+    case 'fish': path(() => { g.ellipse(-0.5, 0, 4.5, 2.8, 0, 0, Math.PI * 2); g.moveTo(3.8, 0); g.lineTo(6.5, -3); g.lineTo(6.5, 3); g.closePath(); }, '#1f6fa8', 1.4, '#cfe6f5'); break;
+    case 'tree': path(() => { g.moveTo(0, 6); g.lineTo(0, 0); }, '#6b4a2b', 1.8); g.beginPath(); g.arc(0, -2, 4.6, 0, Math.PI * 2); g.fillStyle = '#3f8f45'; g.fill(); g.strokeStyle = W; g.lineWidth = 1.2; g.stroke(); break;
+    case 'tent': path(() => { g.moveTo(-6, 5); g.lineTo(0, -5.5); g.lineTo(6, 5); g.closePath(); g.moveTo(0, -5.5); g.lineTo(0, 5); }, '#7a5a2a', 1.5, '#f2d9a6'); break;
+    case 'wheel': path(() => { g.arc(0, -1, 5, 0, Math.PI * 2); for (let i = 0; i < 6; i++) { const a = i * Math.PI / 3; g.moveTo(0, -1); g.lineTo(5 * Math.cos(a), -1 + 5 * Math.sin(a)); } g.moveTo(-3, 6); g.lineTo(0, -1); g.lineTo(3, 6); }, '#c2185b', 1.3); break;
+    case 'flag': path(() => { g.moveTo(-3, 6); g.lineTo(-3, -6); }, '#333', 1.6); g.beginPath(); g.moveTo(-3, -6); g.lineTo(5, -3.5); g.lineTo(-3, -1); g.closePath(); g.fillStyle = '#d32f2f'; g.fill(); g.strokeStyle = W; g.lineWidth = 1; g.stroke(); break;
+    case 'mount': path(() => { g.moveTo(-6.5, 5); g.lineTo(0, -5.5); g.lineTo(6.5, 5); g.closePath(); }, '#4a6a8a', 1.5, '#cfe0ee'); g.beginPath(); g.moveTo(-2.4, -1.6); g.lineTo(0, -5.5); g.lineTo(2.4, -1.6); g.closePath(); g.fillStyle = '#fff'; g.fill(); break;
+    case 'star': path(() => { for (let i = 0; i < 10; i++) { const r = i % 2 ? 2.8 : 6.5, a = -Math.PI / 2 + i * Math.PI / 5; if (i) g.lineTo(r * Math.cos(a), r * Math.sin(a)); else g.moveTo(r * Math.cos(a), r * Math.sin(a)); } g.closePath(); }, '#b8860b', 1.2, '#f7c948'); break;
+    case 'power': path(() => { g.moveTo(1.5, -6.5); g.lineTo(-4, 1); g.lineTo(-0.5, 1); g.lineTo(-1.8, 6.5); g.lineTo(4, -1.5); g.lineTo(0.6, -1.5); g.closePath(); }, '#8a6d00', 1.2, '#ffd23f'); break;
+    case 'truck': path(() => { g.rect(-6.5, -3.5, 8, 6); g.rect(1.5, -1, 4.5, 3.5); }, '#2d4f73', 1.3, '#dbe8f5'); g.fillStyle = '#2d4f73'; for (const x of [-4, 3.5]) { g.beginPath(); g.arc(x, 3.6, 1.5, 0, Math.PI * 2); g.fill(); } break;
+    case 'bus': disc(6, '#2a7de1', '#fff'); g.font = 'bold 8px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff'; g.fillText('B', 0, 0.5); break;
+    case 'gear': g.restore(); gearSym(g, X, Y, 5); return;
+    case 'anchor': path(() => { g.arc(0, -4.5, 1.6, 0, Math.PI * 2); g.moveTo(0, -2.9); g.lineTo(0, 5.5); g.moveTo(-3.5, -1); g.lineTo(3.5, -1); g.moveTo(-5.5, 1.5); g.quadraticCurveTo(-5, 5.5, 0, 5.5); g.quadraticCurveTo(5, 5.5, 5.5, 1.5); }, '#24527a', 1.5); break;
+    case 'P': g.fillStyle = W; if (typeof g.roundRect === 'function') { g.beginPath(); g.roundRect(-6, -6, 12, 12, 2.5); g.fill(); g.beginPath(); g.roundRect(-5, -5, 10, 10, 2); g.fillStyle = '#1f5fbf'; g.fill(); } else { g.fillRect(-6, -6, 12, 12); g.fillStyle = '#1f5fbf'; g.fillRect(-5, -5, 10, 10); }
+      g.font = 'bold 9px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff'; g.fillText('P', 0, 0.5); break;
+  }
+  g.restore();
+}
+// 施設のしるし（地図記号）。近いときは名前も（文字の層）。重なるときは だいじなもの・大きいものから
 function bldMarks(g, bs, z) {
   if (z < 9 || z >= 24) return;
-  for (const b of bs.slice().reverse()) {
-    const sch = SCH_K.has(b.kind); if (!sch && !FAC_K.has(b.kind)) continue;
+  const L = [];
+  for (const b of bs) { const k = symOf(b); if (!k || (k === 'P' && z < 14)) continue; L.push([SYM_P[k] != null ? SYM_P[k] : 8, -b.n, b, k]); }
+  L.sort((a, c) => a[0] - c[0] || a[1] - c[1]);
+  for (const [pr, , b, k] of L) {
     const [X, Y] = bldPt(b, z);
     if (X < -60 || Y < -20 || X > S.W + 60 || Y > S.H + 20) continue;
     if (!markBox(X, Y, 7)) continue;
-    if (sch) {
-      g.font = 'bold 12px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.lineWidth = 3; g.strokeStyle = 'rgba(255,255,255,.92)'; g.strokeText(SYM_SCH, X, Y); g.fillStyle = '#5a3d0c'; g.fillText(SYM_SCH, X, Y);
-    } else gearSym(g, X, Y, 5);
-    if (z >= 14 && b.name) label(g, b.name, X + 10, Y, { size: 10, left: true, color: b.own === 2 ? '#123c8c' : b.own === 3 ? '#5a3d0c' : '#333' });
+    symDraw(g, k, X, Y);
+    if (z >= 14 && b.name && pr <= 8 && !(k === 'gear' && !(pOf(b.kind) || {}).mk)) label(g, b.name, X + 10, Y, { size: 10, left: true, color: b.own === 2 ? '#123c8c' : b.own === 3 ? '#5a3d0c' : '#333' });
   }
 }
 // 建物の名前（とても近いとき）
@@ -3322,27 +3475,87 @@ function bldRow(B, mine) {
   return `<b>建物</b><span><span>${esc(B.name || kindName(B.kind))}</span><small>（<span>${esc(kindName(B.kind))}</span>${B.floors > 0 ? `・<span>${B.floors}階</span>` : ''}${B.n ? `・<span>入居 ${B.occ}/${B.n}</span>` : ''}）</small>${mine ? `<br><small>家賃 1日 ${X(B.rent)}</small>` : ''}</span>`;
 }
 
-/* ---- 建てる：プリセットをえらぶ ---- */
+/* ---- 建てる：プリセットをえらぶ（t54l：12の分け方・さがす・建てられるものだけ・特徴） ---- */
+// 施設の用途ごとのことば
+const FAC_UI = {
+  school: { ic: '🏫', who: '生徒', cap: '定員', pool: '通える人', fee: '授業料', unit: '1人 1日', day: '24時間の授業料', lv: '授業料の水準', npc: '町の学校法人', come: '生徒が通う' },
+  hotel: { ic: '🏨', who: '宿泊客', cap: '泊まれる人', pool: '泊まりにくる見こみ', fee: '宿泊料', unit: '1人 1泊', day: '24時間の宿泊料', lv: '宿泊料の水準', npc: '町のホテル会社', come: '旅の人が泊まる' },
+  hospital: { ic: '🏥', who: '患者・利用者', cap: '1日に見られる人', pool: 'かかる見こみ', fee: '診療報酬など', unit: '1人 1日', day: '24時間の診療報酬など', lv: '料金の水準', npc: '町の医療法人', come: '患者・利用者が来る' },
+  leisure: { ic: '🎡', who: '来場者', cap: '1日に入れる人', pool: '来る見こみ', fee: '入場料など', unit: '1人', day: '24時間の入場料など', lv: '料金の水準', npc: '町の会社', come: '来場者が来る' },
+};
+// 月のならび → 春・夏・秋・冬（ほかは月を）
+function monthsTxt(ms) {
+  const set = new Set(ms || []), out = [];
+  for (const [n, a] of [['春', [3, 4, 5]], ['夏', [7, 8]], ['秋', [9, 10, 11]], ['冬', [12, 1, 2]]]) if (a.every(m => set.has(m))) { out.push(`<span>${n}</span>`); a.forEach(m => set.delete(m)); }
+  const mn = m => { try { return new Intl.DateTimeFormat(document.documentElement.lang || 'ja', { month: 'short', timeZone: 'UTC' }).format(new Date(Date.UTC(2026, m - 1, 15))); } catch (e) { return m + '/'; } };
+  for (const m of [...set].sort((a, b) => a - b)) out.push(`<span translate="no">${mn(m)}</span>`);
+  return out.join('・');
+}
+// 建物の特徴（建てる画面・形をえらぶ画面）。o：見つもり（大きさがわかれば定員・1日の量も）
+function bFeats(p, o) {
+  const f = [], ft = (t, c) => f.push(`<span class="mp-ft${c ? ' ' + c : ''}">${t}</span>`), ok = o && o.ok !== false && o.total_m2;
+  const kd = p.sc ? (S.boot.sck || {})[p.sc] : null;
+  if (kd) {
+    const ui = FAC_UI[kd.use] || FAC_UI.leisure;
+    ft(`<span>${ui.come}</span>`, 'in');
+    if (ok) ft(`<span>${ui.cap} ${fmt(Math.floor(o.total_m2 / kd.spp))}人</span>`, 'in');
+    ft(`<span>${ui.fee}</span> <span>${ui.unit}</span> <span>${X(kd.fee)}</span>`);
+    if (kd.acc) ft(kd.use === 'school' ? '駅が近いと生徒がふえる' : '駅が近いと客がふえる', 'up');
+    if (kd.rs) ft('駅の乗り降りする人も来る', 'up');
+    if (kd.loc) ft('地価が高いと値段も高い', 'up');
+    if (kd.pk) ft(`<span>多い月</span> ${monthsTxt(kd.pk)}`, 'up');
+    if (kd.op) ft(`<span>少ない月</span> ${monthsTxt(kd.op)}`, 'dn');
+  }
+  if (p.mk === 'railcar') { ft('鉄鋼 → 鉄道車両', 'in'); if (ok) ft(`<span>1日に ${Math.max(1, Math.floor(o.total_m2 / ((S.boot.scr || {}).rc_m2 || 5000)))}両まで</span>`, 'in'); }
+  else if (p.mk) {
+    const rc = (S.boot.rcp || {})[p.mk] || {}, ins = Object.keys(rc.in || {});
+    ft(`<span>${ins.map(g => esc(GN(g))).join('・')} → ${esc(GN(p.mk))}</span>`, 'in');
+    if (ok && rc.r) ft(`<span>1日の生産 ${qtyS(rc.r * o.total_m2, GU(p.mk))}</span>`, 'in');
+    if (p.mk === 'car') ft(`<span>バス・トラックの注文も受けられる</span>`, 'up');
+  }
+  if (p.opts) ft(`<span>つくるもの</span> ${p.opts.map(g => `<span>${esc(GN(g))}</span>`).join('・')}`, 'in');
+  if (p.rb && p.rb !== 1) ft(`<span>とれる量 ${p.rb}倍</span>`, p.rb > 1 ? 'up' : 'dn');
+  if (p.rl && p.rl !== 1) ft(`<span>家賃 ${p.rl}倍</span>`, p.rl > 1 ? 'up' : 'dn');
+  if (p.dm && p.dm !== 1) ft(p.dm >= 1.15 ? '入りやすい' : p.dm > 1 ? 'やや入りやすい' : p.dm <= 0.7 ? '入りにくい' : 'やや入りにくい', p.dm > 1 ? 'up' : 'dn');
+  if (p.pp != null && p.pp !== 1) ft(p.pp > 1 ? '人が多い（駅の乗る人がふえる）' : '人が少ない', p.pp > 1 ? 'up' : '');
+  for (const [u, v] of Object.entries(p.fx || {})) ft(`<span>近くの${USE_NAME[u] || u}</span> <span>${v > 0 ? '+' : '−'}${Math.round(Math.abs(v) * 100)}%</span>`, v > 0 ? 'up' : 'dn');
+  if (p.mix) ft(`<span>階ごとに</span> ${[...new Set(p.mix.map(x => x[1]))].map(u => `<span>${USE_NAME[u] || u}</span>`).join('・')}`);
+  else if (p.g2 === 'shop') ft('1・2階は店舗'); else if (p.g1 === 'shop') ft('1階は店舗');
+  if ((p.opt || []).includes('shop1')) ft('1階を店舗にできる');
+  if (p.sea) ft('海のそば');
+  return f.join('');
+}
 async function bldStart(P) {
-  const m = modal(['建物を建てる', '<p class="muted small">読みこんでいます…</p>']);
+  const m = modal(['建物を建てる', '<p class="muted small">読みこんでいます…</p>'], null, 'mp-wide');
   const ops = await api('mp_bld_options', { p_parcel: P.id, p_as: S.as }); if (!ops) return m.close();
-  const pr = k => S.boot.bld.find(b => b.k === k) || {};
-  // 学校の定員・工場の1日の量（いちばん大きく建てたとき）
-  const extra = (p, o) => {
-    if (p.sc) { const k = (S.boot.sck || {})[p.sc]; return `<br><span>生徒が通う・授業料</span>${k && o.ok ? `・<span>定員 ${fmt(Math.floor(o.total_m2 / k.spp))}人まで</span>` : ''}`; }
-    if (p.mk === 'railcar') return `<br><span>鉄鋼 → 鉄道車両</span>${o.ok ? `・<span>1日に ${Math.max(1, Math.floor(o.total_m2 / ((S.boot.scr || {}).rc_m2 || 5000)))}両まで</span>` : ''}`;
-    if (p.mk) { const rc = (S.boot.rcp || {})[p.mk] || {}, ins = Object.keys(rc.in || {});
-      return `<br><span>${ins.map(g => esc(GN(g))).join('・')} → ${esc(GN(p.mk))}</span>${o.ok && rc.r ? `・<span>1日の生産 ${qtyS(rc.r * o.total_m2, GU(p.mk))}</span>` : ''}`; }
-    return '';
-  };
-  const item = o => { const p = pr(o.k); return `<button class="mp-item" style="text-align:left${o.ok ? '' : ';opacity:.55'}" data-k="${o.k}" ${o.ok ? '' : 'disabled'}>
-      <b>${esc(p.n || o.k)}</b> ${o.ok ? `<span class="mp-cost">${X(o.cost)}</span>` : ''}
-      <small><br>${o.ok ? `<span>${p.f1 > 0 ? `${p.f0}〜${o.f1}階` : '平ら'}</span>・<span>部屋 ${fmt(o.units)}</span>・<span>家賃の目安 1日 ${X(o.rent_day)}</span>` : `<span>${esc(o.why || '')}</span>`}${extra(p, o)}</small></button>`; };
-  const cats = ['home', 'biz', 'school', 'ind', 'park'], catOf = o => { const c = pr(o.k).cat; return cats.includes(c) ? c : 'ind'; };
-  m.set('建物を建てる', `<p class="small" style="margin:0 0 6px"><span>${esc(P.ban)}</span>・<span>${fmt(P.n * 100)}㎡</span></p>
-    ${cats.map(c => { const os = ops.filter(o => catOf(o) === c); return os.length ? `<h4 style="margin:10px 0 4px">${CAT_NAME[c]}</h4><div class="mp-list">${os.map(item).join('')}</div>` : ''; }).join('')}
-    <p class="muted small">工事費は床1㎡ごと。家賃の目安は満室・相場のとき。用途地域の建ぺい率・容積率で、建てられる広さと高さが決まります。学校・特殊工場は、建てると「自分で使う」になります（入居募集・テナント募集にも変えられます）</p>`, b => {
-    b.querySelectorAll('[data-k]').forEach(x => x.onclick = () => { m.close(); bldDesign(P, pr(x.dataset.k), ops.find(o => o.k === x.dataset.k)); });
+  const catOf = o => { const c = (pOf(o.k) || {}).cat; return CATS.includes(c) ? c : 'ind'; };
+  const nOk = c => ops.filter(o => catOf(o) === c && o.ok).length, nAll = c => ops.filter(o => catOf(o) === c).length;
+  let cat = 'home', only = true, qs = '';
+  try { cat = localStorage.getItem('mp_bcat') || cat; only = localStorage.getItem('mp_bonly') !== '0'; } catch (e) {}
+  if (!CATS.includes(cat) || !nOk(cat)) cat = CATS.find(nOk) || 'home';
+  const item = o => { const p = pOf(o.k) || {}; return `<button class="mp-item" style="text-align:left${o.ok ? '' : ';opacity:.55'}" data-k="${o.k}" ${o.ok ? '' : 'disabled'}>
+      <span class="mp-sw" style="background:${esc(p.c || '#bbb')}"></span><b>${esc(p.n || o.k)}</b> ${o.ok ? `<span class="mp-cost">${X(o.cost)}</span>` : ''}
+      <small><br>${o.ok ? `<span>${p.f1 > 0 ? `${p.f0}〜${o.f1}階` : '平ら'}</span>・<span>部屋 ${fmt(o.units)}</span>・<span>家賃の目安 1日 ${X(o.rent_day)}</span>` : `<span>${esc(o.why || '')}</span>`}</small>
+      <div class="mp-fts">${bFeats(p, o)}</div></button>`; };
+  m.set('建物を建てる', `<p class="small" style="margin:0 0 6px"><span>${esc(P.ban)}</span>・<span>${fmt(P.n * 100)}㎡</span>・<span>建てられるもの ${ops.filter(o => o.ok).length}種類</span></p>
+    <div class="tabs-s" style="flex-wrap:wrap" data-cats>${CATS.filter(nAll).map(c => `<button data-cat="${c}"><span>${CAT_NAME[c]}</span> <small>${nOk(c)}</small></button>`).join('')}</div>
+    <div class="mp-row"><input class="mp-inp" data-q placeholder="さがす（ホテル・病院・神社など）" style="flex:1 1 150px">
+      <label class="small" style="white-space:nowrap"><input type="checkbox" data-only ${only ? 'checked' : ''}> <span>建てられるものだけ</span></label></div>
+    <div class="mp-list" data-items></div>
+    <p class="muted small">工事費は床1㎡ごと。家賃の目安は満室・相場のとき。用途地域の建ぺい率・容積率で、建てられる広さと高さが決まります。学校・病院・ホテル・娯楽・特殊工場は、建てると「自分で使う」になります（入居募集・テナント募集にも変えられます）。緑の特徴は有利、赤は不利なところです</p>`, b => {
+    const list = b.querySelector('[data-items]'), qi = b.querySelector('[data-q]'), oc = b.querySelector('[data-only]');
+    const draw = () => {
+      const q = qs.trim().toLowerCase();
+      b.querySelectorAll('[data-cat]').forEach(x => x.classList.toggle('on', !q && x.dataset.cat === cat));
+      const hit = o => { const n = (pOf(o.k) || {}).n || o.k; return n.toLowerCase().includes(q) || String(T(n)).toLowerCase().includes(q); };
+      const os = ops.filter(o => (q ? hit(o) : catOf(o) === cat) && (!only || o.ok)).sort((a, c) => (c.ok - a.ok));
+      list.innerHTML = os.map(item).join('') || `<p class="muted small">${q ? '見つかりません' : 'この分け方で建てられるものはありません（「建てられるものだけ」を外すと、理由が出ます）'}</p>`;
+      list.querySelectorAll('[data-k]').forEach(x => x.onclick = () => { m.close(); bldDesign(P, pOf(x.dataset.k), ops.find(o => o.k === x.dataset.k)); });
+    };
+    b.querySelectorAll('[data-cat]').forEach(x => x.onclick = () => { cat = x.dataset.cat; qs = ''; qi.value = ''; try { localStorage.setItem('mp_bcat', cat); } catch (e) {} draw(); });
+    qi.oninput = () => { qs = qi.value; draw(); };
+    oc.onchange = () => { only = oc.checked; try { localStorage.setItem('mp_bonly', only ? '1' : '0'); } catch (e) {} draw(); };
+    draw();
   });
 }
 /* ---- 建てる：形・階数・名前 ---- */
@@ -3351,6 +3564,7 @@ async function bldDesign(P, pr, o) {
   const m = modal([pr.n, '']);
   const flat = pr.f1 === 0;
   m.set(pr.n, `<canvas class="mp-bprev" width="300" height="200" style="width:100%;max-width:300px;height:auto;display:block;margin:0 auto 6px;border:1px solid var(--line,#ddd);border-radius:10px;background:#eef0ea"></canvas>
+    <div class="mp-fts" data-ft style="margin:0 0 4px">${bFeats(pr, o)}</div>
     ${flat ? '' : `<div class="mp-row" data-shapes>${pr.sh.map(s => `<button class="btn" data-sh="${s}">${SHAPE_NAME[s] || s}</button>`).join('')}</div>
       <div class="mp-row"><b style="white-space:nowrap">階数</b><input type="range" class="mp-fl" style="flex:1" min="${pr.f0}" max="${pr.f1}" value="${st.floors}"><b class="mp-fln" style="min-width:3.5em;text-align:right"></b></div>`}
     ${(pr.opt || []).includes('shop1') ? `<label class="mp-row small" style="gap:6px"><input type="checkbox" class="mp-opt"> <span>1階を店舗にする</span></label>` : ''}
@@ -3383,6 +3597,7 @@ async function bldDesign(P, pr, o) {
       if (my !== seq) return;
       last = q; draw(q);
       if (!q) { qv.innerHTML = '<b>見つもり</b><span class="mp-warn">建てられません</span>'; return; }
+      const fe = b.querySelector('[data-ft]'); if (fe) fe.innerHTML = bFeats(pr, q);
       if (fl) { fl.min = q.f0; fl.max = q.f1; if (Number(fl.value) !== q.floors) fl.value = q.floors; st.floors = q.floors; }
       if (fln) fln.textContent = T(`${q.floors}階`);
       const uses = Object.entries(q.uses || {}).map(([u, n]) => `<span>${USE_NAME[u] || u}</span> <span>${n}</span>`).join('・');
@@ -3486,20 +3701,26 @@ async function openBld(bid) {
 /* ---- 建物の事業（t54k）：学校（生徒・授業料）・工場（つくるもの・在庫・仕入れ・売上）・田畑と港（つくるもの）・鉄道車両工場 ---- */
 function scBlock(d) {
   const s = d.sc; if (!s) return '';
-  const opRow = s.gov ? '' : `<b>動かしている</b><span>${s.op ? `<span>${esc(s.who || '')}</span>` : s.npc ? '<span>町の学校法人（入居募集）</span>'
+  const ui = FAC_UI[s.use] || (s.kind === 'school' ? FAC_UI.school : FAC_UI.leisure);
+  const opRow = s.gov ? '' : `<b>動かしている</b><span>${s.op ? `<span>${esc(s.who || '')}</span>` : s.npc ? `<span>${ui.npc}（入居募集）</span>`
     : '<span class="mp-warn">止まっています</span> <small>（自分で使うか、会社が借りると動きます）</small>'}</span>`;
-  if (s.kind === 'school') {
-    const k = (S.boot.sck || {})[s.grp] || {}, lv = Math.round((s.lv || 1) * 100);
-    return `<h4 style="margin:12px 0 4px">🏫 <span>${esc(k.n || '学校')}</span></h4><div class="mp-kv">
-      <b>生徒</b><span><span>${fmt(s.n || 0)}人</span> / <span>定員 ${fmt(s.cap || 0)}人</span></span>
-      ${s.pool != null ? `<b>通える人</b><span><span>${fmt(s.pool)}人</span>${k.acc ? ` <small>（${s.acc >= 1 ? '駅が近い' : s.acc >= 0.8 ? 'バス停が近い' : '駅・バス停が遠い'}）</small>` : ''}</span>` : ''}
+  if (s.kind === 'fac' || s.kind === 'school') {   // 施設（t54l）：学校・宿泊・医療と福祉・娯楽
+    const k = (S.boot.sck || {})[s.grp] || {}, lv = Math.round((s.lv || 1) * 100), mo = new Date().getMonth() + 1;
+    const ssn = (k.pk || k.op) ? `<b>季節</b><span>${k.pk ? `<span>多い月</span> ${monthsTxt(k.pk)} <small>（1.3倍）</small>` : ''}${k.pk && k.op ? '・' : ''}${k.op ? `<span>少ない月</span> ${monthsTxt(k.op)} <small>（0.75倍）</small>` : ''}${(k.pk || []).includes(mo) ? ' <b style="color:#23864a">いまは多い月</b>' : (k.op || []).includes(mo) ? ' <b style="color:#c0392b">いまは少ない月</b>' : ''}</span>` : '';
+    const how = s.use === 'school' || s.kind === 'school' ? '<span>生徒は、まわりの人（その年ごろの人）から通ってきます。同じ種類の学校が近くにあると分けあいます。</span>'
+      : s.use === 'hotel' ? '<span>宿泊客は、近くの駅の乗り降りする人（旅の人）と、まわりの人から来ます。同じ種類の宿が近くにあると分けあいます。地価が高いところは宿泊料も高くなります。</span>'
+      : s.use === 'hospital' ? '<span>患者・利用者は、まわりの人から来ます。同じ種類の病院・施設が近くにあると分けあいます。</span>'
+      : '<span>来場者は、まわりの人と、近くの駅の乗り降りする人から来ます。同じ種類の施設が近くにあると分けあいます。</span>';
+    return `<h4 style="margin:12px 0 4px">${ui.ic} <span>${esc(k.n || ui.who)}</span></h4><div class="mp-kv">
+      <b>${ui.who}</b><span><span>${fmt(s.n || 0)}人</span> / <span>${ui.cap} ${fmt(s.cap || 0)}人</span></span>
+      ${s.pool != null ? `<b>${ui.pool}</b><span><span>${fmt(s.pool)}人</span>${k.acc ? ` <small>（${s.acc >= 1 ? '駅が近い' : s.acc >= 0.8 ? 'バス停が近い' : '駅・バス停が遠い'}）</small>` : ''}</span>` : ''}
       ${(s.sta || []).length ? `<b>近くの駅</b><span>${s.sta.map(n => `<span translate="no">${esc(n)}</span>`).join('・')}</span>` : ''}
-      ${opRow}
-      ${s.gov ? '' : `<b>授業料</b><span><span>1人 1日 ${X(s.fee)}</span> <small>（水準 ${lv}%）</small></span>`}
-      ${s.can && s.day != null ? `<b>24時間の授業料</b><span>${X(s.day)}</span>` : ''}
-      ${s.can ? `<b>授業料の水準</b><span><input type="range" min="50" max="200" step="5" value="${lv}" class="mp-sclv" style="width:55%;vertical-align:middle"> <b class="mp-sclvn">${lv}%</b> <button class="btn" data-sclv style="padding:2px 8px">決める</button></span>` : ''}
+      ${ssn}${opRow}
+      ${s.gov ? '' : `<b>${ui.fee}</b><span><span>${ui.unit}</span> <span>${X(s.fee)}</span> <small>（水準 ${lv}%）</small></span>`}
+      ${s.can && s.day != null ? `<b>${ui.day}</b><span>${X(s.day)}</span>` : ''}
+      ${s.can ? `<b>${ui.lv}</b><span><input type="range" min="50" max="200" step="5" value="${lv}" class="mp-sclv" style="width:55%;vertical-align:middle"> <b class="mp-sclvn">${lv}%</b> <button class="btn" data-sclv style="padding:2px 8px">決める</button></span>` : ''}
       </div>
-      <p class="muted small" style="margin:2px 0 6px"><span>生徒は、まわりの人（その年ごろの人）から通ってきます。同じ種類の学校が近くにあると分けあいます。</span>${k.acc ? '<span>駅・バス停が近いと生徒がふえます。</span>' : ''}<span>生徒は近くの駅・バス停の乗る人にふえます（次の日から）。</span>${s.gov ? '' : '<span>自分で使うか会社が借りると、授業料（先生の給料などをひいた分）が1時間ごとに入ります。水準が高いと生徒が減ります。</span>'}</p>`;
+      <p class="muted small" style="margin:2px 0 6px">${how}${k.acc ? '<span>駅・バス停が近いとふえます。</span>' : ''}<span>近くの駅・バス停の乗る人にふえます（次の日から）。</span>${s.gov ? '' : `<span>自分で使うか会社が借りると、${ui.fee}（人件費などをひいた分）が1時間ごとに入ります。水準が高いと減ります。</span>`}</p>`;
   }
   const st = s.stock || {}, stock = Object.keys(st).length ? gSort(st).map(([g, q]) => qG(g, q)).join('・') : '<span class="muted">なし</span>';
   const prodSel = s.can && s.opts ? `<b>つくるもの</b><span><select class="mp-inp" data-scprod style="width:auto"><option value="">ふつう（いままでどおり）</option>${s.opts.map(g => `<option value="${g}" ${s.prod === g ? 'selected' : ''}>${esc(GN(g))}</option>`).join('')}</select> <button class="btn" data-scprodset style="padding:2px 8px">決める</button></span>` : '';
@@ -3514,6 +3735,7 @@ function scBlock(d) {
       ${Object.keys(Q('make')).length ? `<span>つくった</span> ${qs('make')}<br>` : ''}
       ${A('buy') ? `<span>仕入れ</span> ${X(A('buy'))} <small>（${qs('buy')}）</small><br>` : ''}${A('imp') ? `<span>輸入</span> ${X(A('imp'))} <small>（${qs('imp')}）</small><br>` : ''}
       ${A('sell') ? `<span>工場に売った</span> ${X(A('sell'))}<br>` : ''}${A('shop') ? `<span>お店に売った</span> ${X(A('shop'))}<br>` : ''}${A('mkt') ? `<span>市場に売った</span> ${X(A('mkt'))}<br>` : ''}${A('rc') ? `<span>車両の売上</span> ${X(A('rc'))}<br>` : ''}
+      ${Object.keys(Q('own')).length ? `<span>自分のトラックで運んだ</span> ${qs('own')} <small>（運送費なし）</small><br>` : ''}
       ${A('ship') ? `<span>運送費</span> ${X(A('ship'))}<br>` : ''}${A('cost') ? `<span>材料・人件費など</span> ${X(A('cost'))}<br>` : ''}
       <b><span>売上 ${X(sales)}</span>・<span>費用 ${X(costs)}</span></b></span>` : '';
   const flows = s.can && (s.flows || []).length ? `<b>仕入れ先・売り先</b><span>${s.flows.map(f => `<span>${f.k === 'buy' ? '←' : '→'} <span translate="no">${esc(f.peer)}</span> ${qG(f.g, f.q)} <small>（${f.km}km・${X(f.a)}）</small></span>`).join('<br>')}</span>` : '';
@@ -3536,15 +3758,18 @@ function scBlock(d) {
     ${prodSel || `<b>つくるもの</b><span>${what}</span>`}
     ${s.per_day != null ? `<b>1日の生産</b><span>${qtyS(s.per_day, GU(s.prod))}</span>` : ''}
     <b>在庫</b><span>${stock}</span>
+    ${s.rd ? `<b>バス・トラック</b><span><span>注文を受ける：1日に ${s.rd.capd}台まで</span>・<span>${s.rd.wait > 0 ? `待ち あと${s.rd.wait}時間` : '待ちなし'}</span><br>
+      <span>値段：定価の${Math.round((s.rd.lv || 0.9) * 100)}%</span> <small>（自分の注文は部品代 ${Math.round((s.rd.parts || 0.45) * 100)}%）</small></span>
+      ${s.can ? `<b>値段の水準</b><span><input type="range" min="40" max="150" step="5" value="${Math.round((s.rd.lv || 0.9) * 100)}" class="mp-sclv" style="width:55%;vertical-align:middle"> <b class="mp-sclvn">${Math.round((s.rd.lv || 0.9) * 100)}%</b> <button class="btn" data-sclv style="padding:2px 8px">決める</button></span>` : ''}` : ''}
     ${opRow}${impRow}${dayRows}${flows}</div>
     <p class="muted small" style="margin:2px 0 6px">${s.kind === 'raw' ? `<span>${s.prod === 'wheat' ? 'つくった小麦は、近くの製粉工場がトラックで買います（種・肥料などは値段の2割）。' : '船で仕入れた分（値段の6割）を、近くの工場がトラックで買います。'}</span>`
-      : '<span>材料は1時間ごとに、近くの工場・田畑・港の在庫からトラックで仕入れます（市場の値段＋運送費）。輸入のほうが安いとき・足りないときは輸入します。</span>'}<span>売れのこり（6時間分をこえる分）は市場へ（値段の85%）。</span>${s.prod === 'food' ? '<span>食品は近くのお店へ（人・会社が使っているお店には小売のもうけ）。</span>' : ''}${['car', 'elec'].includes(s.prod) ? '<span>できたものは市場へ（値段のまま）。</span>' : ''}<span>未払いがあると止まります。</span></p>`;
+      : '<span>材料は1時間ごとに、近くの工場・田畑・港の在庫からトラックで仕入れます（市場の値段＋運送費）。輸入のほうが安いとき・足りないときは輸入します。</span>'}<span>売れのこり（6時間分をこえる分）は市場へ（値段の85%）。</span>${s.prod === 'food' ? '<span>食品は近くのお店へ（人・会社が使っているお店には小売のもうけ）。</span>' : ''}${['car', 'elec'].includes(s.prod) ? '<span>できたものは市場へ（値段のまま）。</span>' : ''}${s.rd ? '<span>≡ →「車両と編成」でバス・トラックを注文するときに、この工場をえらべます（1台に、車両の重さの8割の鉄鋼を使います）。工場を動かしている名義の注文は、部品代と鉄鋼だけ。</span>' : ''}<span>自分の名義のトラック（バスの営業所に置く）があると、そのぶん運送費がかかりません。</span><span>未払いがあると止まります。</span></p>`;
 }
 function scBind(b, d, load) {
   const s = d.sc; if (!s || !s.can) return;
   const as = d.own_as || s.as || S.as, q = k => b.querySelector(k);
   const lv = q('.mp-sclv'); if (lv) { lv.oninput = () => { q('.mp-sclvn').textContent = lv.value + '%'; };
-    q('[data-sclv]').onclick = async () => { if (await api('mp_sc_set', { p_bld: d.id, p_prod: null, p_imp: null, p_lv: Number(lv.value) / 100, p_as: as }, s.kind === 'school' ? '授業料の水準を変えました' : '値段の水準を変えました')) load(); }; }
+    q('[data-sclv]').onclick = async () => { if (await api('mp_sc_set', { p_bld: d.id, p_prod: null, p_imp: null, p_lv: Number(lv.value) / 100, p_as: as }, s.use === 'school' || s.kind === 'school' ? '授業料の水準を変えました' : s.use === 'hotel' ? '宿泊料の水準を変えました' : s.kind === 'fac' ? '料金の水準を変えました' : '値段の水準を変えました')) load(); }; }
   const im = q('[data-scimp]'); if (im) im.onchange = async () => { if (await api('mp_sc_set', { p_bld: d.id, p_prod: null, p_imp: im.checked, p_lv: null, p_as: as }, '変えました')) load(); else im.checked = !im.checked; };
   const ps = q('[data-scprodset]'); if (ps) ps.onclick = async () => {
     const v = q('[data-scprod]').value;
