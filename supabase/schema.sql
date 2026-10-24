@@ -17521,8 +17521,9 @@ begin
                   (select round(100.0 * count(*) filter (where x.t_kind is not null or x.mode = 'self') / greatest(count(*), 1)) from mp_units x where x.bld = b.id),
                   case when pa.gov then 3 when coalesce(pa.own_u = u or pa.own_c = any(me_cs), false) then 2 else 1 end)), '[]'::jsonb)
                from mp_blds b join mp_parcels pa on pa.id = b.parcel where pa.bb && box(point(p_x0 * 5, p_y0 * 5), point(p_x1 * 5, p_y1 * 5))) end,
-    'places', (select coalesce(jsonb_agg(jsonb_build_object('id', p.id, 'k', p.k, 'n', p.name, 'x', p.x, 'y', p.y, 't', p.type, 'pop', p.pop, 'par', p.parent)), '[]'::jsonb)
-               from mp_places p where p.pt <@ b and p.k in ('pref', 'muni', 'ward', 'river', 'spot') and (p_lod < 2 or p.k in ('pref', 'muni'))),
+    'places', (select coalesce(jsonb_agg(jsonb_build_object('id', p.id, 'k', p.k, 'n', p.name, 'x', p.x, 'y', p.y, 't', p.type, 'pop', p.pop, 'par', p.parent)
+                  || case when p.k = 'island' then jsonb_build_object('sz', (p.extra ->> 'n')::int) else '{}'::jsonb end), '[]'::jsonb)   -- 島（t54k2）：sz＝陸のマスの数
+               from mp_places p where p.pt <@ b and p.k in ('pref', 'muni', 'ward', 'river', 'spot', 'island') and (p_lod < 2 or p.k in ('pref', 'muni'))),
     -- 町字の名前：[id, 種類, 名前, x, y]（町・大字は lod 1 から、丁目・字は lod 0）
     'chos', (select coalesce(jsonb_agg(jsonb_build_array(m.id, m.kind, m.name, m.x, m.y)), '[]'::jsonb)
                from mp_cho m where m.pt <@ b and m.gone is null and (p_lod = 0 or (p_lod = 1 and m.kind in ('cho', 'oaza')))),
@@ -20729,6 +20730,10 @@ begin
     'cho', case when b.id is not null then jsonb_build_object('id', b.id, 'kind', b.kind, 'name', b.name,
               'subs', (select count(*) from mp_cho where parent = b.id and gone is null)) end,
     'sub', case when a.id is not null then jsonb_build_object('id', a.id, 'kind', a.kind, 'name', a.name, 'num', a.num) end,
+    -- 島（t54k2）：このマスをふくむ島（囲む四角の中で、いちばん近いもの）
+    'isl', (select jsonb_build_object('id', i.id, 'name', i.name) from mp_places i where i.k = 'island'
+              and p_x between (i.extra -> 'bb' ->> 0)::int and (i.extra -> 'bb' ->> 2)::int and p_y between (i.extra -> 'bb' ->> 1)::int and (i.extra -> 'bb' ->> 3)::int
+              order by i.pt <-> point(p_x, p_y) limit 1),
     'cho_id', ck, 'text', _mp_addr(p_x, p_y, null, null) ->> 'text');
 end $$;
 -- マスの町字を変える（チャンクの k・kp を書きかえる）。tiles は [x0, y0, x1, y1, …]

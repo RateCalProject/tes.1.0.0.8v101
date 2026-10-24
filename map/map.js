@@ -531,15 +531,17 @@ function render() {
     g.strokeStyle = pass ? (asph ? '#7b7f86' : st.fill) : st.edge; g.lineWidth = pass ? w : w + 2; pathSeg(g, s); g.stroke();
   }
   if (asph) for (const s of roads) if (s.c === 'exp' && s.l) laneMarks(g, s, z);
-  // 建物（形・高さ）
-  if (z >= 4) drawBlds(g, it, z, v);
+  // 重なりの順（下から）：平らな建物（田畑・駐車場・広場）→ 車庫 → 系統 → 駅のホーム → 高さのある建物 → 境界線 → しるし（バス停・家・えらんだもの）→ 文字
+  const bs = z >= 4 ? bldsIn(it, v) : [];
+  if (bs.length) drawBlds(g, bs, z, 0);
+  for (const d of it.deps.values()) drawDepot(g, d, z);
+  if (S.routeHi) drawRouteHi(g, z, it);
+  for (const s of it.stas.values()) if (s.k !== 'bus') drawStation(g, s, z);
+  if (bs.length) drawBlds(g, bs, z, 1);
   // 境界線（県・市区町村・町字）
   if (z >= 1.2) drawBounds(g, z, v);
-  // 系統（めだたせる）
-  if (S.routeHi) drawRouteHi(g, z, it);
-  // 車庫・駅
-  for (const d of it.deps.values()) drawDepot(g, d, z);
-  for (const s of it.stas.values()) drawStation(g, s, z);
+  // バス停（しるし。建物にかくれないように）
+  for (const s of it.stas.values()) if (s.k === 'bus') drawBusStop(g, s, z);
   // 自分の住所（家のしるし。自分にだけ見える）
   if (S.boot && S.boot.home && z >= 1.2) drawHome(g, S.boot.home);
   // えらんだもの
@@ -549,19 +551,34 @@ function render() {
     if (p) { worldT(g); g.strokeStyle = '#d23'; g.lineWidth = 3 / z; g.stroke(p.edge); screenT(g); }
     else { const w = z / 5; g.strokeStyle = '#d23'; g.lineWidth = 2; g.strokeRect(sx(S.sel.x / 5), sy(S.sel.y / 5), Math.max(3, w), Math.max(3, w)); }
   }
-  // IC・JCT
+  // IC・JCT（点）
   if (z >= 2.2) for (const n of it.nodes.values()) {
     if (!n.n || (n.nk !== 'ic' && n.nk !== 'jct')) continue;
     const x = sx(n.fx), y = sy(n.fy); if (x < -40 || y < -20 || x > S.W + 40 || y > S.H + 20) continue;
     g.fillStyle = n.nk === 'jct' ? '#7a2fa8' : '#1f7a46'; g.beginPath(); g.arc(x, y, 4, 0, 6.3); g.fill();
-    if (z >= 3.5) label(g, n.n, x + 6, y - 6, { size: 11, color: n.nk === 'jct' ? '#5a1f80' : '#145a33', bg: 'rgba(255,255,255,.85)', left: true });
   }
-  // 地名
-  if (S.layer.label) drawPlaces(g, it, z);
+  // 文字（いちばん上）。だいじなものから置き、重なるものはあとから出さない
+  drawLabels(g, it, z, v, bs);
   // 道具の上がき
   if (S.drawTool) S.drawTool(g, z);
   // 方位と縮尺
   drawScale(g, z);
+}
+// 文字の層：駅 → IC・JCT → 施設のしるしと名前 → 目じるし → 車庫 → バス停 → 建物の名前 → 島 → 町字 → 市区町村・県・川 → 地番
+function drawLabels(g, it, z, v, bs) {
+  for (const s of it.stas.values()) if (s.k !== 'bus') staLabel(g, s, z);
+  if (z >= 3.5) for (const n of it.nodes.values()) {
+    if (!n.n || (n.nk !== 'ic' && n.nk !== 'jct')) continue;
+    const x = sx(n.fx), y = sy(n.fy); if (x < -40 || y < -20 || x > S.W + 40 || y > S.H + 20) continue;
+    label(g, n.n, x + 6, y - 6, { size: 11, color: n.nk === 'jct' ? '#5a1f80' : '#145a33', bg: 'rgba(255,255,255,.85)', left: true });
+  }
+  if (bs.length) bldMarks(g, bs, z);
+  if (S.layer.label) drawSpots(g, it, z);
+  if (z >= 4) for (const d of it.deps.values()) depLabel(g, d, z);
+  if (z >= 9) for (const s of it.stas.values()) if (s.k === 'bus') { const x = sx(s.fx), y = sy(s.fy), r = Math.max(3.5, 0.18 * z); if (x > -80 && y > -40 && x < S.W + 80 && y < S.H + 40) label(g, s.n, x, y - r - 8, { size: 11, color: '#164f99', bg: 'rgba(255,255,255,.85)' }); }
+  if (bs.length) bldNames(g, bs, z);
+  if (S.layer.label) drawPlaces(g, it, z);
+  if (S.layer.own && z >= 36) parcelLabels(g, it, v);
 }
 // 地図の座標（マス）で描くとき・画面にもどすとき
 function worldT(g) { const z = S.cam.z; g.setTransform(S.dpr * z, 0, 0, S.dpr * z, S.dpr * (S.W / 2 - S.cam.x * z), S.dpr * (S.H / 2 - S.cam.y * z)); }
@@ -584,7 +601,13 @@ function drawParcels(g, it, z, v) {
   }
   if (mark && mark.size) for (const p of vis) if (mark.has(p.id)) { g.strokeStyle = '#ff9800'; g.lineWidth = 3.5 / z; g.stroke(p.edge); }
   screenT(g);
-  if (z >= 36) for (const p of vis) label(g, p.ban, sx(p.lx), sy(p.ly), { size: 10, color: p.own === 3 ? '#444' : p.own === 2 ? '#1a3f8a' : '#7a4416' });
+}
+// 地番（文字の層のいちばん下）
+function parcelLabels(g, it, v) {
+  for (const p of it.parcels.values()) {
+    if (!(p.bb[2] >= v.x0 && p.bb[0] <= v.x1 && p.bb[3] >= v.y0 && p.bb[1] <= v.y1)) continue;
+    label(g, p.ban, sx(p.lx), sy(p.ly), { size: 10, color: p.own === 3 ? '#444' : p.own === 2 ? '#1a3f8a' : '#7a4416' });
+  }
 }
 // 境界線：県（太い一点鎖線）・市区町村（鎖線）・区（破線）・町／大字（点線）・丁目／字（細い点線）
 const BND_ST = { pref: { w: 3.2, c: 'rgba(80,40,110,.85)', d: [12, 4, 2, 4], z: 1.2 }, muni: { w: 2.2, c: 'rgba(90,50,120,.75)', d: [9, 4], z: 1.2 },
@@ -637,17 +660,26 @@ function drawRail(g, s, z) {
   g.setLineDash([]); g.lineCap = 'round';
   if (mine && z >= 10 && s.dbl) { g.strokeStyle = 'rgba(40,110,220,.35)'; g.lineWidth = 0.5 * z + 4; pathSeg(g, s); g.stroke(); }
 }
+// バス停のしるし（名前は文字の層で）
+function drawBusStop(g, s, z) {
+  if (z < 5) return;
+  const x = sx(s.fx), y = sy(s.fy);
+  if (x < -80 || y < -40 || x > S.W + 80 || y > S.H + 40) return;
+  const r = Math.max(3.5, 0.18 * z);
+  g.fillStyle = '#2a7de1'; g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.beginPath(); g.arc(x, y, r, 0, 6.3); g.fill(); g.stroke();
+  if (r >= 7) { g.fillStyle = '#fff'; g.font = `bold ${Math.round(r * 1.2)}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('B', x, y + 0.5); }
+}
+// 駅の名前（文字の層。ホームの上がわ。重なるときは下がわに）
+function staLabel(g, s, z) {
+  if (z < 1.6) return;
+  const x = sx(s.fx), y = sy(s.fy);
+  if (x < -80 || y < -40 || x > S.W + 80 || y > S.H + 40) return;
+  const Wd = Math.max(5, (0.22 * Math.max(1, s.tr) + 0.18) * z), o = { size: z >= 6 ? 13 : 11, bold: true, color: '#111', bg: 'rgba(255,255,255,.9)', border: s.mine ? '#1f5fbf' : '#555' };
+  if (!label(g, s.n, x, y - Wd / 2 - 10, o)) label(g, s.n, x, y + Wd / 2 + 10, o);
+}
 function drawStation(g, s, z) {
   const x = sx(s.fx), y = sy(s.fy);
   if (x < -80 || y < -40 || x > S.W + 80 || y > S.H + 40) return;
-  if (s.k === 'bus') {
-    if (z < 5) return;
-    const r = Math.max(3.5, 0.18 * z);
-    g.fillStyle = '#2a7de1'; g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.beginPath(); g.arc(x, y, r, 0, 6.3); g.fill(); g.stroke();
-    if (r >= 7) { g.fillStyle = '#fff'; g.font = `bold ${Math.round(r * 1.2)}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('B', x, y + 0.5); }
-    if (z >= 9) label(g, s.n, x, y - r - 8, { size: 11, color: '#164f99', bg: 'rgba(255,255,255,.85)' });
-    return;
-  }
   const L = Math.max(10, s.pl / 50 * z), Wd = Math.max(5, (0.22 * Math.max(1, s.tr) + 0.18) * z);
   g.save(); g.translate(x, y); g.rotate(s.a);
   g.fillStyle = '#ffffff'; g.strokeStyle = s.mine ? '#1f5fbf' : '#333'; g.lineWidth = 1.6;
@@ -664,7 +696,6 @@ function drawStation(g, s, z) {
       for (const lx of (L > 70 ? [-L / 2 + fs * 0.9, L / 2 - fs * 0.9] : [0])) g.fillText(String(k + 1), x + lx * ca - ly * sa, y + lx * sa + ly * ca + 0.5);
     }
   }
-  if (z >= 1.6) label(g, s.n, x, y - Wd / 2 - 10, { size: z >= 6 ? 13 : 11, bold: true, color: '#111', bg: 'rgba(255,255,255,.9)', border: s.mine ? '#1f5fbf' : '#555' });
 }
 // 車庫の大きさ：[長さ, はば, 線からのあき, 留置線の数]（マス）。'T400x6' は線路をなぞったもの（400m・6本）
 function depDim(k, sz) {
@@ -694,7 +725,12 @@ function drawDepot(g, d, z) {
       g.beginPath(); g.moveTo(sx(a[0] + (c2[0] - a[0]) * f), sy(a[1] + (c2[1] - a[1]) * f)); g.lineTo(sx(b[0] + (e2[0] - b[0]) * f), sy(b[1] + (e2[1] - b[1]) * f)); g.stroke();
     }
   }
-  if (z >= 4) { const cx = (P[0][0] + P[2][0]) / 2, cy = (P[0][1] + P[2][1]) / 2; label(g, d.n, sx(cx), sy(cy), { size: 11, color: '#222', bg: 'rgba(255,255,255,.8)' }); }
+}
+// 車庫の名前（文字の層）
+function depLabel(g, d, z) {
+  const P = depPoly(d), cx = (P[0][0] + P[2][0]) / 2, cy = (P[0][1] + P[2][1]) / 2, x = sx(cx), y = sy(cy);
+  if (x < -80 || y < -40 || x > S.W + 80 || y > S.H + 40) return;
+  label(g, d.n, x, y, { size: 11, color: '#222', bg: 'rgba(255,255,255,.8)' });
 }
 function drawRouteHi(g, z, it) {
   const R = S.routeHi; if (!R || !R.legs) return;
@@ -735,14 +771,31 @@ function label(g, text, x, y, o) {
   g.fillStyle = o.color || '#222'; g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillText(text, x0 + 3, y + 0.5);
   return true;
 }
+// しるし（地図記号）の場所をとる。ほかの文字・しるしと重なるときは false（描かない）
+function markBox(x, y, r) {
+  const b = [x - r - 1, y - r - 1, x + r + 1, y + r + 1];
+  for (const c of LBL) if (b[0] < c[2] && b[2] > c[0] && b[1] < c[3] && b[3] > c[1]) return false;
+  LBL.push(b); return true;
+}
 function roundRect(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
-function drawPlaces(g, it, z) {
-  // 目じるし（大学のキャンパスなど）：町字より先に（重なったら町字のほうを出さない）
+// 目じるし（大学のキャンパスなど）：町字より先に（重なったら町字のほうを出さない）
+function drawSpots(g, it, z) {
   if (z >= 4.5 && z < 24) for (const p of it.places.values()) {
     if (p.k !== 'spot') continue;
     const x = sx(p.x + 0.5), y = sy(p.y + 0.5);
     if (x < -120 || y < -30 || x > S.W + 120 || y > S.H + 30) continue;
     label(g, '🎓 ' + p.n, x, y, { size: 14, bold: true, color: '#7a3214', bg: 'rgba(255,250,240,.88)', border: 'rgba(122,50,20,.35)' });
+  }
+}
+function drawPlaces(g, it, z) {
+  // 島（小さい島は近づいたときだけ。島が小さく見えるときは島の下に）
+  for (const p of it.places.values()) {
+    if (p.k !== 'island') continue;
+    const r = Math.sqrt((p.sz || 1) / Math.PI) * z;   // 画面での島の半径（px）
+    if (r < 2.5) continue;
+    const x = sx(p.x + 0.5), y = sy(p.y + 0.5);
+    if (x < -120 || y < -40 || x > S.W + 120 || y > S.H + 40) continue;
+    label(g, p.n, x, r < 26 ? y + r + 9 : y, { size: (p.sz || 1) <= 3 ? 10 : r >= 26 ? 13 : 11, color: '#1f4f6e', bold: r >= 26 });
   }
   // 町字（町・大字は近いとき、丁目・字はもっと近いとき）
   if (z >= 5) {
@@ -3026,14 +3079,14 @@ function namesTool() {
     const d = await api('mp_admin_place_at', { p_x: tx, p_y: ty }); if (!d) return;
     const subName = d.sub ? (d.sub.kind === 'aza' ? '字' : '丁目') : null, choName = d.cho ? (d.cho.kind === 'oaza' ? '大字' : '町') : null;
     const rows = [[(d.pref && d.pref.type) || '県', d.pref, 'place', (d.pref && d.pref.type) || '県'], ['郡', d.gun, 'gun', '郡'], ['市区町村', d.muni, 'place', d.muni && d.muni.type], ['区', d.ward, 'place', '区'],
-                  [choName || '町', d.cho, 'cho', ''], [subName || '丁目', d.sub, 'cho', '']].filter(r => r[1]);
+                  [choName || '町', d.cho, 'cho', ''], [subName || '丁目', d.sub, 'cho', ''], ['島', d.isl, 'place', '']].filter(r => r[1]);
     sheet(`<h4>${esc(d.text || '')}</h4><div class="mp-kv">${rows.map((r, i) => `<b>${esc(r[0])}</b><span><b>${esc(r[1].name + (r[0] === '郡' ? '郡' : r[3] || ''))}</b>
         ${r[1].gen ? `<small class="muted">（もとは ${esc(r[1].gen)}）</small>` : ''} <button class="btn" style="padding:2px 8px" data-ren="${i}">名前を変える</button></span>`).join('')}</div>
       ${d.cho ? `<div class="mp-row"><button class="btn" data-split>この${esc(subName || choName)}を分ける</button>
         ${d.sub ? `<button class="btn" data-merge="sub">${esc(subName)}をとなりと合併</button>` : ''}<button class="btn" data-merge="cho">${esc(choName)}をとなりと合併</button></div>` : ''}`, s => {
       s.querySelectorAll('[data-ren]').forEach(b => b.onclick = async () => {
         const r = rows[Number(b.dataset.ren)];
-        const nm = prompt(T('新しい名前（「県」「市」「区」「郡」などはつけない）'), r[1].name); if (!nm) return;
+        const nm = prompt(r[0] === '島' ? T('島の新しい名前（「島」「岩」までつける）') : T('新しい名前（「県」「市」「区」「郡」などはつけない）'), r[1].name); if (!nm) return;
         if (await api('mp_admin_rename', { p_kind: r[2], p_id: r[1].id, p_name: nm }, '名前を変えました')) { for (const c of S.cells.values()) c.stale = true; show(tx, ty); }
       });
       const sp = s.querySelector('[data-split]'); if (sp) sp.onclick = () => {
@@ -3156,13 +3209,18 @@ function prepBld(a) {
   b.bb = [Math.min(x0 / 5, x0 / 5 + dx), Math.min(y0 / 5, y0 / 5 + dy), (x1 + 1) / 5, (y1 + 1) / 5];
   return b;
 }
-function drawBlds(g, it, z, v) {
+// 見えている建物（平らなもの（広場・駐車場・田畑）を先に。あとは北西から＝手前のものをあとで）
+function bldsIn(it, v) {
   const bs = [...it.blds.values()].filter(b => b.bb[2] >= v.x0 && b.bb[0] <= v.x1 && b.bb[3] >= v.y0 && b.bb[1] <= v.y1);
-  if (!bs.length) return;
-  bs.sort((a, b) => ((a.floors > 0) - (b.floors > 0)) || ((a.cy + a.cx * 0.3) - (b.cy + b.cx * 0.3)));   // 平らなもの（広場・駐車場・田畑）を先に。あとは北西から（手前のものをあとで）
+  bs.sort((a, b) => ((a.floors > 0) - (b.floors > 0)) || ((a.cy + a.cx * 0.3) - (b.cy + b.cx * 0.3)));
+  return bs;
+}
+// 建物を描く。pass 0：平らなもの（駅のホームより下）・1：高さのあるもの（ホームより上）
+function drawBlds(g, bs, z, pass) {
   const walls = S.b25 && z >= 9, selP = S.sel && S.sel.kind === 'cell' ? S.sel.parcel : null;   // 2D のときは壁を描かない（上から見たまま）
   worldT(g);
   for (const b of bs) {
+    if ((b.floors > 0) !== (pass === 1)) continue;
     const col = BK[b.kind] || ['#bbb', '#eee', '#ccc'];
     if (b.floors <= 0) {   // 田畑・駐車場・広場・グラウンド・緑地（平ら）
       const pave = b.kind === 'plaza' || b.kind === 'uave', wheat = b.kind === 'ufarm', grass = b.kind === 'ugreen' || b.kind === 'ufield';
@@ -3196,18 +3254,33 @@ function drawBlds(g, it, z, v) {
     if (selP && b.parcel === selP) { g.strokeStyle = '#d23'; g.lineWidth = 3 / z; g.stroke(walls && b.floors > 0 ? b.edge : b.baseEdge); }
   }
   screenT(g);
-  if (z >= 9 && z < 24) for (const b of bs) {
-    if (!SCH_K.has(b.kind) && !FAC_K.has(b.kind)) continue;
-    const X = sx(walls && b.floors > 0 ? b.lx : b.cx), Y = sy(walls && b.floors > 0 ? b.ly : b.cy);
-    if (SCH_K.has(b.kind)) {
+}
+// 建物の文字の場所（屋根の上）
+const bldPt = (b, z) => { const w = S.b25 && z >= 9 && b.floors > 0; return [sx(w ? b.lx : b.cx), sy(w ? b.ly : b.cy)]; };
+// 施設のしるし（学校の「文」・工場の歯車）。近いときは名前も（文字の層）
+function bldMarks(g, bs, z) {
+  if (z < 9 || z >= 24) return;
+  for (const b of bs.slice().reverse()) {
+    const sch = SCH_K.has(b.kind); if (!sch && !FAC_K.has(b.kind)) continue;
+    const [X, Y] = bldPt(b, z);
+    if (X < -60 || Y < -20 || X > S.W + 60 || Y > S.H + 20) continue;
+    if (!markBox(X, Y, 7)) continue;
+    if (sch) {
       g.font = 'bold 12px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
       g.lineWidth = 3; g.strokeStyle = 'rgba(255,255,255,.92)'; g.strokeText(SYM_SCH, X, Y); g.fillStyle = '#5a3d0c'; g.fillText(SYM_SCH, X, Y);
     } else gearSym(g, X, Y, 5);
+    if (z >= 14 && b.name) label(g, b.name, X + 10, Y, { size: 10, left: true, color: b.own === 2 ? '#123c8c' : b.own === 3 ? '#5a3d0c' : '#333' });
   }
-  if (z >= 24) for (const b of bs.slice().reverse()) {
+}
+// 建物の名前（とても近いとき）
+function bldNames(g, bs, z) {
+  if (z < 24) return;
+  for (const b of bs.slice().reverse()) {
     if (!b.name && b.floors <= 0) continue;
+    const [X, Y] = bldPt(b, z);
+    if (X < -100 || Y < -20 || X > S.W + 100 || Y > S.H + 20) continue;
     const t = (b.name || '') + (b.floors > 0 ? (b.name ? ' ' : '') + b.floors + 'F' : '');
-    label(g, t, sx(walls ? b.lx : b.cx), sy(walls ? b.ly : b.cy), { size: b.kind === 'cityhall' || b.kind === 'uhq' ? 12 : 10, color: b.own === 2 ? '#123c8c' : b.own === 3 ? '#5a3d0c' : '#333', bg: 'rgba(255,255,255,.82)' });
+    label(g, t, X, Y, { size: b.kind === 'cityhall' || b.kind === 'uhq' ? 12 : 10, color: b.own === 2 ? '#123c8c' : b.own === 3 ? '#5a3d0c' : '#333', bg: 'rgba(255,255,255,.82)' });
   }
 }
 // 工場の記号（歯車）
