@@ -3633,6 +3633,7 @@ async function openBld(bid) {
   const sel = new Set();
   const load = async () => {
     const d = await api('mp_bld_get', { p_bld: bid }); if (!d) return m.close();
+    if (d.mine && d.units.length === 1 && !sel.size) sel.add(d.units[0].id);   // 部屋が1つ（学校・施設・工場など）は、はじめからえらんでおく
     const floors = [...new Set(d.units.map(u => u.f))];
     const stat = u => u.tk === 'corp' ? `<span>${esc(u.tn || '')}</span><small>（テナント）</small>` : u.tk === 'npc' ? `<span>${esc(u.tn || '')}</span>`
       : u.mode === 'self' ? '<span>自分で使う</span>' : u.mode === 'corp' ? `<span class="mp-warn">テナント募集中</span>` : '<span class="muted">空き</span>';
@@ -3703,7 +3704,7 @@ function scBlock(d) {
   const s = d.sc; if (!s) return '';
   const ui = FAC_UI[s.use] || (s.kind === 'school' ? FAC_UI.school : FAC_UI.leisure);
   const opRow = s.gov ? '' : `<b>動かしている</b><span>${s.op ? `<span>${esc(s.who || '')}</span>` : s.npc ? `<span>${ui.npc}（入居募集）</span>`
-    : '<span class="mp-warn">止まっています</span> <small>（自分で使うか、会社が借りると動きます）</small>'}</span>`;
+    : `<span class="mp-warn">止まっています</span> <small>（自分で使うか、会社が借りると動きます）</small>${d.mine && d.units.length ? ' <button class="btn main" data-scself style="padding:2px 10px">自分で使う</button>' : ''}`}</span>`;
   if (s.kind === 'fac' || s.kind === 'school') {   // 施設（t54l）：学校・宿泊・医療と福祉・娯楽
     const k = (S.boot.sck || {})[s.grp] || {}, lv = Math.round((s.lv || 1) * 100), mo = new Date().getMonth() + 1;
     const ssn = (k.pk || k.op) ? `<b>季節</b><span>${k.pk ? `<span>多い月</span> ${monthsTxt(k.pk)} <small>（1.3倍）</small>` : ''}${k.pk && k.op ? '・' : ''}${k.op ? `<span>少ない月</span> ${monthsTxt(k.op)} <small>（0.75倍）</small>` : ''}${(k.pk || []).includes(mo) ? ' <b style="color:#23864a">いまは多い月</b>' : (k.op || []).includes(mo) ? ' <b style="color:#c0392b">いまは少ない月</b>' : ''}</span>` : '';
@@ -3768,6 +3769,11 @@ function scBlock(d) {
 function scBind(b, d, load) {
   const s = d.sc; if (!s || !s.can) return;
   const as = d.own_as || s.as || S.as, q = k => b.querySelector(k);
+  const sf = q('[data-scself]'); if (sf) sf.onclick = async () => {   // 止まっている施設・工場を、自分で使う（t54m）
+    sf.disabled = true;
+    const r = await api('mp_unit_set', { p_units: d.units.map(u => u.id), p_mode: 'self', p_ask: null, p_as: d.own_as || S.as }, '自分で使うようにしました');
+    sf.disabled = false; if (r) load();
+  };
   const lv = q('.mp-sclv'); if (lv) { lv.oninput = () => { q('.mp-sclvn').textContent = lv.value + '%'; };
     q('[data-sclv]').onclick = async () => { if (await api('mp_sc_set', { p_bld: d.id, p_prod: null, p_imp: null, p_lv: Number(lv.value) / 100, p_as: as }, s.use === 'school' || s.kind === 'school' ? '授業料の水準を変えました' : s.use === 'hotel' ? '宿泊料の水準を変えました' : s.kind === 'fac' ? '料金の水準を変えました' : '値段の水準を変えました')) load(); }; }
   const im = q('[data-scimp]'); if (im) im.onchange = async () => { if (await api('mp_sc_set', { p_bld: d.id, p_prod: null, p_imp: im.checked, p_lv: null, p_as: as }, '変えました')) load(); else im.checked = !im.checked; };

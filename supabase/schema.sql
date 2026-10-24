@@ -16573,6 +16573,8 @@ drop function if exists public.mp_train_save(bigint, bigint, int, text, text, in
 drop function if exists public.mp_train_bulk(bigint, int, int, int, int, text, text, bigint, text);
 drop function if exists public.mp_train_save(bigint, bigint, int, text, text, int, bigint, jsonb, bigint[], text, bigint, date);   -- t54e：連結（p_cpl）をたした
 drop function if exists public.mp_xfer_offer(bigint, text, bigint, text, text);   -- t54h：1両ずつの譲渡（p_cars）をたした
+drop function if exists public.mp_bld_options(bigint, text);   -- t54l：p_cat（分け方でしぼる）をたした
+drop function if exists public._mp_sc_school_calc(timestamptz);   -- t54m：p_only（その建物だけ数えなおす）をたした
 create table if not exists public.mp_places (
   id     text primary key,       -- p:県 m:市町村 w:区 d:町名 r:川
   k      text not null,          -- pref / muni / ward / dist / river / spot（目じるし：大学のキャンパスなど。t54i）
@@ -21648,6 +21650,7 @@ begin
   q := _mp_bld_check(p, p_kind, p_shape, p_floors, p_opt);
   perform _mp_pay(pa.pu, pa.pc, false, (q ->> 'cost')::bigint, 'bld', format('%s（%s㎡）を建てた', q ->> 'name', q ->> 'total_m2'));
   bid := _mp_bld_make(p.id, q, p_opt, p_name, (q ->> 'cost')::bigint, false);
+  perform _mp_sc_touch(bid);   -- 施設なら、客をすぐ数える（t54m）
   x0 := (p.bb[1])[0]; y0 := (p.bb[1])[1]; x1 := (p.bb[0])[0] - 1; y1 := (p.bb[0])[1] - 1;
   perform _mp_chg('land', null, 'set', box(point(_mp_t5(x0), _mp_t5(y0)), point(_mp_t5(x1) + 1, _mp_t5(y1) + 1)));
   return (q - 'plan') || jsonb_build_object('id', bid, 'bname', (select name from mp_blds where id = bid));
@@ -21795,6 +21798,7 @@ begin
      where id = x.id;
     n := n + 1;
   end loop;
+  perform _mp_sc_touch(z.bld) from (select distinct un.bld from mp_units un where un.id = any(p_units)) z;   -- 施設なら、客をすぐ数えなおす（t54m）
   return jsonb_build_object('n', n);
 end $$;
 -- 自社のオフィス（t54i）：自分（名義）の建物の部屋に、自分の別の会社をすぐ入れる。家賃は p_rent（1日。0 でもよい）。
@@ -21823,6 +21827,7 @@ begin
      where id = x.id;
     n := n + 1;
   end loop;
+  perform _mp_sc_touch(z.bld) from (select distinct un.bld from mp_units un where un.id = any(p_units)) z;   -- 施設なら、客をすぐ数えなおす（t54m）
   return jsonb_build_object('n', n, 'corp', tc.nm, 'rent', p_rent);
 end $$;
 -- テナント募集中の部屋（地図の範囲 p_box [x0, y0, x1, y1]（マス）か、ぜんぶ）。用途でしぼれる
@@ -21859,6 +21864,7 @@ begin
   select * into p from mp_parcels where id = b.parcel;
   if _mp_same(p.own_u, p.own_c, false, pa.pu, pa.pc, false) then raise exception '自分の建物です（「自分で使う」にしてください）'; end if;
   update mp_units set t_kind = 'corp', t_c = pa.pc, t_name = null, rent = x.ask, since = now() where id = x.id;
+  perform _mp_sc_touch(x.bld);   -- 施設なら、客をすぐ数えなおす（t54m）
   one := (select coalesce((pr ->> 'one')::boolean, false) from jsonb_array_elements(_mp_bld_presets()) pr where pr ->> 'k' = b.kind);
   who := coalesce(p.own_u, (select owner from companies where id = p.own_c));
   perform _notice(who, format('【国土】「%s」%sに%sが入居しました（家賃 1日 %s X）。', b.name, _mp_room(x.floor, x.no, one), pa.nm, _fmt(x.ask)));
@@ -21880,6 +21886,7 @@ begin
   if not owner_side and not (pa.pc is not null and pa.pc = x.t_c) then raise exception 'あなた（この名義）の部屋ではありません'; end if;
   select name, owner into cname, co from companies where id = x.t_c;
   update mp_units set t_kind = null, t_c = null, t_name = null, rent = 0, since = null where id = x.id;
+  perform _mp_sc_touch(x.bld);   -- 施設なら、客をすぐ数えなおす（t54m）
   one := (select coalesce((pr ->> 'one')::boolean, false) from jsonb_array_elements(_mp_bld_presets()) pr where pr ->> 'k' = b.kind);
   -- 自社のオフィス（建物の持ち主と同じ人の会社）だったときは、入居募集にもどす（知らせはなし）
   if co is not null and co = coalesce(p.own_u, (select owner from companies where id = p.own_c)) then
@@ -23062,15 +23069,16 @@ begin
   select * into x from mp_units u where u.bld = bid order by u.floor, u.no limit 1;
   if not found then return; end if;
   m2 := x.m2;
-  if b.built_at >= h - interval '1 hour' then return; end if;
+  if b.built_at >= h then return; end if;   -- 建てる前の計算では動かない（t54m：建ててすぐ動く。はじめの1時間は建ててからの分だけ。前は1時間待ち）
   if x.mode = 'self' and x.t_kind is null then ok := true; pu := p.own_u; pc := p.own_c;
   elsif x.t_kind = 'corp' and x.t_c is not null and x.since < h then ok := true; pc := x.t_c;
   elsif x.t_kind = 'npc' then npc := true;
   end if;
 end $$;
 
-/* ---------- 施設：利用する人（学校の生徒・宿泊客・患者・来場者）（1時間ごと） ---------- */
-create or replace function public._mp_sc_school_calc(h timestamptz) returns void
+/* ---------- 施設：利用する人（学校の生徒・宿泊客・患者・来場者）（1時間ごと） ----------
+   p_only：その建物だけ数えなおす（建てたとき・使い方を変えたとき。分けあうのは、まわりの施設の定員と） */
+create or replace function public._mp_sc_school_calc(h timestamptz, p_only bigint default null) returns void
 language plpgsql set search_path = public as $$
 declare kd jsonb := _mp_sc_kinds(); mo int := extract(month from h at time zone 'Asia/Tokyo')::int;
 begin
@@ -23095,14 +23103,14 @@ begin
       when exists (select 1 from mp_stations st where st.kind = 'bus' and st.x between (t.x - 10) * 100 and (t.x + 10) * 100 and st.y between (t.y - 10) * 100 and (t.y + 10) * 100
                      and (st.x / 100.0 - t.x) ^ 2 + (st.y / 100.0 - t.y) ^ 2 <= 100 and exists (select 1 from mp_routes r where r.ok and st.id = any(r.stops))) then 0.8
       else 0.5 end
-   where cap > 0;
+   where cap > 0 and (p_only is null or t.bld = p_only);
   -- 来る人：まわりの人 × わりあい ＋ 近くの駅の乗り降り × わりあい。駅で通えるか・まわりの建物の効果（fx）・季節
   update _scs t set pool = (_mp_catch(t.x, t.y, (kd -> t.grp ->> 'r')::real) * (kd -> t.grp ->> 'age')::real
                             + coalesce((kd -> t.grp ->> 'rs')::real, 0) * coalesce((select sum(f.flow) from _sflow f where f.sx between t.x - 15 and t.x + 15 and f.sy between t.y - 15 and t.y + 15
                                                                                      and (f.sx - t.x) ^ 2 + (f.sy - t.y) ^ 2 <= 225), 0))
                            * t.acc * greatest(0.1, 1 + t.fxv)
                            * case when coalesce(kd -> t.grp -> 'pk', '[]'::jsonb) @> to_jsonb(mo) then 1.3 when coalesce(kd -> t.grp -> 'op', '[]'::jsonb) @> to_jsonb(mo) then 0.75 else 1 end
-   where cap > 0;
+   where cap > 0 and (p_only is null or t.bld = p_only);
   -- 同じ種類の施設で分けあう（通える範囲の中の定員のわりあい）。人・会社の施設は、値段の水準が高いと減る。値段（1人・1日）：地価が高いと高い（loc の種類）
   update mp_sc s set st = jsonb_build_object('n', q.n, 'cap', q.cap, 'pool', round(q.pool), 'acc', q.acc, 'at', h, 'fee', round((kd -> q.grp ->> 'fee')::numeric * round(q.lv::numeric, 2) * q.locf))
     from (select t.bld, t.grp, t.lv, t.cap, t.pool, t.acc,
@@ -23110,9 +23118,19 @@ begin
                  case when t.cap = 0 then 0 else least(t.cap, floor(t.pool * t.cap
                    / greatest(1, (select sum(u.cap) from _scs u where u.grp = t.grp and u.cap > 0 and (u.x - t.x) ^ 2 + (u.y - t.y) ^ 2 <= ((kd -> t.grp ->> 'r')::real) ^ 2))
                    * power(case when t.ok and not t.gv then greatest(t.lv, 0.5) else 1 end, -1.5)))::int end n
-            from _scs t) q
+            from _scs t where p_only is null or t.bld = p_only) q
    where s.bld = q.bld;
   drop table if exists _scs; drop table if exists _sflow;
+end $$;
+-- 施設の客を、その建物だけすぐ数えなおす（t54m：建てたとき・使い方を変えたとき）。うまくいかなくても、1時間ごとの計算で数える
+create or replace function public._mp_sc_touch(bid bigint) returns void
+language plpgsql set search_path = public as $$
+begin
+  if not exists (select 1 from mp_sc where bld = bid and grp is not null) then return; end if;
+  begin
+    perform _mp_sc_school_calc(clock_timestamp(), bid);   -- 同じトランザクションで建てた建物も（built_at = now() より後の時刻で）
+  exception when others then raise warning 'mp sc touch %: %', bid, sqlerrm;
+  end;
 end $$;
 -- 駅・バス停のまわりの学校の生徒（乗る人に足す）。1つの学校のまわりに駅がいくつもあるときは分ける
 create or replace function public._mp_sc_riders(sx int, sy int, skind text, rr real) returns real
@@ -23143,10 +23161,11 @@ begin
   perform _mp_sc_school_calc(h);
   -- 施設の売上（人・会社が動かしている施設）：学校は授業料、宿泊は宿泊料、医療・福祉は診療報酬など、娯楽は入場料など
   for fa in select scx.bld, scx.grp, (scx.st ->> 'n')::int sn, coalesce((scx.st ->> 'fee')::numeric, (kd -> scx.grp ->> 'fee')::numeric) fee, kd -> scx.grp ->> 'use' fuse,
-                   coalesce(nullif(blx.name, ''), kd -> scx.grp ->> 'n') name, opx.pu, opx.pc
+                   coalesce(nullif(blx.name, ''), kd -> scx.grp ->> 'n') name, opx.pu, opx.pc,
+                   least(1, extract(epoch from h - blx.built_at) / 3600.0)::numeric fr      -- 建ててから1時間たっていなければ、その分だけ
               from mp_sc scx join mp_blds blx on blx.id = scx.bld, lateral _mp_sc_op(scx.bld, h) opx
              where scx.grp is not null and opx.ok and not opx.gv and coalesce((scx.st ->> 'n')::int, 0) > 0 loop
-    amt := round(fa.sn * fa.fee / 24);
+    amt := round(fa.sn * fa.fee / 24 * fa.fr);
     if amt > 0 then
       perform _mp_earn(fa.pu, fa.pc, false, amt, case when fa.fuse = 'school' then 'tuition' else 'fee' end,
                        format(case fa.fuse when 'school' then '授業料：%s（%s人）' when 'hotel' then '宿泊料：%s（%s人）' when 'hospital' then '診療報酬など：%s（%s人）'
@@ -23160,13 +23179,14 @@ begin
   create temp table _sco on commit drop as
     select scx.bld, scx.prod, scx.imp, scx.lv, scx.x, scx.y, blx.kind,
            coalesce(nullif(blx.name, ''), _mp_bld_pmap() -> blx.kind ->> 'n', '') name,
-           opx.pu, opx.pc, opx.m2 * coalesce((_mp_bld_pmap() -> blx.kind ->> 'rb')::numeric, 1) m2, _mp_sc_owes(opx.pu, opx.pc) owes
+           opx.pu, opx.pc, opx.m2 * coalesce((_mp_bld_pmap() -> blx.kind ->> 'rb')::numeric, 1) m2, _mp_sc_owes(opx.pu, opx.pc) owes,
+           least(1, extract(epoch from h - blx.built_at) / 3600.0)::numeric fr      -- 建ててから1時間たっていなければ、その分だけつくる
       from mp_sc scx join mp_blds blx on blx.id = scx.bld, lateral _mp_sc_op(scx.bld, h) opx
      where scx.prod is not null and rc ? scx.prod and opx.ok and not opx.gv;
 
   -- 1) つくる（材料の在庫の分だけ。田畑・港は材料なし）
   for fa in select * from _sco o where o.prod <> 'railcar' and not o.owes order by o.bld loop
-    mk := (rc -> fa.prod ->> 'r')::numeric * fa.m2 / 24;
+    mk := (rc -> fa.prod ->> 'r')::numeric * fa.m2 / 24 * fa.fr;
     for gk, kq in select e.key, e.value::text::numeric from jsonb_each(rc -> fa.prod -> 'in') e loop
       have := coalesce((select stk.qty from mp_stock stk where stk.bld = fa.bld and stk.good = gk), 0);
       mk := least(mk, have / kq);
@@ -23340,7 +23360,7 @@ begin
   if s.bld is null then return o || jsonb_build_object('kind', 'none'); end if;
   -- 施設（学校・宿泊・医療と福祉・娯楽）
   if s.grp is not null then
-    return o || jsonb_build_object('kind', 'fac', 'use', kd -> s.grp ->> 'use', 'grp', s.grp, 'cap', coalesce((s.st ->> 'cap')::int, floor(op.m2 / (kd -> s.grp ->> 'spp')::real)::int),
+    return o || jsonb_build_object('kind', 'fac', 'use', kd -> s.grp ->> 'use', 'grp', s.grp, 'cap', coalesce(nullif((s.st ->> 'cap')::int, 0), floor(op.m2 / (kd -> s.grp ->> 'spp')::real)::int),   -- 止まっているときも、建物の定員（t54m）
       'n', coalesce((s.st ->> 'n')::int, 0), 'pool', (s.st ->> 'pool')::int, 'acc', (s.st ->> 'acc')::real, 'lv', s.lv,
       'fee', coalesce((s.st ->> 'fee')::numeric, round((kd -> s.grp ->> 'fee')::numeric * round(s.lv::numeric, 2))),
       'day', case when can then (select coalesce(sum(l.amt), 0) from mp_sclog l where l.bld = bid and l.k = 'fee' and l.at > now() - interval '24 hours') end,
@@ -23642,23 +23662,23 @@ begin
             '_mp_pub_cells','_mp_pub_of','_mp_rail_path','_mp_rate','_mp_renet','_mp_resample','_mp_resched','_mp_rev',
             '_mp_road_mul','_mp_road_v','_mp_road_w','_mp_room','_mp_route_catch','_mp_route_sta','_mp_route_uses','_mp_routes_fix',
             '_mp_run','_mp_run_check','_mp_run_mark','_mp_same','_mp_sc_info','_mp_sc_init','_mp_sc_kinds','_mp_sc_op',
-            '_mp_sc_owes','_mp_sc_recipes','_mp_sc_riders','_mp_sc_school_calc','_mp_sc_tick_hour','_mp_seg_blocked','_mp_seg_cells_arr','_mp_seg_chain',
-            '_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_sta_trk','_mp_struct_cells',
-            '_mp_sub','_mp_t49_from_tiles','_mp_t5','_mp_ters','_mp_thin','_mp_thru_link','_mp_thru_ok','_mp_tick',
-            '_mp_tick_day','_mp_tick_hour','_mp_tiles','_mp_tmul','_mp_today','_mp_train_calc','_mp_train_json','_mp_train_times',
-            '_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim','_mp_vruns','_mp_world','_mp_zname','_mp_zone_rule',
-            'mp_admin_cho_merge','mp_admin_cho_split','mp_admin_lvset','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state','mp_admin_zone',
-            'mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set','mp_boot',
-            'mp_car_log','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_gone','mp_cars_list','mp_cho_get',
-            'mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia','mp_dia_undo','mp_form_del','mp_form_order','mp_form_set',
-            'mp_home_clear','mp_home_get','mp_home_set','mp_kinds_list','mp_kinds_set','mp_land_buy','mp_land_decide','mp_land_req',
-            'mp_land_req_del','mp_land_reqs','mp_ledger_days','mp_ledger_page','mp_makers','mp_op_del','mp_op_export','mp_op_import',
-            'mp_op_save','mp_ops_list','mp_parcel_buy','mp_parcel_merge','mp_parcel_rent','mp_parcel_sell','mp_parcel_split','mp_poll',
-            'mp_route_del','mp_route_pat','mp_route_save','mp_routes_list','mp_sc_list','mp_sc_set','mp_seg_build','mp_seg_del',
-            'mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_speed','mp_seg_split','mp_spot','mp_sta_build','mp_sta_edit',
-            'mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list','mp_thru_req','mp_train_autoform',
-            'mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market','mp_unit_mine','mp_unit_own',
-            'mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer') loop
+            '_mp_sc_owes','_mp_sc_recipes','_mp_sc_riders','_mp_sc_school_calc','_mp_sc_tick_hour','_mp_sc_touch','_mp_seg_blocked','_mp_seg_cells_arr',
+            '_mp_seg_chain','_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_sta_trk',
+            '_mp_struct_cells','_mp_sub','_mp_t49_from_tiles','_mp_t5','_mp_ters','_mp_thin','_mp_thru_link','_mp_thru_ok',
+            '_mp_tick','_mp_tick_day','_mp_tick_hour','_mp_tiles','_mp_tmul','_mp_today','_mp_train_calc','_mp_train_json',
+            '_mp_train_times','_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim','_mp_vruns','_mp_world','_mp_zname',
+            '_mp_zone_rule','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_lvset','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state',
+            'mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set',
+            'mp_boot','mp_car_log','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_gone','mp_cars_list',
+            'mp_cho_get','mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia','mp_dia_undo','mp_form_del','mp_form_order',
+            'mp_form_set','mp_home_clear','mp_home_get','mp_home_set','mp_kinds_list','mp_kinds_set','mp_land_buy','mp_land_decide',
+            'mp_land_req','mp_land_req_del','mp_land_reqs','mp_ledger_days','mp_ledger_page','mp_makers','mp_op_del','mp_op_export',
+            'mp_op_import','mp_op_save','mp_ops_list','mp_parcel_buy','mp_parcel_merge','mp_parcel_rent','mp_parcel_sell','mp_parcel_split',
+            'mp_poll','mp_route_del','mp_route_pat','mp_route_save','mp_routes_list','mp_sc_list','mp_sc_set','mp_seg_build',
+            'mp_seg_del','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_speed','mp_seg_split','mp_spot','mp_sta_build',
+            'mp_sta_edit','mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list','mp_thru_req',
+            'mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market','mp_unit_mine',
+            'mp_unit_own','mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
       execute format('revoke all on function %s from authenticated', f.sig);
