@@ -17137,24 +17137,24 @@ insert into public.mp_types(code, series, label, role, face, num_from, num_to, l
 on conflict (code) do nothing;
 -- t54o：フェリー（船）。港は「フェリーターミナル」の建物につく（線 seg なし・bld）。航路（系統 kind = 'ship'）は海の上の折れ線（legs の w）
 alter table public.mp_stations drop constraint if exists mp_stations_kind_check;
-alter table public.mp_stations add constraint mp_stations_kind_check check (kind in ('rail', 'bus', 'ship'));
+alter table public.mp_stations add constraint mp_stations_kind_check check (kind in ('rail', 'bus', 'ship', 'air'));
 alter table public.mp_stations alter column seg drop not null;
 alter table public.mp_stations add column if not exists bld bigint references public.mp_blds(id) on delete cascade;
 alter table public.mp_stations drop constraint if exists mp_stations_ship_check;
-alter table public.mp_stations add constraint mp_stations_ship_check check ((kind = 'ship' and bld is not null) or (kind <> 'ship' and seg is not null));
+alter table public.mp_stations add constraint mp_stations_ship_check check ((kind in ('ship', 'air') and bld is not null) or (kind not in ('ship', 'air') and seg is not null));
 create index if not exists mp_stations_bld on public.mp_stations (bld) where bld is not null;
 alter table public.mp_depots drop constraint if exists mp_depots_kind_check;
-alter table public.mp_depots add constraint mp_depots_kind_check check (kind in ('rail', 'bus', 'ship'));
+alter table public.mp_depots add constraint mp_depots_kind_check check (kind in ('rail', 'bus', 'ship', 'air'));
 alter table public.mp_depots alter column seg drop not null;
 alter table public.mp_depots add column if not exists bld bigint references public.mp_blds(id) on delete cascade;
 alter table public.mp_depots drop constraint if exists mp_depots_ship_check;
-alter table public.mp_depots add constraint mp_depots_ship_check check ((kind = 'ship' and bld is not null) or (kind <> 'ship' and seg is not null));
+alter table public.mp_depots add constraint mp_depots_ship_check check ((kind in ('ship', 'air') and bld is not null) or (kind not in ('ship', 'air') and seg is not null));
 create index if not exists mp_depots_bld on public.mp_depots (bld) where bld is not null;
 alter table public.mp_routes drop constraint if exists mp_routes_kind_check;
-alter table public.mp_routes add constraint mp_routes_kind_check check (kind in ('rail', 'bus', 'ship'));
+alter table public.mp_routes add constraint mp_routes_kind_check check (kind in ('rail', 'bus', 'ship', 'air'));
 alter table public.mp_routes add column if not exists bb box;          -- 航路の範囲（地図に航路を描く）
 alter table public.mp_ops drop constraint if exists mp_ops_kind_check;
-alter table public.mp_ops add constraint mp_ops_kind_check check (kind in ('rail', 'bus', 'ship'));
+alter table public.mp_ops add constraint mp_ops_kind_check check (kind in ('rail', 'bus', 'ship', 'air'));
 create table if not exists public.mp_isltile (       -- 島のマス（どの島か）。本土のマスはない（海をこえる荷物を見る）
   x int not null, y int not null, isl text not null,
   primary key (x, y)
@@ -17169,6 +17169,30 @@ insert into public.mp_types(code, series, label, role, face, num_from, num_to, l
   ('FM80', 'SHIP80', 'FM80', 'Ship', '', 1, 999, 110, 700, 450, 3500, 7400, 0, true, 33, 0.12, 0.15, false, true, true, true, 4500000000, 900000, 700, '1980年ごろの中型フェリー（トラック・車 約50台・600t）', 132, 600),
   ('FL80', 'SHIP80', 'FL80', 'Ship', '', 1, 999, 170, 1100, 800, 9000, 19000, 0, true, 41, 0.1, 0.12, false, true, true, true, 11000000000, 2200000, 700, '1980年ごろの大型フェリー（長距離。トラック 約100台・1,600t・寝台つき）', 133, 1600),
   ('JF80', 'SHIP80', 'JF80', 'Ship', '', 1, 999, 27, 260, 260, 165, 5600, 0, true, 80, 0.6, 0.8, false, true, true, true, 2800000000, 560000, 700, '1980年ごろの高速船（ジェットフォイル。とても速いが車はのせられない・波に弱い）', 134, 0)
+on conflict (code) do nothing;
+-- t54p：航空①（空港・旅客機・路線）。空港は建物（空港のプリセット）につく乗り場（kind = 'air'。plat は滑走路の長さ m・tracks はゲートの数）と駐機場（mp_depots kind = 'air'）
+alter table public.mp_stations drop constraint if exists mp_stations_kind_check;
+alter table public.mp_stations add constraint mp_stations_kind_check check (kind in ('rail', 'bus', 'ship', 'air'));
+alter table public.mp_stations drop constraint if exists mp_stations_ship_check;
+alter table public.mp_stations add constraint mp_stations_ship_check check ((kind in ('ship', 'air') and bld is not null) or (kind not in ('ship', 'air') and seg is not null));
+alter table public.mp_depots drop constraint if exists mp_depots_kind_check;
+alter table public.mp_depots add constraint mp_depots_kind_check check (kind in ('rail', 'bus', 'ship', 'air'));
+alter table public.mp_depots drop constraint if exists mp_depots_ship_check;
+alter table public.mp_depots add constraint mp_depots_ship_check check ((kind in ('ship', 'air') and bld is not null) or (kind not in ('ship', 'air') and seg is not null));
+alter table public.mp_routes drop constraint if exists mp_routes_kind_check;
+alter table public.mp_routes add constraint mp_routes_kind_check check (kind in ('rail', 'bus', 'ship', 'air'));
+alter table public.mp_ops drop constraint if exists mp_ops_kind_check;
+alter table public.mp_ops add constraint mp_ops_kind_check check (kind in ('rail', 'bus', 'ship', 'air'));
+alter table public.mp_types add column if not exists rwy int;   -- 旅客機：離着陸にいる滑走路の長さ（m）
+insert into public.mp_series(code, name, kind, note, ord) values
+  ('AIR80', '1980年ごろの旅客機', 'air', '1980年ごろの性能。空港の駐機場に置く。離着陸には、それぞれの滑走路の長さがいる', 140)
+on conflict (code) do nothing;
+insert into public.mp_types(code, series, label, role, face, num_from, num_to, len, cap, seats, mass, power, panto, cab, vmax, acc, dec, elec, heat, ac, toilet, price, upkeep, life, note, ord, load, rwy) values
+  ('CP19', 'AIR80', 'CP19', 'Air', '', 1, 999, 16, 19, 19, 6, 900, 0, true, 300, 1, 1, false, true, true, false, 600000000, 120000, 700, '1980年ごろのコミューター機（19席・プロペラ。短い滑走路でも飛べる）', 140, 0, 800),
+  ('TP60', 'AIR80', 'TP60', 'Air', '', 1, 999, 26, 60, 60, 25, 4500, 0, true, 470, 1, 1, false, true, true, true, 2500000000, 450000, 700, '1980年ごろのプロペラ旅客機（60席。地方の空港むき）', 141, 0, 1200),
+  ('NJ130', 'AIR80', 'NJ130', 'Air', '', 1, 999, 30, 130, 130, 52, 14000, 0, true, 780, 1, 1, false, true, true, true, 4000000000, 800000, 700, '1980年ごろの小型ジェット旅客機（130席）', 142, 0, 1800),
+  ('WJ280', 'AIR80', 'WJ280', 'Air', '', 1, 999, 54, 280, 280, 140, 40000, 0, true, 850, 1, 1, false, true, true, true, 12000000000, 2200000, 700, '1980年ごろの中型ワイドボディ機（280席・通路2本）', 143, 0, 2300),
+  ('JB500', 'AIR80', 'JB500', 'Air', '', 1, 999, 70, 500, 500, 330, 80000, 0, true, 900, 1, 1, false, true, true, true, 25000000000, 4500000, 700, '1980年ごろの大型ジェット旅客機（ジャンボ。500席。長い滑走路がいる）', 144, 0, 2800)
 on conflict (code) do nothing;
 alter table public.mp_chunks enable row level security;
 alter table public.mp_places enable row level security;
@@ -17232,6 +17256,9 @@ language sql stable set search_path = public as $$
       --   港に着く・出るのにかかる時間（秒）・造船所（延床1㎡で1日につくれる船の重さ t・鉄鋼は船の重さの何倍））
       'g_ship', 0.15, 'catch_ship', 40, 'ship_fare', 300, 'ship_km', 25, 'ferry_t', 400, 'ferry_tkm', 30, 'up_port', 50000, 'ship_dock', 600,
       'sy_tpd', 0.02, 'sy_steel', 0.3
+    ) || jsonb_build_object(
+      -- t54p：航空（乗る人のわりあい・空港のまわり（マス）・運賃（はじめ＋1km）・空港の維持費（ゲート2つ・1日）・離着陸・地上走行の時間（秒））
+      'g_air', 0.01, 'catch_air', 200, 'air_fare', 8000, 'air_km', 60, 'up_air', 200000, 'air_ovh', 1500
     )) ->> k)::numeric)
 $$;
 create or replace function public._mp_ok(u uuid) returns void
@@ -17594,14 +17621,14 @@ begin
                   'tk', case when s.kind = 'rail' then _mp_sta_trk(s) end,
                   'mine', coalesce(s.own_u = u or s.own_c = any(me_cs), false), 'o', case when s.own_u is not null then 'u:' || s.own_u else 'c:' || s.own_c end,
                   'rt', (select coalesce(jsonb_agg(jsonb_build_object('id', ro.id, 'c', ro.color, 'n', ro.name)), '[]'::jsonb) from mp_routes ro where s.id = any(ro.stops)))), '[]'::jsonb)
-               from mp_stations s where s.x between (p_x0 - 5) * 100 and (p_x1 + 5) * 100 and s.y between (p_y0 - 5) * 100 and (p_y1 + 5) * 100 and (p_lod < 2 or s.kind = 'rail')),
+               from mp_stations s where s.x between (p_x0 - 5) * 100 and (p_x1 + 5) * 100 and s.y between (p_y0 - 5) * 100 and (p_y1 + 5) * 100 and (p_lod < 2 or s.kind in ('rail', 'air'))),
     'deps', (select coalesce(jsonb_agg(jsonb_build_object('id', d.id, 'k', d.kind, 'seg', d.seg, 'at', d.at, 'side', d.side, 'sz', d.size, 'x', d.x, 'y', d.y, 'a', d.ang, 'n', d.name, 'cap', d.cap, 'b', d.bld,
                   'mine', coalesce(d.own_u = u or d.own_c = any(me_cs), false))), '[]'::jsonb)
                from mp_depots d where d.x between (p_x0 - 13) * 100 and (p_x1 + 13) * 100 and d.y between (p_y0 - 13) * 100 and (p_y1 + 13) * 100 and p_lod < 2),
     -- 航路（t54o）：海の上の折れ線（区間ごと。1/100 マス）
-    'lanes', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'c', r.color, 'n', r.name, 'ok', r.ok, 'mine', coalesce(r.own_u = u or r.own_c = any(me_cs), false),
+    'lanes', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'k', r.kind, 'c', r.color, 'n', r.name, 'ok', r.ok, 'mine', coalesce(r.own_u = u or r.own_c = any(me_cs), false),
                   'w', (select coalesce(jsonb_agg(l -> 'w'), '[]'::jsonb) from jsonb_array_elements(r.legs) l))), '[]'::jsonb)
-               from mp_routes r where r.kind = 'ship' and r.bb && b),
+               from mp_routes r where r.kind in ('ship', 'air') and r.bb && b),   -- t54p：空の路線も
     -- 筆：[id, 行ごとの区画のならび [y, x0, x1, …], 1 他人・2 自分・3 国, 売り出し, 建物, 地番, 持ち主のキー]
     'parcels', case when p_lod > 0 then '[]'::jsonb else (select coalesce(jsonb_agg(jsonb_build_array(pa.id,
                   (select jsonb_agg(v order by rn.y, rn.x0, u.o) from (
@@ -18162,6 +18189,7 @@ begin
   me_cs := array(select id from companies where owner = u);
   if not coalesce(st.own_u = u or st.own_c = any(me_cs) or _is_admin(u), false) then raise exception 'あなたの駅ではありません'; end if;
   if p_del and st.kind = 'ship' then raise exception '港の乗り場は、フェリーターミナルの建物をこわすとなくなります'; end if;   -- t54o
+  if p_del and st.kind = 'air' then raise exception '空港の乗り場は、空港の建物をこわすとなくなります'; end if;   -- t54p
   if p_del then
     -- 乗り入れの許可がなくなった他社の系統（走れない）は、気にしない
     if exists (select 1 from mp_routes r where p_id = any(r.stops) and _mp_thru_ok(r.own_u, r.own_c, st.own_u, st.own_c)) then raise exception 'この駅を使っている系統があります（系統から外してから）'; end if;
@@ -18183,7 +18211,7 @@ declare u uuid := _me(); st mp_stations; me_cs int[];
 begin
   perform _mp_ok(u);
   select * into st from mp_stations where id = p_id for update;
-  if not found or st.kind not in ('bus', 'ship') then raise exception 'バス停・港が見つかりません'; end if;
+  if not found or st.kind not in ('bus', 'ship', 'air') then raise exception 'バス停・港・空港が見つかりません'; end if;
   me_cs := array(select id from companies where owner = u);
   if not coalesce(st.own_u = u or st.own_c = any(me_cs), false) then raise exception 'あなたのバス停・港ではありません'; end if;
   if p_lend is not null and (p_lend < 0 or p_lend > 100000000) then raise exception '使用料は0〜1億 X にしてください'; end if;
@@ -18290,6 +18318,7 @@ begin
   me_cs := array(select id from companies where owner = u);
   if not coalesce(d.own_u = u or d.own_c = any(me_cs) or _is_admin(u), false) then raise exception 'あなたの車庫ではありません'; end if;
   if p_del and d.kind = 'ship' then raise exception '港の船の置き場は、フェリーターミナルの建物をこわすとなくなります'; end if;   -- t54o
+  if p_del and d.kind = 'air' then raise exception '空港の駐機場は、空港の建物をこわすとなくなります'; end if;   -- t54p
   if p_del then
     if exists (select 1 from mp_cars where depot = p_id) then raise exception '車籍のある車両がいます（転属か廃車にしてから）'; end if;
     delete from mp_occ where what = 'dep' and ref = p_id;
@@ -18331,8 +18360,8 @@ declare r record; acc real; rail boolean;
 begin
   select count(*) n, sum(t.len) len, sum(t.cap) cap, sum(t.seats) seats, sum(t.mass) mass, sum(t.power) pw, min(t.vmax) vmax, min(t.dec) dcc,
          min(t.acc) bacc, bool_or(t.elec) elec, bool_and(c.ac) ac, bool_and(c.heat) heat, bool_or(c.toilet) toilet, min(c.cond) cond,
-         bool_or(c.busy_until > now()) busy, min(t.series) series, bool_and(t.role not in ('Bus', 'Truck', 'Ship')) israil, sum(t.upkeep) upkeep,
-         bool_or(t.role = 'Ship') isship, sum(t.load) load
+         bool_or(c.busy_until > now()) busy, min(t.series) series, bool_and(t.role not in ('Bus', 'Truck', 'Ship', 'Air')) israil, sum(t.upkeep) upkeep,
+         bool_or(t.role = 'Ship') isship, sum(t.load) load, bool_or(t.role = 'Air') isair, max(t.rwy) rwy
     into r from mp_cars c join mp_types t on t.code = c.type where c.form = fid;
   if r.n = 0 then return null; end if;
   rail := r.israil;
@@ -18341,7 +18370,7 @@ begin
   return jsonb_build_object('n', r.n, 'len', r.len, 'cap', r.cap, 'seats', r.seats, 'mass', round(r.mass::numeric, 1), 'kw', r.pw,
     'acc', round(acc::numeric, 2), 'dec', r.dcc, 'vmax', r.vmax, 'elec', r.elec, 'ac', r.ac, 'heat', r.heat, 'toilet', r.toilet,
     'cond', round(r.cond::numeric), 'busy', coalesce(r.busy, false), 'series', r.series, 'rail', rail, 'upkeep', r.upkeep,
-    'ship', coalesce(r.isship, false), 'load', coalesce(r.load, 0));
+    'ship', coalesce(r.isship, false), 'load', coalesce(r.load, 0), 'air', coalesce(r.isair, false), 'rwy', r.rwy);
 end $$;
 -- 編成のきまりを見る（形式の列。先頭から順に。よければ null、だめならわけ）
 create or replace function public._mp_form_rule_t(tps text[]) returns text
@@ -18353,6 +18382,7 @@ begin
   select count(*) into nbus from unnest(tps) x join mp_types t on t.code = x where t.role = 'Bus';
   if nbus > 0 then return case when n = 1 then null else 'バスは1台ずつです' end; end if;
   if exists (select 1 from unnest(tps) x join mp_types t on t.code = x where t.role = 'Ship') then return case when n = 1 then null else '船は1隻ずつです' end; end if;
+  if exists (select 1 from unnest(tps) x join mp_types t on t.code = x where t.role = 'Air') then return case when n = 1 then null else '飛行機は1機ずつです' end; end if;
   if n > 16 then return '1編成は16両までです'; end if;
   select count(distinct t.series) into ns from unnest(tps) x join mp_types t on t.code = x;
   if ns > 1 then return 'ちがう系列の車両はつなげません'; end if;
@@ -18407,9 +18437,14 @@ begin
   if not found then raise exception 'その形式は注文できません'; end if;
   if p_n < 1 or p_n > 20 then raise exception '一度に1〜20両です'; end if;
   if t.role = 'Ship' and p_n > 4 then raise exception '船は一度に4隻までです'; end if;
+  if t.role = 'Air' and p_n > 4 then raise exception '飛行機は一度に4機までです'; end if;
   select * into d from mp_depots where id = p_depot;
   if not found or not _mp_same(d.own_u, d.own_c, false, pa.pu, pa.pc, false) then raise exception '車籍を置く車庫をえらんでください（この名義の車庫）'; end if;
-  if _mp_role_kind(t.role) <> d.kind then raise exception '%', case when t.role = 'Ship' then '船は港（フェリーターミナル）に置きます' when d.kind = 'ship' then '港に置けるのは船だけです' when t.role = 'Truck' then 'トラックは営業所に置きます' when t.role = 'Bus' then 'バスは営業所に置きます' else '電車は車両基地に置きます' end; end if;
+  if _mp_role_kind(t.role) <> d.kind then raise exception '%', case when t.role = 'Ship' then '船は港（フェリーターミナル）に置きます' when t.role = 'Air' then '飛行機は空港の駐機場に置きます'
+    when d.kind = 'ship' then '港に置けるのは船だけです' when d.kind = 'air' then '空港に置けるのは飛行機だけです' when t.role = 'Truck' then 'トラックは営業所に置きます' when t.role = 'Bus' then 'バスは営業所に置きます' else '電車は車両基地に置きます' end; end if;
+  if t.role = 'Air' and coalesce(t.rwy, 0) > coalesce((select s.plat from mp_stations s where s.bld = d.bld and s.kind = 'air'), 0) then   -- 滑走路（t54p）
+    raise exception '「%」の滑走路（%m）では、%は離着陸できません（%m以上いります）', d.name, (select s.plat from mp_stations s where s.bld = d.bld and s.kind = 'air'), t.label, t.rwy;
+  end if;
   select count(*) into have from mp_cars where depot = p_depot;
   if have + p_n > d.cap then raise exception '車庫がいっぱいです（%両まで・いま%両）', d.cap, have; end if;
   k := _mp_okey(pa.pu, pa.pc);
@@ -18417,7 +18452,7 @@ begin
   s := coalesce(s, 0);
   if t.num_from + s + p_n - 1 > t.num_to then raise exception 'この形式の車番がいっぱいです（%〜%）', t.num_from, t.num_to; end if;
   cost := t.price * p_n;
-  hrs := case when t.role in ('Bus', 'Truck') then 3 when t.role = 'Ship' then 24 else 6 end;   -- 船は国のメーカーで24時間（t54o）
+  hrs := case when t.role in ('Bus', 'Truck') then 3 when t.role = 'Ship' then 24 when t.role = 'Air' then 48 else 6 end;   -- 船は国のメーカーで24時間（t54o）・飛行機は48時間（t54p）
   if p_maker is not null then   -- 鉄道車両工場（払い・鉄鋼はここで）
     mk := _mp_maker_order(p_maker, pa.pu, pa.pc, array_fill(p_type, array[p_n]), p_dry);
     cost := (mk ->> 'cost')::bigint; hrs := (mk ->> 'hours')::int;
@@ -18426,7 +18461,7 @@ begin
     return jsonb_build_object('cost', cost, 'nums', (select jsonb_agg(_mp_carnum(t, t.num_from + s + i)) from generate_series(0, p_n - 1) i), 'hours', hrs, 'upkeep', t.upkeep * p_n,
                               'maker', mk ->> 'maker', 'self', mk -> 'self', 'steel', mk -> 'steel');
   end if;
-  if p_maker is null then perform _mp_pay(pa.pu, pa.pc, false, cost, 'car', format(case when t.role = 'Ship' then '%s を %s隻 注文' else '%s を %s両 注文' end, t.label, p_n)); end if;
+  if p_maker is null then perform _mp_pay(pa.pu, pa.pc, false, cost, 'car', format(case when t.role = 'Ship' then '%s を %s隻 注文' when t.role = 'Air' then '%s を %s機 注文' else '%s を %s両 注文' end, t.label, p_n)); end if;
   insert into mp_serials(owner, type, n) values (k, p_type, s + p_n) on conflict (owner, type) do update set n = excluded.n;
   for i in 0..p_n - 1 loop
     insert into mp_cars(type, num, own_u, own_c, depot, heat, ac, toilet, busy_until, busy_kind, price)
@@ -18435,8 +18470,8 @@ begin
     insert into mp_car_hist(car, k, num, type, ou, oc, d) values (cid, 'new', _mp_carnum(t, t.num_from + s + i), p_type, pa.pu, pa.pc,
       jsonb_build_object('dep', d.name) || case when mk is not null then jsonb_build_object('maker', mk ->> 'maker') else '{}'::jsonb end);
     nums := nums || _mp_carnum(t, t.num_from + s + i);
-    -- バス・船は1台（1隻）で1編成（編成番号は車番。同じ名前の編成があれば「*」をつける）
-    if t.role in ('Bus', 'Ship') then
+    -- バス・船・飛行機は1台（1隻・1機）で1編成（編成番号は車番。同じ名前の編成があれば「*」をつける）
+    if t.role in ('Bus', 'Ship', 'Air') then
       fnm := _mp_carnum(t, t.num_from + s + i);
       while exists (select 1 from mp_forms x where x.own_u is not distinct from pa.pu and x.own_c is not distinct from pa.pc and x.name = fnm) loop fnm := fnm || '*'; end loop;
       insert into mp_forms(name, own_u, own_c, depot) values (fnm, pa.pu, pa.pc, p_depot) returning id into fid;
@@ -18528,7 +18563,7 @@ begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
   if not exists (select 1 from mp_forms where id = p_form and own_u is not distinct from pa.pu and own_c is not distinct from pa.pc) then raise exception '編成が見つかりません'; end if;
-  if exists (select 1 from mp_cars c join mp_types t on t.code = c.type where c.form = p_form and t.role in ('Bus', 'Ship')) then raise exception 'バス・船はばらせません'; end if;
+  if exists (select 1 from mp_cars c join mp_types t on t.code = c.type where c.form = p_form and t.role in ('Bus', 'Ship', 'Air')) then raise exception 'バス・船・飛行機はばらせません'; end if;
   perform _mp_form_drop(array[p_form], '編成がばらされたので、運用からはずれました');
   update mp_cars set form = null, pos = 0 where form = p_form;
   delete from mp_forms where id = p_form;
@@ -18566,7 +18601,9 @@ begin
   end loop;
   if n = 0 then raise exception 'できる車両がありません%', case when skip <> '' then '（' || left(trim(skip), 120) || '）' else '' end; end if;
   if not p_dry then perform _mp_pay(pa.pu, pa.pc, false, cost, 'car', format(case when (select bool_and(t.role = 'Ship') from mp_cars x join mp_types t on t.code = x.type where x.id = any(p_cars))
-                                                                          then '船の%s（%s隻）' else '車両の%s（%s両）' end, label, n)); end if;
+                                                                          then '船の%s（%s隻）'
+                                                                          when (select bool_and(t.role = 'Air') from mp_cars x join mp_types t on t.code = x.type where x.id = any(p_cars))
+                                                                          then '飛行機の%s（%s機）' else '車両の%s（%s両）' end, label, n)); end if;
   return jsonb_build_object('n', n, 'cost', cost, 'hours', hrs, 'skip', trim(skip));
 end $$;
 
@@ -18583,22 +18620,26 @@ begin
   if nd <> 1 then raise exception '同じ車庫の車両をえらんでください'; end if;
   select x.* into src from mp_depots x where x.id = (select depot from mp_cars where id = p_cars[1]);
   if src.id = d.id then raise exception 'もうその車庫の車両です'; end if;
-  if src.kind <> d.kind then raise exception '電車は車両基地、バスは営業所、船は港にしか置けません'; end if;
+  if src.kind <> d.kind then raise exception '電車は車両基地、バスは営業所、船は港、飛行機は空港にしか置けません'; end if;
+  if d.kind = 'air' and exists (select 1 from mp_cars xc join mp_types xt on xt.code = xc.type where xc.id = any(p_cars) and coalesce(xt.rwy, 0) > coalesce((select xs.plat from mp_stations xs where xs.bld = d.bld and xs.kind = 'air'), 0)) then
+    raise exception '「%」の滑走路（%m）では離着陸できない飛行機があります', d.name, (select s.plat from mp_stations s where s.bld = d.bld and s.kind = 'air');   -- t54p
+  end if;
   select count(*) into have from mp_cars where depot = p_depot;
   if have + array_length(p_cars, 1) > d.cap then raise exception 'うつす先の車庫がいっぱいです（%両まで・いま%両）', d.cap, have; end if;
   same := d.kind = 'rail' and (select net from mp_segs where id = src.seg) = (select net from mp_segs where id = d.seg);
   hrs := case when d.kind = 'bus' then 2 when d.kind = 'ship' then greatest(3, ceil(sqrt(((d.x - src.x) / 100.0) ^ 2 + ((d.y - src.y) / 100.0) ^ 2) * 0.05 * 1.3 / 25))::int   -- 船：回航（およそ25km/h）
+              when d.kind = 'air' then 2   -- 飛行機：回航（飛んでいく。t54p）
               when same then 2 else 12 end;
   for c in select x.*, t.price tprice from mp_cars x join mp_types t on t.code = x.type
             where x.id = any(p_cars) and x.own_u is not distinct from pa.pu and x.own_c is not distinct from pa.pc loop
     if c.busy_until > now() then raise exception '%は工事中・納車前です', c.num; end if;
-    cost := cost + round(c.tprice * case when d.kind in ('bus', 'ship') or same then 0.005 else 0.03 end); n := n + 1;
+    cost := cost + round(c.tprice * case when d.kind in ('bus', 'ship', 'air') or same then 0.005 else 0.03 end); n := n + 1;
   end loop;
   if n <> array_length(p_cars, 1) then raise exception 'この名義の車両ではないものがあります'; end if;
-  if p_dry then return jsonb_build_object('cost', cost, 'hours', hrs, 'how', case when d.kind = 'bus' then '回送' when d.kind = 'ship' then '回航' when same then '回送（線路でつながっています）' else '陸送（線路でつながっていません）' end); end if;
-  perform _mp_pay(pa.pu, pa.pc, false, cost, 'car', format(case when d.kind = 'ship' then '%s隻を「%s」へ回航' else '%s両を「%s」へ転属' end, n, d.name));
+  if p_dry then return jsonb_build_object('cost', cost, 'hours', hrs, 'how', case when d.kind = 'bus' then '回送' when d.kind in ('ship', 'air') then '回航' when same then '回送（線路でつながっています）' else '陸送（線路でつながっていません）' end); end if;
+  perform _mp_pay(pa.pu, pa.pc, false, cost, 'car', format(case when d.kind = 'ship' then '%s隻を「%s」へ回航' when d.kind = 'air' then '%s機を「%s」へ回航' else '%s両を「%s」へ転属' end, n, d.name));
   insert into mp_car_hist(car, k, num, type, ou, oc, d)
-    select cc.id, 'move', cc.num, cc.type, cc.own_u, cc.own_c, jsonb_build_object('dep', src.name, 'to', d.name, 'how', case when d.kind = 'ship' then '回航' when same or d.kind = 'bus' then '回送' else '陸送' end)
+    select cc.id, 'move', cc.num, cc.type, cc.own_u, cc.own_c, jsonb_build_object('dep', src.name, 'to', d.name, 'how', case when d.kind in ('ship', 'air') then '回航' when same or d.kind = 'bus' then '回送' else '陸送' end)
       from mp_cars cc where cc.id = any(p_cars);
   -- 編成ぜんぶが動くなら編成ごと。一部だけなら、その車は編成から外れる
   forms := array(select distinct form from mp_cars where id = any(p_cars) and form is not null);
@@ -18615,11 +18656,11 @@ end $$;
 -- 廃車（車籍をなくす。スクラップ代として値段の3%がもどる）
 create or replace function public.mp_car_scrap(p_cars bigint[], p_as text, p_dry boolean) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); pa record; back bigint; n int; forms bigint[]; sh boolean;
+declare u uuid := _me(); pa record; back bigint; n int; forms bigint[]; sh boolean; ai boolean;
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
-  select count(*), coalesce(sum(round(t.price * 0.03)), 0), coalesce(bool_and(t.role = 'Ship'), false) into n, back, sh from mp_cars c join mp_types t on t.code = c.type
+  select count(*), coalesce(sum(round(t.price * 0.03)), 0), coalesce(bool_and(t.role = 'Ship'), false), coalesce(bool_and(t.role = 'Air'), false) into n, back, sh, ai from mp_cars c join mp_types t on t.code = c.type
    where c.id = any(p_cars) and c.own_u is not distinct from pa.pu and c.own_c is not distinct from pa.pc;
   if n = 0 or n <> array_length(p_cars, 1) then raise exception 'この名義の車両ではないものがあります'; end if;
   if exists (select 1 from mp_cars where id = any(p_cars) and busy_until > now() and busy_kind = 'deliver') then raise exception '納車前の車両は廃車にできません'; end if;
@@ -18631,7 +18672,7 @@ begin
   perform _mp_form_drop(array(select x from unnest(forms) x where _mp_form_rule(array(select c.id from mp_cars c where c.form = x order by c.pos)) is not null),
                         '編成の車両が廃車になったので、運用からはずれました');
   delete from mp_forms f where f.id = any(forms) and not exists (select 1 from mp_cars c where c.form = f.id);
-  perform _mp_earn(pa.pu, pa.pc, false, back, 'car', format(case when sh then '%s隻を廃船（スクラップ代）' else '%s両を廃車（スクラップ代）' end, n));
+  perform _mp_earn(pa.pu, pa.pc, false, back, 'car', format(case when sh then '%s隻を廃船（スクラップ代）' when ai then '%s機を廃機（スクラップ代）' else '%s両を廃車（スクラップ代）' end, n));
   return jsonb_build_object('n', n, 'back', back);
 end $$;
 
@@ -18918,7 +18959,7 @@ declare u uuid := _me(); pa record; r mp_routes; i int; leg jsonb; lg jsonb := '
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
-  if p_kind not in ('rail', 'bus', 'ship') then raise exception '系統の種類がちがいます'; end if;
+  if p_kind not in ('rail', 'bus', 'ship', 'air') then raise exception '系統の種類がちがいます'; end if;
   if n < 2 then raise exception '駅（バス停）を2つ以上えらんでください'; end if;
   if n > 60 then raise exception '1つの系統は60駅までです'; end if;
   if trim(coalesce(p_name, '')) = '' then raise exception '系統の名前をつけてください'; end if;
@@ -18927,9 +18968,10 @@ begin
     if not found or st.kind <> p_kind then raise exception '%番目の駅が見つかりません', i; end if;
     if p_kind = 'rail' and not _mp_thru_ok(pa.pu, pa.pc, st.own_u, st.own_c) then raise exception '「%」はこの名義の駅ではありません（ほかの人・会社の駅は、乗り入れの許可があると入れられます）', st.name; end if;
     -- 他社のバス停は、貸しているものだけ（この系統がもう使っているものはそのまま）
-    if p_kind in ('bus', 'ship') and not _mp_same(st.own_u, st.own_c, false, pa.pu, pa.pc, false) and st.lend is null
+    if p_kind in ('bus', 'ship', 'air') and not _mp_same(st.own_u, st.own_c, false, pa.pu, pa.pc, false) and st.lend is null
        and not exists (select 1 from mp_stopuse x join mp_routes r2 on r2.id = x.route where x.route = p_id and x.stop = st.id and r2.own_u is not distinct from pa.pu and r2.own_c is not distinct from pa.pc) then
       if p_kind = 'ship' then raise exception '「%」はほかの人・会社の港で、貸し出されていません', st.name; end if;
+      if p_kind = 'air' then raise exception '「%」はほかの人・会社の空港で、貸し出されていません', st.name; end if;
       raise exception '「%」はほかの人・会社のバス停で、貸し出されていません', st.name;
     end if;
     if i > 1 and p_stops[i] = p_stops[i - 1] then raise exception '同じ駅が続いています'; end if;
@@ -18937,24 +18979,26 @@ begin
   for i in 1..n - 1 loop
     if p_kind = 'rail' then leg := _mp_rail_path(pa.pu, pa.pc, p_stops[i], p_stops[i + 1]);
     elsif p_kind = 'ship' then leg := _mp_sea_leg(array(select jsonb_array_elements_text(p_paths -> (i - 1))::int), p_stops[i], p_stops[i + 1]);   -- t54o：海の上の折れ線
+    elsif p_kind = 'air' then leg := _mp_air_leg(p_stops[i], p_stops[i + 1]);   -- t54p：空港どうしの直線
     else leg := _mp_bus_path(pa.pu, pa.pc, p_stops[i], p_stops[i + 1], array(select jsonb_array_elements_text(p_paths -> (i - 1))::bigint)); end if;
     if leg is null then
       raise exception '「%」から「%」へ行けません（%）', (select name from mp_stations where id = p_stops[i]), (select name from mp_stations where id = p_stops[i + 1]),
-        case when p_kind = 'rail' then '線路がつながっていないか、分岐で急に曲がります' when p_kind = 'ship' then '航路が陸や浅いところにかかっています' else '道路がつながっていません' end;
+        case when p_kind = 'rail' then '線路がつながっていないか、分岐で急に曲がります' when p_kind = 'ship' then '航路が陸や浅いところにかかっています'
+             when p_kind = 'air' then '空港どうしが近すぎます（10km 以上）' else '道路がつながっていません' end;
     end if;
     lg := lg || jsonb_build_array(leg);
   end loop;
   if p_id is null then
     insert into mp_routes(kind, name, color, own_u, own_c, stops, timing, dwell, legs)
     values (p_kind, left(trim(p_name), 30), coalesce(nullif(p_color, ''), '#d23'), pa.pu, pa.pc, p_stops,
-            coalesce(array(select x from unnest(p_timing) x where x = any(p_stops)), '{}'), greatest(10, least(case when p_kind = 'ship' then 3600 else 300 end, coalesce(p_dwell, 30))), lg)
+            coalesce(array(select x from unnest(p_timing) x where x = any(p_stops)), '{}'), greatest(10, least(case when p_kind = 'ship' then 3600 when p_kind = 'air' then 7200 else 300 end, coalesce(p_dwell, 30))), lg)
     returning id into rid;
   else
     select * into r from mp_routes where id = p_id and own_u is not distinct from pa.pu and own_c is not distinct from pa.pc for update;
     if not found then raise exception '系統が見つかりません'; end if;
     if r.kind <> p_kind then raise exception '系統の種類は変えられません'; end if;
     update mp_routes set name = left(trim(p_name), 30), color = coalesce(nullif(p_color, ''), color), stops = p_stops,
-           timing = coalesce(array(select x from unnest(p_timing) x where x = any(p_stops)), '{}'), dwell = greatest(10, least(case when p_kind = 'ship' then 3600 else 300 end, coalesce(p_dwell, 30))),
+           timing = coalesce(array(select x from unnest(p_timing) x where x = any(p_stops)), '{}'), dwell = greatest(10, least(case when p_kind = 'ship' then 3600 when p_kind = 'air' then 7200 else 300 end, coalesce(p_dwell, 30))),
            legs = lg, ok = true, why = null, runt = '{}'::jsonb, catch = null
      where id = p_id;
     rid := p_id;
@@ -18968,11 +19012,11 @@ begin
                                             from jsonb_each(pats) e(k, v)), '{}'::jsonb) where id = rid;
   end if;
   -- 航路の範囲（地図に描く。t54o）
-  update mp_routes set bb = case when p_kind = 'ship' then (select box(point(min(z.x) / 100.0, min(z.y) / 100.0), point(max(z.x) / 100.0, max(z.y) / 100.0)) from (
+  update mp_routes set bb = case when p_kind in ('ship', 'air') then (select box(point(min(z.x) / 100.0, min(z.y) / 100.0), point(max(z.x) / 100.0, max(z.y) / 100.0)) from (
       select (l -> 'w' ->> (2 * (k - 1)))::int x, (l -> 'w' ->> (2 * k - 1))::int y from jsonb_array_elements(lg) l, generate_series(1, jsonb_array_length(l -> 'w') / 2) k) z) end
    where id = rid;
-  -- 他社のバス停・港の使用料（1系統・1日）：使いはじめたときの貸出料のまま
-  if p_kind in ('bus', 'ship') then
+  -- 他社のバス停・港・空港の使用料（1系統・1日）：使いはじめたときの貸出料のまま
+  if p_kind in ('bus', 'ship', 'air') then
     delete from mp_stopuse x where x.route = rid and not (x.stop = any(p_stops));
     insert into mp_stopuse(route, stop, fee)
       select rid, s.id, coalesce(s.lend, 0) from mp_stations s
@@ -18981,8 +19025,8 @@ begin
   end if;
   perform _mp_resched(rid);
   perform _mp_chg('route', rid, 'set', null);
-  -- 航路は地図に描くので、前とあとの範囲を読みなおしてもらう（t54o）
-  if p_kind = 'ship' then
+  -- 航路・空の路線は地図に描くので、前とあとの範囲を読みなおしてもらう（t54o・t54p）
+  if p_kind in ('ship', 'air') then
     if p_id is not null and r.bb is not null then perform _mp_chg('lane', rid, 'set', r.bb); end if;
     perform _mp_chg('lane', rid, 'set', (select bb from mp_routes where id = rid));
   end if;
@@ -19019,6 +19063,10 @@ begin
                coalesce((perf ->> 'vmax')::real, case when r.kind = 'bus' then 80 when r.kind = 'ship' then 30 else 100 end), cut);
   if r.kind = 'bus' then t := t + 6 * (select count(*) from generate_series(i0, i1 - 1) k, jsonb_array_elements(r.legs -> (k - 1) -> 'g'))::int; end if;  -- 交差点
   if r.kind = 'ship' then t := t + _mp_rate('ship_dock')::int; end if;   -- 船：港を出る・港に入る（t54o）
+  if r.kind = 'air' then   -- 飛行機：地上走行・離陸・上昇・降下・着陸（air_ovh 秒）＋ 巡航（最高速度の8割で。t54p）
+    t := _mp_rate('air_ovh')::int + round(coalesce((select sum((r.legs -> (k - 1) ->> 'd')::real) from generate_series(i0, i1 - 1) k), 0)
+                                          / (coalesce((perf ->> 'vmax')::real, 500) * 0.8 / 3.6))::int;
+  end if;
   update mp_routes set runt = runt || jsonb_build_object(key, t) where id = r.id;
   return t;
 end $$;
@@ -19071,6 +19119,10 @@ begin
   if perf is null then ws := ws || '編成が決まっていません（走りません）'::text; end if;
   if perf is not null and r.kind = 'rail' and (perf ->> 'elec')::boolean and exists (select 1 from jsonb_array_elements(r.legs) l where not (l ->> 'e')::boolean) then
     ws := ws || '電化していない区間があります（電車は走れません）'::text;
+  end if;
+  -- 飛行機：滑走路の短い空港には離着陸できない（t54p）
+  if perf is not null and r.kind = 'air' and coalesce((perf ->> 'rwy')::int, 0) > (select min(s.plat) from mp_stations s where s.id = any(r.stops)) then
+    ws := ws || format('滑走路の短い空港があります（%sm以上いります。飛びません）', perf ->> 'rwy');
   end if;
   -- 連結：つなぐ運用・つなぐ駅と切りはなす駅（走る順の何番目か）
   for e, ci in select z.v, z.o from jsonb_array_elements(coalesce(tr.cpl, '[]'::jsonb)) with ordinality z(v, o) loop
@@ -19707,7 +19759,7 @@ language plpgsql set search_path = public as $$
 declare r mp_routes; out jsonb := '{}'::jsonb; s mp_stations; rr real;
 begin
   select * into r from mp_routes where id = rid;
-  rr := _mp_rate(case r.kind when 'rail' then 'catch_rail' when 'ship' then 'catch_ship' else 'catch_bus' end);   -- t54o：港のまわり
+  rr := _mp_rate(case r.kind when 'rail' then 'catch_rail' when 'ship' then 'catch_ship' when 'air' then 'catch_air' else 'catch_bus' end);   -- t54o：港のまわり・t54p：空港のまわり
   for s in select * from mp_stations where id = any(r.stops) loop
     out := out || jsonb_build_object(s.id::text, round(_mp_catch(s.x / 100.0, s.y / 100.0, rr) + _mp_bld_people(s.x / 100.0, s.y / 100.0, rr)
                                                      + _mp_sc_riders(s.x, s.y, s.kind, rr)));   -- t54k：学校の生徒
@@ -19735,6 +19787,7 @@ begin
       perf := _mp_form_perf(tr.fid);
       if perf is null or (perf ->> 'busy')::boolean then continue; end if;
       if r.kind = 'rail' and (perf ->> 'elec')::boolean and exists (select 1 from jsonb_array_elements(r.legs) l where not (l ->> 'e')::boolean) then continue; end if;
+      if r.kind = 'air' and coalesce((perf ->> 'rwy')::int, 0) > (select min(s.plat) from mp_stations s where s.id = any(r.stops)) then continue; end if;   -- 滑走路（t54p）
       -- 故障（状態が 40 より悪いと、ときどき）
       if (perf ->> 'cond')::real < 40 and random() < (40 - (perf ->> 'cond')::real) / 300 then
         broke := broke + 1;
@@ -19775,20 +19828,27 @@ begin
     spd := case when secs > 0 then km / greatest(secs / nok / 3600.0, 0.01) else 30 end;
     q := least(1.5, greatest(0.5, spd / 30.0));
     if r.kind = 'ship' then q := case when spd > 40 then 1.3 else 1 end; end if;   -- 船：島へは船しかないので遅くても減らない（高速船は少しふえる。t54o）
+    if r.kind = 'air' then q := least(1.0, greatest(0.2, km / 60)); end if;   -- 飛行機：近いところへは鉄道・バスで行く人が多い（60km より短いと減る。t54p）
     comf := 1;
     if mo in (6, 7, 8, 9) then comf := comf * (0.8 + 0.2 * acn / nok); end if;
     if mo in (12, 1, 2) then comf := comf * (0.8 + 0.2 * htn / nok); end if;
     if km > 30 then comf := comf * (0.9 + 0.1 * toil / nok); end if;
-    dem := pop * _mp_rate(case r.kind when 'rail' then 'g_rail' when 'ship' then 'g_ship' else 'g_bus' end) * _mp_hourf(hh) * q * comf * share;
-    dem1 := dem / 2 * tph1::real / (tph1 + 3); dem2 := dem / 2 * tph2::real / (tph2 + 3);
-    served := floor(least(dem1, cap1 * 1.5 * 2) + least(dem2, cap2 * 1.5 * 2));
-    trip := case when r.kind = 'ship' then greatest(1.5, km * 0.85) else greatest(1.5, least(15, km * 0.45)) end;   -- 船はほとんどの人が向こう岸まで（t54o）
+    dem := pop * _mp_rate(case r.kind when 'rail' then 'g_rail' when 'ship' then 'g_ship' when 'air' then 'g_air' else 'g_bus' end) * _mp_hourf(hh) * q * comf * share;
+    if r.kind = 'air' then   -- 飛行機：本数が少なくても予約して乗る・座席の数まで（立って乗れない。t54p）
+      dem1 := dem / 2 * tph1::real / (tph1 + 0.5); dem2 := dem / 2 * tph2::real / (tph2 + 0.5);
+      served := floor(least(dem1, cap1) + least(dem2, cap2));
+    else
+      dem1 := dem / 2 * tph1::real / (tph1 + 3); dem2 := dem / 2 * tph2::real / (tph2 + 3);
+      served := floor(least(dem1, cap1 * 1.5 * 2) + least(dem2, cap2 * 1.5 * 2));
+    end if;
+    trip := case when r.kind = 'ship' then greatest(1.5, km * 0.85) when r.kind = 'air' then km else greatest(1.5, least(15, km * 0.45)) end;   -- 船はほとんどの人が向こう岸まで（t54o）・飛行機は終点まで
     fare := case when r.kind = 'rail' then _mp_rate('fare_base') + _mp_rate('fare_km') * trip
                  when r.kind = 'ship' then _mp_rate('ship_fare') + _mp_rate('ship_km') * trip
+                 when r.kind = 'air' then _mp_rate('air_fare') + _mp_rate('air_km') * trip
                  else _mp_rate('bus_fare') + _mp_rate('bus_km') * greatest(0, trip - 3) end;
     rev := floor(served * fare);
     lastj := jsonb_build_object('at', h, 'tph', tph1 + tph2, 'demand', round(dem), 'served', served, 'revenue', rev, 'cap', (cap1 + cap2) * 3, 'fare', round(fare),
-             'load', case when cap1 + cap2 > 0 then round(100.0 * served / ((cap1 + cap2) * 2)) else 0 end, 'broke', broke, 'speed', round(spd::numeric, 1));
+             'load', case when cap1 + cap2 > 0 then round(100.0 * served / ((cap1 + cap2) * case when r.kind = 'air' then 1 else 2 end)) else 0 end, 'broke', broke, 'speed', round(spd::numeric, 1));
     update mp_routes set last = lastj where id = r.id;
     insert into mp_hours(route, hour, tph, cap, demand, served, revenue) values (r.id, date_trunc('hour', h), tph1 + tph2, (cap1 + cap2)::int, round(dem)::int, served, rev)
       on conflict (route, hour) do update set tph = excluded.tph, cap = excluded.cap, demand = excluded.demand, served = excluded.served, revenue = excluded.revenue;
@@ -19804,8 +19864,8 @@ begin
     select pu, pc, sum(a)::bigint amt, string_agg(distinct k, '・') ks from (
       select own_u pu, own_c pc, len * _mp_rate(case when kind = 'rail' then 'up_rail' else 'up_road' end) * case when dbl then 1.6 else 1 end * case when elec then 1.3 else 1 end a, '線路・道路' k
         from mp_segs where not gov and (kind = 'rail' or cls = 'priv')
-      union all select own_u, own_c, case when kind = 'rail' then _mp_rate('up_sta') * (1 + 0.25 * (tracks - 1)) when kind = 'ship' then _mp_rate('up_port') else _mp_rate('up_stop') end, '駅' from mp_stations
-      union all select own_u, own_c, case when kind = 'ship' then 0 else _mp_rate(case when kind = 'rail' then 'up_dep' else 'up_bdep' end) end * case when size like 'T%' then greatest(1, cap / 24.0) when size = 'L' then 5 when size = 'M' then 2.5 else 1 end, '車庫' from mp_depots
+      union all select own_u, own_c, case when kind = 'rail' then _mp_rate('up_sta') * (1 + 0.25 * (tracks - 1)) when kind = 'ship' then _mp_rate('up_port') when kind = 'air' then _mp_rate('up_air') * greatest(1, tracks / 2.0) else _mp_rate('up_stop') end, '駅' from mp_stations
+      union all select own_u, own_c, case when kind in ('ship', 'air') then 0 else _mp_rate(case when kind = 'rail' then 'up_dep' else 'up_bdep' end) end * case when size like 'T%' then greatest(1, cap / 24.0) when size = 'L' then 5 when size = 'M' then 2.5 else 1 end, '車庫' from mp_depots
       union all select c.own_u, c.own_c, t.upkeep, '車両' from mp_cars c join mp_types t on t.code = c.type
     ) z group by pu, pc
   loop
@@ -19832,9 +19892,9 @@ begin
             group by ro.own_u, ro.own_c, sx.own_u, sx.own_c, sx.kind loop
     amt := round(o.fee / 24.0);
     if amt <= 0 then continue; end if;
-    amt := _mp_soft_pay(o.pay_u, o.pay_c, false, amt, 'lease', case when o.sk = 'ship' then '港の使用料' else 'バス停の使用料' end);
+    amt := _mp_soft_pay(o.pay_u, o.pay_c, false, amt, 'lease', case when o.sk = 'ship' then '港の使用料' when o.sk = 'air' then '空港の使用料' else 'バス停の使用料' end);
     if amt > 0 and (o.lu is not null or o.lc is not null) then
-      perform _mp_earn(o.lu, o.lc, false, amt, 'lease_in', case when o.sk = 'ship' then '港の使用料（受けとり）' else 'バス停の使用料（受けとり）' end);
+      perform _mp_earn(o.lu, o.lc, false, amt, 'lease_in', case when o.sk = 'ship' then '港の使用料（受けとり）' when o.sk = 'air' then '空港の使用料（受けとり）' else 'バス停の使用料（受けとり）' end);
     end if;
   end loop;
   -- 乗り入れの線路使用料（t54j）：この1時間に始発を出た列車（回送・試運転もふくむ）× 持ち主の線路の km × 1列車・1km の使用料。系統の持ち主 → 線路の持ち主
@@ -19980,7 +20040,8 @@ begin
     'up_rail','up_road','up_sta','up_stop','up_dep','up_bdep','g_rail','g_bus','fare_base','fare_km','bus_fare','bus_km','catch_rail','catch_bus',
     'max_tiles','grow','grow_sta','urb_k','urb_sta',
     'p_wheat','p_flour','p_food','p_ore','p_steel','p_car','p_crude','p_chem','p_elec','truck_base','truck_km','sc_imp','sc_mkt','sc_shop','sc_food','sc_food_km','sc_keep','rc_parts','rc_m2','rd_m2','trk_tkm',
-    'g_ship','catch_ship','ship_fare','ship_km','ferry_t','ferry_tkm','up_port','ship_dock','sy_tpd','sy_steel']) kk);
+    'g_ship','catch_ship','ship_fare','ship_km','ferry_t','ferry_tkm','up_port','ship_dock','sy_tpd','sy_steel',
+    'g_air','catch_air','air_fare','air_km','up_air','air_ovh']) kk);
 end $$;
 -- 用途地域を塗る（p_z が null なら、もとにもどす）
 create or replace function public.mp_admin_zone(p_tiles int[], p_z text) returns jsonb
@@ -20185,6 +20246,7 @@ begin
   end if;
   if kind = 'bus' then return case sz when 'M' then array[5, 3, 0.9, 60] else array[3, 2, 0.9, 20] end::real[]; end if;
   if kind = 'ship' then return array[2, 2, 0.5, 8]::real[]; end if;   -- 港の船の置き場（t54o。線の横ではない）
+  if kind = 'air' then return array[2, 2, 0.5, 8]::real[]; end if;    -- 空港の駐機場（t54p。線の横ではない）
   return case sz when 'L' then array[10, 4, 0.9, 120] when 'M' then array[7, 3, 0.9, 48] else array[5, 2, 0.9, 16] end::real[];
 end $$;
 create or replace function public._mp_dep_cells(fx real, fy real, ang real, side int, kind text, sz text) returns table (x int, y int)
@@ -21314,6 +21376,10 @@ language sql immutable as $$
    {"k":"oiltank","n":"油槽所","use":"warehouse","one":true,"z":"gk","cpm":350,"f0":1,"f1":1,"min":40,"max":1200,"sh":["full","slab"],"cat":"logi","c":"#d9d9d2","rl":1.1,"pp":0.2,"dn":["{}油槽所"]},
    {"k":"container","n":"コンテナヤード","use":"warehouse","one":true,"z":"gk","cpm":60,"f0":0,"f1":0,"min":100,"max":1600,"sh":["full"],"cat":"logi","c":"#c26a4a","pat":"container","dn":["{}コンテナヤード"]},
    {"k":"fishport","n":"漁港","use":"port","one":true,"z":"ghk","cpm":300,"f0":1,"f1":1,"min":6,"max":400,"sh":["full"],"sea":true,"cat":"port","c":"#8fb0bf","rl":0.8,"dm":1.1,"dn":["{}漁港"]},
+   {"k":"airfield","n":"飛行場（コミューター）","use":"port","one":true,"z":"efghk","cpm":3000,"f0":0,"f1":0,"min":100,"max":1600,"sh":["full"],"cat":"port","c":"#b7bec5","air":true,"rwy":800,"gates":2,"hangar":4,"pp":1.2,"rl":0.4,"dn":["{}飛行場"]},
+   {"k":"airport_s","n":"地方空港","use":"port","one":true,"z":"efghk","cpm":5000,"f0":0,"f1":0,"min":400,"max":1600,"sh":["full"],"cat":"port","c":"#b2b9c1","air":true,"rwy":1500,"gates":4,"hangar":8,"pp":1.5,"rl":0.4,"dn":["{}空港"]},
+   {"k":"airport_m","n":"空港","use":"port","one":true,"z":"efgh","cpm":8000,"f0":0,"f1":0,"min":900,"max":3200,"sh":["full"],"cat":"port","c":"#adb4bc","air":true,"rwy":2500,"gates":8,"hangar":16,"pp":2,"rl":0.4,"dn":["{}空港"]},
+   {"k":"airport_l","n":"国際空港","use":"port","one":true,"z":"efgh","cpm":12000,"f0":0,"f1":0,"min":1500,"max":6400,"sh":["full"],"cat":"port","c":"#a8b0b8","air":true,"rwy":3000,"gates":16,"hangar":30,"pp":3,"rl":0.4,"dn":["{}国際空港"]},
    {"k":"ferry","n":"フェリーターミナル","use":"port","one":true,"z":"gk","cpm":600,"f0":1,"f1":3,"min":20,"max":600,"sh":["full"],"sea":true,"cat":"port","c":"#a7c0cf","pp":1.5,"fx":{"hotel":0.04},"dn":["{}フェリーターミナル"]},
    {"k":"containerport","n":"コンテナふ頭","use":"port","one":true,"z":"gk","cpm":450,"f0":1,"f1":1,"min":100,"max":1600,"sh":["full"],"sea":true,"cat":"port","c":"#8c9fae","rl":1.15,"opts":["ore","crude"],"dn":["{}コンテナふ頭"]},
    {"k":"oilport","n":"石油基地","use":"port","one":true,"z":"gk","cpm":500,"f0":1,"f1":1,"min":40,"max":1600,"sh":["full"],"sea":true,"cat":"port","c":"#b7b9b1","rl":1.1,"opts":["crude"],"rb":1.3,"dn":["{}石油基地"]},
@@ -21521,6 +21587,7 @@ begin
     when 'factory' then nm[1 + b % array_length(nm, 1)] || fac[1 + a % array_length(fac, 1)]
     when 'warehouse' then nm[1 + b % array_length(nm, 1)] || '運輸'
     when 'port' then nm[1 + b % array_length(nm, 1)] || '海運'
+    when 'air' then nm[1 + b % array_length(nm, 1)] || '航空'   -- 空港の部屋（t54p）
     when 'farm' then fam[1 + a % array_length(fam, 1)] || '農園'
     when 'parking' then '月極の利用者'
     when 'school' then '学校法人' || nm[1 + b % array_length(nm, 1)] || '学園'
@@ -21702,7 +21769,7 @@ begin
   perform _mp_bld_refresh(bid);
   perform _mp_sc_init(bid);
   if fill then
-    update mp_units u set t_kind = 'npc', t_name = _mp_npc_name(u.id, u.use), since = now(),
+    update mp_units u set t_kind = 'npc', t_name = _mp_npc_name(u.id, case when _mp_term_kind(b.kind) = 'air' then 'air' else u.use end), since = now(),
                           rent = round((b.mr ->> u.use)::numeric * u.m2 * b.rent_lv::numeric, 1)
       from mp_blds b where b.id = u.bld and u.bld = bid;
   end if;
@@ -21723,7 +21790,7 @@ begin
   perform _mp_pay(pa.pu, pa.pc, false, (q ->> 'cost')::bigint, 'bld', format('%s（%s㎡）を建てた', q ->> 'name', q ->> 'total_m2'));
   bid := _mp_bld_make(p.id, q, p_opt, p_name, (q ->> 'cost')::bigint, false);
   perform _mp_sc_touch(bid);   -- 施設なら、客をすぐ数える（t54m）
-  if p_kind = 'ferry' then perform _mp_port_open(bid); end if;   -- フェリーターミナル：港（乗り場・船の置き場。t54o）
+  if _mp_term_kind(p_kind) is not null then perform _mp_port_open(bid); end if;   -- フェリーターミナル：港（乗り場・船の置き場。t54o）・空港：乗り場・駐機場（t54p）
   x0 := (p.bb[1])[0]; y0 := (p.bb[1])[1]; x1 := (p.bb[0])[0] - 1; y1 := (p.bb[0])[1] - 1;
   perform _mp_chg('land', null, 'set', box(point(_mp_t5(x0), _mp_t5(y0)), point(_mp_t5(x1) + 1, _mp_t5(y1) + 1)));
   return (q - 'plan') || jsonb_build_object('id', bid, 'bname', (select name from mp_blds where id = bid));
@@ -21797,8 +21864,9 @@ begin
               'rent', coalesce(sum(x.rent) filter (where x.t_kind is not null), 0)::bigint,
               'occ', count(*) filter (where x.t_kind is not null or x.mode = 'self'), 'n', count(*)) from mp_units x where x.bld = b.id) end,
     'sc', _mp_sc_info(b.id, u),
-    -- 港（フェリーターミナル。t54o）：乗り場・船の置き場・船の数・航路の数
-    'port', case when b.kind = 'ferry' then (select jsonb_build_object('sta', s.id, 'dep', (select d.id from mp_depots d where d.bld = b.id), 'name', s.name, 'ln', s.lend,
+    -- 港（フェリーターミナル。t54o）・空港（t54p）：乗り場・置き場・船（飛行機）の数・航路（路線）の数。k：ship・air、rwy：滑走路（m）、gates：ゲート
+    'port', case when _mp_term_kind(b.kind) is not null then (select jsonb_build_object('sta', s.id, 'dep', (select d.id from mp_depots d where d.bld = b.id), 'name', s.name, 'ln', s.lend,
+               'k', s.kind, 'rwy', case when s.kind = 'air' then s.plat end, 'gates', case when s.kind = 'air' then s.tracks end,
                'n', (select count(*) from mp_cars c join mp_depots d on d.id = c.depot where d.bld = b.id), 'cap', (select d.cap from mp_depots d where d.bld = b.id),
                'routes', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'n', r.name, 'c', r.color) order by r.id), '[]'::jsonb) from mp_routes r where s.id = any(r.stops)))
              from mp_stations s where s.bld = b.id) end);
@@ -21837,13 +21905,13 @@ begin
   select * into p from mp_parcels where id = b.parcel for update;
   if p.gov then raise exception '国の建物はこわせません'; end if;
   if not _mp_same(p.own_u, p.own_c, false, pa.pu, pa.pc, false) then raise exception 'あなた（この名義）の建物ではありません'; end if;
-  if b.kind = 'ferry' and _mp_port_busy(b.id) is not null then raise exception '%', _mp_port_busy(b.id); end if;   -- 港：船・航路（t54o）
+  if _mp_term_kind(b.kind) is not null and _mp_port_busy(b.id) is not null then raise exception '%', _mp_port_busy(b.id); end if;   -- 港：船・航路（t54o）・空港：飛行機・路線（t54p）
   one := (select coalesce((x ->> 'one')::boolean, false) from jsonb_array_elements(_mp_bld_presets()) x where x ->> 'k' = b.kind);
   for t in select x.*, c.owner co from mp_units x join companies c on c.id = x.t_c where x.bld = b.id and x.t_kind = 'corp' loop
     perform _notice(t.co, format('【国土】「%s」がこわされたので、%sの賃貸借が終わりました。', b.name, _mp_room(t.floor, t.no, one)));
     n := n + 1;
   end loop;
-  if b.kind = 'ferry' then   -- 港の乗り場・置き場は建物といっしょに消える（ほかの人の航路の使用料も）
+  if _mp_term_kind(b.kind) is not null then   -- 港・空港の乗り場・置き場は建物といっしょに消える（ほかの人の航路の使用料も）
     perform _mp_chg('sta', s.id, 'del', box(point(s.x / 100.0 - 3, s.y / 100.0 - 3), point(s.x / 100.0 + 3, s.y / 100.0 + 3))) from mp_stations s where s.bld = b.id;
   end if;
   delete from mp_blds where id = b.id;
@@ -22007,7 +22075,7 @@ begin
   -- 会社がなくなったテナントは空きに
   update mp_units set t_kind = null, t_c = null, rent = 0, since = null where t_kind = 'corp' and t_c is null;
   -- 入居募集：空き部屋に入る・入っている人が出ていく（家賃の水準が高いほど入りにくく、出ていきやすい）
-  update mp_units x set t_kind = 'npc', t_name = _mp_npc_name(x.id * 31 + extract(epoch from h)::bigint, x.use), since = h,
+  update mp_units x set t_kind = 'npc', t_name = _mp_npc_name(x.id * 31 + extract(epoch from h)::bigint, case when _mp_term_kind(b.kind) = 'air' then 'air' else x.use end), since = h,
                         rent = round((b.mr ->> x.use)::numeric * x.m2 * b.rent_lv::numeric, 1)
     from mp_blds b where b.id = x.bld and x.mode = 'npc' and x.t_kind is null and b.built_at < h - interval '1 hour'
      and random() < least(0.5, 0.05 * coalesce((b.dem ->> x.use)::real, 0.5) / power(b.rent_lv, 2.5));
@@ -22166,7 +22234,7 @@ begin
   if pa.gv then raise exception '車両は人か会社で持ちます'; end if;
   if nc = 0 then raise exception '形式をえらんでください'; end if;
   if exists (select 1 from unnest(p_types) x where not exists (select 1 from mp_types y where y.code = x and y.on_sale)) then raise exception 'その形式は注文できません'; end if;
-  if exists (select 1 from unnest(p_types) x join mp_types y on y.code = x where y.role in ('Bus', 'Truck', 'Ship')) then raise exception 'バス・トラック・船は1台ずつ注文してください'; end if;
+  if exists (select 1 from unnest(p_types) x join mp_types y on y.code = x where y.role in ('Bus', 'Truck', 'Ship', 'Air')) then raise exception 'バス・トラック・船・飛行機は1台ずつ注文してください'; end if;
   why := _mp_form_rule_t(p_types);
   if why is not null then raise exception '%', why; end if;
   if nm = '' then raise exception '編成番号を入れてください'; end if;
@@ -22247,7 +22315,7 @@ begin
     select * into o from mp_ops where id = p_id and own_u is not distinct from pa.pu and own_c is not distinct from pa.pc for update;
     if not found then raise exception '運用が見つかりません'; end if;
     kd := o.kind;
-  else kd := case when p_kind in ('bus', 'ship') then p_kind else 'rail' end; end if;
+  else kd := case when p_kind in ('bus', 'ship', 'air') then p_kind else 'rail' end; end if;
   if exists (select 1 from mp_ops x where x.own_u is not distinct from pa.pu and x.own_c is not distinct from pa.pc and x.num = nm and x.id is distinct from p_id) then
     raise exception '運用番号「%」はもうあります', nm;
   end if;
@@ -22255,7 +22323,7 @@ begin
     select * into f from mp_forms where id = p_form and own_u is not distinct from pa.pu and own_c is not distinct from pa.pc;
     if not found then raise exception '編成が見つかりません'; end if;
     if _mp_form_kind(p_form) <> kd then   -- t54o：船の運用には船だけ
-      raise exception '%', case kd when 'rail' then '鉄道の運用には電車だけを入れられます' when 'ship' then '船の運用には船だけを入れられます' else 'バスの運用にはバスだけを入れられます' end;
+      raise exception '%', case kd when 'rail' then '鉄道の運用には電車だけを入れられます' when 'ship' then '船の運用には船だけを入れられます' when 'air' then '飛行機の運用には飛行機だけを入れられます' else 'バスの運用にはバスだけを入れられます' end;
     end if;
     if _mp_form_rule(array(select c.id from mp_cars c where c.form = p_form order by c.pos)) is not null then raise exception '編成のきまりに合っていません（組みなおしてください）'; end if;
     select id, num into other, othernum from mp_ops where form = p_form and id is distinct from p_id;
@@ -22329,7 +22397,7 @@ begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
   for o in select x.* from mp_ops x where x.own_u is not distinct from pa.pu and x.own_c is not distinct from pa.pc and (p_ops is null or x.id = any(p_ops)) order by x.num loop
-    outv := outv || jsonb_build_array(jsonb_build_object('運用番号', o.num, '種類', case o.kind when 'rail' then '鉄道' when 'ship' then '船' else 'バス' end,
+    outv := outv || jsonb_build_array(jsonb_build_object('運用番号', o.num, '種類', case o.kind when 'rail' then '鉄道' when 'ship' then '船' when 'air' then '飛行機' else 'バス' end,
               '編成', (select name from mp_forms where id = o.form), 'メモ', o.note,
               '列車', coalesce((select jsonb_agg(_mp_train_json(t) order by t.day nulls first, t.dep, t.id) from mp_trains t where t.op = o.id), '[]'::jsonb)));
   end loop;
@@ -22378,7 +22446,7 @@ begin
     if opnum is not null then
       select * into o from mp_ops where own_u is not distinct from pa.pu and own_c is not distinct from pa.pc and num = opnum;
       if o.id is not null then okind := o.kind; repl := repl || o.id; end if;
-      if okind is null and e ->> '種類' in ('鉄道', 'バス', '船') then okind := case e ->> '種類' when 'バス' then 'bus' when '船' then 'ship' else 'rail' end; end if;
+      if okind is null and e ->> '種類' in ('鉄道', 'バス', '船', '飛行機') then okind := case e ->> '種類' when 'バス' then 'bus' when '船' then 'ship' when '飛行機' then 'air' else 'rail' end; end if;
     end if;
     lbl := coalesce(opnum, '（運用なし）');
     -- 編成（書いてあるときだけ）
@@ -22505,7 +22573,7 @@ begin
       select * into o from mp_ops where own_u is not distinct from pa.pu and own_c is not distinct from pa.pc and num = opnum;
       if o.id is null then
         okind := coalesce((select (rw ->> 'route')::bigint from jsonb_array_elements(rowsv) rw where (rw ->> 'i')::int = i limit 1)::text, '');
-        okind := coalesce((select kind from mp_routes where id = nullif(okind, '')::bigint), case e ->> '種類' when 'バス' then 'bus' when '船' then 'ship' else 'rail' end);
+        okind := coalesce((select kind from mp_routes where id = nullif(okind, '')::bigint), case e ->> '種類' when 'バス' then 'bus' when '船' then 'ship' when '飛行機' then 'air' else 'rail' end);
         insert into mp_ops(own_u, own_c, kind, num, note) values (pa.pu, pa.pc, okind, opnum, left(coalesce(e ->> 'メモ', ''), 200)) returning * into o;
       elsif e ? 'メモ' then update mp_ops set note = left(coalesce(e ->> 'メモ', ''), 200) where id = o.id;
       end if;
@@ -22603,8 +22671,8 @@ begin
                'cars', case when x.form is not null then (select jsonb_agg(c.num order by c.pos) from mp_cars c where c.form = f.id)
                             else (select jsonb_agg(c.num order by array_position(x.cars, c.id)) from mp_cars c where c.id = any(x.cars)) end,
                'loose', x.form is null, 'n', case when x.form is null then coalesce(array_length(x.cars, 1), 0) else (select count(*) from mp_cars c where c.form = f.id) end,
-               'rail', coalesce((select bool_and(ty.role not in ('Bus', 'Truck', 'Ship')) from mp_cars c join mp_types ty on ty.code = c.type where (x.form is not null and c.form = x.form) or c.id = any(x.cars)), true),
-               'kind', coalesce((select case when bool_or(ty.role = 'Ship') then 'ship' when bool_or(ty.role in ('Bus', 'Truck')) then 'bus' else 'rail' end
+               'rail', coalesce((select bool_and(ty.role not in ('Bus', 'Truck', 'Ship', 'Air')) from mp_cars c join mp_types ty on ty.code = c.type where (x.form is not null and c.form = x.form) or c.id = any(x.cars)), true),
+               'kind', coalesce((select case when bool_or(ty.role = 'Ship') then 'ship' when bool_or(ty.role = 'Air') then 'air' when bool_or(ty.role in ('Bus', 'Truck')) then 'bus' else 'rail' end
                                    from mp_cars c join mp_types ty on ty.code = c.type where (x.form is not null and c.form = x.form) or c.id = any(x.cars)), 'rail'),
                'from', _mp_pname(x.from_u, x.from_c, false), 'to', _mp_pname(x.to_u, x.to_c, false), 'to_as', case when x.to_u is not null then 'me' else (select cid from companies where id = x.to_c) end,
                'price', x.price, 'msg', x.msg, 'st', x.st, 'at', x.created_at) j
@@ -22638,11 +22706,11 @@ begin
     if ncar = 0 or (select count(*) from mp_cars where id = any(x.cars) and own_u is not distinct from x.from_u and own_c is not distinct from x.from_c and form is null) <> ncar then
       raise exception 'この車両は、もう相手のものではないか、編成に入っています';
     end if;
-    knd := coalesce((select case when bool_or(ty.role = 'Ship') then 'ship' when bool_or(ty.role in ('Bus', 'Truck')) then 'bus' else 'rail' end
+    knd := coalesce((select case when bool_or(ty.role = 'Ship') then 'ship' when bool_or(ty.role = 'Air') then 'air' when bool_or(ty.role in ('Bus', 'Truck')) then 'bus' else 'rail' end
                        from mp_cars cc join mp_types ty on ty.code = cc.type where cc.id = any(x.cars)), 'rail');   -- t54o：船も
     select * into d from mp_depots where id = p_depot;
     if not found or not _mp_same(d.own_u, d.own_c, false, x.to_u, x.to_c, false) then raise exception '車籍を置く車庫をえらんでください（受けとる名義の車庫）'; end if;
-    if d.kind <> knd then raise exception '%', case knd when 'rail' then '電車は車両基地に置きます' when 'ship' then '船は港に置きます' else 'バスは営業所に置きます' end; end if;
+    if d.kind <> knd then raise exception '%', case knd when 'rail' then '電車は車両基地に置きます' when 'ship' then '船は港に置きます' when 'air' then '飛行機は空港の駐機場に置きます' else 'バスは営業所に置きます' end; end if;
     select count(*) into have from mp_cars where depot = p_depot;
     if have + ncar > d.cap then raise exception '車庫がいっぱいです（%両まで・いま%両）', d.cap, have; end if;
     if x.price > 0 then
@@ -22671,7 +22739,7 @@ begin
   knd := _mp_form_kind(f.id);   -- t54o：船も
   select * into d from mp_depots where id = p_depot;
   if not found or not _mp_same(d.own_u, d.own_c, false, x.to_u, x.to_c, false) then raise exception '車籍を置く車庫をえらんでください（受けとる名義の車庫）'; end if;
-  if d.kind <> knd then raise exception '%', case knd when 'rail' then '電車は車両基地に置きます' when 'ship' then '船は港に置きます' else 'バスは営業所に置きます' end; end if;
+  if d.kind <> knd then raise exception '%', case knd when 'rail' then '電車は車両基地に置きます' when 'ship' then '船は港に置きます' when 'air' then '飛行機は空港の駐機場に置きます' else 'バスは営業所に置きます' end; end if;
   select count(*) into have from mp_cars where depot = p_depot;
   if have + ncar > d.cap then raise exception '車庫がいっぱいです（%両まで・いま%両）', d.cap, have; end if;
   nm := coalesce(nullif(left(trim(coalesce(p_name, '')), 20), ''), f.name);
@@ -23728,6 +23796,21 @@ begin
   return jsonb_build_object('d', round(m::numeric, 1), 'p', jsonb_build_array(jsonb_build_array(round(m::numeric, 1), 99)), 'e', true, 's', false,
                             'g', '[]'::jsonb, 'w', to_jsonb(pts));
 end $$;
+-- 乗り場のある建物の種類 → 乗り場の種類（ferry → ship・空港 → air。t54p）
+create or replace function public._mp_term_kind(k text) returns text
+language sql immutable as $$ select case when k = 'ferry' then 'ship' when k in ('airfield', 'airport_s', 'airport_m', 'airport_l') then 'air' end $$;
+-- 空港どうしの区間（直線。10km 以上はなれていること）：{d, p, e, s, g, w}（t54p）
+create or replace function public._mp_air_leg(sa bigint, sb bigint) returns jsonb
+language plpgsql stable set search_path = public as $$
+declare A mp_stations; B mp_stations; m real;
+begin
+  select * into A from mp_stations where id = sa; select * into B from mp_stations where id = sb;
+  if A.kind is distinct from 'air' or B.kind is distinct from 'air' then return null; end if;
+  m := sqrt(((B.x - A.x) / 100.0) ^ 2 + ((B.y - A.y) / 100.0) ^ 2) * 50;
+  if m < 10000 then return null; end if;
+  return jsonb_build_object('d', round(m::numeric, 1), 'p', jsonb_build_array(jsonb_build_array(round(m::numeric, 1), 999)), 'e', true, 's', false,
+                            'g', '[]'::jsonb, 'w', jsonb_build_array(A.x, A.y, B.x, B.y));
+end $$;
 -- 港の乗り場：建物のまん中にいちばん近い海のマスのまん中（1/100 マス）
 create or replace function public._mp_port_pier(bid bigint, out px int, out py int)
 language plpgsql stable set search_path = public as $$
@@ -23740,15 +23823,29 @@ begin
      where _mp_sea(gx, gy) order by (gx + 0.5 - cx) ^ 2 + (gy + 0.5 - cy) ^ 2, gx, gy limit 1) q;
 end $$;
 -- フェリーターミナルを港にする（乗り場と船の置き場）。もうあれば、その乗り場。海が近くになければ null
+--   空港（t54p）：建物のまん中に乗り場（plat = 滑走路の長さ・tracks = ゲートの数）と駐機場（cap = 駐機場に置ける機数。プリセットから）
 create or replace function public._mp_port_open(bid bigint) returns bigint
 language plpgsql set search_path = public as $$
-declare b mp_blds; p mp_parcels; q record; sid bigint; nm text;
+declare b mp_blds; p mp_parcels; q record; sid bigint; nm text; tk text; pr jsonb; ax int; ay int;
 begin
   select * into b from mp_blds where id = bid;
-  if not found or b.kind <> 'ferry' then return null; end if;
-  select id into sid from mp_stations where bld = bid and kind = 'ship';
+  if not found then return null; end if;
+  tk := _mp_term_kind(b.kind);
+  if tk is null then return null; end if;
+  select id into sid from mp_stations where bld = bid and kind = tk;
   if sid is not null then return sid; end if;
   select * into p from mp_parcels where id = b.parcel;
+  if tk = 'air' then
+    select x into pr from jsonb_array_elements(_mp_bld_presets()) x where x ->> 'k' = b.kind;
+    select round(avg(b.cells[2 * i - 1] + 0.5) * 20)::int, round(avg(b.cells[2 * i] + 0.5) * 20)::int into ax, ay from generate_series(1, array_length(b.cells, 1) / 2) i;
+    nm := left(coalesce(nullif(b.name, ''), pr ->> 'n'), 20);
+    insert into mp_stations(kind, seg, at, x, y, plat, tracks, name, own_u, own_c, bld, cost)
+      values ('air', null, 0, ax, ay, coalesce((pr ->> 'rwy')::int, 800), coalesce((pr ->> 'gates')::int, 2), nm, p.own_u, p.own_c, bid, 0) returning id into sid;
+    insert into mp_depots(kind, seg, at, side, size, x, y, cap, name, own_u, own_c, bld)
+      values ('air', null, 0, 1, 'S', ax, ay, coalesce((pr ->> 'hangar')::int, 4), nm, p.own_u, p.own_c, bid);
+    perform _mp_chg('sta', sid, 'set', box(point(ax / 100.0 - 3, ay / 100.0 - 3), point(ax / 100.0 + 3, ay / 100.0 + 3)));
+    return sid;
+  end if;
   select * into q from _mp_port_pier(bid);
   if q.px is null then return null; end if;
   nm := left(coalesce(nullif(b.name, ''), 'フェリーターミナル'), 20);
@@ -23763,6 +23860,10 @@ end $$;
 create or replace function public._mp_port_busy(bid bigint) returns text
 language sql stable set search_path = public as $$
   select case
+    when exists (select 1 from mp_cars c join mp_depots d on d.id = c.depot where d.bld = bid and d.kind = 'air')
+      then format('空港「%s」に飛行機があります（ほかの空港に回航するか、廃機にしてから）', (select d.name from mp_depots d where d.bld = bid limit 1))
+    when exists (select 1 from mp_routes r join mp_stations s on s.id = any(r.stops) where s.bld = bid and s.kind = 'air')
+      then format('空港「%s」を使っている路線があります（路線から外してから）', (select s.name from mp_stations s where s.bld = bid limit 1))
     when exists (select 1 from mp_cars c join mp_depots d on d.id = c.depot where d.bld = bid)
       then format('港「%s」に船があります（ほかの港に回航するか、廃船にしてから）', (select d.name from mp_depots d where d.bld = bid limit 1))
     when exists (select 1 from mp_routes r join mp_stations s on s.id = any(r.stops) where s.bld = bid)
@@ -23775,7 +23876,7 @@ language plpgsql set search_path = public as $$
 declare b record; w text;
 begin
   if new.own_u is not distinct from old.own_u and new.own_c is not distinct from old.own_c then return new; end if;
-  for b in select id from mp_blds where parcel = new.id and kind = 'ferry' loop
+  for b in select id from mp_blds where parcel = new.id and _mp_term_kind(kind) is not null loop   -- 港・空港（t54p）
     w := _mp_port_busy(b.id);
     if w is not null then raise exception '%', w; end if;
     update mp_stations set own_u = new.own_u, own_c = new.own_c where bld = b.id;
@@ -23836,11 +23937,11 @@ begin
 end $$;
 -- 形式の役割 → 車庫・運用の種類（rail 鉄道・bus バス（トラックも）・ship 船）
 create or replace function public._mp_role_kind(role text) returns text
-language sql immutable as $$ select case when role = 'Ship' then 'ship' when role in ('Bus', 'Truck') then 'bus' else 'rail' end $$;
+language sql immutable as $$ select case when role = 'Ship' then 'ship' when role = 'Air' then 'air' when role in ('Bus', 'Truck') then 'bus' else 'rail' end $$;
 -- 編成の種類（車両の形式から）
 create or replace function public._mp_form_kind(fid bigint) returns text
 language sql stable set search_path = public as $$
-  select coalesce((select case when bool_or(t.role = 'Ship') then 'ship' when bool_or(t.role in ('Bus', 'Truck')) then 'bus' else 'rail' end
+  select coalesce((select case when bool_or(t.role = 'Ship') then 'ship' when bool_or(t.role = 'Air') then 'air' when bool_or(t.role in ('Bus', 'Truck')) then 'bus' else 'rail' end
                      from mp_cars c join mp_types t on t.code = c.type where c.form = fid), 'rail')
 $$;
 -- フェリーにのせた（t）：その航路・向きの、のこりを減らす
@@ -23946,40 +24047,40 @@ begin
             '_hc_pay','_hc_do_train','_hc_daily','_hc_monthly','_hc_after_races','_hc_json','_hx_info','hx_admin_state','hx_admin_create',
             'hx_admin_cancel','hx_state','_hx_sold','_hx_bid','_hx_buynow','hx_bid','hx_buynow','_hx_ai_val','_hx_ai_tick',
             'hc_train','hc_feed','hc_mode','hc_vet','hc_release','_hc_tick',
-            '_mp_addr','_mp_admin','_mp_angdiff','_mp_at','_mp_bal','_mp_ban','_mp_bb','_mp_bld_check',
-            '_mp_bld_defname','_mp_bld_dem','_mp_bld_hit','_mp_bld_make','_mp_bld_people','_mp_bld_plan','_mp_bld_pmap','_mp_bld_presets',
-            '_mp_bld_refresh','_mp_bld_shape','_mp_bld_tick_day','_mp_bld_tick_hour','_mp_bus_path','_mp_busy_cells','_mp_carnum','_mp_catch',
-            '_mp_cell','_mp_chg','_mp_chimoku','_mp_cho_at','_mp_cho_set_tiles','_mp_cho_text','_mp_cmuls','_mp_cval',
-            '_mp_day_ok','_mp_dens','_mp_dep_cells','_mp_dep_dim','_mp_dep_tiles','_mp_dep_tiles_g','_mp_dia_snap','_mp_dispatch',
-            '_mp_earn','_mp_edec','_mp_end','_mp_end_ang','_mp_ferry_links','_mp_ferry_pick','_mp_ferry_use','_mp_fmtn',
-            '_mp_fmtq','_mp_form_drop','_mp_form_kind','_mp_form_perf','_mp_form_routes','_mp_form_rule','_mp_form_rule_t','_mp_form_runs',
-            '_mp_g','_mp_geom_ok','_mp_goods','_mp_gov_build','_mp_hm_parse','_mp_hms','_mp_home_text','_mp_hourf',
-            '_mp_isl_at','_mp_kinds_of','_mp_kprio','_mp_land_fee','_mp_land_need','_mp_land_std','_mp_land_stop','_mp_lease_del',
-            '_mp_lease_quote','_mp_lease_set','_mp_leg_from','_mp_leg_time','_mp_len','_mp_line_cells','_mp_lock','_mp_lvmap_build',
-            '_mp_maker_order','_mp_mcval','_mp_mine','_mp_minr','_mp_mvalue','_mp_npc_name','_mp_occ_set','_mp_ok',
-            '_mp_okey','_mp_op_of_form','_mp_parcel_label','_mp_parcel_vals','_mp_party','_mp_pay','_mp_pick_trk','_mp_pkey',
-            '_mp_placeholder_names','_mp_pname','_mp_port_busy','_mp_port_isl','_mp_port_open','_mp_port_owner_trg','_mp_port_pier','_mp_pref_road',
-            '_mp_pref_type','_mp_proj','_mp_pub_cells','_mp_pub_of','_mp_rail_path','_mp_rate','_mp_renet','_mp_resample',
-            '_mp_resched','_mp_rev','_mp_road_mul','_mp_road_v','_mp_road_w','_mp_role_kind','_mp_room','_mp_route_catch',
-            '_mp_route_sta','_mp_route_uses','_mp_routes_fix','_mp_run','_mp_run_check','_mp_run_mark','_mp_same','_mp_sc_info',
-            '_mp_sc_init','_mp_sc_kinds','_mp_sc_op','_mp_sc_owes','_mp_sc_recipes','_mp_sc_riders','_mp_sc_school_calc','_mp_sc_tick_hour',
-            '_mp_sc_touch','_mp_sea','_mp_sea_leg','_mp_sea_seg','_mp_seg_blocked','_mp_seg_cells_arr','_mp_seg_chain','_mp_seg_join2',
-            '_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_sta_trk','_mp_struct_cells','_mp_sub',
-            '_mp_t49_from_tiles','_mp_t5','_mp_ters','_mp_thin','_mp_thru_link','_mp_thru_ok','_mp_tick','_mp_tick_day',
-            '_mp_tick_hour','_mp_tiles','_mp_tmul','_mp_today','_mp_train_calc','_mp_train_json','_mp_train_times','_mp_unit_mr',
-            '_mp_use_name','_mp_value','_mp_vlim','_mp_vruns','_mp_world','_mp_zname','_mp_zone_rule','mp_admin_cho_merge',
-            'mp_admin_cho_split','mp_admin_lvset','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state','mp_admin_zone','mp_area',
-            'mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set','mp_boot','mp_car_log',
-            'mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_gone','mp_cars_list','mp_cho_get','mp_chunk_get',
-            'mp_dep_build','mp_dep_edit','mp_dia','mp_dia_undo','mp_form_del','mp_form_order','mp_form_set','mp_home_clear',
-            'mp_home_get','mp_home_set','mp_kinds_list','mp_kinds_set','mp_land_buy','mp_land_decide','mp_land_req','mp_land_req_del',
-            'mp_land_reqs','mp_ledger_days','mp_ledger_page','mp_makers','mp_op_del','mp_op_export','mp_op_import','mp_op_save',
-            'mp_ops_list','mp_parcel_buy','mp_parcel_merge','mp_parcel_rent','mp_parcel_sell','mp_parcel_split','mp_poll','mp_route_del',
-            'mp_route_pat','mp_route_save','mp_routes_list','mp_sc_list','mp_sc_set','mp_seg_build','mp_seg_del','mp_seg_edit',
-            'mp_seg_join','mp_seg_opts','mp_seg_speed','mp_seg_split','mp_spot','mp_sta_build','mp_sta_edit','mp_sta_trk',
-            'mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list','mp_thru_req','mp_train_autoform','mp_train_bulk',
-            'mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market','mp_unit_mine','mp_unit_own','mp_unit_set',
-            'mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer') loop
+            '_mp_addr','_mp_admin','_mp_air_leg','_mp_angdiff','_mp_at','_mp_bal','_mp_ban','_mp_bb',
+            '_mp_bld_check','_mp_bld_defname','_mp_bld_dem','_mp_bld_hit','_mp_bld_make','_mp_bld_people','_mp_bld_plan','_mp_bld_pmap',
+            '_mp_bld_presets','_mp_bld_refresh','_mp_bld_shape','_mp_bld_tick_day','_mp_bld_tick_hour','_mp_bus_path','_mp_busy_cells','_mp_carnum',
+            '_mp_catch','_mp_cell','_mp_chg','_mp_chimoku','_mp_cho_at','_mp_cho_set_tiles','_mp_cho_text','_mp_cmuls',
+            '_mp_cval','_mp_day_ok','_mp_dens','_mp_dep_cells','_mp_dep_dim','_mp_dep_tiles','_mp_dep_tiles_g','_mp_dia_snap',
+            '_mp_dispatch','_mp_earn','_mp_edec','_mp_end','_mp_end_ang','_mp_ferry_links','_mp_ferry_pick','_mp_ferry_use',
+            '_mp_fmtn','_mp_fmtq','_mp_form_drop','_mp_form_kind','_mp_form_perf','_mp_form_routes','_mp_form_rule','_mp_form_rule_t',
+            '_mp_form_runs','_mp_g','_mp_geom_ok','_mp_goods','_mp_gov_build','_mp_hm_parse','_mp_hms','_mp_home_text',
+            '_mp_hourf','_mp_isl_at','_mp_kinds_of','_mp_kprio','_mp_land_fee','_mp_land_need','_mp_land_std','_mp_land_stop',
+            '_mp_lease_del','_mp_lease_quote','_mp_lease_set','_mp_leg_from','_mp_leg_time','_mp_len','_mp_line_cells','_mp_lock',
+            '_mp_lvmap_build','_mp_maker_order','_mp_mcval','_mp_mine','_mp_minr','_mp_mvalue','_mp_npc_name','_mp_occ_set',
+            '_mp_ok','_mp_okey','_mp_op_of_form','_mp_parcel_label','_mp_parcel_vals','_mp_party','_mp_pay','_mp_pick_trk',
+            '_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_port_busy','_mp_port_isl','_mp_port_open','_mp_port_owner_trg','_mp_port_pier',
+            '_mp_pref_road','_mp_pref_type','_mp_proj','_mp_pub_cells','_mp_pub_of','_mp_rail_path','_mp_rate','_mp_renet',
+            '_mp_resample','_mp_resched','_mp_rev','_mp_road_mul','_mp_road_v','_mp_road_w','_mp_role_kind','_mp_room',
+            '_mp_route_catch','_mp_route_sta','_mp_route_uses','_mp_routes_fix','_mp_run','_mp_run_check','_mp_run_mark','_mp_same',
+            '_mp_sc_info','_mp_sc_init','_mp_sc_kinds','_mp_sc_op','_mp_sc_owes','_mp_sc_recipes','_mp_sc_riders','_mp_sc_school_calc',
+            '_mp_sc_tick_hour','_mp_sc_touch','_mp_sea','_mp_sea_leg','_mp_sea_seg','_mp_seg_blocked','_mp_seg_cells_arr','_mp_seg_chain',
+            '_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_sta_trk','_mp_struct_cells',
+            '_mp_sub','_mp_t49_from_tiles','_mp_t5','_mp_term_kind','_mp_ters','_mp_thin','_mp_thru_link','_mp_thru_ok',
+            '_mp_tick','_mp_tick_day','_mp_tick_hour','_mp_tiles','_mp_tmul','_mp_today','_mp_train_calc','_mp_train_json',
+            '_mp_train_times','_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim','_mp_vruns','_mp_world','_mp_zname',
+            '_mp_zone_rule','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_lvset','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state',
+            'mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set',
+            'mp_boot','mp_car_log','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_gone','mp_cars_list',
+            'mp_cho_get','mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia','mp_dia_undo','mp_form_del','mp_form_order',
+            'mp_form_set','mp_home_clear','mp_home_get','mp_home_set','mp_kinds_list','mp_kinds_set','mp_land_buy','mp_land_decide',
+            'mp_land_req','mp_land_req_del','mp_land_reqs','mp_ledger_days','mp_ledger_page','mp_makers','mp_op_del','mp_op_export',
+            'mp_op_import','mp_op_save','mp_ops_list','mp_parcel_buy','mp_parcel_merge','mp_parcel_rent','mp_parcel_sell','mp_parcel_split',
+            'mp_poll','mp_route_del','mp_route_pat','mp_route_save','mp_routes_list','mp_sc_list','mp_sc_set','mp_seg_build',
+            'mp_seg_del','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_speed','mp_seg_split','mp_spot','mp_sta_build',
+            'mp_sta_edit','mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list','mp_thru_req',
+            'mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market','mp_unit_mine',
+            'mp_unit_own','mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
       execute format('revoke all on function %s from authenticated', f.sig);
