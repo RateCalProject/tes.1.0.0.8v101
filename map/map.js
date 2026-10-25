@@ -3262,6 +3262,9 @@ const BK = {
   factory: ['#b8b8b0', '#e4e4dc', '#c4c4ba'], warehouse: ['#c2b59b', '#ece4d2', '#cfc2a6'], port: ['#9ab3c0', '#dde8ee', '#a9bcc6'],
   farm: ['#a9cf73'], parking: ['#bdbdbd'], pkbld: ['#b0b0b0', '#e2e2e2', '#c2c2c2'],
   cityhall: ['#c9b48c', '#f1e8d6', '#d8c6a3'], plaza: ['#e6dfcf'],   // 国の建物（t54g）：市役所・広場
+  // 国の建物（t56）：府県庁・官庁・国会議事堂・裁判所・首相官邸・国立図書館・司令部
+  prefhall: ['#b9a27a', '#efe5d2', '#d3c2a0'], govhall: ['#a7b3c1', '#e8ecf1', '#c4cdd8'], diet: ['#d6cbb6', '#f6f1e6', '#e3d8c4'],
+  court: ['#b5ada0', '#efebe4', '#d3ccc0'], kantei: ['#c3b597', '#f3eee2', '#dbd0b9'], natlib: ['#9c8c70', '#eee8db', '#d2c6af'], milhq: ['#8a977a', '#e3e8dc', '#b6c0a8'],
   // 風の芽大学（t54i）：本部・校舎・研究棟・図書館・講堂・体育館・学生会館・学生寮・大学病院・博物館・附属学校・温室・グラウンド・実験農場・緑地・並木道
   uhq: ['#a65a46', '#efe2d4', '#d4bfaa'], ukan: ['#c08a68', '#f2e8dc', '#d9c8b4'], ulab: ['#9fb0bf', '#e6eaee', '#bcc6cf'],
   ulib: ['#6f8a5e', '#efeadf', '#d3c9b6'], uhall: ['#8c4a3c', '#eadccd', '#cdb9a3'], ugym: ['#7fa0b8', '#e8edf1', '#c5d0d8'],
@@ -3448,9 +3451,9 @@ const SYM_K = { shrine: 'torii', temple: 'manji', church: 'cross', superonsen: '
   baseball: 'stadium', soccer: 'stadium', arena: 'stadium', athletics: 'stadium', museum: 'museum', artmuseum: 'museum', science: 'museum', umus: 'museum',
   aquarium: 'fish', fishing: 'fish', zoo: 'tree', botanical: 'tree', camp: 'tent', amuse: 'wheel', golf: 'flag', golfrange: 'flag', ski: 'mount',
   hospital: 'hosp', bighosp: 'hosp', erhosp: 'hosp', uhosp: 'hosp', nursing: 'care', care: 'care', dayserv: 'care', uschool: 'sch',
-  postoffice: 'post', cityhall: 'hall', thermal: 'power', solar: 'power', wind: 'power', truckterm: 'truck', busterm: 'bus', water: '', garbage: '' };
+  postoffice: 'post', cityhall: 'hall', prefhall: 'pref', govhall: 'gov', kantei: 'gov', diet: 'diet', court: 'court', natlib: 'book', milhq: 'mil', thermal: 'power', solar: 'power', wind: 'power', truckterm: 'truck', busterm: 'bus', water: '', garbage: '' };
 // 重なったときに先に出すもの（小さいほど先）
-const SYM_P = { hall: 0, hosp: 1, sch: 2, torii: 3, manji: 3, cross: 3, stadium: 4, museum: 4, wheel: 4, fish: 5, tree: 5, hotel: 5, onsen: 5, mount: 5,
+const SYM_P = { pref: 0, diet: 0, hall: 0, court: 0, gov: 0, book: 1, mil: 1, hosp: 1, sch: 2, torii: 3, manji: 3, cross: 3, stadium: 4, museum: 4, wheel: 4, fish: 5, tree: 5, hotel: 5, onsen: 5, mount: 5,
   flag: 6, tent: 6, star: 6, post: 6, clinic: 7, care: 7, power: 8, truck: 8, bus: 8, gear: 9, anchor: 9, P: 10 };
 function symOf(b) {
   if (SYM_K[b.kind] != null) return SYM_K[b.kind] || null;
@@ -3475,6 +3478,15 @@ function symDraw(g, k, X, Y) {
     case 'manji': txt(SYM_TXT.manji, '#3d3328', 12); break;
     case 'post': disc(6.5, '#fff', '#c0392b'); g.font = 'bold 9px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#c0392b'; g.fillText(SYM_TXT.post, 0, 0.5); break;
     case 'hall': for (const [col, lw] of [[W, 3.6], ['#333', 1.6]]) for (const r of [6, 3]) { g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.strokeStyle = col; g.lineWidth = lw; g.stroke(); } break;
+    // 国の建物（t56）：府県庁（◎にまん中の点）・官庁（○に横線）・国会議事堂（ドーム）・裁判所（高札）・国立図書館（本）・司令部（旗）
+    case 'pref': for (const [col, lw] of [[W, 3.6], ['#1f3d7a', 1.6]]) for (const r of [6.5, 3.6]) { g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.strokeStyle = col; g.lineWidth = lw; g.stroke(); }
+      g.beginPath(); g.arc(0, 0, 1.6, 0, Math.PI * 2); g.fillStyle = '#1f3d7a'; g.fill(); break;
+    case 'gov': path(() => { g.arc(0, 0, 6, 0, Math.PI * 2); g.moveTo(-6, 0); g.lineTo(6, 0); }, '#333', 1.6, '#fff'); break;
+    case 'diet': path(() => { g.moveTo(-6.5, 5.5); g.lineTo(6.5, 5.5); g.lineTo(6.5, 1.5); g.lineTo(3.2, 1.5); g.arc(0, 1.5, 3.2, 0, Math.PI, true); g.lineTo(-6.5, 1.5); g.closePath(); g.moveTo(0, -1.7); g.lineTo(0, -6.5); }, '#3d3a33', 1.4, '#fff'); break;
+    case 'court': path(() => { g.rect(-6, -6, 12, 6.5); g.moveTo(0, 0.5); g.lineTo(0, 6.5); }, '#3d3a33', 1.5, '#fff'); break;
+    case 'book': path(() => { g.moveTo(0, -3.5); g.quadraticCurveTo(-3, -5.5, -6.5, -4.5); g.lineTo(-6.5, 4.5); g.quadraticCurveTo(-3, 3.5, 0, 5.5); g.quadraticCurveTo(3, 3.5, 6.5, 4.5); g.lineTo(6.5, -4.5); g.quadraticCurveTo(3, -5.5, 0, -3.5); g.closePath(); g.moveTo(0, -3.5); g.lineTo(0, 5.5); }, '#4d4a42', 1.3, '#fff'); break;
+    case 'mil': path(() => { g.moveTo(-4.5, 6.5); g.lineTo(-4.5, -6.5); }, '#2f3d2a', 1.6); g.fillStyle = W; g.fillRect(-4.2, -6.8, 11, 7.6);
+      g.fillStyle = '#4b5d3a'; g.fillRect(-3.5, -6, 9.6, 6.2); g.fillStyle = '#fff'; g.fillRect(-3.5, -3.7, 9.6, 1.6); break;
     case 'hosp': disc(6.5, '#fff', '#c62828'); g.fillStyle = '#c62828'; g.fillRect(-1.3, -4.2, 2.6, 8.4); g.fillRect(-4.2, -1.3, 8.4, 2.6); break;
     case 'clinic': g.fillStyle = W; g.fillRect(-2.7, -5.7, 5.4, 11.4); g.fillRect(-5.7, -2.7, 11.4, 5.4); g.fillStyle = '#d84343'; g.fillRect(-1.4, -4.4, 2.8, 8.8); g.fillRect(-4.4, -1.4, 8.8, 2.8); break;
     case 'care': path(() => { g.moveTo(-5, 5); g.lineTo(-5, -1); g.lineTo(0, -5.5); g.lineTo(5, -1); g.lineTo(5, 5); g.closePath(); }, '#8a5a2b', 1.5, '#fff'); g.fillStyle = '#8a5a2b'; g.fillRect(-1, 0.5, 2, 4.5); break;
@@ -3516,7 +3528,8 @@ function bldMarks(g, bs, z) {
     if (z >= 14 && b.name && pr <= 8 && !(k === 'gear' && !(pOf(b.kind) || {}).mk)) label(g, b.name, X + 10, Y, { size: 10, left: true, color: b.own === 2 ? '#123c8c' : b.own === 3 ? '#5a3d0c' : '#333' });
   }
 }
-// 建物の名前（とても近いとき）
+// 建物の名前（とても近いとき）。国の大きい建物は大きい字
+const GOV_BIG = new Set(['cityhall', 'uhq', 'prefhall', 'govhall', 'diet', 'court', 'kantei', 'natlib', 'milhq']);
 function bldNames(g, bs, z) {
   if (z < 24) return;
   for (const b of bs.slice().reverse()) {
@@ -3525,7 +3538,7 @@ function bldNames(g, bs, z) {
     const [X, Y] = bldPt(b, z);
     if (X < -100 || Y < -20 || X > S.W + 100 || Y > S.H + 20) continue;
     const t = (b.name || '') + (b.floors > 0 ? (b.name ? ' ' : '') + b.floors + 'F' : '');
-    label(g, t, X, Y, { size: b.kind === 'cityhall' || b.kind === 'uhq' ? 12 : 10, color: b.own === 2 ? '#123c8c' : b.own === 3 ? '#5a3d0c' : '#333', bg: 'rgba(255,255,255,.82)' });
+    label(g, t, X, Y, { size: GOV_BIG.has(b.kind) ? 12 : 10, color: b.own === 2 ? '#123c8c' : b.own === 3 ? '#5a3d0c' : '#333', bg: 'rgba(255,255,255,.82)' });
   }
 }
 // 工場の記号（歯車）

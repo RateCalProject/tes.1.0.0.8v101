@@ -21423,7 +21423,14 @@ language sql immutable as $$
    {"k":"ufield","n":"グラウンド","use":"plaza","one":true,"z":"abcdefghik","cpm":30,"f0":0,"f1":0,"min":1,"max":1600,"sh":["full"],"gov":true},
    {"k":"ufarm","n":"実験農場","use":"farm","one":true,"z":"abcdefghik","cpm":10,"f0":0,"f1":0,"min":1,"max":1600,"sh":["full"],"gov":true},
    {"k":"ugreen","n":"緑地","use":"plaza","one":true,"z":"abcdefghik","cpm":20,"f0":0,"f1":0,"min":1,"max":1600,"sh":["full"],"gov":true},
-   {"k":"uave","n":"並木道","use":"plaza","one":true,"z":"abcdefghik","cpm":40,"f0":0,"f1":0,"min":1,"max":1600,"sh":["full"],"gov":true}
+   {"k":"uave","n":"並木道","use":"plaza","one":true,"z":"abcdefghik","cpm":40,"f0":0,"f1":0,"min":1,"max":1600,"sh":["full"],"gov":true},
+   {"k":"prefhall","n":"府県庁","use":"office","u":0,"z":"abcdefghik","cpm":1200,"f0":1,"f1":80,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"govhall","n":"官庁","use":"office","u":0,"z":"abcdefghik","cpm":1100,"f0":1,"f1":80,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"diet","n":"国会議事堂","use":"office","u":0,"z":"abcdefghik","cpm":2500,"f0":1,"f1":10,"min":1,"max":1600,"sh":["full"],"gov":true},
+   {"k":"court","n":"裁判所","use":"office","u":0,"z":"abcdefghik","cpm":1300,"f0":1,"f1":30,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"kantei","n":"首相官邸","use":"office","u":0,"z":"abcdefghik","cpm":1800,"f0":1,"f1":10,"min":1,"max":1600,"sh":["full"],"gov":true},
+   {"k":"natlib","n":"国立図書館","use":"office","u":0,"z":"abcdefghik","cpm":1000,"f0":1,"f1":20,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"milhq","n":"司令部","use":"office","u":0,"z":"abcdefghik","cpm":1000,"f0":1,"f1":30,"min":1,"max":1600,"sh":["full","tower"],"gov":true}
   ]'::jsonb
 $$;
 -- プリセットを k で引けるように（t54l）
@@ -21801,7 +21808,7 @@ begin
   return (q - 'plan') || jsonb_build_object('id', bid, 'bname', (select name from mp_blds where id = bid));
 end $$;
 
-/* ---------- 国の建物（t54g：市役所・広場など。t54l：各地の神社・お寺。管理者が SQL でつくる） ----------
+/* ---------- 国の建物（t54g：市役所・広場など。t54l：各地の神社・お寺。t56：府県庁・国会議事堂・裁判所・首相官邸・官庁・国立図書館・司令部。管理者が SQL でつくる） ----------
    p_cells：筆にする区画 [X0, Y0, …]（あいている国の土地・同じ町字）。p_bcells：建物の区画（null なら筆ぜんぶ）。工事費は国庫から。税・家賃はなし */
 create or replace function public._mp_gov_build(p_cells int[], p_kind text, p_floors int, p_shape text, p_bcells int[], p_name text) returns bigint
 language plpgsql set search_path = public as $$
