@@ -146,33 +146,147 @@ function world(opt) {
     return { best, all };
   }
 
+  /* ---------- 広げた国土（t55）：南の陸（半島・湾）と、南東の海の島 ----------
+     いまの国土（広げる前の地図）の陸と、そのまわりの海は1マスも変えない：
+       南の陸は y ≥ 1536（広げたところ）だけ。もとの海岸から、鷹磯川の河口の南でなめらかに分かれて東へ
+       島は、もとは深い海だけだったところ（ISL_BOX）だけ
+     形は「海岸からの内陸の距離 d（マス）」で決める：北の海岸の線より南が陸 ＋ 半島（芯の線とはば）− 湾（だ円）＋ ゆらぎ。小島も */
+  const S_EXT = SEED + 131, Y_EXT = 1536, ISL_BOX = [576, 576, 1728, 1536];
+  const inIslBox = (x, y) => x >= ISL_BOX[0] && x < ISL_BOX[2] && y >= ISL_BOX[1] && y < ISL_BOX[3];
+  const extZone = (x, y) => y >= Y_EXT || inIslBox(x, y);
+  const smax = (a, b, k) => { const h = Math.max(k - Math.abs(a - b), 0) / k; return Math.max(a, b) + h * h * k * 0.25; };
+  const smin = (a, b, k) => { const h = Math.max(k - Math.abs(a - b), 0) / k; return Math.min(a, b) - h * h * k * 0.25; };
+  // なめらかな線（点のあいだを Catmull-Rom で）：P は [a, b] の列（a が増える順）。a → b
+  function spl(P, a) {
+    let i = 1; while (i < P.length - 2 && a > P[i + 1][0]) i++;
+    const p0 = P[i - 1], p1 = P[i], p2 = P[i + 1], p3 = P[Math.min(i + 2, P.length - 1)];
+    const t = clamp((a - p1[0]) / (p2[0] - p1[0]), 0, 1), t2 = t * t, t3 = t2 * t;
+    const m1 = (p2[1] - p0[1]) / (p2[0] - p0[0]) * (p2[0] - p1[0]), m2 = (p3[1] - p1[1]) / (p3[0] - p1[0]) * (p2[0] - p1[0]);
+    return (2 * t3 - 3 * t2 + 1) * p1[1] + (t3 - 2 * t2 + t) * m1 + (-2 * t3 + 3 * t2) * p2[1] + (t3 - t2) * m2;
+  }
+  // 南の陸の南の本土の海岸（湾の奥。x → y）と、西の陸の東の海岸（内湾の西岸。y → x）
+  const SC = [[-1900, 2200], [-1300, 2236], [-1000, 2276], [-700, 2326], [-400, 2376], [-100, 2416], [200, 2428], [500, 2380], [800, 2316], [1100, 2328], [1400, 2356], [1900, 2370]];
+  const WC_ = [[1400, -1460], [1616, -1440], [1700, -1388], [1800, -1336], [2000, -1290], [2200, -1250], [2400, -1220], [2900, -1200]];
+  const southY = x => spl(SC, x), westX = y => spl(WC_, y);
+  // 半島・島の芯（折れ線）とはば（点ごと）：はば − 芯からの距離
+  function capD(p, x, y) {
+    let best = -1e9;
+    for (let i = 0; i + 1 < p.pts.length; i++) {
+      const [ax, ay] = p.pts[i], [bx, by] = p.pts[i + 1], dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+      const t = clamp(((x - ax) * dx + (y - ay) * dy) / L2, 0, 1), qx = ax + dx * t - x, qy = ay + dy * t - y;
+      const w = p.w[i] + (p.w[i + 1] - p.w[i]) * t, d = w - Math.sqrt(qx * qx + qy * qy);
+      if (d > best) best = d;
+    }
+    return best;
+  }
+  // 湾（だ円）：外がプラス、中がマイナス
+  function bayD(b, x, y) {
+    const c = Math.cos(b.a), s = Math.sin(b.a), dx = x - b.x, dy = y - b.y, px = (dx * c + dy * s) / b.rx, py = (-dx * s + dy * c) / b.ry;
+    return (Math.sqrt(px * px + py * py) - 1) * Math.min(b.rx, b.ry);
+  }
+  const PEN = [   // 南の陸の半島（芯の線とはば。西から）
+    { pts: [[-1470, 1792], [-1200, 1760], [-950, 1722], [-700, 1712]], w: [120, 95, 70, 38] },                      // 北の岬（内湾の北をかこむ）
+    { pts: [[-640, 2390], [-560, 2150], [-440, 1960], [-300, 1830], [-150, 1730]], w: [240, 220, 180, 128, 58] },    // 大きい半島（北東へ。内湾の東）
+    { pts: [[380, 2450], [400, 2200], [440, 2020], [490, 1900], [522, 1818]], w: [120, 100, 80, 60, 32] },            // 細い半島（北へ）
+    { pts: [[1180, 2420], [1220, 2150], [1240, 1960], [1262, 1822], [1290, 1722]], w: [300, 262, 212, 150, 70] } ];  // 東の半島（広い・山がち。島のほうへ）
+  const BAYS = [   // 入り江（中がマイナス）
+    { x: -1270, y: 2050, rx: 60, ry: 34, a: 0.3 }, { x: 140, y: 2400, rx: 70, ry: 50, a: 0.2 }, { x: 760, y: 2300, rx: 70, ry: 44, a: -0.2 },
+    { x: 1020, y: 2080, rx: 56, ry: 40, a: 0.7 }, { x: 1440, y: 1980, rx: 60, ry: 36, a: -0.5 } ];
+  const S_ISLETS = [[-860, 1640, 18], [-600, 1680, 12], [60, 2160, 30], [-990, 2060, 22], [560, 1760, 14], [1320, 1640, 26], [1380, 1584, 12], [700, 2000, 16], [-80, 1660, 16]];
+  // 南東の海の大きい島（芯の線とはば）・入り江・まわりの小島
+  const BIG = { pts: [[790, 1342], [880, 1272], [962, 1236], [1050, 1156], [1130, 1104], [1222, 1056], [1310, 972]], w: [70, 112, 136, 150, 126, 140, 78] };
+  const BIG_BAYS = [{ x: 930, y: 1118, rx: 62, ry: 42, a: 0.6 }, { x: 1150, y: 1262, rx: 48, ry: 34, a: -0.3 }, { x: 1260, y: 1150, rx: 40, ry: 30, a: 0.2 }];
+  const B_ISLETS = [[650, 1450, 28], [700, 1500, 12], [1430, 862, 24], [1478, 900, 10], [1180, 1400, 18], [1452, 1226, 26], [1000, 1385, 10], [1380, 1330, 14]];   // 地図のはし（x 1536）にかからないように
+  const isletD = (s, x, y) => s[2] - Math.sqrt((x - s[0]) * (x - s[0]) + (y - s[1]) * (y - s[1]));
+  // 広げたところの内陸の距離 d と種類 k（1 南の陸・2 島）。形はゆがめて（まっすぐにならないように）、海岸にゆらぎ
+  function extLand(x, y) {
+    const wx = x + 70 * fbm(x / 330, y / 330, S_EXT + 31, 3), wy = y + 70 * fbm(x / 330, y / 330, S_EXT + 37, 3);
+    if (y >= Y_EXT) {
+      const sl = (southY(wx + 8) - southY(wx - 8)) / 16, tl = (westX(wy + 8) - westX(wy - 8)) / 16;
+      let d = smax((wy - southY(wx)) / Math.sqrt(1 + sl * sl), (westX(wy) - wx) / Math.sqrt(1 + tl * tl), 80);
+      for (const p of PEN) d = smax(d, capD(p, wx, wy), 80);
+      for (const b of BAYS) d = smin(d, bayD(b, wx, wy), 40);
+      for (const s of S_ISLETS) d = Math.max(d, isletD(s, x, y));
+      d += 30 * fbm(x / 210, y / 210, S_EXT, 3) + 14 * fbm(x / 80, y / 80, S_EXT + 2, 2) + 16 * fbm(x / 46, y / 46, S_C2, 3) + 7 * fbm(x / 13, y / 13, S_C2 + 3, 2);
+      d -= 34 * ss(0.6, 0.93, ridged(x / 75, y / 75, S_EXT + 41, 2)) * ss(-24, 8, d) * (1 - ss(40, 130, d)) * extW(x);   // 海岸のそばに、細い入り江（リアス式）
+      if (d < -6 && d > -90) { const isl = fbm(x / 28, y / 28, S_ISL + 5, 3); if (isl > 0.37) d = (isl - 0.37) * 60; }   // 沖の小島
+      return { d, k: 1 };
+    }
+    let d = capD(BIG, wx, wy);
+    for (const b of BIG_BAYS) d = smin(d, bayD(b, wx, wy), 30);
+    for (const s of B_ISLETS) d = Math.max(d, isletD(s, x, y));
+    d += 26 * fbm(x / 130, y / 130, S_EXT + 3, 3) + 12 * fbm(x / 70, y / 70, S_EXT + 4, 2) + 16 * fbm(x / 46, y / 46, S_C2, 3) + 7 * fbm(x / 13, y / 13, S_C2 + 3, 2);
+    if (d < -6 && d > -90) { const isl = fbm(x / 28, y / 28, S_ISL + 7, 3); if (isl > 0.37) d = (isl - 0.37) * 60; }
+    return { d, k: 2 };
+  }
+  // 南の陸の新しい決まりのきき方：もとの海岸とつながる西のはし（x < −1420）は 0（もとと同じ）、東へ 1
+  const extW = x => ss(-1420, -1060, x);
+  /* 広げたところの川（湾の奥へ流れこむ）：河口のまえ（湾の中）の点 m・内陸への向き・長さ。もとの川と同じ形のもの（s：河口から内陸へ）
+     川の線は、まっすぐ＋ゆるい曲がり。地図の絵のための線（xrivers）も */
+  const XR_DEF = [
+    { k: 1, m: [-980, 2196], dir: [0.06, 1], len: 560, w0: 2.9, big: true, pd: 330, sm: 80 },     // 内湾の南の奥へ
+    { k: 2, m: [150, 2356], dir: [0.12, 1], len: 400, w0: 2.6, big: true, pd: 300, sm: 89 },      // まん中の湾の奥へ
+    { k: 3, m: [776, 2250], dir: [-0.06, 1], len: 500, w0: 2.7, big: true, pd: 320, sm: 90 },     // 東の湾の奥へ
+    { k: 4, m: [-1196, 1984], dir: [-1, 0.22], len: 360, w0: 1.8, big: false, pd: 260, sm: 105 },  // 内湾の西から
+    { k: 5, m: [-704, 2160], dir: [1, 0.3], len: 230, w0: 1.6, big: false, pd: 220, sm: 0 },     // 大きい半島から内湾へ
+    { k: 6, m: [962, 2140], dir: [1, 0.25], len: 300, w0: 1.8, big: false, pd: 240, sm: 0 },     // 東の半島から東の湾へ
+    { k: 7, m: [905, 1078], dir: [0.72, 0.69], len: 170, w0: 1.6, big: false, pd: 120, sm: 115 },  // 島（北西の入り江へ）
+    { k: 8, m: [1166, 1300], dir: [-0.35, -1], len: 130, w0: 1.4, big: false, pd: 100, sm: 77 } ]; // 島（南東の入り江へ）
+  const XR = XR_DEF.map(r => { const L = Math.hypot(r.dir[0], r.dir[1]); return { ...r, cx: r.dir[0] / L, cy: r.dir[1] / L, s0: 0, s1: r.len, trib: false, xr: true, name: '' }; });
+  const xrOff = (r, s) => (22 + 6 * ss(0, 200, s)) * fbm(s / 80 + r.k * 17.3, r.k * 3.1 + 0.5, S_EXT + 51, 2) * 2 * ss(0, 90, s);
+  function nearXRiver(x, y) {
+    let best = null; const all = [];
+    for (const r of XR) {
+      const dx = x - r.m[0], dy = y - r.m[1], s = dx * r.cx + dy * r.cy;
+      if (s < r.s0 - 12 || s > r.s1 + 90) continue;
+      const t = -dx * r.cy + dy * r.cx, dv = t - xrOff(r, s), w = riverW(r, s), a = Math.abs(dv);
+      if (a > 220) continue;
+      const q = { r, s, dv, a, w }; all.push(q);
+      if (s >= r.s0 - 5 && s <= r.s1 + 40 && (!best || a - w < best.a - best.w)) best = q;
+    }
+    return { best, all };
+  }
+  // 地図の絵のための川の線（[x, y, …]・はば）。sm：河口（川のマスがはじまるところ。湾の中には描かない）
+  const xrivers = XR.map(r => { const pts = [], ws = [], s0 = Math.max(0, r.sm - 3); for (let s = s0; s <= r.len; s += 1) { const o = xrOff(r, s); pts.push(r.m[0] + r.cx * s - r.cy * o, r.m[1] + r.cy * s + r.cx * o); ws.push(riverW(r, s)); } return { k: r.k, s0, pts, w: ws }; });
+
   /* 1マスの地形（標高 e：メートル。海はマイナス）
      平地の高さ ep ＝ ゆるい上り（0.6m/km）＋ 山のふもとの扇状地 ＋ 台地 。そこに丘陵・山がのる。川ぞいは谷（低地）になる
-     rl ＝ 起伏（丘・山の分）。地形の種類は rl で決める（台地や扇状地は高くても平地） */
-  function cell(x, y) {
+     rl ＝ 起伏（丘・山の分）。地形の種類は rl で決める（台地や扇状地は高くても平地）
+     xk：0 もとの国土・1 南の陸・2 島（t55） */
+  function cell(x, y) { return cellAt(x, y, extZone(x, y)); }
+  function cell0(x, y) { return cellAt(x, y, false); }          // 広げる前の国土
+  function cellAt(x, y, useExt) {
     const u = (x + y) * SQ, v = (x - y) * SQ;
-    const nr = nearRiver(u, v), rn = nr.best;
+    const nr = nearRiver(u, v);
+    let rn = nr.best, rall = nr.all;
     let d = coastU(v) - u + 16 * fbm(x / 46, y / 46, S_C2, 3) + 7 * fbm(x / 13, y / 13, S_C2 + 3, 2);          // 海岸からの内陸の距離（マス）
     // 沖の小島
     if (d < -6 && d > -90) { const isl = fbm(x / 28, y / 28, S_ISL, 3); if (isl > 0.31) d = (isl - 0.31) * 60; }
+    let xk = 0;
+    if (useExt) {
+      const ex = extLand(x, y); if (ex.d > d - 30) { if (ex.d >= d) xk = ex.k; d = smax(d, ex.d, 30); }
+      const xr = nearXRiver(x, y);   // 広げたところの川
+      if (xr.all.length) { rall = rall.concat(xr.all); if (xr.best && (!rn || xr.best.a - xr.best.w < rn.a - rn.w)) rn = xr.best; }
+    }
     let e, rl = 0;
     if (d < 0) e = d * 1.2;                                              // 海の深さ
     else {
-      const pd = plainDepth(v);
-      const ms = pd + 230 * fbm(x / 420, y / 420, S_MTN2 + 7, 3) + 90 * fbm(x / 130, y / 130, S_MTN2 + 8, 2);   // 山がはじまるところ
+      const w = xk === 1 ? extW(x) : 0;
+      const pd = xk === 2 ? 60 : w > 0 ? plainDepth(v) * (1 - w) + w * (300 + 150 * fbm(x / 700, y / 700, S_EXT + 9, 2)) : plainDepth(v);
+      const ms = xk === 2 ? 74 + 40 * fbm(x / 160, y / 160, S_EXT + 11, 2) : pd + 230 * fbm(x / 420, y / 420, S_MTN2 + 7, 3) + 90 * fbm(x / 130, y / 130, S_MTN2 + 8, 2);   // 山がはじまるところ
       const fan = 150 * sq(ss(ms - 650, ms + 100, d));                                                       // 扇状地
       const plat = ss(-0.04, 0.1, fbm(x / 380, y / 380, S_PLAT, 3)) * (10 + 0.022 * d) * ss(25, 140, d);     // 台地
       const r0 = Math.sqrt(x * x + y * y);
       let hm = clamp((fbm(x / 600, y / 600, S_HILL, 3) - 0.16) * 3.2, 0, 1) * ss(60, 220, d) * ss(140, 380, r0);  // 丘陵（都心にはない）
-      hm = clamp(hm + 0.8 * ss(ms - 380, ms - 30, d), 0, 1);                                                // 山のてまえは丘
+      hm = clamp(hm + 0.8 * (xk === 2 ? ss(ms - 64, ms + 6, d) : ss(ms - 380 + 150 * w, ms - 30 + 30 * w, d)), 0, 1);   // 山のてまえは丘（広げたところは、海ぞいに平地をのこす）
       const hills = hm > 0 ? hm * (22 + 170 * ridged(x / 95, y / 95, S_HILL + 3, 3)) : 0;
-      const mf = ss(ms, ms + 280, d);
-      const mtn = mf > 0 ? mf * (220 + 1500 * ridged(x / 120, y / 120, S_MTN, 4) * (0.45 + 0.9 * clamp(fbm(x / 330, y / 330, S_MTN2, 2) + 0.5, 0, 1))) : 0;
+      const mf = xk === 2 ? ss(ms, ms + 130, d) : ss(ms, ms + 280, d);
+      const mtn = mf > 0 ? mf * (xk === 2 ? 0.62 : 1) * (220 + 1500 * ridged(x / 120, y / 120, S_MTN, 4) * (0.45 + 0.9 * clamp(fbm(x / 330, y / 330, S_MTN2, 2) + 0.5, 0, 1))) : 0;
       const ep = 1 + 0.03 * d + fan + plat + 1.5 * fbm(x / 14, y / 14, S_HILL + 9, 2);
       e = ep + hills + mtn;
       // 川ぞいは谷になる（平野では広い低地、山では細い谷）。近くの川ぜんぶの分をなめらかに（いちばん低くなるもの）
       let lo = e;
-      for (const q of nr.all) {
+      for (const q of rall) {
         const r = q.r, f = ss(r.s0 - 12, r.s0, q.s) * (1 - ss(r.s1, r.s1 + 90, q.s));
         if (f <= 0) continue;
         const inPl = 1 - ss(r.pd - 250, r.pd + 150, q.s);
@@ -199,25 +313,72 @@ function world(opt) {
       else if (e < 1700) t = 'M';
       else t = 'K';
     }
-    return { t, e, d, u, v, rn, isRiver, rl };
+    return { t, e, d, u, v, rn, isRiver, rl, xk };
   }
 
   /* ---------- 市町村（ジッターつき格子のたね。瑠璃市だけ特別に大きい） ---------- */
   const MC = 150, RURI = { id: 'm:ruri', x: 0, y: 0, w: 165, name: '瑠璃', type: '市', pop: 1250000, ruri: true };
-  const munis = new Map();
+  /* 広げた国土（t55）：もとの市町村のたねはそのまま（広げる前の地形でえらぶ）。新しい土地（南の陸 j ≥ 11・島）にだけ、新しい市町村のたね
+     もとの国土のマスは、もとのたねだけを見る（区域・人の多さが変わらない）。南の陸のはじめ（y < 1720）は、新しいたねを遠めに見る（境目がもとの地図にくっつかない） */
+  const munis = new Map(), munis0 = new Map();
+  const extGrid = (i, j) => j >= 11 || (i >= 4 && i <= 10 && j >= 4 && j <= 9);
+  function muniSeed0(i, j) { const key = i + ',' + j; let m = munis0.get(key); if (m === undefined) { m = seedAt(i, j, cell0, false); munis0.set(key, m); } return m; }
   function muniSeed(i, j) {
     const key = i + ',' + j; let m = munis.get(key); if (m !== undefined) return m;
-    m = null;
+    m = muniSeed0(i, j);
+    if (!m && extGrid(i, j)) m = seedExt(i, j);
+    munis.set(key, m); return m;
+  }
+  /* 新しい土地の市町村のたね（t55）
+     決めた場所（XFIX：格子 i,j → [x, y, 種類, 人口]）：湾の奥の川の河口の大きいまち・島の市町（島はこれだけ）
+     ほかの南の陸は、もとと同じえらび方（人は少なめ。丘・山の中は、ときどき となりにまとめる） */
+  const XFIX = { '-7,15': [-960, 2330, '市', 420000], '1,16': [160, 2470, '市', 280000], '5,15': [780, 2360, '市', 230000], '-9,12': [-1300, 1850, '市', 150000], '8,12': [1270, 1800, '市', 90000],
+                 '5,7': [870, 1180, '市', 85000], '7,8': [1180, 1235, '町', 22000], '8,6': [1300, 1000, '町', 18000], '5,9': [800, 1360, '町', 15000], '7,7': [1060, 1060, '村', 3500] };
+  const gunName = (i, j) => kanjiName(hash3(Math.floor(i / 2), Math.floor(j / 2), S_MUNI + 7));
+  function seedExt(i, j) {
+    const f = XFIX[i + ',' + j];
+    if (f) {   // 近くの、海ぞいの低いところ
+      let best = null;
+      for (let dy = -36; dy <= 36; dy += 3) for (let dx = -36; dx <= 36; dx += 3) {
+        const x = f[0] + dx, y = f[1] + dy, q = cell(x, y);
+        if (q.t === 'D' || q.t === 'S' || q.t === 'R' || q.t === 'L' || q.d < 8) continue;
+        const sc = -q.e - Math.abs(q.d - 30) * 0.3 - Math.sqrt(dx * dx + dy * dy) * 0.25;
+        if (!best || sc > best.sc) best = { x, y, sc };
+      }
+      if (best) return { id: 'm:' + i + '_' + j, i, j, x: best.x, y: best.y, w: 0, type: f[2], pop: f[3], name: kanjiName(hash3(i, j, S_MUNI + 3)), gun: f[2] === '市' ? '' : gunName(i, j), ext: true };
+    }
+    if (j <= 10) return null;   // 島は決めた場所だけ
+    const cx = i * MC + MC / 2, cy = j * MC + MC / 2;
+    let best = null;
+    for (let c = 0; c < 7; c++) {
+      const x = Math.floor(i * MC + MC * (0.15 + 0.7 * rnd(i, j * 31 + c, S_MUNI))), y = Math.floor(j * MC + MC * (0.15 + 0.7 * rnd(i * 17 + c, j, S_MUNI + 1)));
+      const q = cell(x, y);
+      if (q.t === 'D' || q.t === 'S' || q.t === 'R' || q.t === 'L' || q.d < 4) continue;
+      const sc = -q.e - (q.t === 'F' ? 10 : 0) + rnd(x, y, S_MUNI + 2) * 25 - Math.abs(q.d - 25) * 0.08;
+      if (!best || sc > best.sc) best = { x, y, sc, q };
+    }
+    if (!best) return null;
+    const q = best.q, r1 = rnd(i, j, S_EXT + 21);
+    if ((q.e > 380 && r1 < 0.6) || (q.e > 150 && r1 < 0.3)) return null;   // 丘・山の中は、ときどき となりの市町村にまとめる
+    const flat = q.rl < 28 && q.d < plainDepth(q.v) - 120;
+    const type = flat ? (rnd(i, j, S_MUNI + 8) < 0.6 ? '市' : '町') : q.e < 320 ? '町' : '村';
+    const pop = type === '市' ? Math.round(30000 + 150000 * rnd(i, j, S_MUNI + 4) * rnd(i, j, S_MUNI + 5) + 15000 * rnd(i, j, S_MUNI + 6))
+      : type === '町' ? Math.round(5000 + 26000 * rnd(i, j, S_MUNI + 4)) : Math.round(700 + 4800 * rnd(i, j, S_MUNI + 4));
+    return { id: 'm:' + i + '_' + j, i, j, x: best.x, y: best.y, w: 0, type, pop, name: kanjiName(hash3(i, j, S_MUNI + 3)), gun: type === '市' ? '' : gunName(i, j), ext: true, cx, cy };
+  }
+  function seedAt(i, j, cellf, ext) {
+    let m = null;
     const cx = i * MC + MC / 2, cy = j * MC + MC / 2;
     if (cx * cx + cy * cy > 235 * 235) {
       let best = null;
       for (let c = 0; c < 7; c++) {
         const x = Math.floor(i * MC + MC * (0.15 + 0.7 * rnd(i, j * 31 + c, S_MUNI))), y = Math.floor(j * MC + MC * (0.15 + 0.7 * rnd(i * 17 + c, j, S_MUNI + 1)));
-        const q = cell(x, y);
+        const q = cellf(x, y);
         if (q.t === 'D' || q.t === 'S' || q.t === 'R' || q.t === 'L' || q.d < 4) continue;
         const sc = -q.e - (q.t === 'F' ? 10 : 0) + rnd(x, y, S_MUNI + 2) * 25 - Math.abs(q.d - 25) * 0.08;
         if (!best || sc > best.sc) best = { x, y, sc, q };
       }
+      if (best && ext && best.q.e > 380 && rnd(i, j, S_EXT + 21) < 0.5) best = null;   // 新しい山の中は、ときどき となりの村にまとめる
       if (best) {
         const q = best.q, h = hash3(i, j, S_MUNI + 3), r0 = Math.sqrt(best.x * best.x + best.y * best.y);
         // 平野の市町村は「市」が多い（瑠璃に近いほど）。山あいは町・村
@@ -230,18 +391,20 @@ function world(opt) {
           if (r0 > 400 && rnd(i, j, S_MUNI + 9) < 0.06) pop = Math.round(420000 + 480000 * rnd(i, j, S_MUNI + 10));   // ときどき大きい市
         }
         m = { id: 'm:' + i + '_' + j, i, j, x: best.x, y: best.y, w: 0, type, pop, name: kanjiName(h), gun: type === '市' ? '' : kanjiName(hash3(Math.floor(i / 2), Math.floor(j / 2), S_MUNI + 7)) };
+        if (ext) m.ext = true;
       }
     }
-    munis.set(key, m); return m;
+    return m;
   }
   const warpX = (x, y) => x + 14 * fbm(x / 45, y / 45, S_MUNI + 40, 2), warpY = (x, y) => y + 14 * fbm(x / 45, y / 45, S_MUNI + 41, 2);
   function muniAt(x0, y0) {
     const x = warpX(x0, y0), y = warpY(x0, y0);
     const i0 = Math.floor(x / MC), j0 = Math.floor(y / MC);
+    const ez = extZone(x0, y0), pen = ez && y0 >= Y_EXT ? sq(170 * ss(1720, 1560, y0)) : 0;
     let best = RURI, bd = x * x + y * y - RURI.w * RURI.w;
     for (let i = i0 - 2; i <= i0 + 2; i++) for (let j = j0 - 2; j <= j0 + 2; j++) {
-      const m = muniSeed(i, j); if (!m) continue;
-      const dx = x - m.x, dy = y - m.y, dd = dx * dx + dy * dy;
+      const m = ez ? muniSeed(i, j) : muniSeed0(i, j); if (!m) continue;
+      const dx = x - m.x, dy = y - m.y, dd = dx * dx + dy * dy + (m.ext ? pen : 0);
       if (dd < bd) { bd = dd; best = m; }
     }
     return best;
@@ -290,9 +453,9 @@ function world(opt) {
     return (ruriPop = t);
   }
   const CORE = 110000;
-  function centersNear(x, y) {
-    const out = [], i0 = Math.floor(x / MC), j0 = Math.floor(y / MC);
-    for (let i = i0 - 3; i <= i0 + 3; i++) for (let j = j0 - 3; j <= j0 + 3; j++) { const m = muniSeed(i, j); if (m) out.push({ id: m.id, x: m.x, y: m.y, dp: m.pop, sg: sig(m.pop) }); }
+  function centersNear(x, y, all) {
+    const out = [], i0 = Math.floor(x / MC), j0 = Math.floor(y / MC), ez = all || extZone(x, y);   // もとの国土のマスは、もとの市町村だけ（t55）
+    for (let i = i0 - 3; i <= i0 + 3; i++) for (let j = j0 - 3; j <= j0 + 3; j++) { const m = ez ? muniSeed(i, j) : muniSeed0(i, j); if (m) out.push({ id: m.id, x: m.x, y: m.y, dp: m.pop, sg: sig(m.pop) }); }
     if (x * x + y * y < 1500 * 1500) {
       const T = ruriTotal();
       out.push({ id: 'c:ruri', x: 0, y: 0, dp: Math.round(0.55 * T) - CORE, sg: 105 }, { id: 'c:core', x: 0, y: 0, dp: CORE, sg: 20 },
@@ -315,7 +478,7 @@ function world(opt) {
   function centers(cx0, cy0, cx1, cy1) {
     const X0 = cx0 * CS, Y0 = cy0 * CS, X1 = (cx1 + 1) * CS, Y1 = (cy1 + 1) * CS, seen = new Set(), out = [];
     for (let x = X0; x < X1 + MC; x += MC) for (let y = Y0; y < Y1 + MC; y += MC) {
-      for (const c of centersNear(Math.min(x, X1 - 1), Math.min(y, Y1 - 1))) {
+      for (const c of centersNear(Math.min(x, X1 - 1), Math.min(y, Y1 - 1), true)) {
         if (seen.has(c.id) || c.x < X0 || c.x >= X1 || c.y < Y0 || c.y >= Y1) continue;
         seen.add(c.id); out.push(c);
       }
@@ -379,7 +542,7 @@ function world(opt) {
       const ar = areaAt(x, y);
       let ix = palIx.get(ar.id); if (ix === undefined) { ix = pal.length; pal.push(ar.id); palIx.set(ar.id, ix); }
       A[k] = B64[ix];
-      const key = Math.floor(x / 32) + ',' + Math.floor(y / 32);
+      const key = Math.floor(x / 32) + ',' + Math.floor(y / 32) + (extZone(x, y) ? 'e' : '');
       if (key !== csKey) { csKey = key; cs = centersNear(x, y); }
       Z[k] = zoneOf(q, density(x, y, cs), ar, x, y);
     }
@@ -438,7 +601,7 @@ function world(opt) {
     return out;
   }
 
-  return { CS, SEED, chunk, places, centers, cell, areaAt, muniAt, wardAt, density: (x, y) => density(x, y, centersNear(x, y)), mouth, river, riverV, riverW, ruriTotal, prefAt, plainDepth, coastU, RS };
+  return { CS, SEED, chunk, places, centers, cell, cell0, extZone, Y_EXT, ISL_BOX, xrivers, areaAt, muniAt, wardAt, density: (x, y) => density(x, y, centersNear(x, y)), mouth, river, riverV, riverW, ruriTotal, prefAt, plainDepth, coastU, RS };
 }
 
 /* 同じ区域（市町村・区）の中で町名が重ならないように、あとから来たほうに「東・西・新…」をつける。

@@ -17585,7 +17585,9 @@ begin
            'apx', (select jsonb_agg(jsonb_build_array(coalesce(case when p.k = 'ward' then p.parent else p.id end, ''),
                                                       coalesce(case when p.k = 'ward' then (select m.parent from mp_places m where m.id = p.parent) else p.parent end, '')) order by q.o)
                      from unnest(c.ap) with ordinality q(id, o) left join mp_places p on p.id = q.id),
-           'zo', (select coalesce(jsonb_agg(jsonb_build_array(z.x, z.y, z.z)), '[]'::jsonb) from mp_zone z where z.x >> 6 = c.cx and z.y >> 6 = c.cy))), '[]'::jsonb)
+           -- 用途地域を変えたマス（t55：索引で読む。島の住居・港湾などで行がふえても速く）
+           'zo', (select coalesce(jsonb_agg(jsonb_build_array(z.x, z.y, z.z)), '[]'::jsonb) from mp_zone z
+                   where z.x between c.cx * 64 and c.cx * 64 + 63 and z.y between c.cy * 64 and c.cy * 64 + 63))), '[]'::jsonb)
     into r from mp_chunks c join (select p_keys[2 * i - 1] kx, p_keys[2 * i] ky from generate_series(1, coalesce(array_length(p_keys, 1), 0) / 2) i) k
       on c.cx = k.kx and c.cy = k.ky;
   return r;

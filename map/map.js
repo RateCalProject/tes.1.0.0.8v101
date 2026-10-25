@@ -285,6 +285,17 @@ function riversCell(i, j) {
         }
       }
     }
+    // 広げた国土（t55）の川：worldgen.js の xrivers（1マスごとの点）
+    for (const xr of WG.xrivers || []) {
+      let cur = null;
+      for (let q = 0; q < xr.w.length; q++) {
+        const x = xr.pts[2 * q], y = xr.pts[2 * q + 1];
+        if (x >= x0 && x <= x1 && y >= y0 && y <= y1) {
+          if (!cur) { cur = { pts: [], w: [] }; r.push(cur); }
+          cur.pts.push(x + 0.5, y + 0.5); cur.w.push(xr.w[q] + 0.45);
+        } else cur = null;
+      }
+    }
   }
   RIV.set(k, r);
   if (RIV.size > 400) RIV.delete(RIV.keys().next().value);
