@@ -1357,16 +1357,20 @@ async function segDel(s) {
 function showSta(s) {
   S.sel = { kind: 'sta', id: s.id }; S.dirty = true;
   const air = s.k === 'air', port = s.k === 'ship' || air, pdep = port ? [...S.vis.deps.values()].find(d => d.k === s.k && d.b != null && d.b === s.b) : null;
-  sheet(`<h4>${s.k === 'rail' ? '🚉 ' : air ? '✈ ' : port ? '⚓ ' : '🚏 '}<span>${esc(s.n)}</span>${s.k === 'rail' ? '<span>駅</span>' : air ? '<span>（空港）</span>' : port ? '<span>（港）</span>' : ''}</h4><p class="small muted" data-addr translate="no" style="margin:0"></p>
-    <div class="mp-kv"><b>持ち主</b><span><span>${esc(S.vis.names[s.o] || '')}</span>${s.mine ? '<small>（あなた）</small>' : ''}</span>
+  const gov = air && s.o === 'gov', adm = gov && S.admin;   // 国の空港（t54q）：だれでも使える。名前・使用料は管理者
+  sheet(`<h4>${s.k === 'rail' ? '🚉 ' : air ? '✈ ' : port ? '⚓ ' : '🚏 '}<span>${esc(s.n)}</span>${s.k === 'rail' ? '<span>駅</span>' : gov ? '<span>（国の空港）</span>' : air ? '<span>（空港）</span>' : port ? '<span>（港）</span>' : ''}</h4><p class="small muted" data-addr translate="no" style="margin:0"></p>
+    <div class="mp-kv"><b>持ち主</b><span><span>${s.o === 'gov' ? '国' : esc(S.vis.names[s.o] || '')}</span>${s.mine ? '<small>（あなた）</small>' : ''}</span>
       ${s.k === 'rail' ? `<b>ホーム</b><span>${s.pl} m・${s.tr}番線まで</span>` : ''}
       ${s.k === 'rail' && s.tk ? `<b>発着番線</b><span>${s.tk.map((t, i) => `<span>${esc(trkL(t, i))}</span>`).join('<br>')}</span>` : ''}
-      ${s.k === 'bus' || port ? `<b>貸し出し</b><span>${s.ln != null ? `<span>ほかの人・会社に貸しています（1系統・1日 ${X(s.ln)}）</span>` : '<span>ほかの人・会社には貸していません</span>'}</span>` : ''}
+      ${gov ? `<b>使用料</b><span>${s.ln != null ? `<span>空路に入れると 1路線・1日 ${X(s.ln)}（国庫へ）</span>` : '<span>いまは新しい空路に使えません</span>'}</span>`
+        : s.k === 'bus' || port ? `<b>貸し出し</b><span>${s.ln != null ? `<span>ほかの人・会社に貸しています（1系統・1日 ${X(s.ln)}）</span>` : '<span>ほかの人・会社には貸していません</span>'}</span>` : ''}
       ${air ? `<b>滑走路</b><span><span>${fmt(s.pl)}m</span>・<span>ゲート ${s.tr}</span></span>` : ''}
-      ${port && pdep ? (air ? `<b>駐機場</b><span>${pdep.cap}機まで</span>` : `<b>船の置き場</b><span>${pdep.cap}隻まで</span>`) : ''}
+      ${port && pdep ? (gov ? `<b>駐機場</b><span>${pdep.cap}機まで（みんなで使う）</span>` : air ? `<b>駐機場</b><span>${pdep.cap}機まで</span>` : `<b>船の置き場</b><span>${pdep.cap}隻まで</span>`) : ''}
       <b>${air ? '空路' : port ? '航路' : '系統'}</b><span>${(s.rt || []).map(r => `<a href="#" data-rt="${r.id}" style="color:${esc(r.c)};font-weight:800">■ ${esc(r.n)}</a>`).join('<br>') || 'なし'}</span>
       ${s.k === 'rail' ? thruRow(s.o) : ''}</div>
-    ${s.mine && port ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button><button class="btn" data-lend>貸し出し</button>${pdep ? (air ? '<button class="btn" data-cars>飛行機を見る</button>' : '<button class="btn" data-cars>船を見る</button>') : ''}${air ? '<button class="btn" data-newr>＋ 空路</button>' : '<button class="btn" data-newr>＋ 航路</button>'}</div>
+    ${gov ? `<div class="mp-row">${pdep ? '<button class="btn" data-cars>飛行機を見る・注文する</button>' : ''}<button class="btn" data-newr>＋ 空路</button>${adm ? '<button class="btn" data-ren>名前を変える</button><button class="btn" data-lend>使用料</button>' : ''}</div>
+      <p class="muted small">国の空港です。だれでも駐機場に飛行機を置いて（≡ →「車両と編成」）、空路に使えます。空路に入れると、1路線・1日の使用料を国にはらいます（使いはじめたときの値段のまま）</p>`
+    : s.mine && port ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button><button class="btn" data-lend>貸し出し</button>${pdep ? (air ? '<button class="btn" data-cars>飛行機を見る</button>' : '<button class="btn" data-cars>船を見る</button>') : ''}${air ? '<button class="btn" data-newr>＋ 空路</button>' : '<button class="btn" data-newr>＋ 航路</button>'}</div>
       <p class="muted small">${air ? '空港は、空港の建物をこわすとなくなります' : '港は、フェリーターミナルの建物をこわすとなくなります'}</p>` : s.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button>${s.k === 'bus' ? '<button class="btn" data-lend>貸し出し</button>' : '<button class="btn" data-trk>発着番線</button>'}<button class="btn" data-del>こわす</button></div>` : ''}`, sh => {
     const cs = sh.querySelector('[data-cars]'); if (cs) cs.onclick = () => openCars(pdep.id);
     const nr = sh.querySelector('[data-newr]'); if (nr) nr.onclick = () => { sheet(null); routeBuild(s.k); };
@@ -1374,11 +1378,11 @@ function showSta(s) {
     const th = sh.querySelector('[data-thru]'); if (th) th.onclick = () => thruReq({ sta: s.id }, () => { if (S.sel && S.sel.kind === 'sta' && S.sel.id === s.id) showSta(s); });
     const tk = sh.querySelector('[data-trk]'); if (tk) tk.onclick = () => trkEdit(s);
     const ld = sh.querySelector('[data-lend]'); if (ld) ld.onclick = async () => {
-      const v = prompt(T('ほかの人・会社に貸す使用料（1系統・1日・X）。空にすると貸しません（いま使っている系統は、そのまま使えます）'), s.ln != null ? String(s.ln) : '1000');
+      const v = prompt(gov ? T('国の空港の使用料（1路線・1日・X）。空にすると、新しい空路には使えなくなります（いまの空路は、そのまま使えます）') : T('ほかの人・会社に貸す使用料（1系統・1日・X）。空にすると貸しません（いま使っている系統は、そのまま使えます）'), s.ln != null ? String(s.ln) : '1000');
       if (v == null) return;
       const t = String(v).replace(/[,，\s]/g, ''), n = t === '' ? null : Number(t);
       if (n != null && !(n >= 0)) return toast('数字を入れてください');
-      const r = await api('mp_stop_lend', { p_id: s.id, p_lend: n }, n == null ? '貸すのをやめました' : '貸し出します');
+      const r = await api('mp_stop_lend', { p_id: s.id, p_lend: n }, gov ? (n == null ? '新しい空路には使えなくしました' : '使用料を決めました') : n == null ? '貸すのをやめました' : '貸し出します');
       if (r) { s.ln = r.lend; refreshBox(s.fx - 3, s.fy - 3, s.fx + 3, s.fy + 3); showSta(s); }
     };
     const r = sh.querySelector('[data-ren]'); if (r) r.onclick = async () => { const nm = prompt(T('新しい名前'), s.n); if (nm && await api('mp_sta_edit', { p_id: s.id, p_name: nm, p_del: false }, '名前を変えました')) refreshBox(s.fx - 3, s.fy - 3, s.fx + 3, s.fy + 3); };
@@ -1442,6 +1446,7 @@ function landRect() {
 async function landSheet() {
   const r = landRect(); if (!r) return;
   const n = (r[2] - r[0] + 1) * (r[3] - r[1] + 1);
+  if (S.as === 'gov' && S.admin) return airportSheet(r, n);   // 名義「国」：国の空港を建てる（t54q）
   if (n > 1600) return sheet(`<h4>${fmt(n)}区画</h4><p class="mp-warn">一度にえらべるのは1600区画（400m×400m）までです</p>`);
   sheet(`<h4>${fmt(n)}区画 えらびました</h4><p class="muted small">見つもっています…</p>`);
   const q = await api('mp_land_buy', { p_rect: r, p_as: S.as, p_dry: true });
@@ -1457,6 +1462,38 @@ async function landSheet() {
     const b = s.querySelector('[data-buy]'); if (b) b.onclick = async () => {
       const x = await api('mp_land_buy', { p_rect: r, p_as: S.as, p_dry: false });
       if (x) { toast(T(`${fmt(x.n)}区画（${x.parcels}筆）を買いました（${fmt(x.total)} X）`)); refreshBox(r[0] / 5 - 1, r[1] / 5 - 1, r[2] / 5 + 2, r[3] / 5 + 2); sheet(null); S.toolState.a = S.toolState.b = null; S.dirty = true; }
+    };
+  });
+}
+// 国の空港（t54q）：管理者が名義「国」で、えらんだ範囲に建てる（あいている国の土地のうち、同じ町字でつながったいちばん大きいところ）
+const AIR_KINDS = [['airfield', '飛行場'], ['airport_s', '地方空港'], ['airport_m', '空港'], ['airport_l', '国際空港']];
+let airKind = 'airport_s';
+async function airportSheet(r, n) {
+  if (n > 10000) return sheet(`<h4>${fmt(n)}区画</h4><p class="mp-warn">国の空港の範囲は10000区画（1km×1km）までです</p>`);
+  sheet(`<h4>✈ 国の空港</h4><p class="muted small">見つもっています…</p>`);
+  const q = await api('mp_admin_airport', { p_rect: r, p_kind: airKind, p_name: '', p_dry: true });
+  const r2 = landRect(); if (!q || !r2 || r2.join() !== r.join()) return;
+  const why = q.why || {}, sk = [why.road && `道路・線路など ${why.road}`, why.water && `水の上 ${why.water}`, why.mtn && `山 ${why.mtn}`, why.park && `公園 ${why.park}`, why.owned && `持ち主がいる ${why.owned}`, why.other && `そのほか ${why.other}`].filter(Boolean).map(t => `<span>${esc(t)}</span>`).join('・');
+  sheet(`<h4>✈ 国の空港を建てる <small class="muted">（管理者・名義「国」）</small></h4>
+    <div class="mp-seg" style="flex-wrap:wrap;margin:4px 0">${AIR_KINDS.map(([k, nm]) => `<button data-ak="${k}" class="${k === airKind ? 'on' : ''}">${esc(nm)}</button>`).join('')}</div>
+    <div class="mp-kv"><b>えらんだ範囲</b><span>${fmt(n)}区画</span>
+      <b>建てるところ</b><span><span>${fmt(q.n)}区画（${fmt(q.n * 100)}㎡）</span>${q.ok ? '' : ` <span class="mp-warn">${esc(q.n < q.min ? T(`${fmt(q.min)}区画以上いります`) : T(`${fmt(q.max)}区画までです`))}</span>`}</span>
+      ${q.addr ? `<b>場所</b><span translate="no">${esc(q.addr)}</span>` : ''}
+      ${q.parts > 1 ? `<b>町字</b><span>${q.parts}つの町字にまたがっています（いちばん大きい、つながったところに建てます）</span>` : ''}
+      ${sk ? `<b>使えない</b><span>${sk}</span>` : ''}
+      <b>滑走路</b><span><span>${fmt(q.rwy)}m</span>・<span>ゲート ${q.gates}</span>・<span>駐機場 ${q.hangar}機</span></span>
+      <b>工事費</b><span class="mp-cost">${X(q.cost)}</span>
+      <b>使用料</b><span>1路線・1日 ${X(q.fee)}（国庫へ）</span></div>
+    <div class="mp-row"><input class="mp-inp" style="flex:1 1 160px" data-anm placeholder="${esc(q.name || '')}" maxlength="30">${q.ok ? '<button class="btn main" data-abuild>国の空港を建てる</button>' : ''}</div>
+    <p class="muted small">あいている国の土地（道路・水・山・公園・持ち主のいる土地はのぞく）のうち、同じ町字でつながった いちばん大きいところに建てます。工事費は国庫から。乗り場（✈）と駐機場は国のもので、だれでも飛行機を置いて空路に使えます（使用料は国庫へ。✈ をタップして変えられます）。もう一度2か所タップすると、えらびなおせます</p>`, s => {
+    s.querySelectorAll('[data-ak]').forEach(b => b.onclick = () => { airKind = b.dataset.ak; airportSheet(r, n); });
+    const bb = s.querySelector('[data-abuild]'); if (bb) bb.onclick = async () => {
+      const nm = s.querySelector('[data-anm]').value.trim() || q.name || '';
+      if (!confirm(T(`「${nm}」（${q.kname}・${fmt(q.n)}区画）を国の空港として建てます。工事費 ${fmt(q.cost)} X（国庫から）。よろしいですか？`))) return;
+      bb.disabled = true;
+      const x = await api('mp_admin_airport', { p_rect: r, p_kind: airKind, p_name: nm, p_dry: false });
+      bb.disabled = false;
+      if (x) { toast(T(`国の空港「${x.name}」を建てました`)); refreshBox(r[0] / 5 - 2, r[1] / 5 - 2, r[2] / 5 + 3, r[3] / 5 + 3); sheet(null); S.toolState.a = S.toolState.b = null; S.dirty = true; }
     };
   });
 }
@@ -2174,7 +2211,7 @@ function openHelp() {
     <p><b>バス・トラック</b>：1980年ごろの性能のバス（路線バス・観光バスなど）とトラック（2t・4t・10t・トレーラー）を、バスの営業所で注文できます。自動車工場（人・会社の工場）をメーカーにえらぶと、その工場の鉄鋼でつくります（自分の工場なら部品代だけ）。トラックは自分の工場・田畑・港の荷物を運び、そのぶん運送費がかかりません（1台で1時間に 積める重さ×300km÷24 t・km。トラックターミナルで +10%）。</p>
     <p><b>鉄道車両工場</b>：鉄鋼（近くの製鉄所から）で鉄道車両をつくります。≡ →「車両と編成」で注文するときにメーカーとしてえらべます。工場を動かしている名義の注文は部品代（定価の45%）と鉄鋼だけ。ほかの人・会社には値段の水準（定価の40〜150%）で売れます。1日につくれる両数は延床面積で決まり、注文が多いと納車が先になります。</p>
     <p><b>フェリー・船</b>：海の近くの筆に「フェリーターミナル」を建てると、港（⚓ 乗り場）と船の置き場ができます。船（1980年ごろの性能：旅客船・小型〜大型フェリー・高速船）は、≡ →「車両と編成」で港をえらんで注文します（国の造船所は24時間。造船所をえらぶと、その鉄鋼でつくります）。≡ →「系統とダイヤ」の「＋ 航路（フェリー）」で港を順にタップすると、海の上の道を自動でさがします（曲がり角の点はドラッグで動かせ、長押しで消せます）。便を入れると人を乗せて運賃が入ります。フェリーは、海をこえる荷物（工場の仕入れ・お店への食品）をトラックごと運び、その運賃は航路の持ち主に入ります（自分の航路なら運賃はかかりません）。フェリーの便がない島とは、荷物を運べません。ほかの人の港は、持ち主が貸し出しているものだけ航路に入れられます。</p>
-    <p><b>空港・飛行機</b>：用途地域が準工業・工業・臨港・農業振興（小さい飛行場・地方空港は住居・港湾も）の土地に「空港」を建てると、まん中に空港の乗り場（✈）と駐機場ができます。飛行場（コミューター。滑走路800m）・地方空港（1,500m）・空港（2,500m）・国際空港（3,000m）。飛行機（1980年ごろの性能：コミューター機・プロペラ旅客機・小型ジェット・中型ワイドボディ・ジャンボ）は、≡ →「車両と編成」で空港をえらんで注文します（国の航空機メーカーで48時間）。滑走路が短い空港には、大きな飛行機は置けず、離着陸もできません。≡ →「系統とダイヤ」の「＋ 空路（飛行機）」で空港を順にタップすると、まっすぐ飛ぶ路線ができます（空港どうしは10km以上）。空港のまわり（10km）の人が乗り、運賃は距離で決まります。座席の数までしか乗れません。ほかの人の空港は、持ち主が貸し出しているものだけ路線に入れられます。</p>
+    <p><b>空港・飛行機</b>：空港は国の建物で、国（管理者）が建てます。まん中に空港の乗り場（✈）と駐機場があります。飛行場（コミューター。滑走路800m）・地方空港（1,500m）・空港（2,500m）・国際空港（3,000m）。だれでも国の空港の駐機場に飛行機を置けます（みんなで使います）。飛行機（1980年ごろの性能：コミューター機・プロペラ旅客機・小型ジェット・中型ワイドボディ・ジャンボ）は、≡ →「車両と編成」で空港をえらんで注文します（国の航空機メーカーで48時間）。滑走路が短い空港には、大きな飛行機は置けず、離着陸もできません。≡ →「系統とダイヤ」の「＋ 空路（飛行機）」で空港を順にタップすると、まっすぐ飛ぶ路線ができます（空港どうしは10km以上）。空路に入れた空港ごとに、1路線・1日の使用料を国にはらいます。空港のまわり（10km）の人が乗り、運賃は距離で決まります。座席の数までしか乗れません。</p>
     <p><b>自分の住所</b>：地図で区画か建物をタップ →「ここを自分の住所に」（建物なら部屋もえらべます）。住所はあなたのページ（人のページ）でみんなに見えます。地図には🏠が出ます（自分にだけ）。≡ →「自分の住所」で見る・消す。</p>
     <p><b>風の芽大学</b>：風の芽大学中央駅のまわりは、風の芽大学 麦畑キャンパス（約140ha）。本部・図書館・学部・研究所・大学病院・附属学校・学生寮・グラウンド・実験農場（麦畑）などがならぶ、国の建物です。</p>
     <p><b>線路・道路</b>：点をおくと、なめらかな線になります。他人の土地や国の土地の上につくると、毎日使用料がかかります（国・府県・市の道路の上はかかりません）。まちの中は工事費が高くなります。</p>
@@ -2208,12 +2245,13 @@ async function openCars(depFocus) {
   const carChip = (c, on) => `<span class="mp-car ${on ? 'on' : ''} ${c.busy ? 'busy' : ''}" data-car="${c.id}">${c.xfer ? '<small class="mp-warn">譲渡中</small> ' : ''}${c.role === 'Truck' ? '<small class="muted">トラック</small> ' : c.role && c.role !== 'Bus' && c.role !== 'Ship' && c.role !== 'Air' ? `<small class="muted">${esc(c.role)}</small> ` : ''}${esc(c.num)}<span class="n">${c.busy ? esc({ deliver: '納車まち', move: '転属中', ac: '冷房工事', heat: '暖房工事', toilet: 'トイレ工事', inspect: '検査中', renew: '更新工事' }[c.busy] || c.busy) : `<span>状態${c.cond}</span>${c.ac ? '❄' : ''}${c.toilet ? '🚻' : ''}`}</span></span>`;
   const draw = () => {
     const d = st.d, deps = d.depots, dep = deps.find(x => x.id === st.dep);
-    if (!deps.length) return m.set('車両と編成', `<p class="small">まず地図で車庫（🏭）をつくってください。車両は車庫に車籍をおきます（${esc(asName())}）。船は港（フェリーターミナルの建物）に、飛行機は空港に置きます。</p>`);
+    if (!deps.length) return m.set('車両と編成', `<p class="small">まず地図で車庫（🏭）をつくってください。車両は車庫に車籍をおきます（${esc(asName())}）。船は港（フェリーターミナルの建物）に、飛行機は国の空港の駐機場に置きます。</p>`);
     const cars = d.cars.filter(c => c.depot === st.dep), forms = d.forms.filter(f => f.depot === st.dep), loose = cars.filter(c => !c.form);
     const road = dep.kind === 'bus', sea = dep.kind === 'ship', air = dep.kind === 'air', uni = sea || air, typeOpts = d.types.filter(t => roleKind(t.role) === dep.kind);   // 営業所：バス・トラック（t54l）・港：船（t54o）・空港：飛行機（t54p）
     const mks = st.mk.filter(x => (x.kind || 'rail') === (road ? 'road' : sea ? 'sea' : air ? 'air' : 'rail')), trucks = loose.filter(c => c.role === 'Truck');
     m.set('車両と編成', `
-      <div class="tabs-s">${deps.map(x => `<button data-dep="${x.id}" class="${x.id === st.dep ? 'on' : ''}">${esc(x.name)} ${x.n}/${x.cap}</button>`).join('')}</div>
+      <div class="tabs-s">${deps.map(x => `<button data-dep="${x.id}" class="${x.id === st.dep ? 'on' : ''}">${x.pub ? '✈ ' : ''}${esc(x.name)} ${x.n}/${x.cap}</button>`).join('')}</div>
+      ${dep.pub ? '<p class="muted small" style="margin:4px 0 0">国の空港の駐機場です（みんなで使います。数は、みんなの飛行機の合計）</p>' : ''}
       <h4 style="margin:12px 0 4px">編成（${forms.length}）</h4>
       ${forms.map(f => { const p = f.perf || {}; const fc = cars.filter(c => c.form === f.id).sort((a, b) => a.pos - b.pos); return `<div class="mp-item">
         <b>${esc(f.name)}</b>${f.op ? ` <small class="muted"><span>運用</span> <span>${esc(f.op.num)}</span></small>` : ''}${f.xfer ? ' <small class="mp-warn">譲渡の申しこみ中</small>' : ''}
@@ -3830,6 +3868,14 @@ function scBlock(d) {
 // 港（フェリーターミナル。t54o）：乗り場・船の数・航路
 function portBlock(d) {
   const p = d.port; if (!p) return '';
+  if (p.k === 'air' && d.gov) return `<h4 style="margin:12px 0 4px">✈ <span>国の空港</span></h4><div class="mp-kv">
+      <b>ターミナル</b><span translate="no">${esc(p.name || '')}</span>
+      <b>滑走路</b><span><span>${fmt(p.rwy || 0)}m</span>・<span>ゲート ${p.gates || 0}</span></span>
+      <b>飛行機</b><span><span>${p.n || 0} / ${p.cap || 0}機</span>（みんなで使う）</span>
+      <b>使用料</b><span>${p.ln != null ? `<span>空路に入れると 1路線・1日 ${X(p.ln)}（国庫へ）</span>` : '<span>いまは新しい空路に使えません</span>'}</span>
+      <b>空路</b><span>${(p.routes || []).map(r => `<a href="#" data-prt="${r.id}" style="color:${esc(r.c)};font-weight:800">■ ${esc(r.n)}</a>`).join('<br>') || 'なし'}</span></div>
+    <div class="mp-row"><button class="btn" data-pcars>飛行機を見る・注文する</button><button class="btn" data-pnew>＋ 空路</button></div>
+    <p class="muted small" style="margin:2px 0 6px">国の空港です（空港は国が建てます）。だれでも駐機場に飛行機を置いて、空路に使えます。空路に入れると、1路線・1日の使用料を国にはらいます。滑走路より長い滑走路がいる飛行機は、この空港に置けず、離着陸もできません</p>`;
   if (p.k === 'air') return `<h4 style="margin:12px 0 4px">✈ <span>空港</span></h4><div class="mp-kv">
       <b>ターミナル</b><span translate="no">${esc(p.name || '')}</span>
       <b>滑走路</b><span><span>${fmt(p.rwy || 0)}m</span>・<span>ゲート ${p.gates || 0}</span></span>
@@ -4225,7 +4271,7 @@ function airRouteBuild(edit) {
   const km = (a, b) => Math.hypot((b.x - a.x) / 100, (b.y - a.y) / 100) * 50 / 1000;
   S.tapHook = (x, y) => {
     const h = nearSta(x, y, 24, s => s.k === 'air'); if (!h || h.s.k !== 'air') return toast('空港をタップしてください');
-    if (!h.s.mine && h.s.ln == null && !(edit && edit.stops.some(z => z.id === h.s.id))) return toast('この空港は、持ち主が貸し出していません');
+    if (!h.s.mine && h.s.ln == null && !(edit && edit.stops.some(z => z.id === h.s.id))) return toast(h.s.o === 'gov' ? 'この国の空港は、いまは新しい空路に使えません' : 'この空港は、持ち主が貸し出していません');
     if (st.stops.length && st.stops[st.stops.length - 1].id === h.s.id) return;
     const s = { id: h.s.id, n: h.s.n, x: h.s.x, y: h.s.y, ln: h.s.mine ? null : h.s.ln };
     if (st.stops.length && km(st.stops[st.stops.length - 1], s) < 10) return toast('空港どうしが近すぎます（10km 以上）');
@@ -4248,7 +4294,7 @@ function airRouteBuild(edit) {
       ${st.stops.length >= 2 ? `<p class="small" style="margin:4px 0"><span>飛ぶ距離</span> <b>${d.toFixed(1)}km</b></p>` : ''}
       <div class="mp-row">折り返しの時間 <input class="mp-inp mp-num" type="number" min="600" max="7200" step="300" value="${st.dwell}" data-dw> 秒 <small class="muted">（乗り降り・給油・整備）</small></div>
       <div class="mp-row"><button class="btn" data-cancel>キャンセル</button><button class="btn main" data-ok ${st.stops.length >= 2 ? '' : 'disabled'}>${edit ? 'この順に直す' : '空路をつくる'}（${esc(asName())}）</button></div>
-      <p class="muted small">空港は「空港」の建物です（飛行場・地方空港・空港・国際空港。滑走路の長さで、飛べる飛行機がちがいます）。飛行機は ≡ →「車両と編成」で空港をえらんで注文します</p>`, s => {
+      <p class="muted small">空港は国の空港です（飛行場・地方空港・空港・国際空港。滑走路の長さで、飛べる飛行機がちがいます）。空路に入れた空港ごとに、1路線・1日の使用料を国にはらいます。飛行機は ≡ →「車両と編成」で空港をえらんで注文します</p>`, s => {
       s.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
       s.querySelector('[data-col]').oninput = e => { st.color = e.target.value; S.dirty = true; };
       s.querySelector('[data-dw]').onchange = e => { st.dwell = Math.max(600, Math.min(7200, Number(e.target.value) || 1800)); };

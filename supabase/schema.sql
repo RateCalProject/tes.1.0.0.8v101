@@ -17619,7 +17619,7 @@ begin
                  and (n.name is not null or exists (select 1 from mp_segs s where s.n0 = n.id and not s.gov) or exists (select 1 from mp_segs s where s.n1 = n.id and not s.gov))),
     'stas', (select coalesce(jsonb_agg(jsonb_build_object('id', s.id, 'k', s.kind, 'seg', s.seg, 'at', s.at, 'x', s.x, 'y', s.y, 'a', s.ang, 'pl', s.plat, 'tr', s.tracks, 'n', s.name, 'ln', s.lend, 'b', s.bld,
                   'tk', case when s.kind = 'rail' then _mp_sta_trk(s) end,
-                  'mine', coalesce(s.own_u = u or s.own_c = any(me_cs), false), 'o', case when s.own_u is not null then 'u:' || s.own_u else 'c:' || s.own_c end,
+                  'mine', coalesce(s.own_u = u or s.own_c = any(me_cs), false), 'o', case when s.own_u is not null then 'u:' || s.own_u when s.own_c is not null then 'c:' || s.own_c else 'gov' end,
                   'rt', (select coalesce(jsonb_agg(jsonb_build_object('id', ro.id, 'c', ro.color, 'n', ro.name)), '[]'::jsonb) from mp_routes ro where s.id = any(ro.stops)))), '[]'::jsonb)
                from mp_stations s where s.x between (p_x0 - 5) * 100 and (p_x1 + 5) * 100 and s.y between (p_y0 - 5) * 100 and (p_y1 + 5) * 100 and (p_lod < 2 or s.kind in ('rail', 'air'))),
     'deps', (select coalesce(jsonb_agg(jsonb_build_object('id', d.id, 'k', d.kind, 'seg', d.seg, 'at', d.at, 'side', d.side, 'sz', d.size, 'x', d.x, 'y', d.y, 'a', d.ang, 'n', d.name, 'cap', d.cap, 'b', d.bld,
@@ -18213,7 +18213,9 @@ begin
   select * into st from mp_stations where id = p_id for update;
   if not found or st.kind not in ('bus', 'ship', 'air') then raise exception 'バス停・港・空港が見つかりません'; end if;
   me_cs := array(select id from companies where owner = u);
-  if not coalesce(st.own_u = u or st.own_c = any(me_cs), false) then raise exception 'あなたのバス停・港ではありません'; end if;
+  if not coalesce(st.own_u = u or st.own_c = any(me_cs), false) and not (st.own_u is null and st.own_c is null and _is_admin(u)) then   -- 国の空港は管理者（t54q）
+    raise exception 'あなたのバス停・港ではありません';
+  end if;
   if p_lend is not null and (p_lend < 0 or p_lend > 100000000) then raise exception '使用料は0〜1億 X にしてください'; end if;
   update mp_stations set lend = round(p_lend) where id = p_id;
   perform _mp_chg('sta', p_id, 'set', box(point(st.x / 100.0 - 3, st.y / 100.0 - 3), point(st.x / 100.0 + 3, st.y / 100.0 + 3)));
@@ -18439,7 +18441,7 @@ begin
   if t.role = 'Ship' and p_n > 4 then raise exception '船は一度に4隻までです'; end if;
   if t.role = 'Air' and p_n > 4 then raise exception '飛行機は一度に4機までです'; end if;
   select * into d from mp_depots where id = p_depot;
-  if not found or not _mp_same(d.own_u, d.own_c, false, pa.pu, pa.pc, false) then raise exception '車籍を置く車庫をえらんでください（この名義の車庫）'; end if;
+  if not found or not _mp_dep_ok(d, pa.pu, pa.pc) then raise exception '車籍を置く車庫をえらんでください（この名義の車庫）'; end if;   -- 国の空港の駐機場も（t54q）
   if _mp_role_kind(t.role) <> d.kind then raise exception '%', case when t.role = 'Ship' then '船は港（フェリーターミナル）に置きます' when t.role = 'Air' then '飛行機は空港の駐機場に置きます'
     when d.kind = 'ship' then '港に置けるのは船だけです' when d.kind = 'air' then '空港に置けるのは飛行機だけです' when t.role = 'Truck' then 'トラックは営業所に置きます' when t.role = 'Bus' then 'バスは営業所に置きます' else '電車は車両基地に置きます' end; end if;
   if t.role = 'Air' and coalesce(t.rwy, 0) > coalesce((select s.plat from mp_stations s where s.bld = d.bld and s.kind = 'air'), 0) then   -- 滑走路（t54p）
@@ -18502,8 +18504,9 @@ begin
                'xfer', (select x.id from mp_xfers x where x.form = f.id and x.st = 'offer' limit 1)) order by f.name), '[]'::jsonb)
              from mp_forms f where f.own_u is not distinct from pa.pu and f.own_c is not distinct from pa.pc),
     'depots', (select coalesce(jsonb_agg(jsonb_build_object('id', d.id, 'kind', d.kind, 'name', d.name, 'cap', d.cap, 'x', d.x, 'y', d.y,
-               'n', (select count(*) from mp_cars c where c.depot = d.id)) order by d.id), '[]'::jsonb)
-             from mp_depots d where d.own_u is not distinct from pa.pu and d.own_c is not distinct from pa.pc),
+               'n', (select count(*) from mp_cars c where c.depot = d.id), 'pub', d.own_u is null and d.own_c is null and not pa.gv) order by d.own_u is null and d.own_c is null, d.id), '[]'::jsonb)
+             from mp_depots d where (d.own_u is not distinct from pa.pu and d.own_c is not distinct from pa.pc)
+                                 or (d.kind = 'air' and d.bld is not null and _mp_gov_term(d.bld))),   -- 国の空港の駐機場（みんなで使う。t54q）
     'types', (select coalesce(jsonb_agg(to_jsonb(t) order by t.ord), '[]'::jsonb) from mp_types t where t.on_sale),
     'series', (select coalesce(jsonb_agg(to_jsonb(s) order by s.ord), '[]'::jsonb) from mp_series s));
 end $$;
@@ -18615,7 +18618,7 @@ begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
   select * into d from mp_depots where id = p_depot;
-  if not found or not _mp_same(d.own_u, d.own_c, false, pa.pu, pa.pc, false) then raise exception 'うつす先の車庫をえらんでください（この名義の車庫）'; end if;
+  if not found or not _mp_dep_ok(d, pa.pu, pa.pc) then raise exception 'うつす先の車庫をえらんでください（この名義の車庫）'; end if;   -- 国の空港の駐機場も（t54q）
   select count(distinct depot) into nd from mp_cars where id = any(p_cars);
   if nd <> 1 then raise exception '同じ車庫の車両をえらんでください'; end if;
   select x.* into src from mp_depots x where x.id = (select depot from mp_cars where id = p_cars[1]);
@@ -19867,7 +19870,7 @@ begin
       union all select own_u, own_c, case when kind = 'rail' then _mp_rate('up_sta') * (1 + 0.25 * (tracks - 1)) when kind = 'ship' then _mp_rate('up_port') when kind = 'air' then _mp_rate('up_air') * greatest(1, tracks / 2.0) else _mp_rate('up_stop') end, '駅' from mp_stations
       union all select own_u, own_c, case when kind in ('ship', 'air') then 0 else _mp_rate(case when kind = 'rail' then 'up_dep' else 'up_bdep' end) end * case when size like 'T%' then greatest(1, cap / 24.0) when size = 'L' then 5 when size = 'M' then 2.5 else 1 end, '車庫' from mp_depots
       union all select c.own_u, c.own_c, t.upkeep, '車両' from mp_cars c join mp_types t on t.code = c.type
-    ) z group by pu, pc
+    ) z where pu is not null or pc is not null group by pu, pc   -- 国のもの（国の空港。t54q）は国庫から国庫なので、なし
   loop
     amt := round(o.amt / 24.0);
     if amt > 0 then perform _mp_soft_pay(o.pu, o.pc, false, amt, 'upkeep', format('維持費（%s）', o.ks)); end if;
@@ -21376,10 +21379,10 @@ language sql immutable as $$
    {"k":"oiltank","n":"油槽所","use":"warehouse","one":true,"z":"gk","cpm":350,"f0":1,"f1":1,"min":40,"max":1200,"sh":["full","slab"],"cat":"logi","c":"#d9d9d2","rl":1.1,"pp":0.2,"dn":["{}油槽所"]},
    {"k":"container","n":"コンテナヤード","use":"warehouse","one":true,"z":"gk","cpm":60,"f0":0,"f1":0,"min":100,"max":1600,"sh":["full"],"cat":"logi","c":"#c26a4a","pat":"container","dn":["{}コンテナヤード"]},
    {"k":"fishport","n":"漁港","use":"port","one":true,"z":"ghk","cpm":300,"f0":1,"f1":1,"min":6,"max":400,"sh":["full"],"sea":true,"cat":"port","c":"#8fb0bf","rl":0.8,"dm":1.1,"dn":["{}漁港"]},
-   {"k":"airfield","n":"飛行場（コミューター）","use":"port","one":true,"z":"efghk","cpm":3000,"f0":0,"f1":0,"min":100,"max":1600,"sh":["full"],"cat":"port","c":"#b7bec5","air":true,"rwy":800,"gates":2,"hangar":4,"pp":1.2,"rl":0.4,"dn":["{}飛行場"]},
-   {"k":"airport_s","n":"地方空港","use":"port","one":true,"z":"efghk","cpm":5000,"f0":0,"f1":0,"min":400,"max":1600,"sh":["full"],"cat":"port","c":"#b2b9c1","air":true,"rwy":1500,"gates":4,"hangar":8,"pp":1.5,"rl":0.4,"dn":["{}空港"]},
-   {"k":"airport_m","n":"空港","use":"port","one":true,"z":"efgh","cpm":8000,"f0":0,"f1":0,"min":900,"max":3200,"sh":["full"],"cat":"port","c":"#adb4bc","air":true,"rwy":2500,"gates":8,"hangar":16,"pp":2,"rl":0.4,"dn":["{}空港"]},
-   {"k":"airport_l","n":"国際空港","use":"port","one":true,"z":"efgh","cpm":12000,"f0":0,"f1":0,"min":1500,"max":6400,"sh":["full"],"cat":"port","c":"#a8b0b8","air":true,"rwy":3000,"gates":16,"hangar":30,"pp":3,"rl":0.4,"dn":["{}国際空港"]},
+   {"k":"airfield","n":"飛行場（コミューター）","use":"port","one":true,"z":"efghk","cpm":3000,"f0":0,"f1":0,"min":100,"max":1600,"sh":["full"],"cat":"port","c":"#b7bec5","air":true,"gov":true,"rwy":800,"gates":2,"hangar":4,"pp":1.2,"rl":0.4,"dn":["{}飛行場"]},
+   {"k":"airport_s","n":"地方空港","use":"port","one":true,"z":"efghk","cpm":5000,"f0":0,"f1":0,"min":400,"max":1600,"sh":["full"],"cat":"port","c":"#b2b9c1","air":true,"gov":true,"rwy":1500,"gates":4,"hangar":8,"pp":1.5,"rl":0.4,"dn":["{}空港"]},
+   {"k":"airport_m","n":"空港","use":"port","one":true,"z":"efgh","cpm":8000,"f0":0,"f1":0,"min":900,"max":3200,"sh":["full"],"cat":"port","c":"#adb4bc","air":true,"gov":true,"rwy":2500,"gates":8,"hangar":16,"pp":2,"rl":0.4,"dn":["{}空港"]},
+   {"k":"airport_l","n":"国際空港","use":"port","one":true,"z":"efgh","cpm":12000,"f0":0,"f1":0,"min":1500,"max":6400,"sh":["full"],"cat":"port","c":"#a8b0b8","air":true,"gov":true,"rwy":3000,"gates":16,"hangar":30,"pp":3,"rl":0.4,"dn":["{}国際空港"]},
    {"k":"ferry","n":"フェリーターミナル","use":"port","one":true,"z":"gk","cpm":600,"f0":1,"f1":3,"min":20,"max":600,"sh":["full"],"sea":true,"cat":"port","c":"#a7c0cf","pp":1.5,"fx":{"hotel":0.04},"dn":["{}フェリーターミナル"]},
    {"k":"containerport","n":"コンテナふ頭","use":"port","one":true,"z":"gk","cpm":450,"f0":1,"f1":1,"min":100,"max":1600,"sh":["full"],"sea":true,"cat":"port","c":"#8c9fae","rl":1.15,"opts":["ore","crude"],"dn":["{}コンテナふ頭"]},
    {"k":"oilport","n":"石油基地","use":"port","one":true,"z":"gk","cpm":500,"f0":1,"f1":1,"min":40,"max":1600,"sh":["full"],"sea":true,"cat":"port","c":"#b7b9b1","rl":1.1,"opts":["crude"],"rb":1.3,"dn":["{}石油基地"]},
@@ -21832,6 +21835,7 @@ begin
   cost := round(case when coalesce(p_floors, 0) = 0 then fm2 else fm2 * p_floors end * (pr ->> 'cpm')::numeric);
   bid := _mp_bld_make(pid, jsonb_build_object('kind', p_kind, 'shape', coalesce(p_shape, 'full'), 'floors', coalesce(p_floors, 0), 'cells', to_jsonb(cs), 'fm2', fm2, 'plan', '[]'::jsonb),
                       '', p_name, cost, false);
+  if _mp_term_kind(p_kind) is not null then perform _mp_port_open(bid); end if;   -- 国の空港（t54q）：乗り場・駐機場（持ち主なし＝国。だれでも使える）
   perform _mp_pay(null, null, true, cost, 'bld', format('%s（%s㎡）を建てた', coalesce(nullif(p_name, ''), pr ->> 'n'), case when coalesce(p_floors, 0) = 0 then fm2 else fm2 * p_floors end));
   perform _mp_chg('land', null, 'set', box(point(_mp_t5(x0), _mp_t5(y0)), point(_mp_t5(x1) + 1, _mp_t5(y1) + 1)));
   drop table _gb;
@@ -22709,7 +22713,7 @@ begin
     knd := coalesce((select case when bool_or(ty.role = 'Ship') then 'ship' when bool_or(ty.role = 'Air') then 'air' when bool_or(ty.role in ('Bus', 'Truck')) then 'bus' else 'rail' end
                        from mp_cars cc join mp_types ty on ty.code = cc.type where cc.id = any(x.cars)), 'rail');   -- t54o：船も
     select * into d from mp_depots where id = p_depot;
-    if not found or not _mp_same(d.own_u, d.own_c, false, x.to_u, x.to_c, false) then raise exception '車籍を置く車庫をえらんでください（受けとる名義の車庫）'; end if;
+    if not found or not _mp_dep_ok(d, x.to_u, x.to_c) then raise exception '車籍を置く車庫をえらんでください（受けとる名義の車庫）'; end if;   -- 国の空港の駐機場も（t54q）
     if d.kind <> knd then raise exception '%', case knd when 'rail' then '電車は車両基地に置きます' when 'ship' then '船は港に置きます' when 'air' then '飛行機は空港の駐機場に置きます' else 'バスは営業所に置きます' end; end if;
     select count(*) into have from mp_cars where depot = p_depot;
     if have + ncar > d.cap then raise exception '車庫がいっぱいです（%両まで・いま%両）', d.cap, have; end if;
@@ -22738,7 +22742,7 @@ begin
   if ncar = 0 then raise exception 'この編成には車両がありません'; end if;
   knd := _mp_form_kind(f.id);   -- t54o：船も
   select * into d from mp_depots where id = p_depot;
-  if not found or not _mp_same(d.own_u, d.own_c, false, x.to_u, x.to_c, false) then raise exception '車籍を置く車庫をえらんでください（受けとる名義の車庫）'; end if;
+  if not found or not _mp_dep_ok(d, x.to_u, x.to_c) then raise exception '車籍を置く車庫をえらんでください（受けとる名義の車庫）'; end if;   -- 国の空港の駐機場も（t54q）
   if d.kind <> knd then raise exception '%', case knd when 'rail' then '電車は車両基地に置きます' when 'ship' then '船は港に置きます' when 'air' then '飛行機は空港の駐機場に置きます' else 'バスは営業所に置きます' end; end if;
   select count(*) into have from mp_cars where depot = p_depot;
   if have + ncar > d.cap then raise exception '車庫がいっぱいです（%両まで・いま%両）', d.cap, have; end if;
@@ -23887,6 +23891,104 @@ end $$;
 drop trigger if exists mp_port_owner on public.mp_parcels;
 create trigger mp_port_owner before update of own_u, own_c on public.mp_parcels for each row execute function public._mp_port_owner_trg();
 
+/* ---------- 国の空港（t54q）：空港は管理者が名義「国」で建てる。乗り場・駐機場は国のもの（持ち主なし）で、だれでも使える ----------
+   空路に入れると、1路線・1日の使用料（乗り場の lend）を国庫へ。駐機場はみんなで使う（入る機数は、みんなの飛行機の合計） */
+-- 国の建物（筆が国のもの）か
+create or replace function public._mp_gov_term(p_bld bigint) returns boolean
+language sql stable set search_path = public as $$
+  select coalesce((select p.gov from mp_blds b join mp_parcels p on p.id = b.parcel where b.id = p_bld), false)
+$$;
+-- 車両を置ける車庫か：その名義の車庫か、国の空港の駐機場（飛行機。みんなで使う）
+create or replace function public._mp_dep_ok(d mp_depots, pu uuid, pc int) returns boolean
+language sql stable set search_path = public as $$
+  select _mp_same(d.own_u, d.own_c, false, pu, pc, false) or (d.kind = 'air' and d.bld is not null and _mp_gov_term(d.bld))
+$$;
+-- 国の空港を建てる（管理者）。p_rect：[X0, Y0, X1, Y1]（区画。両はしを入れる。1km×1km まで）
+--   あいている国の土地（水・山・公園・道路・線路・駅・車庫・持ち主のいる土地はのぞく）のうち、同じ町字でつながったいちばん大きいところに建てる
+--   p_dry なら見つもり：{ok, n, min, max, addr, parts, why, cost, fee, rwy, gates, hangar, name, total}
+create or replace function public.mp_admin_airport(p_rect int[], p_kind text, p_name text, p_dry boolean default true) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pr jsonb; x0 int; y0 int; x1 int; y1 int; w int; h int; n int; i int; j int; k int; v int; tx int; ty int; c record; key text;
+        tcache jsonb := '{}'::jsonb; why jsonb := '{}'::jsonb; ok boolean[]; bz boolean[]; chos text[]; lab int[]; par int[];
+        a int; b int; ra int; rb int; nset int := 0; best record; cells int[]; bid bigint; sid bigint; fee bigint; nm text; mu text; ad jsonb; cost bigint; nparts int; fk int;
+begin
+  perform _mp_ok(u);
+  if not _is_admin(u) then raise exception '国の空港は管理者だけが建てます'; end if;
+  select q into pr from jsonb_array_elements(_mp_bld_presets()) q where q ->> 'k' = p_kind and coalesce((q ->> 'air')::boolean, false);
+  if pr is null then raise exception '空港の種類がちがいます'; end if;
+  if coalesce(array_length(p_rect, 1), 0) <> 4 then raise exception '範囲が読めません'; end if;
+  x0 := least(p_rect[1], p_rect[3]); x1 := greatest(p_rect[1], p_rect[3]); y0 := least(p_rect[2], p_rect[4]); y1 := greatest(p_rect[2], p_rect[4]);
+  w := x1 - x0 + 1; h := y1 - y0 + 1; n := w * h;
+  if n > 10000 then raise exception '一度にえらべるのは10000区画（1km×1km）までです'; end if;
+  ok := array_fill(false, array[n]); bz := array_fill(false, array[n]); chos := array_fill(null::text, array[n]); lab := array_fill(0, array[n]);
+  -- 道路・線路・駅・車庫のかかっている区画
+  for v in select (q.y - y0) * w + (q.x - x0) + 1 from (select x, y from _mp_busy_cells(x0, y0, x1, y1) union select x, y from _mp_pub_cells(x0, y0, x1, y1)) q loop bz[v] := true; end loop;
+  for j in 0..h - 1 loop for i in 0..w - 1 loop
+    k := j * w + i + 1; tx := _mp_t5(x0 + i); ty := _mp_t5(y0 + j); key := tx || ',' || ty;
+    if not (tcache ? key) then
+      select * into c from _mp_cell(tx, ty);
+      tcache := tcache || jsonb_build_object(key, jsonb_build_object('t', c.t, 'z', c.z, 'k', _mp_cho_at(tx, ty),
+                                                                   'v', case when c.t is null or c.t in ('S', 'D', 'R', 'L', 'M', 'K') or c.z = 'j' then null else _mp_cval(tx, ty) end));
+    end if;
+    if coalesce(tcache -> key ->> 't', 'D') in ('S', 'D', 'R', 'L') then why := jsonb_set(why, '{water}', to_jsonb(coalesce((why ->> 'water')::int, 0) + 1)); continue; end if;
+    if tcache -> key ->> 't' in ('M', 'K') then why := jsonb_set(why, '{mtn}', to_jsonb(coalesce((why ->> 'mtn')::int, 0) + 1)); continue; end if;
+    if tcache -> key ->> 'z' = 'j' then why := jsonb_set(why, '{park}', to_jsonb(coalesce((why ->> 'park')::int, 0) + 1)); continue; end if;
+    if bz[k] then why := jsonb_set(why, '{road}', to_jsonb(coalesce((why ->> 'road')::int, 0) + 1)); continue; end if;
+    if tcache -> key ->> 'v' is null or tcache -> key ->> 'k' is null then why := jsonb_set(why, '{other}', to_jsonb(coalesce((why ->> 'other')::int, 0) + 1)); continue; end if;
+    ok[k] := true; chos[k] := tcache -> key ->> 'k';
+  end loop; end loop;
+  -- 持ち主のいる区画（筆）
+  for v in select (pc.y - y0) * w + (pc.x - x0) + 1 from mp_pcells pc where pc.x between x0 and x1 and pc.y between y0 and y1 loop
+    if ok[v] then ok[v] := false; why := jsonb_set(why, '{owned}', to_jsonb(coalesce((why ->> 'owned')::int, 0) + 1)); end if;
+  end loop;
+  -- つながっているところ（上下左右・同じ町字）ごとに番号（土地を買うときと同じ）
+  par := array(select g from generate_series(0, n) g);
+  for k in 1..n loop
+    if not ok[k] then continue; end if;
+    i := (k - 1) % w; j := (k - 1) / w;
+    a := case when i > 0 and ok[k - 1] and chos[k - 1] = chos[k] then lab[k - 1] else 0 end;
+    b := case when j > 0 and ok[k - w] and chos[k - w] = chos[k] then lab[k - w] else 0 end;
+    if a = 0 and b = 0 then nset := nset + 1; lab[k] := nset;
+    elsif a <> 0 and b <> 0 then
+      ra := a; while par[ra + 1] <> ra loop ra := par[ra + 1]; end loop;
+      rb := b; while par[rb + 1] <> rb loop rb := par[rb + 1]; end loop;
+      lab[k] := least(ra, rb); if ra <> rb then par[greatest(ra, rb) + 1] := least(ra, rb); end if;
+    else lab[k] := greatest(a, b); end if;
+  end loop;
+  for k in 1..n loop
+    if lab[k] = 0 then continue; end if;
+    ra := lab[k]; while par[ra + 1] <> ra loop ra := par[ra + 1]; end loop; lab[k] := ra;
+  end loop;
+  select q.l, count(*) cn, min(q.k2) k0 into best from (select lab[k2] l, k2 from generate_series(1, n) k2 where lab[k2] > 0) q group by q.l order by count(*) desc, q.l limit 1;
+  nparts := (select count(distinct chos[k2]) from generate_series(1, n) k2 where ok[k2]);
+  -- 名前（市町村の名前＋空港）・住所・工事費・使用料（1路線・1日：空港の維持費 × ゲート ÷ 8）
+  if best.l is not null then
+    fk := best.k0;
+    ad := _mp_addr(_mp_t5(x0 + (fk - 1) % w), _mp_t5(y0 + (fk - 1) / w), null, null);
+    mu := coalesce(ad ->> 'muni', '');
+    if char_length(mu) > 1 and right(mu, 1) in ('市', '町', '村') then mu := left(mu, char_length(mu) - 1); end if;
+    nm := replace(coalesce(pr -> 'dn' ->> 0, '{}空港'), '{}', mu);
+  end if;
+  cost := coalesce(best.cn, 0)::bigint * 100 * (pr ->> 'cpm')::bigint;
+  fee := round(_mp_rate('up_air') * coalesce((pr ->> 'gates')::int, 2) / 8.0);
+  if p_dry then
+    return jsonb_build_object('ok', coalesce(best.cn, 0) between (pr ->> 'min')::int and (pr ->> 'max')::int, 'n', coalesce(best.cn, 0), 'total', n,
+      'min', (pr ->> 'min')::int, 'max', (pr ->> 'max')::int, 'addr', ad ->> 'text', 'parts', nparts, 'why', why, 'cost', cost, 'fee', fee,
+      'rwy', (pr ->> 'rwy')::int, 'gates', (pr ->> 'gates')::int, 'hangar', (pr ->> 'hangar')::int, 'kname', pr ->> 'n', 'name', nm);
+  end if;
+  if coalesce(best.cn, 0) < (pr ->> 'min')::int then
+    raise exception '%には、同じ町字でつながった あいている国の土地が %区画（%㎡）以上いります（いま %区画）', pr ->> 'n', pr ->> 'min', (pr ->> 'min')::int * 100, coalesce(best.cn, 0);
+  end if;
+  if best.cn > (pr ->> 'max')::int then raise exception '%は %区画（%㎡）までです（いま %区画。えらぶ範囲を小さくしてください）', pr ->> 'n', pr ->> 'max', (pr ->> 'max')::int * 100, best.cn; end if;
+  if char_length(coalesce(p_name, '')) > 30 then raise exception '名前は30文字までです'; end if;
+  cells := array(select vv from (select x0 + (k2 - 1) % w gx, y0 + (k2 - 1) / w gy from generate_series(1, n) k2 where lab[k2] = best.l) q,
+                   lateral unnest(array[q.gx, q.gy]) with ordinality uu(vv, o) order by q.gy, q.gx, uu.o);
+  bid := _mp_gov_build(cells, p_kind, 0, 'full', null, coalesce(nullif(btrim(coalesce(p_name, '')), ''), nm));
+  select id into sid from mp_stations where bld = bid and kind = 'air';
+  update mp_stations set lend = fee where id = sid;
+  return jsonb_build_object('ok', true, 'bld', bid, 'sta', sid, 'n', best.cn, 'cost', cost, 'fee', fee, 'name', (select name from mp_blds where id = bid));
+end $$;
+
 -- 島（mp_isltile）：そのマスの島（本土は null）
 create or replace function public._mp_isl_at(tx int, ty int) returns text
 language sql stable set search_path = public as $$ select isl from mp_isltile where x = tx and y = ty $$;
@@ -24051,36 +24153,37 @@ begin
             '_mp_bld_check','_mp_bld_defname','_mp_bld_dem','_mp_bld_hit','_mp_bld_make','_mp_bld_people','_mp_bld_plan','_mp_bld_pmap',
             '_mp_bld_presets','_mp_bld_refresh','_mp_bld_shape','_mp_bld_tick_day','_mp_bld_tick_hour','_mp_bus_path','_mp_busy_cells','_mp_carnum',
             '_mp_catch','_mp_cell','_mp_chg','_mp_chimoku','_mp_cho_at','_mp_cho_set_tiles','_mp_cho_text','_mp_cmuls',
-            '_mp_cval','_mp_day_ok','_mp_dens','_mp_dep_cells','_mp_dep_dim','_mp_dep_tiles','_mp_dep_tiles_g','_mp_dia_snap',
-            '_mp_dispatch','_mp_earn','_mp_edec','_mp_end','_mp_end_ang','_mp_ferry_links','_mp_ferry_pick','_mp_ferry_use',
-            '_mp_fmtn','_mp_fmtq','_mp_form_drop','_mp_form_kind','_mp_form_perf','_mp_form_routes','_mp_form_rule','_mp_form_rule_t',
-            '_mp_form_runs','_mp_g','_mp_geom_ok','_mp_goods','_mp_gov_build','_mp_hm_parse','_mp_hms','_mp_home_text',
-            '_mp_hourf','_mp_isl_at','_mp_kinds_of','_mp_kprio','_mp_land_fee','_mp_land_need','_mp_land_std','_mp_land_stop',
-            '_mp_lease_del','_mp_lease_quote','_mp_lease_set','_mp_leg_from','_mp_leg_time','_mp_len','_mp_line_cells','_mp_lock',
-            '_mp_lvmap_build','_mp_maker_order','_mp_mcval','_mp_mine','_mp_minr','_mp_mvalue','_mp_npc_name','_mp_occ_set',
-            '_mp_ok','_mp_okey','_mp_op_of_form','_mp_parcel_label','_mp_parcel_vals','_mp_party','_mp_pay','_mp_pick_trk',
-            '_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_port_busy','_mp_port_isl','_mp_port_open','_mp_port_owner_trg','_mp_port_pier',
-            '_mp_pref_road','_mp_pref_type','_mp_proj','_mp_pub_cells','_mp_pub_of','_mp_rail_path','_mp_rate','_mp_renet',
-            '_mp_resample','_mp_resched','_mp_rev','_mp_road_mul','_mp_road_v','_mp_road_w','_mp_role_kind','_mp_room',
-            '_mp_route_catch','_mp_route_sta','_mp_route_uses','_mp_routes_fix','_mp_run','_mp_run_check','_mp_run_mark','_mp_same',
-            '_mp_sc_info','_mp_sc_init','_mp_sc_kinds','_mp_sc_op','_mp_sc_owes','_mp_sc_recipes','_mp_sc_riders','_mp_sc_school_calc',
-            '_mp_sc_tick_hour','_mp_sc_touch','_mp_sea','_mp_sea_leg','_mp_sea_seg','_mp_seg_blocked','_mp_seg_cells_arr','_mp_seg_chain',
-            '_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_sta_trk','_mp_struct_cells',
-            '_mp_sub','_mp_t49_from_tiles','_mp_t5','_mp_term_kind','_mp_ters','_mp_thin','_mp_thru_link','_mp_thru_ok',
-            '_mp_tick','_mp_tick_day','_mp_tick_hour','_mp_tiles','_mp_tmul','_mp_today','_mp_train_calc','_mp_train_json',
-            '_mp_train_times','_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim','_mp_vruns','_mp_world','_mp_zname',
-            '_mp_zone_rule','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_lvset','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state',
-            'mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set',
-            'mp_boot','mp_car_log','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_gone','mp_cars_list',
-            'mp_cho_get','mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia','mp_dia_undo','mp_form_del','mp_form_order',
-            'mp_form_set','mp_home_clear','mp_home_get','mp_home_set','mp_kinds_list','mp_kinds_set','mp_land_buy','mp_land_decide',
-            'mp_land_req','mp_land_req_del','mp_land_reqs','mp_ledger_days','mp_ledger_page','mp_makers','mp_op_del','mp_op_export',
-            'mp_op_import','mp_op_save','mp_ops_list','mp_parcel_buy','mp_parcel_merge','mp_parcel_rent','mp_parcel_sell','mp_parcel_split',
-            'mp_poll','mp_route_del','mp_route_pat','mp_route_save','mp_routes_list','mp_sc_list','mp_sc_set','mp_seg_build',
-            'mp_seg_del','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_speed','mp_seg_split','mp_spot','mp_sta_build',
-            'mp_sta_edit','mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list','mp_thru_req',
-            'mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market','mp_unit_mine',
-            'mp_unit_own','mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer') loop
+            '_mp_cval','_mp_day_ok','_mp_dens','_mp_dep_cells','_mp_dep_dim','_mp_dep_ok','_mp_dep_tiles','_mp_dep_tiles_g',
+            '_mp_dia_snap','_mp_dispatch','_mp_earn','_mp_edec','_mp_end','_mp_end_ang','_mp_ferry_links','_mp_ferry_pick',
+            '_mp_ferry_use','_mp_fmtn','_mp_fmtq','_mp_form_drop','_mp_form_kind','_mp_form_perf','_mp_form_routes','_mp_form_rule',
+            '_mp_form_rule_t','_mp_form_runs','_mp_g','_mp_geom_ok','_mp_goods','_mp_gov_build','_mp_gov_term','_mp_hm_parse',
+            '_mp_hms','_mp_home_text','_mp_hourf','_mp_isl_at','_mp_kinds_of','_mp_kprio','_mp_land_fee','_mp_land_need',
+            '_mp_land_std','_mp_land_stop','_mp_lease_del','_mp_lease_quote','_mp_lease_set','_mp_leg_from','_mp_leg_time','_mp_len',
+            '_mp_line_cells','_mp_lock','_mp_lvmap_build','_mp_maker_order','_mp_mcval','_mp_mine','_mp_minr','_mp_mvalue',
+            '_mp_npc_name','_mp_occ_set','_mp_ok','_mp_okey','_mp_op_of_form','_mp_parcel_label','_mp_parcel_vals','_mp_party',
+            '_mp_pay','_mp_pick_trk','_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_port_busy','_mp_port_isl','_mp_port_open',
+            '_mp_port_owner_trg','_mp_port_pier','_mp_pref_road','_mp_pref_type','_mp_proj','_mp_pub_cells','_mp_pub_of','_mp_rail_path',
+            '_mp_rate','_mp_renet','_mp_resample','_mp_resched','_mp_rev','_mp_road_mul','_mp_road_v','_mp_road_w',
+            '_mp_role_kind','_mp_room','_mp_route_catch','_mp_route_sta','_mp_route_uses','_mp_routes_fix','_mp_run','_mp_run_check',
+            '_mp_run_mark','_mp_same','_mp_sc_info','_mp_sc_init','_mp_sc_kinds','_mp_sc_op','_mp_sc_owes','_mp_sc_recipes',
+            '_mp_sc_riders','_mp_sc_school_calc','_mp_sc_tick_hour','_mp_sc_touch','_mp_sea','_mp_sea_leg','_mp_sea_seg','_mp_seg_blocked',
+            '_mp_seg_cells_arr','_mp_seg_chain','_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells',
+            '_mp_sta_trk','_mp_struct_cells','_mp_sub','_mp_t49_from_tiles','_mp_t5','_mp_term_kind','_mp_ters','_mp_thin',
+            '_mp_thru_link','_mp_thru_ok','_mp_tick','_mp_tick_day','_mp_tick_hour','_mp_tiles','_mp_tmul','_mp_today',
+            '_mp_train_calc','_mp_train_json','_mp_train_times','_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim','_mp_vruns',
+            '_mp_world','_mp_zname','_mp_zone_rule','mp_admin_airport','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_lvset','mp_admin_place_at',
+            'mp_admin_rates','mp_admin_rename','mp_admin_state','mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get',
+            'mp_bld_options','mp_bld_quote','mp_bld_set','mp_boot','mp_car_log','mp_car_move','mp_car_order','mp_car_scrap',
+            'mp_car_work','mp_cars_gone','mp_cars_list','mp_cho_get','mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia',
+            'mp_dia_undo','mp_form_del','mp_form_order','mp_form_set','mp_home_clear','mp_home_get','mp_home_set','mp_kinds_list',
+            'mp_kinds_set','mp_land_buy','mp_land_decide','mp_land_req','mp_land_req_del','mp_land_reqs','mp_ledger_days','mp_ledger_page',
+            'mp_makers','mp_op_del','mp_op_export','mp_op_import','mp_op_save','mp_ops_list','mp_parcel_buy','mp_parcel_merge',
+            'mp_parcel_rent','mp_parcel_sell','mp_parcel_split','mp_poll','mp_route_del','mp_route_pat','mp_route_save','mp_routes_list',
+            'mp_sc_list','mp_sc_set','mp_seg_build','mp_seg_del','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_speed',
+            'mp_seg_split','mp_spot','mp_sta_build','mp_sta_edit','mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer',
+            'mp_thru_end','mp_thru_list','mp_thru_req','mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease',
+            'mp_unit_leave','mp_unit_market','mp_unit_mine','mp_unit_own','mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list',
+            'mp_xfer_offer') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
       execute format('revoke all on function %s from authenticated', f.sig);
