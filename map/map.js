@@ -360,6 +360,16 @@ function prepArea(d) {
   d.blds = (d.blds || []).map(prepBld);
   d.chos = d.chos || [];
   d.lanes = d.lanes || []; for (const l of d.lanes) prepLane(l);   // 航路（t54o）
+  d.rwys = d.rwys || []; for (const r of d.rwys) prepRwy(r);         // 滑走路（t57）
+}
+// 滑走路（t57）：両はし（マス）・向き・はしの番号（北から右まわりの角度 ÷ 10。a のはしは a → b の向き）
+function prepRwy(r) {
+  const [ax, ay, bx, by] = r.p.map(v => v / 100), dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy) || 1;
+  r.P = [ax, ay, bx, by]; r.ux = dx / L; r.uy = dy / L; r.L = L;
+  r.bb = [Math.min(ax, bx) - r.w, Math.min(ay, by) - r.w, Math.max(ax, bx) + r.w, Math.max(ay, by) + r.w];
+  const h = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360, na = Math.round(h / 10) % 36 || 36, nb = (na + 18) % 36 || 36;
+  r.na = String(na).padStart(2, '0'); r.nb = String(nb).padStart(2, '0');
+  return r;
 }
 // 筆：[id, [y, x0, x1, …], 1 他人・2 自分, 売り出し, 建物, 地番, 持ち主] → 区画の塗りと外まわり（マスの単位の Path2D）・まん中・大きさ
 function prepParcel(a) {
@@ -389,7 +399,7 @@ function prepParcel(a) {
 function visibleItems() {
   const [lod, cs] = lodOf(S.cam.z), v = view();
   const i0 = Math.floor(v.x0 / cs), j0 = Math.floor(v.y0 / cs), i1 = Math.floor(v.x1 / cs), j1 = Math.floor(v.y1 / cs);
-  const segs = new Map(), stas = new Map(), deps = new Map(), nodes = new Map(), parcels = new Map(), places = new Map(), chos = new Map(), blds = new Map(), lanes = new Map(), names = {};
+  const segs = new Map(), stas = new Map(), deps = new Map(), nodes = new Map(), parcels = new Map(), places = new Map(), chos = new Map(), blds = new Map(), lanes = new Map(), rwys = new Map(), names = {};
   const take = d => {
     for (const s of d.segs) segs.set(s.id, s);
     for (const s of d.stas) stas.set(s.id, s);
@@ -400,6 +410,7 @@ function visibleItems() {
     for (const p of d.places) places.set(p.id, p);
     for (const c of d.chos) chos.set(c[0], c);
     for (const l of (d.lanes || [])) lanes.set(l.id, l);
+    for (const r of (d.rwys || [])) rwys.set(r.id, r);
     Object.assign(names, d.names);
   };
   for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
@@ -414,7 +425,7 @@ function visibleItems() {
       if (any) break;
     }
   }
-  return { segs, stas, deps, nodes, parcels, places, chos, blds, lanes, names };
+  return { segs, stas, deps, nodes, parcels, places, chos, blds, lanes, rwys, names };
 }
 // 変わったもの（ほかの人の工事など）。15秒ごと
 async function poll() {
@@ -472,6 +483,40 @@ function pathSeg(g, s, off) {
     if (i) g.lineTo(sx(x), sy(y)); else g.moveTo(sx(x), sy(y));
   }
 }
+// 滑走路（t57）：アスファルトの長い四角・まん中の白い点線・ふちの線・両はしのしま模様（近いとき）
+function drawRwys(g, it, z, v) {
+  for (const r of it.rwys.values()) {
+    if (r.bb[2] < v.x0 - 1 || r.bb[0] > v.x1 + 1 || r.bb[3] < v.y0 - 1 || r.bb[1] > v.y1 + 1) continue;
+    const [ax, ay, bx, by] = r.P, ux = r.ux, uy = r.uy, nx = -uy, ny = ux, hw = r.w / 2;
+    g.lineCap = 'butt';
+    g.strokeStyle = '#555a61'; g.lineWidth = Math.max(2, r.w * z); g.beginPath(); g.moveTo(sx(ax), sy(ay)); g.lineTo(sx(bx), sy(by)); g.stroke();
+    if (z >= 3) {
+      g.strokeStyle = 'rgba(255,255,255,.6)'; g.lineWidth = Math.max(1, 0.025 * z);
+      for (const s of [-1, 1]) { const o = hw * 0.9 * s; g.beginPath(); g.moveTo(sx(ax + nx * o), sy(ay + ny * o)); g.lineTo(sx(bx + nx * o), sy(by + ny * o)); g.stroke(); }
+    }
+    if (z >= 1.5) {
+      const e = Math.min(1.2, r.L / 6);
+      g.strokeStyle = '#fff'; g.lineWidth = Math.max(1, 0.02 * z); g.setLineDash([Math.max(3, 0.6 * z), Math.max(3, 0.4 * z)]);
+      g.beginPath(); g.moveTo(sx(ax + ux * e), sy(ay + uy * e)); g.lineTo(sx(bx - ux * e), sy(by - uy * e)); g.stroke(); g.setLineDash([]);
+    }
+    if (z >= 6) {
+      g.strokeStyle = '#fff'; g.lineWidth = Math.max(1, 0.05 * z);
+      for (const [px, py, sg] of [[ax, ay, 1], [bx, by, -1]]) for (let k = -3; k <= 3; k++) {
+        if (!k) continue;
+        const o = k / 3.6 * hw, x0 = px + ux * sg * 0.12 + nx * o, y0 = py + uy * sg * 0.12 + ny * o;
+        g.beginPath(); g.moveTo(sx(x0), sy(y0)); g.lineTo(sx(x0 + ux * sg * 0.55), sy(y0 + uy * sg * 0.55)); g.stroke();
+      }
+    }
+    g.lineCap = 'round';
+  }
+}
+// 滑走路の番号：それぞれのはしの少し内がわに（a のはしは na）
+function rwyLabel(g, r, z, v) {
+  if (r.bb[2] < v.x0 || r.bb[0] > v.x1 || r.bb[3] < v.y0 || r.bb[1] > v.y1) return;
+  const d = Math.min(r.L / 3, Math.max(0.8, 18 / z));
+  label(g, r.na, sx(r.P[0] + r.ux * d), sy(r.P[1] + r.uy * d), { size: 11, color: '#fff', bg: 'rgba(60,64,70,.9)' });
+  label(g, r.nb, sx(r.P[2] - r.ux * d), sy(r.P[3] - r.uy * d), { size: 11, color: '#fff', bg: 'rgba(60,64,70,.9)' });
+}
 function segVisible(s, v) { const b = s.bb; return b[2] >= v.x0 - 1 && b[0] <= v.x1 + 1 && b[3] >= v.y0 - 1 && b[1] <= v.y1 + 1; }
 function render() {
   const g = S.ctx, z = S.cam.z, v = view();
@@ -516,6 +561,8 @@ function render() {
   const it = visibleItems(); S.vis = it;
   // 土地（筆）：持ち主の色・建物・売り出し・地番
   if (S.layer.own && z >= 4) drawParcels(g, it, z, v);
+  // 滑走路（t57）
+  drawRwys(g, it, z, v);
   // 道路（ふち → なか）
   const segs = [...it.segs.values()].filter(s => segVisible(s, v));
   const roads = segs.filter(s => s.k === 'road'), rails = segs.filter(s => s.k === 'rail');
@@ -563,6 +610,7 @@ function render() {
   if (S.boot && S.boot.home && z >= 1.2) drawHome(g, S.boot.home);
   // えらんだもの
   if (S.sel && S.sel.kind === 'seg') { const s = it.segs.get(S.sel.id); if (s) { g.strokeStyle = 'rgba(220,40,60,.75)'; g.lineWidth = Math.max(4, s.w * z + 4); pathSeg(g, s); g.stroke(); } }
+  if (S.sel && S.sel.kind === 'rwy') { const r = it.rwys.get(S.sel.id); if (r) { g.lineCap = 'butt'; g.strokeStyle = 'rgba(220,40,60,.6)'; g.lineWidth = Math.max(5, r.w * z + 5); g.beginPath(); g.moveTo(sx(r.P[0]), sy(r.P[1])); g.lineTo(sx(r.P[2]), sy(r.P[3])); g.stroke(); g.lineCap = 'round'; } }
   if (S.sel && S.sel.kind === 'cell') {
     const p = S.sel.parcel && it.parcels.get(S.sel.parcel);
     if (p) { worldT(g); g.strokeStyle = '#d23'; g.lineWidth = 3 / z; g.stroke(p.edge); screenT(g); }
@@ -584,6 +632,7 @@ function render() {
 // 文字の層：駅 → IC・JCT → 施設のしるしと名前 → 目じるし → 車庫 → バス停 → 建物の名前 → 島 → 町字 → 市区町村・県・川 → 地番
 function drawLabels(g, it, z, v, bs) {
   for (const s of it.stas.values()) if (s.k === 'rail') staLabel(g, s, z);
+  if (z >= 4) for (const r of it.rwys.values()) rwyLabel(g, r, z, v);   // 滑走路の番号（t57）
   for (const s of it.stas.values()) if (s.k === 'ship' || s.k === 'air') portLabel(g, s, z);
   if (z >= 3.5) for (const n of it.nodes.values()) {
     if (!n.n || (n.nk !== 'ic' && n.nk !== 'jct')) continue;
@@ -944,7 +993,7 @@ function build(root) {
     <div class="mp-tools">
       <button data-tool="look" class="on">👆 見る</button><button data-tool="land">▦ 土地</button><button data-tool="rail">🚃 線路</button>
       <button data-tool="road">🛣 道路</button><button data-tool="sta">🚉 駅・バス停</button><button data-tool="dep">🏭 車庫</button>
-      <button data-tool="del">✖ こわす</button><button data-menu>≡ 車両・系統・ダイヤ</button>
+      <button data-tool="rwy" hidden>✈ 滑走路</button><button data-tool="del">✖ こわす</button><button data-menu>≡ 車両・系統・ダイヤ</button>
     </div></div>`;
   S.wrap = root.querySelector('#mpWrap'); S.cv = S.wrap.querySelector('canvas'); S.ctx = S.cv.getContext('2d');
   S.sheet = S.wrap.querySelector('.mp-sheet'); S.hint = S.wrap.querySelector('.mp-hint'); S.addr = S.wrap.querySelector('.mp-addr');
@@ -952,7 +1001,7 @@ function build(root) {
   asSel.innerHTML = S.boot.as.map(a => `<option value="${esc(a.as)}">${a.as === 'me' ? '👤' : a.as === 'gov' ? '🏛' : '🏢'} ${esc(asLabel(a))}</option>`).join('');
   try { const sv = localStorage.getItem('mp_as'); if (sv && S.boot.as.some(a => a.as === sv)) S.as = sv; } catch (e) {}
   asSel.value = S.as;
-  asSel.onchange = () => { S.as = asSel.value; try { localStorage.setItem('mp_as', S.as); } catch (e) {} for (const c of S.cells.values()) c.stale = true; S.dirty = true; if (S.onAs) S.onAs(); };
+  asSel.onchange = () => { S.as = asSel.value; try { localStorage.setItem('mp_as', S.as); } catch (e) {} for (const c of S.cells.values()) c.stale = true; S.dirty = true; toolVis(); if (S.onAs) S.onAs(); };
   S.wrap.querySelectorAll('[data-lay]').forEach(b => b.onclick = () => { const k = b.dataset.lay; S.layer[k] = !S.layer[k]; b.classList.toggle('on', S.layer[k]); S.dirty = true; });
   // 建物の見えかた：2.5D（高さ・壁）と 2D（上から見たまま）。この端末におぼえる
   try { const v = localStorage.getItem('mp_b25'); if (v != null) S.b25 = v !== '0'; } catch (e) {}
@@ -963,10 +1012,17 @@ function build(root) {
   S.wrap.querySelector('[data-zout]').onclick = () => zoomAt(S.W / 2, S.H / 2, 1 / 1.6);
   S.wrap.querySelector('[data-home]').onclick = () => setCam(HOME[0], HOME[1], 6);
   S.wrap.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => setTool(b.dataset.tool));
+  toolVis();
   S.wrap.querySelector('[data-menu]').onclick = () => openMenu();
   bindInput();
   new ResizeObserver(resize).observe(S.wrap);
   resize();
+}
+// 管理者が名義「国」のときだけの道具（✈ 滑走路。t57）
+function toolVis() {
+  const b = S.wrap && S.wrap.querySelector('[data-tool=rwy]'); if (!b) return;
+  const on = !!(S.admin && S.as === 'gov'); b.hidden = !on;
+  if (!on && S.tool === 'rwy') setTool('look');
 }
 function resize() {
   if (!S.wrap) return;
@@ -1154,7 +1210,8 @@ function nearNode(x, y, rpx, pred) {
 const TOOL_HINT = {
   look: '', land: '土地：2か所タップして四角くえらびます（区画は10m四方）',
   rail: '線路：タップして点をおきます。線路のはしから始めると延長、まん中から始めると分岐。点はドラッグで動かせます', road: '道路：タップして点をおきます。道路のはし・まん中から始めると、つながります。点はドラッグで動かせます',
-  sta: '駅：ホームの起点をタップ（自分の線路の上）。バス停は道路の上をタップ', dep: '車両基地：自分の線路の上で起点をタップ（バスの営業所は道路の横をタップ）', del: 'こわす：自分の線・駅・車庫・建物をタップ'
+  sta: '駅：ホームの起点をタップ（自分の線路の上）。バス停は道路の上をタップ', dep: '車両基地：自分の線路の上で起点をタップ（バスの営業所は道路の横をタップ）', del: 'こわす：自分の線・駅・車庫・建物をタップ',
+  rwy: '滑走路（国）：両はしを2か所タップします（まっすぐ・はば60m・800〜4,000m。2km 以内の国の空港の滑走路になります）'
 };
 function setTool(t) {
   if (S.toolEnd) { const f = S.toolEnd; S.toolEnd = null; f(); }
@@ -1163,6 +1220,7 @@ function setTool(t) {
   hint(TOOL_HINT[t] || ''); sheet(null);
   if (t === 'rail' || t === 'road') startDraw(t);
   if (t === 'land') startLand();
+  if (t === 'rwy') startRwy();
   S.dirty = true;
 }
 function onTap(x, y, px, py) {
@@ -1182,6 +1240,8 @@ async function lookAt(x, y) {
   if (dp) return showDep(dp);
   const hb = hitBld(x, y);
   if (hb) { const [bx, by] = hb.cell.split(',').map(Number); return showSpot(bx, by); }
+  const rw = nearRwy(x, y, 6);
+  if (rw) return showRwy(rw);
   const sg = nearSeg(x, y, 8);
   if (sg && (S.cam.z >= 3 || sg.s.k === 'rail' || ['exp', 'nat'].includes(sg.s.c))) return showSeg(sg.s, sg);
   return showSpot(Math.floor(x * 5), Math.floor(y * 5));
@@ -1375,15 +1435,16 @@ function showSta(s) {
       ${s.k === 'rail' && s.tk ? `<b>発着番線</b><span>${s.tk.map((t, i) => `<span>${esc(trkL(t, i))}</span>`).join('<br>')}</span>` : ''}
       ${gov ? `<b>使用料</b><span>${s.ln != null ? `<span>空路に入れると 1路線・1日 ${X(s.ln)}（国庫へ）</span>` : '<span>いまは新しい空路に使えません</span>'}</span>`
         : s.k === 'bus' || port ? `<b>貸し出し</b><span>${s.ln != null ? `<span>ほかの人・会社に貸しています（1系統・1日 ${X(s.ln)}）</span>` : '<span>ほかの人・会社には貸していません</span>'}</span>` : ''}
-      ${air ? `<b>滑走路</b><span><span>${fmt(s.pl)}m</span>・<span>ゲート ${s.tr}</span></span>` : ''}
+      ${air ? `<b>滑走路</b><span>${s.pl > 0 ? `<span>${fmt(s.pl)}m（いちばん長い滑走路）</span>` : '<span class="mp-warn">まだありません（飛行機は飛べません）</span>'}</span><b>発着口</b><span><span>${s.tr}こ</span>（<span>1つで1時間に1便</span>）</span>` : ''}
       ${port && pdep ? (gov ? `<b>駐機場</b><span>${pdep.cap}機まで（みんなで使う）</span>` : air ? `<b>駐機場</b><span>${pdep.cap}機まで</span>` : `<b>船の置き場</b><span>${pdep.cap}隻まで</span>`) : ''}
       <b>${air ? '空路' : port ? '航路' : '系統'}</b><span>${(s.rt || []).map(r => `<a href="#" data-rt="${r.id}" style="color:${esc(r.c)};font-weight:800">■ ${esc(r.n)}</a>`).join('<br>') || 'なし'}</span>
       ${s.k === 'rail' ? thruRow(s.o) : ''}</div>
-    ${gov ? `<div class="mp-row">${pdep ? '<button class="btn" data-cars>飛行機を見る・注文する</button>' : ''}<button class="btn" data-newr>＋ 空路</button>${adm ? '<button class="btn" data-ren>名前を変える</button><button class="btn" data-lend>使用料</button>' : ''}</div>
-      <p class="muted small">国の空港です。だれでも駐機場に飛行機を置いて（≡ →「車両と編成」）、空路に使えます。空路に入れると、1路線・1日の使用料を国にはらいます（使いはじめたときの値段のまま）</p>`
+    ${gov ? `<div class="mp-row"><button class="btn main" data-slot>🛫 発着口・入札</button>${pdep ? '<button class="btn" data-cars>飛行機を見る・注文する</button>' : ''}<button class="btn" data-newr>＋ 空路</button>${adm ? '<button class="btn" data-ren>名前を変える</button><button class="btn" data-lend>使用料</button>' : ''}</div>
+      <p class="muted small"><span>国の空港です。だれでも駐機場に飛行機を置いて（≡ →「車両と編成」）、空路に使えます。空路に入れると、1路線・1日の使用料を国にはらいます（使いはじめたときの値段のまま）。</span><span>この空港を出る便は、1時間に、持っている発着口の数まで（発着口の権利は入札で買います）</span></p>`
     : s.mine && port ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button><button class="btn" data-lend>貸し出し</button>${pdep ? (air ? '<button class="btn" data-cars>飛行機を見る</button>' : '<button class="btn" data-cars>船を見る</button>') : ''}${air ? '<button class="btn" data-newr>＋ 空路</button>' : '<button class="btn" data-newr>＋ 航路</button>'}</div>
       <p class="muted small">${air ? '空港は、空港の建物をこわすとなくなります' : '港は、フェリーターミナルの建物をこわすとなくなります'}</p>` : s.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button>${s.k === 'bus' ? '<button class="btn" data-lend>貸し出し</button>' : '<button class="btn" data-trk>発着番線</button>'}<button class="btn" data-del>こわす</button></div>` : ''}`, sh => {
     const cs = sh.querySelector('[data-cars]'); if (cs) cs.onclick = () => openCars(pdep.id);
+    const sl = sh.querySelector('[data-slot]'); if (sl) sl.onclick = () => openSlots(s.id);
     const nr = sh.querySelector('[data-newr]'); if (nr) nr.onclick = () => { sheet(null); routeBuild(s.k); };
     sh.querySelectorAll('[data-rt]').forEach(a => a.onclick = ev => { ev.preventDefault(); openDia(Number(a.dataset.rt)); });
     const th = sh.querySelector('[data-thru]'); if (th) th.onclick = () => thruReq({ sta: s.id }, () => { if (S.sel && S.sel.kind === 'sta' && S.sel.id === s.id) showSta(s); });
@@ -1427,6 +1488,78 @@ function showDep(d) {
     const c = sh.querySelector('[data-cars]'); if (c) c.onclick = () => openCars(d.id);
     const r = sh.querySelector('[data-ren]'); if (r) r.onclick = async () => { const nm = prompt(T('新しい名前'), d.n); if (nm && await api('mp_dep_edit', { p_id: d.id, p_name: nm, p_del: false }, '名前を変えました')) refreshBox(d.fx - 8, d.fy - 8, d.fx + 8, d.fy + 8); };
     const x = sh.querySelector('[data-del]'); if (x) x.onclick = async () => { if (confirm(T('こわしますか？（工事費はもどりません）')) && await api('mp_dep_edit', { p_id: d.id, p_name: null, p_del: true }, 'こわしました')) { refreshBox(d.fx - 8, d.fy - 8, d.fx + 8, d.fy + 8); sheet(null); } };
+  });
+}
+
+/* ---- 滑走路（t57）：管理者が名義「国」で、両はしを2か所タップして引く ---- */
+function startRwy() {
+  S.toolState = { a: null, b: null };
+  S.drawTool = (g, z) => {
+    const st = S.toolState; if (!st || !st.a) return;
+    const b = st.b || st.a;
+    g.lineCap = 'butt'; g.strokeStyle = 'rgba(30,110,230,.35)'; g.lineWidth = Math.max(3, 1.2 * z);
+    g.beginPath(); g.moveTo(sx(st.a[0]), sy(st.a[1])); g.lineTo(sx(b[0]), sy(b[1])); g.stroke(); g.lineCap = 'round';
+    g.fillStyle = '#1f5fbf'; for (const p of [st.a, st.b].filter(Boolean)) { g.beginPath(); g.arc(sx(p[0]), sy(p[1]), 5, 0, 6.3); g.fill(); }
+    if (st.b) label(g, fmt(Math.round(Math.hypot(b[0] - st.a[0], b[1] - st.a[1]) * 5) * 10) + 'm', sx((st.a[0] + b[0]) / 2), sy((st.a[1] + b[1]) / 2) - 14, { size: 12, color: '#123c8c', bg: 'rgba(255,255,255,.9)' });
+  };
+  S.tapHook = (x, y) => {
+    if (S.cam.z < 1.5) { setCam(x, y, 4); hint('近づいてから、滑走路の両はしをタップします'); return; }
+    const st = S.toolState;
+    if (!st.a || st.b) { st.a = [x, y]; st.b = null; } else st.b = [x, y];
+    rwySheet(); S.dirty = true;
+  };
+  S.toolEnd = () => { S.tapHook = null; S.toolState = null; };
+}
+async function rwySheet() {
+  const st = S.toolState; if (!st || !st.a) return;
+  if (!st.b) return sheet(`<h4>✈ 滑走路</h4><p class="muted small">もう1つのはしをタップしてください（まっすぐ・はば60m・800〜4,000m）</p>`);
+  const p = [st.a[0], st.a[1], st.b[0], st.b[1]];
+  sheet(`<h4>✈ 滑走路</h4><p class="muted small">見つもっています…</p>`);
+  const q = await api('mp_rwy_build', { p_pts: p, p_dry: true });
+  if (!q || S.toolState !== st || !st.b || st.b[0] !== p[2] || st.b[1] !== p[3]) return;
+  const why = q.why || {}, sk = [why.water && `水の上 ${why.water}`, why.mtn && `山 ${why.mtn}`, why.park && `公園 ${why.park}`, why.road && `道路・線路など ${why.road}`, why.owned && `筆（土地・建物） ${why.owned}`, why.out && `地図の外 ${why.out}`]
+    .filter(Boolean).map(t => `<span>${esc(t)}</span>`).join('・');
+  sheet(`<h4>✈ 滑走路 <span>${esc(q.name)}</span> <small class="muted">（管理者・名義「国」）</small></h4>
+    <div class="mp-kv"><b>長さ</b><span><span>${fmt(q.len)}m</span>・<span>はば60m</span></span>
+      <b>空港</b><span>${q.sname ? `<span>${esc(q.sname)}</span>` : '<span class="mp-warn">2km 以内に国の空港がありません</span>'}</span>
+      ${sk ? `<b>かかるもの</b><span>${sk}</span>` : ''}
+      <b>工事費</b><span class="mp-cost">${X(q.cost)}</span></div>
+    ${q.ok ? '' : `<p class="mp-warn">${esc(q.msg || '')}</p>`}
+    <div class="mp-row">${q.ok ? '<button class="btn main" data-rb>滑走路を引く</button>' : ''}</div>
+    <p class="muted small"><span>空港の滑走路の長さは、いちばん長い滑走路です。長さで飛べる飛行機が決まります（コミューター機 800m・プロペラ機 1,200m・小型ジェット 1,800m・中型ワイドボディ 2,300m・ジャンボ 2,800m）。</span><span>滑走路の区画は国の土地で、道路・線路・建物は通れません。もう一度タップすると、引きなおせます</span></p>`, s => {
+    const b = s.querySelector('[data-rb]'); if (b) b.onclick = async () => {
+      if (!confirm(T(`滑走路 ${q.name}（${fmt(q.len)}m）を「${q.sname}」に引きます。工事費 ${fmt(q.cost)} X（国庫から）。よろしいですか？`))) return;
+      const x = await api('mp_rwy_build', { p_pts: p, p_dry: false });
+      if (x) {
+        toast(T(`滑走路 ${x.name}（${fmt(x.len)}m）を引きました`));
+        refreshBox(Math.min(p[0], p[2]) - 4, Math.min(p[1], p[3]) - 4, Math.max(p[0], p[2]) + 4, Math.max(p[1], p[3]) + 4);
+        sheet(null); st.a = st.b = null; S.dirty = true;
+      }
+    };
+  });
+}
+// 滑走路をタップしたか（線から はばの半分 ＋ rpx の半分）
+function nearRwy(x, y, rpx) {
+  const it = S.vis; if (!it || !it.rwys) return null; let best = null;
+  for (const r of it.rwys.values()) {
+    const [ax, ay, bx, by] = r.P, dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+    const t = L2 ? clamp(((x - ax) * dx + (y - ay) * dy) / L2, 0, 1) : 0, d = Math.hypot(x - (ax + dx * t), y - (ay + dy * t));
+    if (d <= r.w / 2 + rpx / 2 / S.cam.z && (!best || d < best.d)) best = { r, d };
+  }
+  return best && best.r;
+}
+function showRwy(r) {
+  S.sel = { kind: 'rwy', id: r.id }; S.dirty = true;
+  const adm = S.admin && S.as === 'gov';
+  sheet(`<h4>✈ 滑走路 <span>${esc(r.n)}</span></h4>
+    <div class="mp-kv"><b>長さ</b><span><span>${fmt(r.len)}m</span>・<span>はば ${fmt(Math.round(r.w * 50))}m</span></span><b>空港</b><span><span>${esc(r.sn || '')}</span></span><b>持ち主</b><span>国</span></div>
+    <div class="mp-row"><button class="btn" data-sl>🛫 発着口・入札</button>${adm ? '<button class="btn" data-del>こわす</button>' : ''}</div>`, sh => {
+    sh.querySelector('[data-sl]').onclick = () => openSlots(r.st);
+    const d = sh.querySelector('[data-del]'); if (d) d.onclick = async () => {
+      if (!confirm(T('この滑走路をこわしますか？（工事費はもどりません）'))) return;
+      const x = await api('mp_rwy_del', { p_id: r.id }, 'こわしました');
+      if (x) { refreshBox(r.bb[0] - 3, r.bb[1] - 3, r.bb[2] + 3, r.bb[3] + 3); sheet(null); S.sel = null; }
+    };
   });
 }
 
@@ -1492,7 +1625,8 @@ async function airportSheet(r, n) {
       ${q.addr ? `<b>場所</b><span translate="no">${esc(q.addr)}</span>` : ''}
       ${q.parts > 1 ? `<b>町字</b><span>${q.parts}つの町字にまたがっています（いちばん大きい、つながったところに建てます）</span>` : ''}
       ${sk ? `<b>使えない</b><span>${sk}</span>` : ''}
-      <b>滑走路</b><span><span>${fmt(q.rwy)}m</span>・<span>ゲート ${q.gates}</span>・<span>駐機場 ${q.hangar}機</span></span>
+      <b>発着口</b><span><span>${q.gates}こ</span>・<span>駐機場 ${q.hangar}機</span></span>
+      <b>滑走路</b><span>建ててから「✈ 滑走路」で引きます</span>
       <b>工事費</b><span class="mp-cost">${X(q.cost)}</span>
       <b>使用料</b><span>1路線・1日 ${X(q.fee)}（国庫へ）</span></div>
     <div class="mp-row"><input class="mp-inp" style="flex:1 1 160px" data-anm placeholder="${esc(q.name || '')}" maxlength="30">${q.ok ? '<button class="btn main" data-abuild>国の空港を建てる</button>' : ''}</div>
@@ -2184,12 +2318,76 @@ function openMenu() {
     <button class="mp-item" style="text-align:left" data-k="sc"><b>🏭 施設と工場</b><br><small>学校・ホテル・病院・娯楽の客と売上／つくるもの・在庫・トラック・市場の値段</small></button>
     <button class="mp-item" style="text-align:left" data-k="home"><b>🏠 自分の住所</b><br><small>${S.boot.home ? `<span translate="no">${esc(S.boot.home.text)}</span>` : 'まだ決めていません'}</small></button>
     <button class="mp-item" style="text-align:left" data-k="landreq"><b>📨 土地の申請</b><br><small>他人の土地を使う申請・とどいた申請への返事（許可・ことわる）</small></button>
+    <button class="mp-item" style="text-align:left" data-k="slots"><b>🛫 発着口（空港）</b><br><small>空港ごとの発着口・入札・自分の発着口（${esc(asName())}）</small></button>
     <button class="mp-item" style="text-align:left" data-k="ledger"><b>💴 お金の記録</b><br><small>運賃・家賃・維持費・使用料・工事費（${esc(asName())}）</small></button>
     ${S.admin ? `<button class="mp-item" style="text-align:left" data-k="admin"><b>🛠 管理</b><br><small>値段の設定・用途地域・ようす</small></button>` : ''}
     <button class="mp-item" style="text-align:left" data-k="help"><b>❓ あそびかた</b></button></div>`], b => {
-    b.querySelectorAll('[data-k]').forEach(x => x.onclick = () => { m.close(); ({ cars: () => openCars(), routes: openRoutes, ops: () => openOps(), xfer: () => openXfers(), thru: () => openThru(), blds: openMyBlds, tenants: openTenants, sc: () => openSC(), home: openHome, landreq: () => openLandReqs(), ledger: openLedger, admin: openAdmin, help: openHelp })[x.dataset.k](); });
+    b.querySelectorAll('[data-k]').forEach(x => x.onclick = () => { m.close(); ({ cars: () => openCars(), routes: openRoutes, ops: () => openOps(), xfer: () => openXfers(), thru: () => openThru(), blds: openMyBlds, tenants: openTenants, sc: () => openSC(), home: openHome, landreq: () => openLandReqs(), slots: () => openSlotList(), ledger: openLedger, admin: openAdmin, help: openHelp })[x.dataset.k](); });
   });
 }
+/* ---------- 発着口（t57）：空港ごとの発着口・入札。国（管理者）はふやす・へらす・入札に出す ---------- */
+const jdt = t => new Date(t).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+async function openSlotList() {
+  const m = modal(['🛫 発着口（空港）', '<p class="muted small">読みこんでいます…</p>'], null);
+  const d = await api('mp_slot_list', { p_as: S.as }); if (!d) return m.close();
+  m.set('🛫 発着口（空港）', d.length ? `<div class="mp-list">${d.map(a => `<button class="mp-item" style="text-align:left" data-st="${a.st}"><b>✈ <span>${esc(a.name)}</span></b>
+      <br><small><span>滑走路 ${a.plat > 0 ? fmt(a.plat) + 'm' : 'なし'}</span>・<span>発着口 ${a.n}（あき ${a.free}）</span>${a.aucs ? `・<span>入札中 ${a.aucs}（しめきり ${jdt(a.ends)}）</span>` : ''}${a.my ? `・<b><span>自分 ${a.my}</span></b>` : ''}${a.lead ? `・<span>いちばん高い入札 ${a.lead}</span>` : ''}</small></button>`).join('')}</div>
+      <p class="muted small">発着口1つで、その空港を出る便を1時間に1便。権利は入札で買います（${esc(asName())}の名義）</p>` : '<p class="small">国の空港はまだありません</p>', b => {
+    b.querySelectorAll('[data-st]').forEach(x => x.onclick = () => { m.close(); openSlots(Number(x.dataset.st)); });
+  });
+}
+async function openSlots(st) {
+  if (!st) return;
+  const m = modal(['🛫 発着口・入札', '<p class="muted small">読みこんでいます…</p>'], null);
+  const load = async () => {
+    const d = await api('mp_slot_get', { p_st: st, p_as: S.as }); if (!d) return m.close();
+    const adm = d.admin && S.as === 'gov', bidOk = S.as !== 'gov';
+    const free = d.slots.filter(x => !x.live && !x.auc).length;
+    m.set('🛫 発着口・入札', `<p class="small" style="margin:0"><b>✈ <span>${esc(d.name)}</span></b></p>
+      <div class="mp-kv"><b>滑走路</b><span>${d.rwys.length ? d.rwys.map(r => `<span>${esc(r.n)}・${fmt(r.len)}m</span>`).join('<br>') : '<span class="mp-warn">まだありません（飛行機は飛べません）</span>'}</span>
+        <b>発着口</b><span><span>${d.slots.length}こ</span>（<span>あき ${free}</span>）</span>
+        ${bidOk ? `<b>${esc(asName())}</b><span><span>${d.my}こ</span>（<span>この空港を出る便を1時間に${d.my}便まで</span>）</span>` : ''}</div>
+      <h4 style="margin:10px 0 4px">入札中</h4>
+      ${d.aucs.length ? `<div class="mp-list">${d.aucs.map(a => `<div class="mp-item"><b>${a.n}番</b> <small><span>しめきり ${jdt(a.ends)}</span>・<span>最低 ${X(a.minp)}</span></small>
+          <br><small>${a.best != null ? `<span>いま ${X(a.best)}</span>（<span>${a.nbid}件</span>）${a.mine ? ' <b><span>あなたがいちばん高い</span></b>' : ''}` : '<span>まだ入札がありません</span>'}</small>
+          ${bidOk ? `<div class="mp-row" style="margin-top:4px"><input class="mp-inp" style="flex:1 1 120px" inputmode="numeric" data-amt="${a.id}" value="${a.next}"><button class="btn main" data-bid="${a.id}">入札する</button></div>` : ''}
+          ${adm ? `<div class="mp-row" style="margin-top:4px"><button class="btn" data-stop="${a.id}">とりやめる</button></div>` : ''}</div>`).join('')}</div>`
+        : '<p class="muted small">いま入札中の発着口はありません</p>'}
+      <h4 style="margin:10px 0 4px">発着口</h4>
+      <div class="mp-list">${d.slots.map(x => `<div class="mp-item small"><b>${x.n}番</b> ${x.live ? `<span>${esc(x.o || '')}</span>${x.mine ? '<small>（あなた）</small>' : ''}・<small><span>${jdt(x.until)}まで</span>・<span>${X(x.price)}</span></small>`
+          : x.auc ? '<span>入札中</span>' : '<span class="muted">あき</span>'}</div>`).join('')}</div>
+      ${adm ? `<h4 style="margin:10px 0 4px">国（管理者）</h4><div class="mp-row"><button class="btn" data-add>＋ ふやす</button><button class="btn" data-del>－ へらす</button>${free ? '<button class="btn main" data-open>入札に出す</button>' : ''}</div>` : ''}
+      <p class="muted small"><span>発着口1つで、この空港を出る便を1時間に1便出せます（持っている数より多い便は飛びません）。</span><span>入札は${d.hours}時間で、いちばん高い人が落札します（お金は国庫へ）。入札したお金はあずかり、ほかの人が上回ったら返します。</span><span>権利は${d.days}日。期限がきたら、また入札に出ます</span></p>`, b => {
+      b.querySelectorAll('[data-bid]').forEach(x => x.onclick = async () => {
+        const id = Number(x.dataset.bid), t = String(b.querySelector(`[data-amt="${id}"]`).value).replace(/[,，\s]/g, ''), n = Number(t);
+        if (!(n > 0)) return toast('数字を入れてください');
+        if (!confirm(T(`${fmt(n)} X で入札します（${asName()}の名義。お金はあずかり、ほかの人が上回ったら返します）。よろしいですか？`))) return;
+        if (await api('mp_slot_bid', { p_auc: id, p_amt: n, p_as: S.as }, '入札しました')) load();
+      });
+      b.querySelectorAll('[data-stop]').forEach(x => x.onclick = async () => {
+        if (!confirm(T('この入札をとりやめますか？（あずかったお金は返します）'))) return;
+        if (await api('mp_slot_admin', { p_st: st, p_op: 'stop', p_n: Number(x.dataset.stop), p_minp: 0 }, 'とりやめました')) load();
+      });
+      const ad = b.querySelector('[data-add]'); if (ad) ad.onclick = async () => {
+        const v = prompt(T('ふやす発着口の数（1〜50）'), '1'); if (v == null) return;
+        if (await api('mp_slot_admin', { p_st: st, p_op: 'add', p_n: Number(v), p_minp: 0 }, 'ふやしました')) load();
+      };
+      const dl = b.querySelector('[data-del]'); if (dl) dl.onclick = async () => {
+        const v = prompt(T('へらす発着口の数（あいているものだけ。番号の大きいものから）'), '1'); if (v == null) return;
+        if (await api('mp_slot_admin', { p_st: st, p_op: 'del', p_n: Number(v), p_minp: 0 }, 'へらしました')) load();
+      };
+      const op = b.querySelector('[data-open]'); if (op) op.onclick = async () => {
+        const v = prompt(T(`入札に出す発着口の数（あき ${free}）`), String(free)); if (v == null) return;
+        const p = prompt(T('最低価格（X）'), '100000000'); if (p == null) return;
+        const n = Number(String(p).replace(/[,，\s]/g, ''));
+        if (!(n >= 0)) return toast('数字を入れてください');
+        if (await api('mp_slot_admin', { p_st: st, p_op: 'open', p_n: Number(v), p_minp: n }, '入札に出しました')) load();
+      };
+    });
+  };
+  load();
+}
+
 // 自分の住所（t54i）：見る・地図で見る・消す
 function openHome() {
   const h = S.boot.home;
@@ -2222,7 +2420,8 @@ function openHelp() {
     <p><b>バス・トラック</b>：1980年ごろの性能のバス（路線バス・観光バスなど）とトラック（2t・4t・10t・トレーラー）を、バスの営業所で注文できます。自動車工場（人・会社の工場）をメーカーにえらぶと、その工場の鉄鋼でつくります（自分の工場なら部品代だけ）。トラックは自分の工場・田畑・港の荷物を運び、そのぶん運送費がかかりません（1台で1時間に 積める重さ×300km÷24 t・km。トラックターミナルで +10%）。</p>
     <p><b>鉄道車両工場</b>：鉄鋼（近くの製鉄所から）で鉄道車両をつくります。≡ →「車両と編成」で注文するときにメーカーとしてえらべます。工場を動かしている名義の注文は部品代（定価の45%）と鉄鋼だけ。ほかの人・会社には値段の水準（定価の40〜150%）で売れます。1日につくれる両数は延床面積で決まり、注文が多いと納車が先になります。</p>
     <p><b>フェリー・船</b>：海の近くの筆に「フェリーターミナル」を建てると、港（⚓ 乗り場）と船の置き場ができます。船（1980年ごろの性能：旅客船・小型〜大型フェリー・高速船）は、≡ →「車両と編成」で港をえらんで注文します（国の造船所は24時間。造船所をえらぶと、その鉄鋼でつくります）。≡ →「系統とダイヤ」の「＋ 航路（フェリー）」で港を順にタップすると、海の上の道を自動でさがします（曲がり角の点はドラッグで動かせ、長押しで消せます）。便を入れると人を乗せて運賃が入ります。フェリーは、海をこえる荷物（工場の仕入れ・お店への食品）をトラックごと運び、その運賃は航路の持ち主に入ります（自分の航路なら運賃はかかりません）。フェリーの便がない島とは、荷物を運べません。ほかの人の港は、持ち主が貸し出しているものだけ航路に入れられます。</p>
-    <p><b>空港・飛行機</b>：空港は国の建物で、国（管理者）が建てます。まん中に空港の乗り場（✈）と駐機場があります。飛行場（コミューター。滑走路800m）・地方空港（1,500m）・空港（2,500m）・国際空港（3,000m）。だれでも国の空港の駐機場に飛行機を置けます（みんなで使います）。飛行機（1980年ごろの性能：コミューター機・プロペラ旅客機・小型ジェット・中型ワイドボディ・ジャンボ）は、≡ →「車両と編成」で空港をえらんで注文します（国の航空機メーカーで48時間）。滑走路が短い空港には、大きな飛行機は置けず、離着陸もできません。≡ →「系統とダイヤ」の「＋ 空路（飛行機）」で空港を順にタップすると、まっすぐ飛ぶ路線ができます（空港どうしは10km以上）。空路に入れた空港ごとに、1路線・1日の使用料を国にはらいます。空港のまわり（10km）の人が乗り、運賃は距離で決まります。座席の数までしか乗れません。</p>
+    <p><b>空港・飛行機</b>：空港は国の建物で、国（管理者）が建てます。まん中に空港の乗り場（✈）と駐機場があります（飛行場・地方空港・空港・国際空港）。滑走路は国が道路のように引きます（「✈ 滑走路」。まっすぐ・800〜4,000m）。空港の滑走路の長さは、いちばん長い滑走路です。だれでも国の空港の駐機場に飛行機を置けます（みんなで使います）。飛行機（1980年ごろの性能：コミューター機・プロペラ旅客機・小型ジェット・中型ワイドボディ・ジャンボ）は、≡ →「車両と編成」で空港をえらんで注文します（国の航空機メーカーで48時間）。滑走路が短い空港には、大きな飛行機は置けず、離着陸もできません。≡ →「系統とダイヤ」の「＋ 空路（飛行機）」で空港を順にタップすると、まっすぐ飛ぶ路線ができます（空港どうしは10km以上）。空路に入れた空港ごとに、1路線・1日の使用料を国にはらいます。空港のまわり（10km）の人が乗り、運賃は距離で決まります。座席の数までしか乗れません。</p>
+    <p><b>発着口</b>：空港ごとに発着口があり（飛行場2・地方空港4・空港8・国際空港16。国がふやせます）、1つで、その空港を出る便を1時間に1便出せます。発着口を使う権利は入札で買います（✈ →「🛫 発着口・入札」。24時間・いちばん高い人が落札。お金は国庫へ）。入札のお金はあずかり、ほかの人が上回ったら返します。権利は30日で、期限がきたら、また入札に出ます。持っている発着口より多い便は飛びません（便に【発着口】の注意が出ます）。≡ →「発着口（空港）」で空港の一覧。</p>
     <p><b>自分の住所</b>：地図で区画か建物をタップ →「ここを自分の住所に」（建物なら部屋もえらべます）。住所はあなたのページ（人のページ）でみんなに見えます。地図には🏠が出ます（自分にだけ）。≡ →「自分の住所」で見る・消す。</p>
     <p><b>風の芽大学</b>：風の芽大学中央駅のまわりは、風の芽大学 麦畑キャンパス（約140ha）。本部・図書館・学部・研究所・大学病院・附属学校・学生寮・グラウンド・実験農場（麦畑）などがならぶ、国の建物です。</p>
     <p><b>線路・道路</b>：点をおくと、なめらかな線になります。他人の土地や国の土地の上につくると、毎日使用料がかかります（国・府県・市の道路の上はかかりません）。まちの中は工事費が高くなります。</p>
@@ -3086,7 +3285,7 @@ async function openLandReqs() {
 
 /* ---- お金の記録 ---- */
 const LK = { fare: '運賃', rent: '家賃', sales: '売上', tenant: 'テナントの家賃（はらう）', lease: '使用料（はらう）', lease_in: '使用料（受けとり）', upkeep: '維持費', tax: '固定資産税', land: '土地', bld: '建物', car: '車両', rail: '線路の工事', road: '道路の工事', sta: '駅', dep: '車庫', owed: '未払い',
-  tuition: '授業料', fee: '施設の売上', goods: '仕入れ・材料', ship: '運送費', ferry: 'フェリーの運賃（トラック）' };
+  tuition: '授業料', fee: '施設の売上', goods: '仕入れ・材料', ship: '運送費', ferry: 'フェリーの運賃（トラック）', slot: '発着口', rwy: '滑走路の工事' };
 async function openLedger() {
   const m = modal(['お金の記録', '<p class="muted small">読みこんでいます…</p>']);
   let rows = [], before = null, head = null;
@@ -3346,7 +3545,7 @@ function drawBlds(g, bs, z, pass) {
       const pat = FLAT_PAT[b.kind] || (pOf(b.kind) || {}).pat, soft = SOFT_PAT.has(pat);
       g.fillStyle = col[0]; g.fill(b.base);
       if (pat && z >= 9) flatPat(g, b, z, pat);
-      if ((pOf(b.kind) || {}).air && z >= 1) drawRunway(g, b, z);   // 空港の滑走路（t54p）
+      if ((pOf(b.kind) || {}).air && z >= 6) drawApron(g, b, z);   // 空港の駐機場の線（t57：滑走路は国が別に引く）
       g.strokeStyle = b.own === 2 ? '#1f5bd6' : soft ? 'rgba(60,90,40,.28)' : 'rgba(60,60,60,.55)'; g.lineWidth = (b.own === 2 ? 1.6 : 1) / z; g.stroke(b.baseEdge);
       if ((pat === 'pave' || pat === 'avenue' || pat === 'green') && z >= 9) {   // 広場・並木道・緑地の木
         g.fillStyle = pat === 'green' ? 'rgba(80,150,70,.6)' : 'rgba(110,170,90,.55)';
@@ -3620,7 +3819,7 @@ function bFeats(p, o) {
     if (p.mk === 'car') ft(`<span>バス・トラックの注文も受けられる</span>`, 'up');
   }
   if (p.k === 'ferry') { ft('港（⚓ 乗り場）と船の置き場ができる', 'in'); ft('フェリー・旅客船の航路をつくれる', 'up'); }   // t54o
-  if (p.air) { ft(`<span>滑走路 ${fmt(p.rwy)}m</span>・<span>ゲート ${p.gates}</span>・<span>駐機場 ${p.hangar}機</span>`, 'in'); ft('飛行機の空路をつくれる', 'up'); }   // t54p
+  if (p.air) { ft(`<span>発着口 ${p.gates}こ</span>・<span>駐機場 ${p.hangar}機</span>`, 'in'); ft('建ててから「✈ 滑走路」で引きます', 'in'); ft('飛行機の空路をつくれる', 'up'); }   // t54p・t57
   if (p.opts) ft(`<span>つくるもの</span> ${p.opts.map(g => `<span>${esc(GN(g))}</span>`).join('・')}`, 'in');
   if (p.rb && p.rb !== 1) ft(`<span>とれる量 ${p.rb}倍</span>`, p.rb > 1 ? 'up' : 'dn');
   if (p.rl && p.rl !== 1) ft(`<span>家賃 ${p.rl}倍</span>`, p.rl > 1 ? 'up' : 'dn');
@@ -3784,6 +3983,7 @@ async function openBld(bid) {
       b.querySelectorAll('[data-prt]').forEach(a => a.onclick = ev => { ev.preventDefault(); m.close(); openDia(Number(a.dataset.prt)); });   // 港（t54o）
       if (q('[data-pcars]')) q('[data-pcars]').onclick = () => { m.close(); openCars(d.port.dep); };
       if (q('[data-pnew]')) q('[data-pnew]').onclick = () => { m.close(); sheet(null); routeBuild(d.port.k === 'air' ? 'air' : 'ship'); };
+      if (q('[data-pslot]')) q('[data-pslot]').onclick = () => { m.close(); openSlots(d.port.sta); };   // t57
       if (q('[data-all]')) q('[data-all]').onclick = () => { d.units.forEach(u => sel.add(u.id)); b.querySelectorAll('[data-c]').forEach(x => x.checked = true); upd(); };
       if (q('[data-none]')) q('[data-none]').onclick = () => { sel.clear(); b.querySelectorAll('[data-c]').forEach(x => x.checked = false); upd(); };
       b.querySelectorAll('[data-mode]').forEach(x => x.onclick = async () => {
@@ -3894,15 +4094,17 @@ function portBlock(d) {
   const p = d.port; if (!p) return '';
   if (p.k === 'air' && d.gov) return `<h4 style="margin:12px 0 4px">✈ <span>国の空港</span></h4><div class="mp-kv">
       <b>ターミナル</b><span translate="no">${esc(p.name || '')}</span>
-      <b>滑走路</b><span><span>${fmt(p.rwy || 0)}m</span>・<span>ゲート ${p.gates || 0}</span></span>
+      <b>滑走路</b><span>${p.rwy > 0 ? `<span>${fmt(p.rwy)}m（いちばん長い滑走路）</span>` : '<span class="mp-warn">まだありません（飛行機は飛べません）</span>'}</span>
+      <b>発着口</b><span><span>${p.gates || 0}こ</span>（<span>1つで1時間に1便</span>）</span>
       <b>飛行機</b><span><span>${p.n || 0} / ${p.cap || 0}機</span>（みんなで使う）</span>
       <b>使用料</b><span>${p.ln != null ? `<span>空路に入れると 1路線・1日 ${X(p.ln)}（国庫へ）</span>` : '<span>いまは新しい空路に使えません</span>'}</span>
       <b>空路</b><span>${(p.routes || []).map(r => `<a href="#" data-prt="${r.id}" style="color:${esc(r.c)};font-weight:800">■ ${esc(r.n)}</a>`).join('<br>') || 'なし'}</span></div>
-    <div class="mp-row"><button class="btn" data-pcars>飛行機を見る・注文する</button><button class="btn" data-pnew>＋ 空路</button></div>
-    <p class="muted small" style="margin:2px 0 6px">国の空港です（空港は国が建てます）。だれでも駐機場に飛行機を置いて、空路に使えます。空路に入れると、1路線・1日の使用料を国にはらいます。滑走路より長い滑走路がいる飛行機は、この空港に置けず、離着陸もできません</p>`;
+    <div class="mp-row"><button class="btn" data-pcars>飛行機を見る・注文する</button><button class="btn" data-pnew>＋ 空路</button><button class="btn" data-pslot>🛫 発着口・入札</button></div>
+    <p class="muted small" style="margin:2px 0 6px"><span>国の空港です（空港は国が建てます）。だれでも駐機場に飛行機を置いて、空路に使えます。空路に入れると、1路線・1日の使用料を国にはらいます。滑走路より長い滑走路がいる飛行機は、この空港に置けず、離着陸もできません</span>。<span>この空港を出る便は、1時間に、持っている発着口の数まで（発着口の権利は入札で買います）</span></p>`;
   if (p.k === 'air') return `<h4 style="margin:12px 0 4px">✈ <span>空港</span></h4><div class="mp-kv">
       <b>ターミナル</b><span translate="no">${esc(p.name || '')}</span>
-      <b>滑走路</b><span><span>${fmt(p.rwy || 0)}m</span>・<span>ゲート ${p.gates || 0}</span></span>
+      <b>滑走路</b><span>${p.rwy > 0 ? `<span>${fmt(p.rwy)}m（いちばん長い滑走路）</span>` : '<span class="mp-warn">まだありません（飛行機は飛べません）</span>'}</span>
+      <b>発着口</b><span><span>${p.gates || 0}こ</span>（<span>1つで1時間に1便</span>）</span>
       <b>飛行機</b><span><span>${p.n || 0} / ${p.cap || 0}機</span></span>
       <b>貸し出し</b><span>${p.ln != null ? `<span>ほかの人・会社に貸しています（1系統・1日 ${X(p.ln)}）</span>` : '<span>ほかの人・会社には貸していません</span>'}</span>
       <b>空路</b><span>${(p.routes || []).map(r => `<a href="#" data-prt="${r.id}" style="color:${esc(r.c)};font-weight:800">■ ${esc(r.n)}</a>`).join('<br>') || 'なし'}</span></div>
@@ -4056,16 +4258,17 @@ function portLabel(g, s, z) {
   const r = portR(z), air = s.k === 'air';
   label(g, s.n, x, y - r - 9, { size: z >= 6 ? 12 : 11, bold: true, color: air ? '#1a237e' : '#0d47a1', bg: 'rgba(255,255,255,.88)', border: air ? 'rgba(26,35,126,.35)' : 'rgba(13,71,161,.35)' });
 }
-// 空港の滑走路（平らな空港の建物の上に。いちばん長い向きに。t54p）
-function drawRunway(g, b, z) {
+// 空港の駐機場の線（平らな空港の建物の上に。長い向きに誘導路の黄色い線と、駐機する場所の線。t57：滑走路は国が別に引く）
+function drawApron(g, b, z) {
   const [x0, y0, x1, y1] = b.bb, w = x1 - x0, h = y1 - y0, hor = w >= h;
-  const L = (hor ? w : h) * 0.9, Wd = Math.max(0.5, Math.min(1.2, (hor ? h : w) * 0.2)), cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-  g.fillStyle = '#5f6368';
-  if (hor) g.fillRect(cx - L / 2, cy - Wd / 2, L, Wd); else g.fillRect(cx - Wd / 2, cy - L / 2, Wd, L);
-  if (z >= 6) {   // まん中の白い破線
-    g.strokeStyle = 'rgba(255,255,255,.9)'; g.lineWidth = Math.max(0.03, 1.2 / z); g.setLineDash([0.6, 0.45]);
-    g.beginPath(); if (hor) { g.moveTo(cx - L / 2 + 0.4, cy); g.lineTo(cx + L / 2 - 0.4, cy); } else { g.moveTo(cx, cy - L / 2 + 0.4); g.lineTo(cx, cy + L / 2 - 0.4); } g.stroke(); g.setLineDash([]);
+  const L = (hor ? w : h) * 0.84, sw = Math.min(1.1, (hor ? h : w) * 0.28), cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, n = Math.max(2, Math.floor(L / 1.3));
+  g.strokeStyle = 'rgba(249,201,40,.95)'; g.lineWidth = Math.max(0.03, 1.4 / z); g.beginPath();
+  if (hor) { g.moveTo(cx - L / 2, cy); g.lineTo(cx + L / 2, cy); } else { g.moveTo(cx, cy - L / 2); g.lineTo(cx, cy + L / 2); }
+  for (let i = 0; i <= n; i++) {
+    const t = -L / 2 + L * i / n;
+    if (hor) { g.moveTo(cx + t, cy); g.lineTo(cx + t, cy - sw); } else { g.moveTo(cx, cy + t); g.lineTo(cx + sw, cy + t); }
   }
+  g.stroke();
 }
 // 系統の強調（ダイヤ）：航路の区間
 function drawRouteHiSea(g, R) {
@@ -4318,7 +4521,7 @@ function airRouteBuild(edit) {
       ${st.stops.length >= 2 ? `<p class="small" style="margin:4px 0"><span>飛ぶ距離</span> <b>${d.toFixed(1)}km</b></p>` : ''}
       <div class="mp-row">折り返しの時間 <input class="mp-inp mp-num" type="number" min="600" max="7200" step="300" value="${st.dwell}" data-dw> 秒 <small class="muted">（乗り降り・給油・整備）</small></div>
       <div class="mp-row"><button class="btn" data-cancel>キャンセル</button><button class="btn main" data-ok ${st.stops.length >= 2 ? '' : 'disabled'}>${edit ? 'この順に直す' : '空路をつくる'}（${esc(asName())}）</button></div>
-      <p class="muted small">空港は国の空港です（飛行場・地方空港・空港・国際空港。滑走路の長さで、飛べる飛行機がちがいます）。空路に入れた空港ごとに、1路線・1日の使用料を国にはらいます。飛行機は ≡ →「車両と編成」で空港をえらんで注文します</p>`, s => {
+      <p class="muted small"><span>空港は国の空港です（飛行場・地方空港・空港・国際空港。滑走路の長さで、飛べる飛行機がちがいます）。空路に入れた空港ごとに、1路線・1日の使用料を国にはらいます。飛行機は ≡ →「車両と編成」で空港をえらんで注文します。</span><span>便は、出る空港ごとに、1時間に持っている発着口の数まで飛べます（✈ →「🛫 発着口・入札」）</span></p>`, s => {
       s.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
       s.querySelector('[data-col]').oninput = e => { st.color = e.target.value; S.dirty = true; };
       s.querySelector('[data-dw]').onchange = e => { st.dwell = Math.max(600, Math.min(7200, Number(e.target.value) || 1800)); };
@@ -4344,5 +4547,6 @@ function airRouteBuild(edit) {
   S.onSheetClose = () => setTool('look');
   draw();
 }
-window.MapApp = { open, pause, state: S, spline, setCam, landReqs: () => openLandReqs(), xfers: () => openXfers(), goto: (x, y) => homeGo(x, y), thru: () => openThru(), bld: id => openBld(id), sc: () => openSC() };
+window.MapApp = { open, pause, state: S, spline, setCam, landReqs: () => openLandReqs(), xfers: () => openXfers(), goto: (x, y) => homeGo(x, y), thru: () => openThru(), bld: id => openBld(id), sc: () => openSC(),
+  slots: L => (L && L.st ? openSlots(Number(L.st)) : openSlotList()) };
 })();

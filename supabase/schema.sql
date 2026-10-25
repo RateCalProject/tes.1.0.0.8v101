@@ -17194,6 +17194,47 @@ insert into public.mp_types(code, series, label, role, face, num_from, num_to, l
   ('WJ280', 'AIR80', 'WJ280', 'Air', '', 1, 999, 54, 280, 280, 140, 40000, 0, true, 850, 1, 1, false, true, true, true, 12000000000, 2200000, 700, '1980年ごろの中型ワイドボディ機（280席・通路2本）', 143, 0, 2300),
   ('JB500', 'AIR80', 'JB500', 'Air', '', 1, 999, 70, 500, 500, 330, 80000, 0, true, 900, 1, 1, false, true, true, true, 25000000000, 4500000, 700, '1980年ごろの大型ジェット旅客機（ジャンボ。500席。長い滑走路がいる）', 144, 0, 2800)
 on conflict (code) do nothing;
+-- t57：滑走路（国が道路のように引く。空港の滑走路の長さ＝いちばん長い滑走路）と発着口（空港ごと。権利は入札で売る。1つで1時間に1便が出られる）
+create table if not exists public.mp_rwys (
+  id bigserial primary key,
+  st bigint not null references public.mp_stations(id) on delete cascade,   -- 空港の乗り場（kind = 'air'）
+  x0 int not null, y0 int not null, x1 int not null, y1 int not null,     -- 両はし（1/100 マス）
+  len int not null,                                                         -- 長さ（m）
+  w real not null default 1.2,                                              -- はば（マス。1.2 = 60m）
+  name text not null default '',                                            -- 番号（例 09/27：向き）
+  cost bigint not null default 0,
+  created_at timestamptz not null default now()
+);
+create index if not exists mp_rwys_st on public.mp_rwys (st);
+create table if not exists public.mp_slots (     -- 発着口：空港の乗り場ごとに 1〜n。権利の持ち主（own_u・own_c）は until まで
+  id bigserial primary key,
+  st bigint not null references public.mp_stations(id) on delete cascade,
+  n int not null,
+  own_u uuid references public.profiles(id) on delete set null,
+  own_c int references public.companies(id) on delete set null,
+  until timestamptz,
+  price bigint not null default 0,          -- 落札した値段
+  minp bigint not null default 0,           -- 入札の最低価格（管理者が決める。期限のあと、また入札に出すときも）
+  unique (st, n)
+);
+create table if not exists public.mp_slot_aucs (  -- 入札（せり上げ・24時間）。いちばん高い入札のお金は国庫にあずかる（ほかの人が上回ったら返す）
+  id bigserial primary key,
+  slot bigint not null references public.mp_slots(id) on delete cascade,
+  ends timestamptz not null,
+  minp bigint not null,
+  best_u uuid references public.profiles(id) on delete set null,
+  best_c int references public.companies(id) on delete set null,
+  best bigint,
+  nbid int not null default 0,
+  st text not null default 'open' check (st in ('open', 'done', 'none', 'stop')),
+  created_at timestamptz not null default now()
+);
+create index if not exists mp_slot_aucs_open on public.mp_slot_aucs (ends) where st = 'open';
+create index if not exists mp_slot_aucs_slot on public.mp_slot_aucs (slot);
+alter table public.mp_trains add column if not exists noslot text;    -- 発着口が足りない（その便は飛ばない）わけ（t57）
+alter table public.mp_rwys enable row level security;
+alter table public.mp_slots enable row level security;
+alter table public.mp_slot_aucs enable row level security;
 alter table public.mp_chunks enable row level security;
 alter table public.mp_places enable row level security;
 alter table public.mp_centers enable row level security;
@@ -17259,6 +17300,9 @@ language sql stable set search_path = public as $$
     ) || jsonb_build_object(
       -- t54p：航空（乗る人のわりあい・空港のまわり（マス）・運賃（はじめ＋1km）・空港の維持費（ゲート2つ・1日）・離着陸・地上走行の時間（秒））
       'g_air', 0.01, 'catch_air', 200, 'air_fare', 8000, 'air_km', 60, 'up_air', 200000, 'air_ovh', 1500
+    ) || jsonb_build_object(
+      -- t57：滑走路の工事費（1㎡）・発着口の権利（日）・入札の時間（時間）・上げ幅（いまの値段の何倍か。いちばん小さくて 1,000 X）
+      'rwy_m2', 20000, 'slot_days', 30, 'slot_hours', 24, 'slot_inc', 0.05
     )) ->> k)::numeric)
 $$;
 create or replace function public._mp_ok(u uuid) returns void
@@ -17631,6 +17675,10 @@ begin
     'lanes', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'k', r.kind, 'c', r.color, 'n', r.name, 'ok', r.ok, 'mine', coalesce(r.own_u = u or r.own_c = any(me_cs), false),
                   'w', (select coalesce(jsonb_agg(l -> 'w'), '[]'::jsonb) from jsonb_array_elements(r.legs) l))), '[]'::jsonb)
                from mp_routes r where r.kind in ('ship', 'air') and r.bb && b),   -- t54p：空の路線も
+    -- 滑走路（t57）：両はし [x0, y0, x1, y1]（1/100 マス）・はば（マス）・番号・長さ・空港
+    'rwys', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'p', jsonb_build_array(r.x0, r.y0, r.x1, r.y1), 'w', r.w, 'n', r.name, 'len', r.len, 'st', r.st,
+                  'sn', (select s.name from mp_stations s where s.id = r.st))), '[]'::jsonb)
+               from mp_rwys r where box(point(least(r.x0, r.x1) / 100.0, least(r.y0, r.y1) / 100.0), point(greatest(r.x0, r.x1) / 100.0, greatest(r.y0, r.y1) / 100.0)) && b),
     -- 筆：[id, 行ごとの区画のならび [y, x0, x1, …], 1 他人・2 自分・3 国, 売り出し, 建物, 地番, 持ち主のキー]
     'parcels', case when p_lod > 0 then '[]'::jsonb else (select coalesce(jsonb_agg(jsonb_build_array(pa.id,
                   (select jsonb_agg(v order by rn.y, rn.x0, u.o) from (
@@ -17778,10 +17826,19 @@ begin
 end $$;
 -- 線（マス tiles・区画 cells）が、駅のホーム・車庫・バス停にかかるか。かかるものの名前（なければ null）
 --   マス（50m）で近くのものをさがし、区画（10m）でホーム・車庫の形にかかるかを見る（同じマスでも、かからなければ通れる）
+-- 滑走路の区画（10m。t57）：線のまわり はば w マス（_mp_seg_blocked・_mp_busy_cells などで使うので先に）
+--   長い1本の線のままだと、_mp_line_cells が線の四角（ななめなら 400×400 区画）をぜんぶしらべて遅いので、100m ごとの点の線にする（同じ区画になる）
+create or replace function public._mp_rwy_cells(x0 int, y0 int, x1 int, y1 int, w real) returns table (x int, y int)
+language sql immutable as $$
+  select c.x, c.y from (select greatest(1, ceil(sqrt(((x1 - x0)::float8) ^ 2 + ((y1 - y0)::float8) ^ 2) / 200))::int n) k,
+    lateral (select array_agg(u.v order by i.i, u.o) p from generate_series(0, k.n) i(i),
+               lateral unnest(array[round(x0 + (x1 - x0) * i.i::float8 / k.n)::int, round(y0 + (y1 - y0) * i.i::float8 / k.n)::int]) with ordinality u(v, o)) a,
+    lateral _mp_line_cells(a.p, (w * 2.5)::real) c
+$$;
 create or replace function public._mp_seg_blocked(tiles int[], cells int[]) returns text
 language sql stable set search_path = public as $$
   with t as (select tiles[2 * i - 1] x, tiles[2 * i] y from generate_series(1, coalesce(array_length(tiles, 1), 0) / 2) i),
-       cand as materialized (select distinct o.what, o.ref from mp_occ o join t on o.x = t.x and o.y = t.y where o.what in ('sta', 'dep', 'stop')),
+       cand as materialized (select distinct o.what, o.ref from mp_occ o join t on o.x = t.x and o.y = t.y where o.what in ('sta', 'dep', 'stop', 'rwy')),
        c as materialized (select distinct cells[2 * i - 1] x, cells[2 * i] y from generate_series(1, coalesce(array_length(cells, 1), 0) / 2) i),
        hit as (
          select '駅「' || st.name || '」' w, 1 o from cand join mp_stations st on cand.what = 'sta' and st.id = cand.ref
@@ -17792,6 +17849,9 @@ language sql stable set search_path = public as $$
          union
          select 'バス停「' || st.name || '」', 3 from cand join mp_stations st on cand.what = 'stop' and st.id = cand.ref
           where exists (select 1 from c where abs(c.x - floor(st.x / 20.0)) <= 1 and abs(c.y - floor(st.y / 20.0)) <= 1)
+         union   -- 滑走路（t57）：道路・線路は横切れない
+         select '滑走路「' || r.name || '」', 0 from cand join mp_rwys r on cand.what = 'rwy' and r.id = cand.ref
+          where exists (select 1 from _mp_rwy_cells(r.x0, r.y0, r.x1, r.y1, r.w) rc join c on c.x = rc.x and c.y = rc.y)
        )
   select string_agg(w, '・' order by o, w) from hit
 $$;
@@ -19040,12 +19100,13 @@ begin
 end $$;
 create or replace function public.mp_route_del(p_id bigint, p_as text) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); pa record; db box;
+declare u uuid := _me(); pa record; db box; rk text;
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
-  delete from mp_routes where id = p_id and own_u is not distinct from pa.pu and own_c is not distinct from pa.pc returning bb into db;
+  delete from mp_routes where id = p_id and own_u is not distinct from pa.pu and own_c is not distinct from pa.pc returning bb, kind into db, rk;
   if not found then raise exception '系統が見つかりません'; end if;
+  if rk = 'air' then perform _mp_slot_mark(); end if;   -- 発着口（t57）：ほかの便が飛べるようになる
   perform _mp_chg('route', p_id, 'del', null);
   if db is not null then perform _mp_chg('lane', p_id, 'del', db); end if;   -- 航路（t54o）
   return jsonb_build_object('ok', true);
@@ -19447,6 +19508,7 @@ begin
       end loop;
     end loop;
   end loop;
+  if r.kind = 'air' then perform _mp_slot_mark(); end if;   -- 発着口（t57）：出る空港・1時間ごとに、持っている発着口の数まで
 end $$;
 
 -- ダイヤの取り消し：変える前の列車をおぼえる（系統ごとに新しい20回分）。時刻の計算の分（sched・warn・bad）はのぞく
@@ -19454,7 +19516,7 @@ create or replace function public._mp_dia_snap(rid bigint, what text) returns vo
 language plpgsql set search_path = public as $$
 begin
   insert into mp_dia_hist(route, what, trains)
-  values (rid, left(what, 80), coalesce((select jsonb_agg(to_jsonb(t) - 'sched' - 'warn' - 'bad' - 'cplx' - 'hold' - 'tai' order by t.id) from mp_trains t where t.route = rid), '[]'::jsonb));
+  values (rid, left(what, 80), coalesce((select jsonb_agg(to_jsonb(t) - 'sched' - 'warn' - 'bad' - 'cplx' - 'hold' - 'tai' - 'noslot' order by t.id) from mp_trains t where t.route = rid), '[]'::jsonb));
   delete from mp_dia_hist h where h.route = rid and h.id not in (select x.id from mp_dia_hist x where x.route = rid order by x.id desc limit 20);
 end $$;
 -- ダイヤの取り消し：いちばん新しい操作の前にもどす（系統の持ち主）
@@ -19793,6 +19855,7 @@ begin
       if perf is null or (perf ->> 'busy')::boolean then continue; end if;
       if r.kind = 'rail' and (perf ->> 'elec')::boolean and exists (select 1 from jsonb_array_elements(r.legs) l where not (l ->> 'e')::boolean) then continue; end if;
       if r.kind = 'air' and coalesce((perf ->> 'rwy')::int, 0) > (select min(s.plat) from mp_stations s where s.id = any(r.stops)) then continue; end if;   -- 滑走路（t54p）
+      if r.kind = 'air' and tr.noslot is not null then continue; end if;   -- 発着口が足りない便は飛ばない（t57）
       -- 故障（状態が 40 より悪いと、ときどき）
       if (perf ->> 'cond')::real < 40 and random() < (40 - (perf ->> 'cond')::real) / 300 then
         broke := broke + 1;
@@ -19978,6 +20041,7 @@ begin
       begin perform _mp_tick_day(); exception when others then raise warning 'mp day: %', sqlerrm; end;
     end if;
   end loop;
+  begin perform _mp_slot_tick(); exception when others then raise warning 'mp slot: %', sqlerrm; end;   -- 発着口の入札・権利の期限（t57）
   update mp_state set v = last where k = 'hour';
 end $$;
 
@@ -20284,14 +20348,21 @@ language sql stable set search_path = public as $$
   select distinct c.x, c.y from mp_segs s, lateral _mp_line_cells(s.pts, _mp_seg_r(s.kind, s.w, s.dbl)) c
    where s.gov and s.bb && box(point(x0 / 5.0 - 1, y0 / 5.0 - 1), point((x1 + 1) / 5.0 + 1, (y1 + 1) / 5.0 + 1))
      and c.x between x0 and x1 and c.y between y0 and y1
+  union   -- 滑走路（t57）
+  select c.x, c.y from mp_rwys r, lateral _mp_rwy_cells(r.x0, r.y0, r.x1, r.y1, r.w) c
+   where box(point(least(r.x0, r.x1) / 100.0 - r.w, least(r.y0, r.y1) / 100.0 - r.w), point(greatest(r.x0, r.x1) / 100.0 + r.w, greatest(r.y0, r.y1) / 100.0 + r.w))
+         && box(point(_mp_pub_cells.x0 / 5.0 - 1, _mp_pub_cells.y0 / 5.0 - 1), point((_mp_pub_cells.x1 + 1) / 5.0 + 1, (_mp_pub_cells.y1 + 1) / 5.0 + 1))   -- 引数（滑走路の列 x0… と同じ名前なので関数名で）
+     and c.x between _mp_pub_cells.x0 and _mp_pub_cells.x1 and c.y between _mp_pub_cells.y0 and _mp_pub_cells.y1
 $$;
 -- 区画の一覧（[X0, Y0, X1, Y1, …]）のうち、公道（国の道路・線路）にかかるもの。区画のあるマスとそのまわりを通る国の線だけを見る（長い線でも速い）
 create or replace function public._mp_pub_of(cells int[]) returns table (x int, y int)
 language sql stable set search_path = public as $$
   with c as materialized (select distinct cells[2 * i - 1] x, cells[2 * i] y from generate_series(1, coalesce(array_length(cells, 1), 0) / 2) i),
        t as (select distinct _mp_t5(c.x) + d.dx tx, _mp_t5(c.y) + d.dy ty from c cross join (select a dx, b dy from generate_series(-1, 1) a, generate_series(-1, 1) b) d),
-       sg as materialized (select distinct o.ref from mp_occ o join t on o.x = t.tx and o.y = t.ty where o.what in ('road', 'rail')),
-       lc as materialized (select q.x, q.y from sg join mp_segs s on s.id = sg.ref and s.gov cross join lateral _mp_line_cells(s.pts, _mp_seg_r(s.kind, s.w, s.dbl)) q)
+       sg as materialized (select distinct o.what, o.ref from mp_occ o join t on o.x = t.tx and o.y = t.ty where o.what in ('road', 'rail', 'rwy')),
+       lc as materialized (select q.x, q.y from sg join mp_segs s on sg.what in ('road', 'rail') and s.id = sg.ref and s.gov cross join lateral _mp_line_cells(s.pts, _mp_seg_r(s.kind, s.w, s.dbl)) q
+                           union all   -- 滑走路（t57）
+                           select q.x, q.y from sg join mp_rwys r on sg.what = 'rwy' and r.id = sg.ref cross join lateral _mp_rwy_cells(r.x0, r.y0, r.x1, r.y1, r.w) q)
   select distinct lc.x, lc.y from lc join c on c.x = lc.x and c.y = lc.y
 $$;
 -- 道路・線路・駅・車庫が使っている区画（区画の四角の中。建物を建てられない）
@@ -20308,6 +20379,28 @@ language sql stable set search_path = public as $$
   select c.x, c.y from mp_depots d, lateral _mp_dep_cells((d.x / 100.0)::real, (d.y / 100.0)::real, d.ang, d.side, d.kind, d.size) c
    where d.x between (x0 / 5.0 - 14) * 100 and ((x1 + 1) / 5.0 + 14) * 100 and d.y between (y0 / 5.0 - 14) * 100 and ((y1 + 1) / 5.0 + 14) * 100
      and c.x between x0 and x1 and c.y between y0 and y1
+  union   -- 滑走路（t57）
+  select c.x, c.y from mp_rwys r, lateral _mp_rwy_cells(r.x0, r.y0, r.x1, r.y1, r.w) c
+   where box(point(least(r.x0, r.x1) / 100.0 - r.w, least(r.y0, r.y1) / 100.0 - r.w), point(greatest(r.x0, r.x1) / 100.0 + r.w, greatest(r.y0, r.y1) / 100.0 + r.w))
+         && box(point(_mp_busy_cells.x0 / 5.0 - 1, _mp_busy_cells.y0 / 5.0 - 1), point((_mp_busy_cells.x1 + 1) / 5.0 + 1, (_mp_busy_cells.y1 + 1) / 5.0 + 1))   -- 引数（滑走路の列 x0… と同じ名前なので関数名で）
+     and c.x between _mp_busy_cells.x0 and _mp_busy_cells.x1 and c.y between _mp_busy_cells.y0 and _mp_busy_cells.y1
+$$;
+-- 区画の一覧（[X0, Y0, X1, Y1, …]）のうち、道路・線路・駅・車庫・滑走路が使っているもの（_mp_busy_cells と同じもの。t57）
+--   区画のあるマスとそのまわりのマスにあるもの（mp_occ）だけを見る（長い・ななめの滑走路でも速い）
+create or replace function public._mp_busy_of(cells int[]) returns table (x int, y int)
+language sql stable set search_path = public as $$
+  with c as materialized (select distinct cells[2 * i - 1] x, cells[2 * i] y from generate_series(1, coalesce(array_length(cells, 1), 0) / 2) i),
+       t as (select distinct _mp_t5(c.x) + d.dx tx, _mp_t5(c.y) + d.dy ty from c cross join (select a dx, b dy from generate_series(-1, 1) a, generate_series(-1, 1) b) d),
+       cand as materialized (select distinct o.what, o.ref from mp_occ o join t on o.x = t.tx and o.y = t.ty where o.what in ('road', 'rail', 'sta', 'dep', 'rwy')),
+       lc as materialized (select q.x, q.y from cand join mp_segs s on cand.what in ('road', 'rail') and s.id = cand.ref cross join lateral _mp_line_cells(s.pts, _mp_seg_r(s.kind, s.w, s.dbl)) q
+                           union all
+                           select q.x, q.y from cand join mp_stations st on cand.what = 'sta' and st.id = cand.ref and st.kind = 'rail' cross join lateral _mp_sta_cells(st.id) q
+                           union all
+                           select q.x, q.y from cand join mp_depots d on cand.what = 'dep' and d.id = cand.ref
+                             cross join lateral _mp_dep_cells((d.x / 100.0)::real, (d.y / 100.0)::real, d.ang, d.side, d.kind, d.size) q
+                           union all
+                           select q.x, q.y from cand join mp_rwys r on cand.what = 'rwy' and r.id = cand.ref cross join lateral _mp_rwy_cells(r.x0, r.y0, r.x1, r.y1, r.w) q)
+  select distinct lc.x, lc.y from lc join c on c.x = lc.x and c.y = lc.y
 $$;
 -- 区画の一覧（[X0, Y0, X1, Y1, …]）のうち、建物のある筆にかかるもの（線路・道路・駅・車庫を作れない）
 create or replace function public._mp_bld_hit(cells int[]) returns text
@@ -20374,7 +20467,7 @@ language sql immutable as $$ select case pt when '府' then '府道' when '都' 
 /* ---------- 区画をしらべる（住所・地目・用途地域・地価・筆・通っているもの） ---------- */
 create or replace function public.mp_spot(p_x int, p_y int) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me_g(); tx int := _mp_t5(p_x); ty int := _mp_t5(p_y); c record; pa mp_parcels; me_cs int[]; d real; r jsonb; why text; pub boolean; cv bigint; cv0 bigint;
+declare u uuid := _me_g(); tx int := _mp_t5(p_x); ty int := _mp_t5(p_y); c record; pa mp_parcels; me_cs int[]; d real; r jsonb; why text; pub boolean; cv bigint; cv0 bigint; rw text;
 begin
   perform _mp_ok(u);
   me_cs := array(select id from companies where owner = u);
@@ -20382,16 +20475,20 @@ begin
   if c.t is null then return jsonb_build_object('x', p_x, 'y', p_y, 'none', true); end if;
   select p.* into pa from mp_pcells pc join mp_parcels p on p.id = pc.parcel where pc.x = p_x and pc.y = p_y;
   pub := exists (select 1 from _mp_pub_cells(p_x, p_y, p_x, p_y));
+  -- 滑走路（t57）
+  rw := (select r.name from mp_occ o join mp_rwys r on r.id = o.ref where o.what = 'rwy' and o.x = tx and o.y = ty
+           and exists (select 1 from _mp_rwy_cells(r.x0, r.y0, r.x1, r.y1, r.w) q where q.x = p_x and q.y = p_y) limit 1);
   d := _mp_dens(tx + 0.5, ty + 0.5);
   cv := _mp_mcval(tx, ty); cv0 := _mp_cval(tx, ty);   -- 地価（売り買い）・評価額（税・家賃・使用料のもと）
   why := case when pa.id is not null then case when pa.sale is null then '持ち主がいます（売りに出ていません）' end
               when c.t in ('S', 'D', 'R', 'L') then '水の上は買えません' when c.z = 'j' then '公園は国の土地です'
+              when rw is not null then '空港の滑走路です（国の土地）'
               when pub then '公道（国・県・市の道路）の土地です' when cv is null then '買えない土地です' end;
   select jsonb_build_object('x', p_x, 'y', p_y, 'tx', tx, 'ty', ty, 'addr', _mp_addr(tx, ty, p_x, p_y),
     'ter', case c.t when 'D' then '海（深い）' when 'S' then '海' when 'R' then '川' when 'L' then '湖' when 'B' then '砂浜' when 'P' then '平地' when 'F' then '林'
                     when 'H' then '丘' when 'M' then '山' when 'K' then '高い山' end, 't', c.t, 'elev', greatest(c.e, 0),
     'zone', c.z, 'zname', _mp_zname(c.z),
-    'chimoku', case when pub then '公衆用道路' when pa.id is null and exists (select 1 from mp_leases e join mp_segs s on s.id = e.ref where e.x = p_x and e.y = p_y and e.ref_kind = 'seg' and s.kind = 'rail') then '鉄道用地'
+    'chimoku', case when rw is not null then '空港用地（滑走路）' when pub then '公衆用道路' when pa.id is null and exists (select 1 from mp_leases e join mp_segs s on s.id = e.ref where e.x = p_x and e.y = p_y and e.ref_kind = 'seg' and s.kind = 'rail') then '鉄道用地'
                     else _mp_chimoku(c.t, c.z, pa.bld, d) end,
     'dens', round(d * 400), 'cval', cv, 'cval0', case when cv0 is distinct from cv then cv0 end, 'pub', pub, 'buy', why is null, 'why', why,
     'parcel', case when pa.id is null then null else jsonb_build_object('id', pa.id, 'ban', _mp_ban(pa.ban, pa.eda), 'n', pa.n, 'val', coalesce(pa.mval, pa.val),
@@ -20417,7 +20514,9 @@ begin
                                   when 'rail' then (select '線路' || case when s.name <> '' then '（' || s.name || '）' else '' end || '・' || _mp_pname(s.own_u, s.own_c, s.gov) from mp_segs s where s.id = o.ref)
                                   when 'sta' then (select case s.kind when 'rail' then '駅：' else 'バス停：' end || s.name from mp_stations s where s.id = o.ref)
                                   when 'stop' then (select 'バス停：' || s.name from mp_stations s where s.id = o.ref)
-                                  when 'dep' then (select '車庫：' || d2.name from mp_depots d2 where d2.id = o.ref) else o.what end)), '[]'::jsonb)
+                                  when 'dep' then (select '車庫：' || d2.name from mp_depots d2 where d2.id = o.ref)
+                                  when 'rwy' then (select '滑走路 ' || r2.name || '（' || to_char(r2.len, 'FM999,999') || 'm・' || coalesce((select s3.name from mp_stations s3 where s3.id = r2.st), '') || '）'
+                                                     from mp_rwys r2 where r2.id = o.ref) else o.what end)), '[]'::jsonb)
            from mp_occ o where o.x = tx and o.y = ty and o.what <> 'bld'),
     'leases', (select coalesce(jsonb_agg(jsonb_build_object('who', _mp_pname(e.pay_u, e.pay_c, e.pay_gov), 'fee', round(e.fee, 1), 'what', e.ref_kind)), '[]'::jsonb)
            from mp_leases e where e.x = p_x and e.y = p_y)) into r;
@@ -23837,6 +23936,7 @@ begin
 end $$;
 -- フェリーターミナルを港にする（乗り場と船の置き場）。もうあれば、その乗り場。海が近くになければ null
 --   空港（t54p）：建物のまん中に乗り場（plat = 滑走路の長さ・tracks = ゲートの数）と駐機場（cap = 駐機場に置ける機数。プリセットから）
+--   t57：滑走路は国が別に引く（はじめは plat = 0。いちばん長い滑走路の長さになる）。発着口（mp_slots）をプリセットの gates の数つくる
 create or replace function public._mp_port_open(bid bigint) returns bigint
 language plpgsql set search_path = public as $$
 declare b mp_blds; p mp_parcels; q record; sid bigint; nm text; tk text; pr jsonb; ax int; ay int;
@@ -23853,7 +23953,9 @@ begin
     select round(avg(b.cells[2 * i - 1] + 0.5) * 20)::int, round(avg(b.cells[2 * i] + 0.5) * 20)::int into ax, ay from generate_series(1, array_length(b.cells, 1) / 2) i;
     nm := left(coalesce(nullif(b.name, ''), pr ->> 'n'), 20);
     insert into mp_stations(kind, seg, at, x, y, plat, tracks, name, own_u, own_c, bld, cost)
-      values ('air', null, 0, ax, ay, coalesce((pr ->> 'rwy')::int, 800), coalesce((pr ->> 'gates')::int, 2), nm, p.own_u, p.own_c, bid, 0) returning id into sid;
+      values ('air', null, 0, ax, ay, 0, coalesce((pr ->> 'gates')::int, 2), nm, p.own_u, p.own_c, bid, 0) returning id into sid;
+    perform _mp_slot_init(sid, coalesce((pr ->> 'gates')::int, 2));
+    perform _mp_air_plat(sid);
     insert into mp_depots(kind, seg, at, side, size, x, y, cap, name, own_u, own_c, bld)
       values ('air', null, 0, 1, 'S', ax, ay, coalesce((pr ->> 'hangar')::int, 4), nm, p.own_u, p.own_c, bid);
     perform _mp_chg('sta', sid, 'set', box(point(ax / 100.0 - 3, ay / 100.0 - 3), point(ax / 100.0 + 3, ay / 100.0 + 3)));
@@ -24062,6 +24164,323 @@ begin
   update _fl set used = used + tons where route = p_route and dir = p_dir;
 end $$;
 
+/* ---------- 滑走路と発着口（t57） ----------
+   滑走路：国（管理者）が、道路のように2点をえらんで引く（まっすぐ・はば60m・800〜4,000m）。2km 以内のいちばん近い国の空港のもの
+     空港の滑走路の長さ（乗り場の plat）＝いちばん長い滑走路。飛行機は、それより長い滑走路がいるものは離着陸できない
+     滑走路の区画は、ほかのもの（道路・線路・建物・筆）に使えない（公道と同じく国の土地）
+   発着口：空港ごとに番号 1〜n（空港を建てると、種類の数：飛行場2・地方空港4・空港8・国際空港16。管理者がふやせる・へらせる）
+     1つで1時間に1便（その空港を出る便）。権利は入札（せり上げ・24時間）で売る（お金は国庫へ）。権利は30日。期限がきたら、また入札に出す
+     空路の便は、出る空港・1時間ごとに、名義が持っている発着口の数まで。こえる便は飛ばない（【発着口】の注意） */
+
+-- 滑走路の番号（向き）：北から右まわりの角度 ÷ 10（01〜36）。小さいほうを先に（例 09/27）
+create or replace function public._mp_rwy_name(x0 int, y0 int, x1 int, y1 int) returns text
+language sql immutable as $$
+  select lpad(least(a, b)::text, 2, '0') || '/' || lpad(greatest(a, b)::text, 2, '0') from (
+    select case when n = 0 then 36 else n end a, case when (n + 18) % 36 = 0 then 36 else (n + 18) % 36 end b
+      from (select (round(((degrees(atan2((x1 - x0)::float8, (y0 - y1)::float8)) + 360)::numeric % 360) / 10)::int % 36) n) z) q
+$$;
+-- 空港の滑走路の長さ（乗り場の plat）＝いちばん長い滑走路
+create or replace function public._mp_air_plat(sid bigint) returns void
+language sql set search_path = public as $$
+  update mp_stations set plat = coalesce((select max(r.len) from mp_rwys r where r.st = sid), 0) where id = sid
+$$;
+-- 滑走路をしらべる：長さ（m）・空港（2km 以内のいちばん近い国の空港）・引けないわけ（数）。msg：いちばん先のわけ
+create or replace function public._mp_rwy_check(x0 int, y0 int, x1 int, y1 int, w real) returns jsonb
+language plpgsql set search_path = public as $$
+declare len int; sid bigint; snm text; d real; why jsonb := '{}'::jsonb; msg text; n int; c record; cc record;
+begin
+  len := round(sqrt(((x1 - x0)::float8) ^ 2 + ((y1 - y0)::float8) ^ 2) / 100 * 50)::int;
+  if len < 800 then msg := format('滑走路は800m以上にしてください（いま %sm）', len);
+  elsif len > 4000 then msg := format('滑走路は4,000mまでです（いま %sm）', len); end if;
+  -- いちばん近い国の空港（乗り場の点から滑走路の線まで 2km 以内）
+  select s.id, s.name, q.d into sid, snm, d from mp_stations s,
+    lateral (select sqrt(((s.x - (x0 + (x1 - x0) * tt.t))::float8) ^ 2 + ((s.y - (y0 + (y1 - y0) * tt.t))::float8) ^ 2) / 100 d
+               from (select greatest(0.0, least(1.0, ((s.x - x0)::float8 * (x1 - x0) + (s.y - y0)::float8 * (y1 - y0)) / greatest(((x1 - x0)::float8) ^ 2 + ((y1 - y0)::float8) ^ 2, 1)))::float8 t) tt) q
+   where s.kind = 'air' and s.bld is not null and _mp_gov_term(s.bld)
+     and s.x between least(x0, x1) - 4000 and greatest(x0, x1) + 4000 and s.y between least(y0, y1) - 4000 and greatest(y0, y1) + 4000
+   order by q.d, s.id limit 1;
+  if sid is null or d > 40 then
+    sid := null; snm := null;
+    msg := coalesce(msg, '滑走路から2km以内に国の空港がありません（先に「▦ 土地」で国の空港を建ててください）');
+  end if;
+  create temp table if not exists _rw (x int, y int) on commit drop;
+  create temp table if not exists _rwb (x int, y int) on commit drop;
+  delete from _rw; delete from _rwb;
+  insert into _rw select * from _mp_rwy_cells(x0, y0, x1, y1, w);
+  -- 地形（水・山・公園・地図の外）：マスごと
+  for c in select distinct _mp_t5(x) tx, _mp_t5(y) ty from _rw loop
+    select * into cc from _mp_cell(c.tx, c.ty);
+    if cc.t is null then why := jsonb_set(why, '{out}', to_jsonb(coalesce((why ->> 'out')::int, 0) + 1));
+    elsif cc.t in ('S', 'D', 'R', 'L') then why := jsonb_set(why, '{water}', to_jsonb(coalesce((why ->> 'water')::int, 0) + 1));
+    elsif cc.t in ('M', 'K') then why := jsonb_set(why, '{mtn}', to_jsonb(coalesce((why ->> 'mtn')::int, 0) + 1));
+    elsif cc.z = 'j' then why := jsonb_set(why, '{park}', to_jsonb(coalesce((why ->> 'park')::int, 0) + 1));
+    end if;
+  end loop;
+  -- 道路・線路・駅・車庫・ほかの滑走路・筆（建物）
+  insert into _rwb select b.x, b.y from _mp_busy_of((select array_agg(u.v order by q.x, q.y, u.o) from (select distinct r.x, r.y from _rw r) q cross join lateral unnest(array[q.x, q.y]) with ordinality u(v, o))) b;
+  select count(*) into n from _rwb;
+  if n > 0 then why := why || jsonb_build_object('road', n); end if;
+  select count(*) into n from _rw r join mp_pcells pc on pc.x = r.x and pc.y = r.y;
+  if n > 0 then why := why || jsonb_build_object('owned', n); end if;
+  msg := coalesce(msg, case when why ? 'out' then '地図の外にかかっています' when why ? 'water' then '水の上には引けません（海・川・湖）'
+                            when why ? 'mtn' then '山には引けません' when why ? 'park' then '公園には引けません'
+                            when why ? 'road' then '道路・線路・駅・車庫・ほかの滑走路にかかっています' when why ? 'owned' then '筆（土地・建物）にかかっています' end);
+  return jsonb_build_object('ok', msg is null, 'msg', msg, 'len', len, 'sta', sid, 'sname', snm, 'why', why);
+end $$;
+-- 滑走路を引く（管理者・国）。p_pts：[x0, y0, x1, y1]（マス）。p_dry なら見つもり：{ok, msg, len, sta, sname, why, cost, name}
+create or replace function public.mp_rwy_build(p_pts real[], p_dry boolean default true) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); x0 int; y0 int; x1 int; y1 int; q jsonb; cost bigint; nm text; rid bigint; sid bigint; len int; rr bigint; w real := 1.2;
+begin
+  perform _mp_ok(u);
+  if not _is_admin(u) then raise exception '滑走路は国（管理者）だけが引きます'; end if;
+  if coalesce(array_length(p_pts, 1), 0) <> 4 or exists (select 1 from unnest(p_pts) v where v is null) then raise exception '滑走路の両はしをえらんでください'; end if;
+  x0 := round(p_pts[1] * 100); y0 := round(p_pts[2] * 100); x1 := round(p_pts[3] * 100); y1 := round(p_pts[4] * 100);
+  q := _mp_rwy_check(x0, y0, x1, y1, w);
+  len := (q ->> 'len')::int;
+  cost := len::bigint * 60 * _mp_rate('rwy_m2')::bigint;
+  nm := _mp_rwy_name(x0, y0, x1, y1);
+  if p_dry then return q || jsonb_build_object('cost', cost, 'name', nm); end if;
+  perform pg_advisory_xact_lock(hashtextextended('mp:rwy', 7));
+  q := _mp_rwy_check(x0, y0, x1, y1, w);   -- ほかの人の工事のあとで、もう一度
+  if not (q ->> 'ok')::boolean then raise exception '%', q ->> 'msg'; end if;
+  sid := (q ->> 'sta')::bigint;
+  insert into mp_rwys(st, x0, y0, x1, y1, len, w, name, cost) values (sid, x0, y0, x1, y1, len, w, nm, cost) returning id into rid;
+  insert into mp_occ(x, y, what, ref) select distinct _mp_t5(c.x), _mp_t5(c.y), 'rwy', rid from _mp_rwy_cells(x0, y0, x1, y1, w) c on conflict do nothing;
+  perform _mp_pay(null, null, true, cost, 'rwy', format('滑走路 %s（%sm・%s）を引いた', nm, len, q ->> 'sname'));
+  perform _mp_air_plat(sid);
+  perform _mp_chg('rwy', rid, 'set', box(point(least(x0, x1) / 100.0 - 2, least(y0, y1) / 100.0 - 2), point(greatest(x0, x1) / 100.0 + 2, greatest(y0, y1) / 100.0 + 2)));
+  perform _mp_chg('sta', sid, 'set', (select box(point(s.x / 100.0 - 3, s.y / 100.0 - 3), point(s.x / 100.0 + 3, s.y / 100.0 + 3)) from mp_stations s where s.id = sid));
+  for rr in select r.id from mp_routes r where r.kind = 'air' and sid = any(r.stops) loop perform _mp_resched(rr); end loop;   -- 滑走路の長さの注意
+  return jsonb_build_object('ok', true, 'id', rid, 'len', len, 'cost', cost, 'name', nm, 'sta', sid, 'sname', q ->> 'sname',
+                            'plat', (select plat from mp_stations where id = sid));
+end $$;
+-- 滑走路をこわす（管理者）。工事費はもどらない
+create or replace function public.mp_rwy_del(p_id bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); r mp_rwys; rr bigint;
+begin
+  perform _mp_ok(u);
+  if not _is_admin(u) then raise exception '滑走路は国（管理者）だけがこわせます'; end if;
+  delete from mp_rwys where id = p_id returning * into r;
+  if r.id is null then raise exception '滑走路が見つかりません'; end if;
+  perform _mp_air_plat(r.st);
+  perform _mp_chg('rwy', r.id, 'del', box(point(least(r.x0, r.x1) / 100.0 - 2, least(r.y0, r.y1) / 100.0 - 2), point(greatest(r.x0, r.x1) / 100.0 + 2, greatest(r.y0, r.y1) / 100.0 + 2)));
+  perform _mp_chg('sta', r.st, 'set', (select box(point(s.x / 100.0 - 3, s.y / 100.0 - 3), point(s.x / 100.0 + 3, s.y / 100.0 + 3)) from mp_stations s where s.id = r.st));
+  for rr in select x.id from mp_routes x where x.kind = 'air' and r.st = any(x.stops) loop perform _mp_resched(rr); end loop;
+  return jsonb_build_object('ok', true, 'plat', (select plat from mp_stations where id = r.st));
+end $$;
+-- 滑走路がなくなったら、使っているマス（mp_occ）も消す（空港の乗り場が消えたときも）
+create or replace function public._mp_rwy_gone() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  delete from mp_occ where what = 'rwy' and ref = old.id;
+  return old;
+end $$;
+drop trigger if exists mp_rwy_gone on public.mp_rwys;
+create trigger mp_rwy_gone after delete on public.mp_rwys for each row execute function public._mp_rwy_gone();
+
+/* ---- 発着口 ---- */
+-- 空港に発着口をつくる（はじめ：プリセットの gates の数）。乗り場の tracks ＝ 発着口の数
+create or replace function public._mp_slot_init(sid bigint, n int) returns void
+language plpgsql set search_path = public as $$
+begin
+  if exists (select 1 from mp_slots where st = sid) then return; end if;
+  insert into mp_slots(st, n) select sid, g from generate_series(1, greatest(0, coalesce(n, 0))) g;
+  update mp_stations set tracks = greatest(1, (select count(*) from mp_slots where st = sid)) where id = sid;
+end $$;
+-- 権利が生きているか（期限の前・持ち主がいる）
+create or replace function public._mp_slot_live(sl mp_slots) returns boolean
+language sql stable set search_path = public as $$ select sl.until is not null and sl.until > now() and (sl.own_u is not null or sl.own_c is not null) $$;
+-- その名義が、その空港で持っている発着口の数
+create or replace function public._mp_slot_held(sid bigint, pu uuid, pc int) returns int
+language sql stable set search_path = public as $$
+  select count(*)::int from mp_slots sl where sl.st = sid and _mp_slot_live(sl) and sl.own_u is not distinct from pu and sl.own_c is not distinct from pc
+$$;
+-- 入札のつぎの値段（いちばん小さい）：はじめは最低価格、あとは いま＋max(1,000 X, いまの slot_inc 倍)
+create or replace function public._mp_slot_next(a mp_slot_aucs) returns bigint
+language sql stable set search_path = public as $$ select case when a.best is null then a.minp else a.best + greatest(1000, ceil(a.best * _mp_rate('slot_inc')))::bigint end $$;
+-- 人に知らせる（会社なら社長）
+create or replace function public._mp_slot_notice(pu uuid, pc int, t text, sid bigint) returns void
+language plpgsql set search_path = public as $$
+declare who uuid := coalesce(pu, (select owner from companies where id = pc));
+begin
+  if who is not null then perform _notice_l(who, t, jsonb_build_object('go', 'map', 'k', 'slot', 'st', sid), null); end if;
+end $$;
+-- 空路の便に、発着口が足りるか：出る空港・1時間ごと（0〜23時）に、系統の名義が持っている発着口の数まで（出る時刻の順）。こえる便は noslot（飛ばない）
+--   編成が走れない便（bad）は数えない。回送・試運転も数える（空港を出る）。【発着口】の注意も
+create or replace function public._mp_slot_mark() returns void
+language plpgsql set search_path = public as $$
+begin
+  create temp table if not exists _sm (tid bigint primary key, w text) on commit drop;
+  delete from _sm;
+  insert into _sm
+    with dep as (
+      select t.id tid, r.own_u ou, r.own_c oc, (s.v ->> 0)::bigint st, ((((s.v ->> 2)::int / 3600) % 24) + 24) % 24 hr, (s.v ->> 2)::int dt
+        from mp_trains t join mp_routes r on r.id = t.route and r.kind = 'air'
+        cross join lateral jsonb_array_elements(t.sched) s(v)
+       where s.v ->> 2 is not null and not t.bad),
+    cap as (select d.ou, d.oc, d.st, _mp_slot_held(d.st, d.ou, d.oc) cap from (select distinct ou, oc, st from dep) d),
+    rk as (select d.*, row_number() over (partition by d.ou, d.oc, d.st, d.hr order by d.dt, d.tid) k from dep d)
+    select rk.tid, min(format('%s の発着口が足りません（%s時台・持っている発着口 %s）', s.name, rk.hr, c.cap))
+      from rk join cap c on c.ou is not distinct from rk.ou and c.oc is not distinct from rk.oc and c.st = rk.st
+      join mp_stations s on s.id = rk.st
+     where rk.k > c.cap group by rk.tid;
+  update mp_trains t set noslot = m.w,
+         warn = nullif(concat_ws(' / ', nullif(regexp_replace(coalesce(t.warn, ''), '( / )?【発着口】[^/]*', '', 'g'), ''), '【発着口】' || m.w), '')
+    from _sm m where m.tid = t.id and (t.noslot is distinct from m.w or coalesce(t.warn, '') not like '%【発着口】%');
+  update mp_trains t set noslot = null, warn = nullif(regexp_replace(coalesce(t.warn, ''), '( / )?【発着口】[^/]*', '', 'g'), '')
+   where (t.noslot is not null or coalesce(t.warn, '') like '%【発着口】%') and not exists (select 1 from _sm m where m.tid = t.id);
+end $$;
+-- 空港の発着口・入札・滑走路（だれでも見られる）。mine・my：p_as の名義
+create or replace function public.mp_slot_get(p_st bigint, p_as text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); pa record; s mp_stations;
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  select * into s from mp_stations where id = p_st and kind = 'air';
+  if not found then raise exception '空港が見つかりません'; end if;
+  return jsonb_build_object('st', s.id, 'name', s.name, 'plat', s.plat, 'gov', _mp_gov_term(s.bld), 'admin', _is_admin(u),
+    'days', _mp_rate('slot_days'), 'hours', _mp_rate('slot_hours'),
+    'rwys', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'n', r.name, 'len', r.len) order by r.len desc, r.id), '[]'::jsonb) from mp_rwys r where r.st = s.id),
+    'slots', (select coalesce(jsonb_agg(jsonb_build_object('id', sl.id, 'n', sl.n, 'live', _mp_slot_live(sl),
+                'o', case when _mp_slot_live(sl) then _mp_pname(sl.own_u, sl.own_c, false) end,
+                'mine', _mp_slot_live(sl) and not pa.gv and sl.own_u is not distinct from pa.pu and sl.own_c is not distinct from pa.pc,
+                'until', case when _mp_slot_live(sl) then sl.until end, 'price', case when _mp_slot_live(sl) then sl.price end, 'minp', sl.minp,
+                'auc', (select a.id from mp_slot_aucs a where a.slot = sl.id and a.st = 'open' limit 1)) order by sl.n), '[]'::jsonb) from mp_slots sl where sl.st = s.id),
+    'aucs', (select coalesce(jsonb_agg(jsonb_build_object('id', a.id, 'slot', a.slot, 'n', sl.n, 'ends', a.ends, 'minp', a.minp, 'best', a.best, 'nbid', a.nbid,
+                'mine', a.best is not null and not pa.gv and a.best_u is not distinct from pa.pu and a.best_c is not distinct from pa.pc, 'next', _mp_slot_next(a)) order by a.ends, sl.n), '[]'::jsonb)
+               from mp_slot_aucs a join mp_slots sl on sl.id = a.slot where sl.st = s.id and a.st = 'open'),
+    'my', case when pa.gv then 0 else _mp_slot_held(s.id, pa.pu, pa.pc) end);
+end $$;
+-- 入札する（自分・自分の会社の名義。国はしない）。お金はあずける（国庫へ）。前のいちばん高い入札のお金は返す
+create or replace function public.mp_slot_bid(p_auc bigint, p_amt bigint, p_as text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pa record; a mp_slot_aucs; sl mp_slots; s mp_stations; nxt bigint;
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  if pa.gv then raise exception '国は入札しません（自分か会社の名義で）'; end if;
+  select * into a from mp_slot_aucs where id = p_auc for update;
+  if not found or a.st <> 'open' then raise exception 'この入札は終わっています'; end if;
+  if a.ends <= now() then raise exception 'この入札はしめきりました'; end if;
+  nxt := _mp_slot_next(a);
+  if p_amt is null or p_amt < nxt then raise exception '% X 以上で入札してください', to_char(nxt, 'FM999,999,999,999,999,999'); end if;
+  if p_amt > 100000000000000000 then raise exception '金額が大きすぎます'; end if;
+  select * into sl from mp_slots where id = a.slot;
+  select * into s from mp_stations where id = sl.st;
+  perform _mp_lock(pa.pu, pa.pc);
+  perform _mp_pay(pa.pu, pa.pc, false, p_amt, 'slot', format('発着口の入札（%s %s番・あずけ）', s.name, sl.n));
+  if a.best is not null then
+    perform _mp_earn(a.best_u, a.best_c, false, a.best, 'slot', format('発着口の入札の返金（%s %s番）', s.name, sl.n));
+    if a.best_u is distinct from pa.pu or a.best_c is distinct from pa.pc then
+      perform _mp_slot_notice(a.best_u, a.best_c, format('【国土】%s の発着口（%s番）の入札で、ほかの入札があなたの %s X を上回りました（あずけたお金は返しました）。', s.name, sl.n, to_char(a.best, 'FM999,999,999,999,999,999')), s.id);
+    end if;
+  end if;
+  update mp_slot_aucs set best_u = pa.pu, best_c = pa.pc, best = p_amt, nbid = nbid + 1 where id = a.id;
+  return jsonb_build_object('ok', true, 'best', p_amt, 'ends', a.ends, 'next', _mp_slot_next((select x from mp_slot_aucs x where x.id = a.id)));
+end $$;
+-- 発着口の管理（管理者）：add（n こふやす）・del（あいている発着口を n こへらす。番号の大きいものから）・open（あいている発着口を n こ入札に出す。最低価格 p_minp）・
+--   stop（入札 p_n をとりやめる。あずかったお金は返す）
+create or replace function public.mp_slot_admin(p_st bigint, p_op text, p_n int, p_minp bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); s mp_stations; k int := 0; a mp_slot_aucs; sl mp_slots; mx int; e timestamptz;
+begin
+  perform _mp_ok(u);
+  if not _is_admin(u) then raise exception '発着口は国（管理者）だけが決めます'; end if;
+  select * into s from mp_stations where id = p_st and kind = 'air' for update;
+  if not found then raise exception '空港が見つかりません'; end if;
+  if p_op = 'add' then
+    if coalesce(p_n, 0) not between 1 and 50 then raise exception '一度にふやせるのは1〜50こです'; end if;
+    mx := coalesce((select max(n) from mp_slots where st = s.id), 0);
+    insert into mp_slots(st, n, minp) select s.id, mx + g, coalesce((select max(minp) from mp_slots where st = s.id), 0) from generate_series(1, p_n) g;
+    k := p_n;
+  elsif p_op = 'del' then
+    if coalesce(p_n, 0) not between 1 and 50 then raise exception '一度にへらせるのは1〜50こです'; end if;
+    for sl in select * from mp_slots x where x.st = s.id and not _mp_slot_live(x) and not exists (select 1 from mp_slot_aucs y where y.slot = x.id and y.st = 'open')
+               order by x.n desc limit p_n loop
+      delete from mp_slots where id = sl.id; k := k + 1;
+    end loop;
+    if k = 0 then raise exception 'へらせる発着口がありません（権利の持ち主がいる・入札中のものはへらせません）'; end if;
+  elsif p_op = 'open' then
+    if coalesce(p_n, 0) not between 1 and 100 then raise exception '一度に出せるのは1〜100こです'; end if;
+    if p_minp is null or p_minp < 0 or p_minp > 100000000000000000 then raise exception '最低価格は 0〜10京 X にしてください'; end if;
+    e := date_trunc('hour', now()) + make_interval(hours => _mp_rate('slot_hours')::int + 1);
+    for sl in select * from mp_slots x where x.st = s.id and not _mp_slot_live(x) and not exists (select 1 from mp_slot_aucs y where y.slot = x.id and y.st = 'open')
+               order by x.n limit p_n loop
+      update mp_slots set minp = p_minp where id = sl.id;
+      insert into mp_slot_aucs(slot, ends, minp) values (sl.id, e, p_minp); k := k + 1;
+    end loop;
+    if k = 0 then raise exception '入札に出せる発着口がありません（あいている発着口がない・もう入札中）'; end if;
+  elsif p_op = 'stop' then
+    select * into a from mp_slot_aucs where id = p_n and st = 'open' for update;
+    if not found or not exists (select 1 from mp_slots x where x.id = a.slot and x.st = s.id) then raise exception '入札が見つかりません'; end if;
+    select * into sl from mp_slots where id = a.slot;
+    if a.best is not null then
+      perform _mp_earn(a.best_u, a.best_c, false, a.best, 'slot', format('発着口の入札の返金（%s %s番・とりやめ）', s.name, sl.n));
+      perform _mp_slot_notice(a.best_u, a.best_c, format('【国土】%s の発着口（%s番）の入札は、とりやめになりました（あずけた %s X は返しました）。', s.name, sl.n, to_char(a.best, 'FM999,999,999,999,999,999')), s.id);
+    end if;
+    update mp_slot_aucs set st = 'stop' where id = a.id; k := 1;
+  else
+    raise exception 'できないことです';
+  end if;
+  update mp_stations set tracks = greatest(1, (select count(*) from mp_slots where st = s.id)) where id = s.id;
+  perform _mp_chg('sta', s.id, 'set', box(point(s.x / 100.0 - 3, s.y / 100.0 - 3), point(s.x / 100.0 + 3, s.y / 100.0 + 3)));
+  return jsonb_build_object('ok', true, 'n', k, 'slots', (select count(*) from mp_slots where st = s.id));
+end $$;
+-- 1時間ごと：しめきった入札（いちばん高い入札が落札・権利は slot_days 日）・期限がきた権利（持ち主をはずして、また入札に出す）。変わったら便を見なおす
+create or replace function public._mp_slot_tick() returns void
+language plpgsql set search_path = public as $$
+declare a mp_slot_aucs; sl mp_slots; nm text; ch boolean := false; dd int := _mp_rate('slot_days')::int; e timestamptz;
+begin
+  for a in select * from mp_slot_aucs where st = 'open' and ends <= now() order by ends, id for update loop
+    select * into sl from mp_slots where id = a.slot for update;
+    select name into nm from mp_stations where id = sl.st;
+    if a.best is not null and (a.best_u is not null or a.best_c is not null) then
+      update mp_slots set own_u = a.best_u, own_c = a.best_c, until = now() + make_interval(days => dd), price = a.best where id = sl.id;
+      update mp_slot_aucs set st = 'done' where id = a.id;
+      insert into mp_ledger(pu, pc, gv, k, amount, memo) values (a.best_u, a.best_c, false, 'slot', 0,
+        format('発着口の権利を落札（%s %s番・%s X・%s日）', nm, sl.n, to_char(a.best, 'FM999,999,999,999,999,999'), dd));
+      perform _mp_slot_notice(a.best_u, a.best_c, format('【国土】%s の発着口（%s番）を %s X で落札しました。%s日のあいだ、この空港を出る便を1時間に1便ふやせます。', nm, sl.n, to_char(a.best, 'FM999,999,999,999,999,999'), dd), sl.st);
+      ch := true;
+    else
+      update mp_slot_aucs set st = 'none' where id = a.id;
+    end if;
+  end loop;
+  e := date_trunc('hour', now()) + make_interval(hours => _mp_rate('slot_hours')::int + 1);
+  for sl in select * from mp_slots where until is not null and until <= now() order by id for update loop
+    select name into nm from mp_stations where id = sl.st;
+    update mp_slots set own_u = null, own_c = null, until = null where id = sl.id;
+    perform _mp_slot_notice(sl.own_u, sl.own_c, format('【国土】%s の発着口（%s番）の権利の期限がきました。また入札に出ています。', nm, sl.n), sl.st);
+    if not exists (select 1 from mp_slot_aucs y where y.slot = sl.id and y.st = 'open') then
+      insert into mp_slot_aucs(slot, ends, minp) values (sl.id, e, sl.minp);
+    end if;
+    ch := true;
+  end loop;
+  -- 持ち主がいなくなった権利（会社がなくなった など）
+  update mp_slots set until = null where until is not null and own_u is null and own_c is null;
+  if ch then perform _mp_slot_mark(); end if;
+end $$;
+-- 空港の一覧（発着口）：滑走路・発着口の数・あき・入札中・自分（p_as の名義）の数。国の空港だけ
+create or replace function public.mp_slot_list(p_as text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); pa record;
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  return (select coalesce(jsonb_agg(jsonb_build_object('st', s.id, 'name', s.name, 'plat', s.plat, 'x', s.x, 'y', s.y,
+            'n', (select count(*) from mp_slots sl where sl.st = s.id),
+            'free', (select count(*) from mp_slots sl where sl.st = s.id and not _mp_slot_live(sl) and not exists (select 1 from mp_slot_aucs a where a.slot = sl.id and a.st = 'open')),
+            'aucs', (select count(*) from mp_slot_aucs a join mp_slots sl on sl.id = a.slot where sl.st = s.id and a.st = 'open'),
+            'ends', (select min(a.ends) from mp_slot_aucs a join mp_slots sl on sl.id = a.slot where sl.st = s.id and a.st = 'open'),
+            'my', case when pa.gv then 0 else _mp_slot_held(s.id, pa.pu, pa.pc) end,
+            'lead', case when pa.gv then 0 else (select count(*) from mp_slot_aucs a join mp_slots sl on sl.id = a.slot
+                                                  where sl.st = s.id and a.st = 'open' and a.best_u is not distinct from pa.pu and a.best_c is not distinct from pa.pc and a.best is not null) end)
+          order by s.name, s.id), '[]'::jsonb)
+    from mp_stations s where s.kind = 'air' and s.bld is not null and _mp_gov_term(s.bld));
+end $$;
+
 
 -- 毎時2分：国土の時計（pg_cron があるとき）
 do $$
@@ -24158,41 +24577,43 @@ begin
             '_hc_pay','_hc_do_train','_hc_daily','_hc_monthly','_hc_after_races','_hc_json','_hx_info','hx_admin_state','hx_admin_create',
             'hx_admin_cancel','hx_state','_hx_sold','_hx_bid','_hx_buynow','hx_bid','hx_buynow','_hx_ai_val','_hx_ai_tick',
             'hc_train','hc_feed','hc_mode','hc_vet','hc_release','_hc_tick',
-            '_mp_addr','_mp_admin','_mp_air_leg','_mp_angdiff','_mp_at','_mp_bal','_mp_ban','_mp_bb',
-            '_mp_bld_check','_mp_bld_defname','_mp_bld_dem','_mp_bld_hit','_mp_bld_make','_mp_bld_people','_mp_bld_plan','_mp_bld_pmap',
-            '_mp_bld_presets','_mp_bld_refresh','_mp_bld_shape','_mp_bld_tick_day','_mp_bld_tick_hour','_mp_bus_path','_mp_busy_cells','_mp_carnum',
-            '_mp_catch','_mp_cell','_mp_chg','_mp_chimoku','_mp_cho_at','_mp_cho_set_tiles','_mp_cho_text','_mp_cmuls',
-            '_mp_cval','_mp_day_ok','_mp_dens','_mp_dep_cells','_mp_dep_dim','_mp_dep_ok','_mp_dep_tiles','_mp_dep_tiles_g',
-            '_mp_dia_snap','_mp_dispatch','_mp_earn','_mp_edec','_mp_end','_mp_end_ang','_mp_ferry_links','_mp_ferry_pick',
-            '_mp_ferry_use','_mp_fmtn','_mp_fmtq','_mp_form_drop','_mp_form_kind','_mp_form_perf','_mp_form_routes','_mp_form_rule',
-            '_mp_form_rule_t','_mp_form_runs','_mp_g','_mp_geom_ok','_mp_goods','_mp_gov_build','_mp_gov_term','_mp_hm_parse',
-            '_mp_hms','_mp_home_text','_mp_hourf','_mp_isl_at','_mp_kinds_of','_mp_kprio','_mp_land_fee','_mp_land_need',
-            '_mp_land_std','_mp_land_stop','_mp_lease_del','_mp_lease_quote','_mp_lease_set','_mp_leg_from','_mp_leg_time','_mp_len',
-            '_mp_line_cells','_mp_lock','_mp_lvmap_build','_mp_maker_order','_mp_mcval','_mp_mine','_mp_minr','_mp_mvalue',
-            '_mp_npc_name','_mp_occ_set','_mp_ok','_mp_okey','_mp_op_of_form','_mp_parcel_label','_mp_parcel_vals','_mp_party',
-            '_mp_pay','_mp_pick_trk','_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_port_busy','_mp_port_isl','_mp_port_open',
-            '_mp_port_owner_trg','_mp_port_pier','_mp_pref_road','_mp_pref_type','_mp_proj','_mp_pub_cells','_mp_pub_of','_mp_rail_path',
-            '_mp_rate','_mp_renet','_mp_resample','_mp_resched','_mp_rev','_mp_road_mul','_mp_road_v','_mp_road_w',
-            '_mp_role_kind','_mp_room','_mp_route_catch','_mp_route_sta','_mp_route_uses','_mp_routes_fix','_mp_run','_mp_run_check',
-            '_mp_run_mark','_mp_same','_mp_sc_info','_mp_sc_init','_mp_sc_kinds','_mp_sc_op','_mp_sc_owes','_mp_sc_recipes',
-            '_mp_sc_riders','_mp_sc_school_calc','_mp_sc_tick_hour','_mp_sc_touch','_mp_sea','_mp_sea_leg','_mp_sea_seg','_mp_seg_blocked',
-            '_mp_seg_cells_arr','_mp_seg_chain','_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_soft_pay','_mp_split','_mp_sta_cells',
-            '_mp_sta_trk','_mp_struct_cells','_mp_sub','_mp_t49_from_tiles','_mp_t5','_mp_term_kind','_mp_ters','_mp_thin',
-            '_mp_thru_link','_mp_thru_ok','_mp_tick','_mp_tick_day','_mp_tick_hour','_mp_tiles','_mp_tmul','_mp_today',
-            '_mp_train_calc','_mp_train_json','_mp_train_times','_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim','_mp_vruns',
-            '_mp_world','_mp_zname','_mp_zone_rule','mp_admin_airport','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_lvset','mp_admin_place_at',
-            'mp_admin_rates','mp_admin_rename','mp_admin_state','mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get',
-            'mp_bld_options','mp_bld_quote','mp_bld_set','mp_boot','mp_car_log','mp_car_move','mp_car_order','mp_car_scrap',
-            'mp_car_work','mp_cars_gone','mp_cars_list','mp_cho_get','mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia',
-            'mp_dia_undo','mp_form_del','mp_form_order','mp_form_set','mp_home_clear','mp_home_get','mp_home_set','mp_kinds_list',
-            'mp_kinds_set','mp_land_buy','mp_land_decide','mp_land_req','mp_land_req_del','mp_land_reqs','mp_ledger_days','mp_ledger_page',
-            'mp_makers','mp_op_del','mp_op_export','mp_op_import','mp_op_save','mp_ops_list','mp_parcel_buy','mp_parcel_merge',
-            'mp_parcel_rent','mp_parcel_sell','mp_parcel_split','mp_poll','mp_route_del','mp_route_pat','mp_route_save','mp_routes_list',
-            'mp_sc_list','mp_sc_set','mp_seg_build','mp_seg_del','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_speed',
-            'mp_seg_split','mp_spot','mp_sta_build','mp_sta_edit','mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer',
-            'mp_thru_end','mp_thru_list','mp_thru_req','mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease',
-            'mp_unit_leave','mp_unit_market','mp_unit_mine','mp_unit_own','mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list',
-            'mp_xfer_offer') loop
+            '_mp_addr','_mp_admin','_mp_air_leg','_mp_air_plat','_mp_angdiff','_mp_at','_mp_bal','_mp_ban',
+            '_mp_bb','_mp_bld_check','_mp_bld_defname','_mp_bld_dem','_mp_bld_hit','_mp_bld_make','_mp_bld_people','_mp_bld_plan',
+            '_mp_bld_pmap','_mp_bld_presets','_mp_bld_refresh','_mp_bld_shape','_mp_bld_tick_day','_mp_bld_tick_hour','_mp_bus_path','_mp_busy_cells',
+            '_mp_busy_of','_mp_carnum','_mp_catch','_mp_cell','_mp_chg','_mp_chimoku','_mp_cho_at','_mp_cho_set_tiles',
+            '_mp_cho_text','_mp_cmuls','_mp_cval','_mp_day_ok','_mp_dens','_mp_dep_cells','_mp_dep_dim','_mp_dep_ok',
+            '_mp_dep_tiles','_mp_dep_tiles_g','_mp_dia_snap','_mp_dispatch','_mp_earn','_mp_edec','_mp_end','_mp_end_ang',
+            '_mp_ferry_links','_mp_ferry_pick','_mp_ferry_use','_mp_fmtn','_mp_fmtq','_mp_form_drop','_mp_form_kind','_mp_form_perf',
+            '_mp_form_routes','_mp_form_rule','_mp_form_rule_t','_mp_form_runs','_mp_g','_mp_geom_ok','_mp_goods','_mp_gov_build',
+            '_mp_gov_term','_mp_hm_parse','_mp_hms','_mp_home_text','_mp_hourf','_mp_isl_at','_mp_kinds_of','_mp_kprio',
+            '_mp_land_fee','_mp_land_need','_mp_land_std','_mp_land_stop','_mp_lease_del','_mp_lease_quote','_mp_lease_set','_mp_leg_from',
+            '_mp_leg_time','_mp_len','_mp_line_cells','_mp_lock','_mp_lvmap_build','_mp_maker_order','_mp_mcval','_mp_mine',
+            '_mp_minr','_mp_mvalue','_mp_npc_name','_mp_occ_set','_mp_ok','_mp_okey','_mp_op_of_form','_mp_parcel_label',
+            '_mp_parcel_vals','_mp_party','_mp_pay','_mp_pick_trk','_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_port_busy',
+            '_mp_port_isl','_mp_port_open','_mp_port_owner_trg','_mp_port_pier','_mp_pref_road','_mp_pref_type','_mp_proj','_mp_pub_cells',
+            '_mp_pub_of','_mp_rail_path','_mp_rate','_mp_renet','_mp_resample','_mp_resched','_mp_rev','_mp_road_mul',
+            '_mp_road_v','_mp_road_w','_mp_role_kind','_mp_room','_mp_route_catch','_mp_route_sta','_mp_route_uses','_mp_routes_fix',
+            '_mp_run','_mp_run_check','_mp_run_mark','_mp_rwy_cells','_mp_rwy_check','_mp_rwy_gone','_mp_rwy_name','_mp_same',
+            '_mp_sc_info','_mp_sc_init','_mp_sc_kinds','_mp_sc_op','_mp_sc_owes','_mp_sc_recipes','_mp_sc_riders','_mp_sc_school_calc',
+            '_mp_sc_tick_hour','_mp_sc_touch','_mp_sea','_mp_sea_leg','_mp_sea_seg','_mp_seg_blocked','_mp_seg_cells_arr','_mp_seg_chain',
+            '_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_slot_held','_mp_slot_init','_mp_slot_live','_mp_slot_mark','_mp_slot_next',
+            '_mp_slot_notice','_mp_slot_tick','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_sta_trk','_mp_struct_cells','_mp_sub',
+            '_mp_t49_from_tiles','_mp_t5','_mp_term_kind','_mp_ters','_mp_thin','_mp_thru_link','_mp_thru_ok','_mp_tick',
+            '_mp_tick_day','_mp_tick_hour','_mp_tiles','_mp_tmul','_mp_today','_mp_train_calc','_mp_train_json','_mp_train_times',
+            '_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim','_mp_vruns','_mp_world','_mp_zname','_mp_zone_rule',
+            'mp_admin_airport','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_lvset','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state',
+            'mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set',
+            'mp_boot','mp_car_log','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_gone','mp_cars_list',
+            'mp_cho_get','mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia','mp_dia_undo','mp_form_del','mp_form_order',
+            'mp_form_set','mp_home_clear','mp_home_get','mp_home_set','mp_kinds_list','mp_kinds_set','mp_land_buy','mp_land_decide',
+            'mp_land_req','mp_land_req_del','mp_land_reqs','mp_ledger_days','mp_ledger_page','mp_makers','mp_op_del','mp_op_export',
+            'mp_op_import','mp_op_save','mp_ops_list','mp_parcel_buy','mp_parcel_merge','mp_parcel_rent','mp_parcel_sell','mp_parcel_split',
+            'mp_poll','mp_route_del','mp_route_pat','mp_route_save','mp_routes_list','mp_rwy_build','mp_rwy_del','mp_sc_list',
+            'mp_sc_set','mp_seg_build','mp_seg_del','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_speed','mp_seg_split',
+            'mp_slot_admin','mp_slot_bid','mp_slot_get','mp_slot_list','mp_spot','mp_sta_build','mp_sta_edit','mp_sta_trk',
+            'mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list','mp_thru_req','mp_train_autoform','mp_train_bulk',
+            'mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market','mp_unit_mine','mp_unit_own','mp_unit_set',
+            'mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
       execute format('revoke all on function %s from authenticated', f.sig);
