@@ -630,6 +630,7 @@ function render() {
   drawLabels(g, it, z, v, bs);
   // 道具の上がき
   if (S.drawTool) S.drawTool(g, z);
+  if (S.pin) drawPin(g);   // さがした場所（t59）
   // 方位と縮尺
   drawScale(g, z);
 }
@@ -991,7 +992,7 @@ function build(root) {
       <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button>
       <span class="mp-addr" translate="no" hidden></span>
     </div>
-    <div class="mp-zoom"><button data-full title="大きく">⤢</button><button data-zin>＋</button><button data-zout>－</button><button data-home title="瑠璃市役所">⌂</button></div>
+    <div class="mp-zoom"><button data-find title="さがす">🔍</button><button data-full title="大きく">⤢</button><button data-zin>＋</button><button data-zout>－</button><button data-home title="瑠璃市役所">⌂</button></div>
     <div class="mp-hint" hidden></div>
     <div class="mp-sheet" hidden></div>
     <div class="mp-tools">
@@ -1012,6 +1013,7 @@ function build(root) {
   const b25 = S.wrap.querySelector('[data-b25]'), b25L = () => { b25.textContent = S.b25 ? '🏢 2.5D' : '🏢 2D'; };
   b25L(); b25.onclick = () => { S.b25 = !S.b25; b25L(); try { localStorage.setItem('mp_b25', S.b25 ? '1' : '0'); } catch (e) {} S.dirty = true; };
   S.wrap.querySelector('[data-full]').onclick = () => { S.wrap.classList.toggle('mp-full'); resize(); };
+  S.wrap.querySelector('[data-find]').onclick = () => openFind();   // さがす（t59）
   S.wrap.querySelector('[data-zin]').onclick = () => zoomAt(S.W / 2, S.H / 2, 1.6);
   S.wrap.querySelector('[data-zout]').onclick = () => zoomAt(S.W / 2, S.H / 2, 1 / 1.6);
   S.wrap.querySelector('[data-home]').onclick = () => setCam(HOME[0], HOME[1], 6);
@@ -1311,6 +1313,7 @@ async function showSpot(cx, cy) {
       ${P && !P.mine && P.sale != null ? `<button class="btn main" data-pbuy>この筆を買う（${X(Math.ceil(P.sale * 1.03))}）</button>` : ''}
       ${!P && !d.buy && d.why ? `<span class="muted small">${esc(d.why)}</span>` : ''}
       ${P && P.b ? `<button class="btn main" data-bopen>${P.gov ? '建物を見る' : '部屋・テナント'}</button>` : ''}
+      ${P && P.gov && P.b && OFFICE_K.includes(P.b.kind) ? '<button class="btn main" data-jm>🏛 住民の窓口</button>' : ''}
       ${P && P.mine ? `<button class="btn" data-sell>${P.sale != null ? '売り出しをやめる' : '売りに出す'}</button>
         ${P.b ? '' : '<button class="btn" data-bld>建物を建てる</button>'}<button class="btn" data-split>分筆</button><button class="btn" data-merge>合筆</button><button class="btn" data-rent>貸出料</button>` : ''}
       ${P && !P.mine && !P.gov && P.rent == null && S.as !== 'gov' && !(P.reqs || []).some(r => r.as === S.as && r.st !== 'no') ? `<button class="btn" data-lreq1>使う申請（${esc(asName())}）</button>` : ''}
@@ -1327,6 +1330,7 @@ async function showSpot(cx, cy) {
     if (q('[data-sell]')) q('[data-sell]').onclick = () => parcelSell(P);
     if (q('[data-bld]')) q('[data-bld]').onclick = () => bldStart(P);
     if (q('[data-bopen]')) q('[data-bopen]').onclick = () => openBld(P.b.id);
+    if (q('[data-jm]')) q('[data-jm]').onclick = () => openJuumin(P.b.id);   // 住民の窓口（t59）
     if (q('[data-split]')) q('[data-split]').onclick = () => startSplit(P);
     if (q('[data-merge]')) q('[data-merge]').onclick = () => startMerge(P);
     if (q('[data-home]')) q('[data-home]').onclick = () => homeHere(cx, cy, P);
@@ -2329,14 +2333,16 @@ function openMenu() {
     b.querySelectorAll('[data-k]').forEach(x => x.onclick = () => { m.close(); ({ cars: () => openCars(), routes: openRoutes, ops: () => openOps(), xfer: () => openXfers(), thru: () => openThru(), blds: openMyBlds, tenants: openTenants, sc: () => openSC(), home: openHome, landreq: () => openLandReqs(), slots: () => openSlotList(), ledger: openLedger, admin: openAdmin, help: openHelp })[x.dataset.k](); });
   });
 }
-/* ---------- 発着口（t57）：空港ごとの発着口・入札。国（管理者）はふやす・へらす・入札に出す ---------- */
+/* ---------- 発着口（t57）：空港ごとの発着口・入札。国（管理者）はふやす・へらす・入札に出す
+   t59：国の認可制（番号 1〜n）。申しこみ → 国が認可（無料・期限なし）。持ち主は返せる・国はとりけせる ---------- */
 const jdt = t => new Date(t).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+const APP_ST = { req: '返事まち', ok: '認可', no: '認可されませんでした', cancel: 'とりさげ' };
 async function openSlotList() {
   const m = modal(['🛫 発着口（空港）', '<p class="muted small">読みこんでいます…</p>'], null);
   const d = await api('mp_slot_list', { p_as: S.as }); if (!d) return m.close();
   m.set('🛫 発着口（空港）', d.length ? `<div class="mp-list">${d.map(a => `<button class="mp-item" style="text-align:left" data-st="${a.st}"><b>✈ <span>${esc(a.name)}</span></b>
-      <br><small><span>滑走路 ${a.plat > 0 ? fmt(a.plat) + 'm' : 'なし'}</span>・<span>発着口 ${a.n}（あき ${a.free}）</span>${a.aucs ? `・<span>入札中 ${a.aucs}（しめきり ${jdt(a.ends)}）</span>` : ''}${a.my ? `・<b><span>自分 ${a.my}</span></b>` : ''}${a.lead ? `・<span>いちばん高い入札 ${a.lead}</span>` : ''}</small></button>`).join('')}</div>
-      <p class="muted small">発着口1つで、その空港を出る便を1時間に1便。権利は入札で買います（${esc(asName())}の名義）</p>` : '<p class="small">国の空港はまだありません</p>', b => {
+      <br><small><span>滑走路 ${a.plat > 0 ? fmt(a.plat) + 'm' : 'なし'}</span>・<span>発着口 ${a.n}（あき ${a.free}）</span>${a.lic ? `・<span>国の認可制 ${a.lic}（あき ${a.lfree}）</span>` : ''}${a.aucs ? `・<span>入札中 ${a.aucs}（しめきり ${jdt(a.ends)}）</span>` : ''}${a.my ? `・<b><span>自分 ${a.my}</span></b>` : ''}${a.lead ? `・<span>いちばん高い入札 ${a.lead}</span>` : ''}${a.apps ? `・<b class="mp-warn"><span>申しこみ ${a.apps}</span></b>` : ''}</small></button>`).join('')}</div>
+      <p class="muted small"><span>発着口1つで、その空港を出る便を1時間に1便。</span><span>権利は入札で買います（${esc(asName())}の名義）。</span><span>国の認可制の発着口は、申しこんで国に認可してもらいます（無料・期限なし）</span></p>` : '<p class="small">国の空港はまだありません</p>', b => {
     b.querySelectorAll('[data-st]').forEach(x => x.onclick = () => { m.close(); openSlots(Number(x.dataset.st)); });
   });
 }
@@ -2346,11 +2352,27 @@ async function openSlots(st) {
   const load = async () => {
     const d = await api('mp_slot_get', { p_st: st, p_as: S.as }); if (!d) return m.close();
     const adm = d.admin && S.as === 'gov', bidOk = S.as !== 'gov';
-    const free = d.slots.filter(x => !x.live && !x.auc).length;
+    const free = d.slots.filter(x => !x.live && !x.auc).length, nlic = d.slots.filter(x => x.lic).length;
+    const lfree = d.slots.filter(x => x.lic && !x.live).length, afree = d.slots.filter(x => !x.lic && !x.live && !x.auc).length;
+    const reqs = d.apps.filter(a => a.st === 'req');
+    const slotRow = x => `<div class="mp-item small"><b>${x.n}番</b>${x.lic ? ' <span class="mp-tag">認可</span>' : ''} ${x.live
+        ? `<span>${esc(x.o || '')}</span>${x.mine ? '<small>（あなた）</small>' : ''}・<small>${x.until ? `<span>${jdt(x.until)}まで</span>・<span>${X(x.price)}</span>` : '<span>期限なし（国の認可）</span>'}</small>
+           ${x.mine && x.lic ? ` <button class="btn" data-ret="${x.id}" style="padding:2px 8px">国に返す</button>` : ''}${adm && x.lic ? ` <button class="btn" data-rev="${x.n}" style="padding:2px 8px">とりけす</button>` : ''}`
+        : x.auc ? '<span>入札中</span>' : x.lic ? '<span class="muted">あき（申しこみ）</span>' : '<span class="muted">あき</span>'}</div>`;
     m.set('🛫 発着口・入札', `<p class="small" style="margin:0"><b>✈ <span>${esc(d.name)}</span></b></p>
       <div class="mp-kv"><b>滑走路</b><span>${d.rwys.length ? d.rwys.map(r => `<span>${esc(r.n)}・${fmt(r.len)}m</span>`).join('<br>') : '<span class="mp-warn">まだありません（飛行機は飛べません）</span>'}</span>
         <b>発着口</b><span><span>${d.slots.length}こ</span>（<span>あき ${free}</span>）</span>
+        ${nlic ? `<b>国の認可制</b><span><span>${nlic}こ</span>（<span>1〜${Math.max(...d.slots.filter(x => x.lic).map(x => x.n))}番</span>・<span>あき ${lfree}</span>）</span>` : ''}
         ${bidOk ? `<b>${esc(asName())}</b><span><span>${d.my}こ</span>（<span>この空港を出る便を1時間に${d.my}便まで</span>）</span>` : ''}</div>
+      ${nlic ? `<h4 style="margin:10px 0 4px">国の認可制</h4>
+        ${adm ? (reqs.length ? `<div class="mp-list">${reqs.map(a => `<div class="mp-item"><b><span>${esc(a.who)}</span></b> <small><span>${a.n}こ</span>・<span>${jdt(a.at)}</span>・<span>いま持っている ${a.held}こ</span></small>
+              ${a.msg ? `<br><small>「<span>${esc(a.msg)}</span>」</small>` : ''}
+              <div class="mp-row" style="margin-top:4px"><button class="btn main" data-aok="${a.id}" data-an="${a.n}">認可する</button><button class="btn" data-ano="${a.id}">ことわる</button></div></div>`).join('')}</div>`
+            : '<p class="muted small">返事まちの申しこみはありません</p>')
+          : `${bidOk ? `<div class="mp-row"><button class="btn main" data-apply>申しこむ（${esc(asName())}）</button></div>` : ''}
+            ${d.apps.length ? `<div class="mp-list">${d.apps.map(a => `<div class="mp-item small"><b>${esc(T(APP_ST[a.st] || a.st))}</b> <span>${a.n}こ</span>${a.st === 'ok' ? `（<span>認可 ${a.got}こ</span>）` : ''}・<span>${jdt(a.at)}</span>
+                ${a.msg ? `<br>「<span>${esc(a.msg)}</span>」` : ''}${a.note ? `<br><span>国から</span>：「<span>${esc(a.note)}</span>」` : ''}
+                ${a.st === 'req' ? ` <button class="btn" data-acan="${a.id}" style="padding:2px 8px">とりさげる</button>` : ''}</div>`).join('')}</div>` : ''}`}` : ''}
       <h4 style="margin:10px 0 4px">入札中</h4>
       ${d.aucs.length ? `<div class="mp-list">${d.aucs.map(a => `<div class="mp-item"><b>${a.n}番</b> <small><span>しめきり ${jdt(a.ends)}</span>・<span>最低 ${X(a.minp)}</span></small>
           <br><small>${a.best != null ? `<span>いま ${X(a.best)}</span>（<span>${a.nbid}件</span>）${a.mine ? ' <b><span>あなたがいちばん高い</span></b>' : ''}` : '<span>まだ入札がありません</span>'}</small>
@@ -2358,10 +2380,9 @@ async function openSlots(st) {
           ${adm ? `<div class="mp-row" style="margin-top:4px"><button class="btn" data-stop="${a.id}">とりやめる</button></div>` : ''}</div>`).join('')}</div>`
         : '<p class="muted small">いま入札中の発着口はありません</p>'}
       <h4 style="margin:10px 0 4px">発着口</h4>
-      <div class="mp-list">${d.slots.map(x => `<div class="mp-item small"><b>${x.n}番</b> ${x.live ? `<span>${esc(x.o || '')}</span>${x.mine ? '<small>（あなた）</small>' : ''}・<small><span>${jdt(x.until)}まで</span>・<span>${X(x.price)}</span></small>`
-          : x.auc ? '<span>入札中</span>' : '<span class="muted">あき</span>'}</div>`).join('')}</div>
-      ${adm ? `<h4 style="margin:10px 0 4px">国（管理者）</h4><div class="mp-row"><button class="btn" data-add>＋ ふやす</button><button class="btn" data-del>－ へらす</button>${free ? '<button class="btn main" data-open>入札に出す</button>' : ''}</div>` : ''}
-      <p class="muted small"><span>発着口1つで、この空港を出る便を1時間に1便出せます（持っている数より多い便は飛びません）。</span><span>入札は${d.hours}時間で、いちばん高い人が落札します（お金は国庫へ）。入札したお金はあずかり、ほかの人が上回ったら返します。</span><span>権利は${d.days}日。期限がきたら、また入札に出ます</span></p>`, b => {
+      <div class="mp-list">${d.slots.map(slotRow).join('')}</div>
+      ${adm ? `<h4 style="margin:10px 0 4px">国（管理者）</h4><div class="mp-row"><button class="btn" data-add>＋ ふやす</button><button class="btn" data-del>－ へらす</button>${afree ? '<button class="btn main" data-open>入札に出す</button>' : ''}<button class="btn" data-lic>認可制の番号</button></div>` : ''}
+      <p class="muted small"><span>発着口1つで、この空港を出る便を1時間に1便出せます（持っている数より多い便は飛びません）。</span><span>入札は${d.hours}時間で、いちばん高い人が落札します（お金は国庫へ）。入札したお金はあずかり、ほかの人が上回ったら返します。</span><span>権利は${d.days}日。期限がきたら、また入札に出ます。</span>${nlic ? '<span>国の認可制の発着口は入札に出しません。何こほしいかと使いみちを書いて申しこみ、国が認可すると、無料・期限なしで使えます（国がとりけすまで。いらなくなったら国に返せます）。</span>' : ''}</p>`, b => {
       b.querySelectorAll('[data-bid]').forEach(x => x.onclick = async () => {
         const id = Number(x.dataset.bid), t = String(b.querySelector(`[data-amt="${id}"]`).value).replace(/[,，\s]/g, ''), n = Number(t);
         if (!(n > 0)) return toast('数字を入れてください');
@@ -2381,25 +2402,58 @@ async function openSlots(st) {
         if (await api('mp_slot_admin', { p_st: st, p_op: 'del', p_n: Number(v), p_minp: 0 }, 'へらしました')) load();
       };
       const op = b.querySelector('[data-open]'); if (op) op.onclick = async () => {
-        const v = prompt(T(`入札に出す発着口の数（あき ${free}）`), String(free)); if (v == null) return;
+        const v = prompt(T(`入札に出す発着口の数（あき ${afree}）`), String(afree)); if (v == null) return;
         const p = prompt(T('最低価格（X）'), '100000000'); if (p == null) return;
         const n = Number(String(p).replace(/[,，\s]/g, ''));
         if (!(n >= 0)) return toast('数字を入れてください');
         if (await api('mp_slot_admin', { p_st: st, p_op: 'open', p_n: Number(v), p_minp: n }, '入札に出しました')) load();
       };
+      const lc = b.querySelector('[data-lic]'); if (lc) lc.onclick = async () => {
+        const v = prompt(T('国の認可制にする番号（1〜この番号まで。0 でなし）'), String(nlic ? Math.max(...d.slots.filter(x => x.lic).map(x => x.n)) : 0)); if (v == null) return;
+        const n = Number(String(v).replace(/[^\d]/g, '')); if (!(n >= 0) || String(v).trim() === '') return toast('数字を入れてください');
+        if (await api('mp_slot_admin', { p_st: st, p_op: 'lic', p_n: n, p_minp: 0 }, '変えました')) load();
+      };
+      const ap = b.querySelector('[data-apply]'); if (ap) ap.onclick = async () => {
+        const v = prompt(T(`ほしい発着口の数（1〜${Math.min(20, nlic)}）`), '1'); if (v == null) return;
+        const n = Number(String(v).replace(/[^\d]/g, '')); if (!(n >= 1)) return toast('数字を入れてください');
+        const msg = prompt(T('使いみち（どこへの路線・1日何便など。200文字まで）'), ''); if (msg == null) return;
+        if (await api('mp_slot_apply', { p_st: st, p_n: n, p_msg: msg, p_as: S.as }, '申しこみました。国の返事がきたら通知がとどきます')) load();
+      };
+      b.querySelectorAll('[data-acan]').forEach(x => x.onclick = async () => {
+        if (!confirm(T('この申しこみをとりさげますか？'))) return;
+        if (await api('mp_slot_cancel', { p_app: Number(x.dataset.acan), p_as: S.as }, 'とりさげました')) load();
+      });
+      b.querySelectorAll('[data-aok]').forEach(x => x.onclick = async () => {
+        const v = prompt(T(`認可する数（あき ${lfree}）`), String(Math.min(Number(x.dataset.an), lfree))); if (v == null) return;
+        const n = Number(String(v).replace(/[^\d]/g, '')); if (!(n >= 1)) return toast('数字を入れてください');
+        const note = prompt(T('ひとこと（なくてもよい）'), ''); if (note == null) return;
+        if (await api('mp_slot_answer', { p_app: Number(x.dataset.aok), p_ok: true, p_n: n, p_note: note }, '認可しました')) load();
+      });
+      b.querySelectorAll('[data-ano]').forEach(x => x.onclick = async () => {
+        const note = prompt(T('ことわるわけ（なくてもよい）'), ''); if (note == null) return;
+        if (await api('mp_slot_answer', { p_app: Number(x.dataset.ano), p_ok: false, p_n: 0, p_note: note }, 'ことわりました')) load();
+      });
+      b.querySelectorAll('[data-ret]').forEach(x => x.onclick = async () => {
+        if (!confirm(T('この発着口を国に返しますか？（もう一度使うときは、申しこみからです）'))) return;
+        if (await api('mp_slot_return', { p_slot: Number(x.dataset.ret), p_as: S.as }, '国に返しました')) load();
+      });
+      b.querySelectorAll('[data-rev]').forEach(x => x.onclick = async () => {
+        if (!confirm(T(`${x.dataset.rev}番の認可をとりけしますか？（持ち主に知らせます）`))) return;
+        if (await api('mp_slot_admin', { p_st: st, p_op: 'revoke', p_n: Number(x.dataset.rev), p_minp: 0 }, 'とりけしました')) load();
+      });
     });
   };
   load();
 }
 
 // 自分の住所（t54i）：見る・地図で見る・消す
-function openHome() {
+async function openHome() {
   const h = S.boot.home;
-  const m = modal(['自分の住所', h ? `<p class="small" style="margin:0 0 6px"><b translate="no">${esc(h.text)}</b></p>
+  const m = modal(['自分の住所', (h ? `<p class="small" style="margin:0 0 6px"><b translate="no">${esc(h.text)}</b></p>
       <p class="muted small"><span>あなたのページ（人のページ）で、みんなに見えます。</span><span>変えるときは、地図で区画か建物をタップ →「ここを自分の住所に」。</span></p>
       <div class="mp-row"><button class="btn main" data-go>地図で見る</button><button class="btn" data-clr style="color:#c33">住所を消す</button></div>`
     : `<p class="small"><span>まだ決めていません。</span><span>地図で区画か建物をタップ →「ここを自分の住所に」で決められます（建物なら部屋もえらべます）。</span></p>
-      <p class="muted small">住所は、あなたのページ（人のページ）でみんなに見えます</p>`], b => {
+      <p class="muted small">住所は、あなたのページ（人のページ）でみんなに見えます</p>`) + '<h4 style="margin:12px 0 4px">住民登録（住民票）</h4><div data-jm><p class="muted small">読みこんでいます…</p></div>'], b => {
     const q = k => b.querySelector(k);
     if (q('[data-go]')) q('[data-go]').onclick = () => { m.close(); homeGo(h.x, h.y); };
     if (q('[data-clr]')) q('[data-clr]').onclick = async () => {
@@ -2407,6 +2461,14 @@ function openHome() {
       if (await api('mp_home_clear', {}, '住所を消しました')) { S.boot.home = null; S.dirty = true; m.close(); }
     };
   });
+  // 住民票（t59）：本人だけ。役所の窓口へ
+  const j = await api('mp_jm_mine', {}); const el = m.querySelector('[data-jm]'); if (!el) return;
+  el.innerHTML = j ? `<p class="small" style="margin:0"><span>${esc(j.area)}</span>：<span translate="no">${esc(j.addr)}</span></p>
+      <p class="muted small" style="margin:2px 0"><span>住民票は、あなたと管理者だけが見られます</span></p>
+      ${j.office ? `<div class="mp-row"><button class="btn" data-off>🏛 <span>${esc(j.office.name)}</span><span>の窓口へ</span></button></div>` : ''}`
+    : '<p class="small"><span>まだ住民登録をしていません。</span><span>市役所・区役所・町村役場をタップ →「🏛 住民の窓口」で転入届を出せます。</span></p>';
+  const off = el.querySelector('[data-off]'); if (off) off.onclick = () => { m.close(); setCam((j.office.x + 0.5) / 5, (j.office.y + 0.5) / 5, Math.max(S.cam.z, 20)); pinAt((j.office.x + 0.5) / 5, (j.office.y + 0.5) / 5); openJuumin(j.office.id); };
+  busyGuard(el);
 }
 // 住所（区画）へ地図を動かして、しらべる
 function homeGo(x, y) { setCam((x + 0.5) / 5, (y + 0.5) / 5, Math.max(S.cam.z, 30)); showSpot(x, y); }
@@ -2426,7 +2488,10 @@ function openHelp() {
     <p><b>フェリー・船</b>：海の近くの筆に「フェリーターミナル」を建てると、港（⚓ 乗り場）と船の置き場ができます。船（1980年ごろの性能：旅客船・小型〜大型フェリー・高速船）は、≡ →「車両と編成」で港をえらんで注文します（国の造船所は24時間。造船所をえらぶと、その鉄鋼でつくります）。≡ →「系統とダイヤ」の「＋ 航路（フェリー）」で港を順にタップすると、海の上の道を自動でさがします（曲がり角の点はドラッグで動かせ、長押しで消せます）。便を入れると人を乗せて運賃が入ります。フェリーは、海をこえる荷物（工場の仕入れ・お店への食品）をトラックごと運び、その運賃は航路の持ち主に入ります（自分の航路なら運賃はかかりません）。フェリーの便がない島とは、荷物を運べません。ほかの人の港は、持ち主が貸し出しているものだけ航路に入れられます。</p>
     <p><b>空港・飛行機</b>：空港は国の建物で、国（管理者）が建てます。まん中に空港の乗り場（✈）と駐機場があります（飛行場・地方空港・空港・国際空港）。滑走路は国が道路のように引きます（「✈ 滑走路」。まっすぐ・800〜4,000m。浅い海の上にも、うめたてて引けます）。空港の滑走路の長さは、いちばん長い滑走路です。だれでも国の空港の駐機場に飛行機を置けます（みんなで使います）。飛行機（1980年ごろの性能：コミューター機・プロペラ旅客機・小型ジェット・中型ワイドボディ・ジャンボ）は、≡ →「車両と編成」で空港をえらんで注文します（国の航空機メーカーで48時間）。滑走路が短い空港には、大きな飛行機は置けず、離着陸もできません。≡ →「系統とダイヤ」の「＋ 空路（飛行機）」で空港を順にタップすると、まっすぐ飛ぶ路線ができます（空港どうしは10km以上）。空路に入れた空港ごとに、1路線・1日の使用料を国にはらいます。空港のまわり（10km）の人が乗り、運賃は距離で決まります。座席の数までしか乗れません。</p>
     <p><b>発着口</b>：空港ごとに発着口があり（飛行場2・地方空港4・空港8・国際空港16。国がふやせます）、1つで、その空港を出る便を1時間に1便出せます。発着口を使う権利は入札で買います（✈ →「🛫 発着口・入札」。24時間・いちばん高い人が落札。お金は国庫へ）。入札のお金はあずかり、ほかの人が上回ったら返します。権利は30日で、期限がきたら、また入札に出ます。持っている発着口より多い便は飛びません（便に【発着口】の注意が出ます）。≡ →「発着口（空港）」で空港の一覧。</p>
+    <p><b>国の認可制の発着口</b>：空港によっては、番号の小さい発着口が「国の認可制」です（瑠璃国際空港は1〜59番）。入札には出ません。「🛫 発着口・入札」で、ほしい数と使いみちを書いて申しこむと、国が認可したぶんの権利が、無料・期限なしで入ります（国がとりけすまで。いらなくなったら国に返せます）。</p>
     <p><b>自分の住所</b>：地図で区画か建物をタップ →「ここを自分の住所に」（建物なら部屋もえらべます）。住所はあなたのページ（人のページ）でみんなに見えます。地図には🏠が出ます（自分にだけ）。≡ →「自分の住所」で見る・消す。</p>
+    <p><b>さがす</b>：地図の右上の 🔍 で、住所（「瑠璃市中里区中央三丁目」「中里3-12-5」のように番地まで）・地名・町字・駅・空港・港・建物の名前でさがせます。人の名前や、人の住所ではさがせません。</p>
+    <p><b>住民登録</b>：市役所・区役所・町村役場をタップ →「🏛 住民の窓口」。転入届（その市区町村に住所をうつす）・転居届（市区町村の中で引っこす）・転出届・住民票の写し（300 X）・印鑑登録・印鑑登録証明書（300 X）。市役所は市の全部、区役所はその区、町村役場はその町村を受けもちます。住民票（住所・日付・住民票コード）は、あなたと管理者だけが見られます。地図の「自分の住所」とは別です（届け出のときに、いっしょに変えることもできます）。</p>
     <p><b>風の芽大学</b>：風の芽大学中央駅のまわりは、風の芽大学 麦畑キャンパス（約140ha）。本部・図書館・学部・研究所・大学病院・附属学校・学生寮・グラウンド・実験農場（麦畑）などがならぶ、国の建物です。</p>
     <p><b>線路・道路</b>：点をおくと、なめらかな線になります。他人の土地や国の土地の上につくると、毎日使用料がかかります（国・府県・市の道路の上はかかりません）。まちの中は工事費が高くなります。</p>
     <p><b>他人の土地</b>：線路・道路・駅・車庫は、他人の筆の上には、持ち主が貸出料を決めているか、申請して許可をもらったときだけつくれます（使用料は1区画・1日。許可のときに持ち主が決めます）。自分の筆は、タップ →「貸出料」で貸し出せます。申請は ≡ →「土地の申請」。前からあるものは、そのまま使えます。</p>
@@ -3289,7 +3354,7 @@ async function openLandReqs() {
 
 /* ---- お金の記録 ---- */
 const LK = { fare: '運賃', rent: '家賃', sales: '売上', tenant: 'テナントの家賃（はらう）', lease: '使用料（はらう）', lease_in: '使用料（受けとり）', upkeep: '維持費', tax: '固定資産税', land: '土地', bld: '建物', car: '車両', rail: '線路の工事', road: '道路の工事', sta: '駅', dep: '車庫', owed: '未払い',
-  tuition: '授業料', fee: '施設の売上', goods: '仕入れ・材料', ship: '運送費', ferry: 'フェリーの運賃（トラック）', slot: '発着口', rwy: '滑走路の工事' };
+  tuition: '授業料', fee: '施設の売上', goods: '仕入れ・材料', ship: '運送費', ferry: 'フェリーの運賃（トラック）', slot: '発着口', rwy: '滑走路の工事', jm: '役所の手数料' };
 async function openLedger() {
   const m = modal(['お金の記録', '<p class="muted small">読みこんでいます…</p>']);
   let rows = [], before = null, head = null;
@@ -3522,7 +3587,6 @@ function prepBld(a) {
     const [x, y] = k.split(',').map(Number); n++; mx += x; my += y;
     x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
     const X0 = x / 5, Y0 = y / 5, X1 = (x + 1) / 5, Y1 = (y + 1) / 5;
-    base.rect(X0, Y0, 0.2, 0.2); roof.rect(X0 + dx, Y0 + dy, 0.2, 0.2);
     const W = !b.set.has((x - 1) + ',' + y), E = !b.set.has((x + 1) + ',' + y), N = !b.set.has(x + ',' + (y - 1)), Sd = !b.set.has(x + ',' + (y + 1));
     if (Sd) { wallS.moveTo(X0, Y1); wallS.lineTo(X1, Y1); wallS.lineTo(X1 + dx, Y1 + dy); wallS.lineTo(X0 + dx, Y1 + dy); wallS.closePath(); }
     if (E) { wallE.moveTo(X1, Y0); wallE.lineTo(X1, Y1); wallE.lineTo(X1 + dx, Y1 + dy); wallE.lineTo(X1 + dx, Y0 + dy); wallE.closePath(); }
@@ -3530,6 +3594,18 @@ function prepBld(a) {
       if (!on) continue;
       baseEdge.moveTo(ax, ay); baseEdge.lineTo(bx, by);
       edge.moveTo(ax + dx, ay + dy); edge.lineTo(bx + dx, by + dy);
+    }
+  }
+  // 床と屋根：行ごとに続いている区画を1つの長方形に（建物が多いところでも速く描く。t59）
+  const rows = new Map();
+  for (const k of b.set) { const i = k.indexOf(','), x = +k.slice(0, i), y = +k.slice(i + 1); let r = rows.get(y); if (!r) rows.set(y, r = []); r.push(x); }
+  for (const [y, xs] of rows) {
+    xs.sort((p, q) => p - q);
+    let s0 = xs[0], p = xs[0];
+    for (let i = 1; i <= xs.length; i++) {
+      if (i < xs.length && xs[i] === p + 1) { p = xs[i]; continue; }
+      base.rect(s0 / 5, y / 5, (p - s0 + 1) / 5, 0.2); roof.rect(s0 / 5 + dx, y / 5 + dy, (p - s0 + 1) / 5, 0.2);
+      if (i < xs.length) s0 = p = xs[i];
     }
   }
   Object.assign(b, { base, baseEdge, roof, edge, wallS, wallE, n });
@@ -3985,6 +4061,7 @@ async function openBld(bid) {
       </div>
       ${scBlock(d)}${portBlock(d)}
       ${d.gov ? `<p class="muted small" style="margin:2px 0 6px">国の建物です（税・家賃はありません）</p>` : ''}
+      ${d.gov && OFFICE_K.includes(d.kind) ? '<div class="mp-row"><button class="btn main" data-jm>🏛 住民の窓口</button><small class="muted">転入・転居・転出・住民票の写し・印鑑登録</small></div>' : ''}
       ${d.mine ? `<p class="muted small" style="margin:2px 0 6px">家賃の水準は入居募集の部屋の家賃（相場の何%か）。高いと入りにくく、出ていきやすくなります。店・事務所などを自分で使うか会社が借りると、売上が入ります</p>
         <div class="mp-row" data-bulk><small data-n>${sel.size}室えらんでいます</small>
           <button class="btn" data-all>ぜんぶえらぶ</button><button class="btn" data-none>えらばない</button></div>
@@ -4004,6 +4081,7 @@ async function openBld(bid) {
       if (q('[data-pcars]')) q('[data-pcars]').onclick = () => { m.close(); openCars(d.port.dep); };
       if (q('[data-pnew]')) q('[data-pnew]').onclick = () => { m.close(); sheet(null); routeBuild(d.port.k === 'air' ? 'air' : 'ship'); };
       if (q('[data-pslot]')) q('[data-pslot]').onclick = () => { m.close(); openSlots(d.port.sta); };   // t57
+      if (q('[data-jm]')) q('[data-jm]').onclick = () => { m.close(); openJuumin(bid); };   // 住民の窓口（t59）
       if (q('[data-all]')) q('[data-all]').onclick = () => { d.units.forEach(u => sel.add(u.id)); b.querySelectorAll('[data-c]').forEach(x => x.checked = true); upd(); };
       if (q('[data-none]')) q('[data-none]').onclick = () => { sel.clear(); b.querySelectorAll('[data-c]').forEach(x => x.checked = false); upd(); };
       b.querySelectorAll('[data-mode]').forEach(x => x.onclick = async () => {
@@ -4567,6 +4645,203 @@ function airRouteBuild(edit) {
   S.onSheetClose = () => setTool('look');
   draw();
 }
+
+/* ---------- さがす（t59）：地名・町字・住所（町字＋地番）・駅・建物の名前。人（登録者）・自宅ではさがせない ---------- */
+const FIND_IC = { pref: '🗾', muni: '🏙', ward: '🏙', island: '🏝', cho: '🏷', addr: '📍', bld: '🏢', sta: { rail: '🚉', bus: '🚏', air: '✈', ship: '⚓' } };
+const FIND_K = { pref: '都道府県', muni: '市区町村', ward: '区', island: '島', cho: '町字', addr: '住所', bld: '建物', sta: '駅・空港・港' };
+function findHist() { try { return JSON.parse(localStorage.getItem('mp_find') || '[]').slice(0, 6); } catch (e) { return []; } }
+function findSave(q) { try { const h = [q, ...findHist().filter(x => x !== q)].slice(0, 6); localStorage.setItem('mp_find', JSON.stringify(h)); } catch (e) {} }
+function openFind() {
+  const m = modal(['🔍 さがす', `<div class="mp-row" style="margin-top:0"><input class="mp-inp" data-q style="flex:1 1 180px" placeholder="住所・地名・駅・建物の名前" enterkeyhint="search" autocomplete="off"><button class="btn main" data-go>さがす</button></div>
+      <p class="muted small" style="margin:4px 0"><span>例：瑠璃市中里区中央三丁目・中里3-12-5・梅ヶ枝町・新中里・瑠璃府庁</span></p>
+      <div data-hist class="mp-row" style="margin-top:2px"></div><div data-res class="mp-list"></div>`], b => {
+    const inp = b.querySelector('[data-q]'), res = b.querySelector('[data-res]'), hist = b.querySelector('[data-hist]');
+    let seq = 0;
+    const showHist = () => { const h = findHist(); hist.innerHTML = h.map((q, i) => `<button class="btn" data-h="${i}" style="padding:3px 9px;font-size:12px" translate="no">${esc(q)}</button>`).join('');
+      hist.querySelectorAll('[data-h]').forEach(x => x.onclick = () => { inp.value = h[Number(x.dataset.h)]; run(); }); };
+    const go = r => {
+      m.close(); sheet(null); setTool('look');
+      setCam(r.x, r.y, r.z); pinAt(r.x, r.y);
+      if ((r.k === 'bld' || r.k === 'addr') && r.cx != null) setTimeout(() => showSpot(r.cx, r.cy), 350);
+    };
+    const run = async () => {
+      const q = inp.value.trim(); if (!q) return;
+      const my = ++seq; res.innerHTML = '<p class="muted small">さがしています…</p>';
+      const d = await api('mp_find', { p_q: q }); if (my !== seq) return;
+      if (!d) { res.innerHTML = ''; return; }
+      findSave(q); showHist();
+      res.innerHTML = d.length ? d.map((r, i) => `<button class="mp-item" style="text-align:left" data-i="${i}"><b>${r.k === 'sta' ? (FIND_IC.sta[r.sk] || '🚉') : (FIND_IC[r.k] || '📍')} <span translate="no">${esc(r.n)}</span></b>
+          <br><small><span>${esc(T(FIND_K[r.k] || ''))}</span>${r.s ? `・<span translate="no">${esc(r.s)}</span>` : ''}</small></button>`).join('')
+        : '<p class="small"><span>見つかりませんでした。</span><span>地名・町字・番地・駅・建物の名前でさがせます（人の名前ではさがせません）</span></p>';
+      res.querySelectorAll('[data-i]').forEach(x => x.onclick = () => go(d[Number(x.dataset.i)]));
+    };
+    b.querySelector('[data-go]').onclick = run;
+    inp.onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); run(); } };
+    showHist(); setTimeout(() => inp.focus(), 50);
+  });
+}
+// 見つけた場所のしるし（12秒）
+function pinAt(x, y) { S.pin = { x, y, t: now() }; S.dirty = true; clearTimeout(S.pinT); S.pinT = setTimeout(() => { S.pin = null; S.dirty = true; }, 12000); }
+function drawPin(g) {
+  const p = S.pin; if (!p) return;
+  const x = sx(p.x), y = sy(p.y); if (x < -30 || y < -50 || x > S.W + 30 || y > S.H + 30) return;
+  g.fillStyle = '#d62f2f'; g.strokeStyle = '#fff'; g.lineWidth = 2.5;
+  g.beginPath(); g.arc(x, y - 22, 11, Math.PI * 0.82, Math.PI * 2.18); g.lineTo(x, y); g.closePath(); g.fill(); g.stroke();
+  g.fillStyle = '#fff'; g.beginPath(); g.arc(x, y - 22, 4.2, 0, 6.3); g.fill();
+}
+// 地図で場所（区画か建物）をえらぶ：cb(cx, cy)
+function pickPlace(msg, cb) {
+  setTool('look');
+  hint(msg);
+  sheet(`<h4>${esc(T(msg))}</h4><div class="mp-row"><button class="btn" data-cancel>やめる</button></div>`, s => { s.querySelector('[data-cancel]').onclick = () => setTool('look'); });
+  S.tapHook = (x, y) => {
+    let cx = Math.floor(x * 5), cy = Math.floor(y * 5);
+    const hb = hitBld(x, y); if (hb) [cx, cy] = hb.cell.split(',').map(Number);
+    S.tapHook = null; S.toolEnd = null; hint(''); sheet(null); S.sel = { kind: 'cell', x: cx, y: cy }; S.dirty = true;
+    cb(cx, cy);
+  };
+  S.toolEnd = () => { S.tapHook = null; };
+}
+
+/* ---------- 住民の窓口（t59）：市役所・区役所・町村役場。転入・転居・転出・住民票の写し・印鑑登録 ---------- */
+const JM_K = { in: '転入届', move: '転居届', out: '転出届', cert: '住民票の写しの交付', seal: '印鑑登録', seal_cert: '印鑑登録証明書の交付', seal_end: '印鑑登録の廃止' };
+const OFFICE_K = ['cityhall', 'wardoffice', 'townhall'];
+const jday = t => { const d = new Date(t); return isNaN(d) ? '' : d.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'long', day: 'numeric' }); };
+async function openJuumin(bid) {
+  const m = modal(['🏛 住民の窓口', '<p class="muted small">読みこんでいます…</p>'], null, 'mp-wide');
+  const load = async () => {
+    const d = await api('mp_jm_get', { p_bld: bid }); if (!d) return m.close();
+    const me = d.me, here = d.here;
+    m.set('🏛 住民の窓口', `<p class="small" style="margin:0"><b><span>${esc(d.name)}</span></b>・<span>${esc(d.area)}</span>${d.pop ? `<small>（<span>人口 ${fmt(d.pop)}人</span>）</small>` : ''}</p>
+      <div class="mp-kv"><b>住民登録</b><span>${!me ? '<span class="muted">まだ住民登録をしていません</span>'
+          : here ? `<b>この役所の住民です</b><br><span translate="no">${esc(me.addr)}</span>`
+          : `<span>${esc(me.area)}に住民登録しています</span><br><span translate="no">${esc(me.addr)}</span>`}</span>
+        ${me ? `<b>住民となった日</b><span>${esc(jday(me.since))}</span><b>住所を定めた日</b><span>${esc(jday(me.moved))}</span>` : ''}
+        ${me && here ? `<b>印鑑登録</b><span>${me.seal ? `<span>登録あり（登録番号 ${esc(me.seal_no)}）</span>` : '<span class="muted">なし</span>'}</span>` : ''}</div>
+      <h4 style="margin:10px 0 4px">届け出・証明書</h4>
+      <div class="mp-list">
+        ${!here ? `<button class="mp-item" style="text-align:left" data-f="in"><b>📥 転入届</b><br><small><span>${esc(d.area)}に住所をうつします（住所をえらびます）</span>${me ? '<span>。いまの市区町村からの転出も、いっしょにします</span>' : ''}</small></button>` : ''}
+        ${here ? `<button class="mp-item" style="text-align:left" data-f="move"><b>🏠 転居届</b><br><small>${esc(d.area)}の中で、住所を変えます</small></button>
+          <button class="mp-item" style="text-align:left" data-f="out"><b>📤 転出届</b><br><small>住民登録をやめます（ほかの市区町村へは、そこの役所に転入届を出すだけでも引っこせます）</small></button>
+          <button class="mp-item" style="text-align:left" data-c="cert"><b>📄 住民票の写し</b><br><small>手数料 ${X(d.fee.cert)}（国庫へ）</small></button>
+          ${me.seal ? `<button class="mp-item" style="text-align:left" data-c="seal_cert"><b>🔴 印鑑登録証明書</b><br><small>手数料 ${X(d.fee.seal_cert)}（国庫へ）</small></button>
+            <button class="mp-item" style="text-align:left" data-s="end"><b>✂ 印鑑登録の廃止</b><br><small>登録した印鑑を使わなくなったとき</small></button>`
+            : `<button class="mp-item" style="text-align:left" data-s="reg"><b>🔴 印鑑登録</b><br><small>印影の文字（1〜4字）を登録します（無料）</small></button>`}` : ''}
+      </div>
+      ${d.log.length ? `<h4 style="margin:10px 0 4px">あなたの届け出の記録</h4><div class="mp-list">${d.log.map(l => `<div class="mp-item small"><b>${esc(T(JM_K[l.k] || l.k))}</b>・<span>${esc(l.area || '')}</span>・<span>${esc(jday(l.at))}</span>${l.no ? `・<span>受付番号 ${l.no}</span>` : ''}${l.fee ? `・<span>${X(l.fee)}</span>` : ''}${l.addr ? `<br><small translate="no">${esc(l.addr)}</small>` : ''}</div>`).join('')}</div>` : ''}
+      ${d.admin ? `<h4 style="margin:10px 0 4px">管理者</h4><div class="mp-row"><span class="small"><span>この役所が受けもつ住民 ${d.res}人</span></span><button class="btn" data-res>住民の一覧</button></div>` : ''}
+      <p class="muted small"><span>住民票（住所・日付・住民票コード）は、あなたと管理者だけが見られます。</span><span>地図の「自分の住所」（人のページで公開）とは別です（届け出のときに、いっしょに変えることもできます）。</span>${d.kind === 'cityhall' && !d.ward ? '<span>市役所は市の全部を、区役所はその区を、町村役場はその町村を受けもちます。</span>' : ''}</p>`, b => {
+      b.querySelectorAll('[data-f]').forEach(x => x.onclick = () => jmFile(d, x.dataset.f, m, load));
+      b.querySelectorAll('[data-c]').forEach(x => x.onclick = async () => {
+        const k = x.dataset.c;
+        if (!confirm(T(`${k === 'cert' ? '住民票の写し' : '印鑑登録証明書'}をもらいます（手数料 ${fmt(d.fee[k])} X）。よろしいですか？`))) return;
+        const r = await api('mp_jm_cert', { p_bld: bid, p_kind: k }); if (r) { showCert(r); load(); }
+      });
+      b.querySelectorAll('[data-s]').forEach(x => x.onclick = async () => {
+        if (x.dataset.s === 'end') {
+          if (!confirm(T('印鑑登録を廃止します。よろしいですか？'))) return;
+          if (await api('mp_jm_seal', { p_bld: bid, p_op: 'end', p_text: null }, '印鑑登録を廃止しました')) load();
+          return;
+        }
+        const nick = asLabel((S.boot.as || []).find(a => a.as === 'me')) || '';
+        const v = prompt(T('印影の文字（1〜4字。名前やその一部など）'), nick.slice(0, 2)); if (v == null) return;
+        const r = await api('mp_jm_seal', { p_bld: bid, p_op: 'reg', p_text: v.trim() });
+        if (r) { toast(T(`印鑑登録をしました（受付番号 ${r.no}・登録番号 ${r.seal_no}）`)); load(); }
+      });
+      const rs = b.querySelector('[data-res]'); if (rs) rs.onclick = async () => {
+        const L = await api('mp_jm_residents', { p_bld: bid }); if (!L) return;
+        modal(['住民の一覧（管理者）', L.length ? `<div class="mp-list">${L.map(r => `<div class="mp-item small"><b translate="no">${esc(r.nick)}</b> <small translate="no">@${esc(r.uid || '')}</small>${r.seal ? ' <span class="mp-tag">印鑑登録</span>' : ''}
+            <br><span translate="no">${esc(r.addr)}</span><br><small><span>住民となった日 ${esc(jday(r.since))}</span></small></div>`).join('')}</div>` : '<p class="small">まだいません</p>'], null);
+      };
+    });
+  };
+  load();
+}
+// 転入・転居（住所をえらぶ）・転出
+async function jmFile(d, k, m, load) {
+  if (k === 'out') {
+    if (!confirm(T(`転出届を出して、${d.area}の住民登録をやめます。よろしいですか？`))) return;
+    const r = await api('mp_jm_file', { p_bld: d.bld, p_kind: 'out', p_x: null, p_y: null, p_unit: null, p_home: false });
+    if (r) { toast(T(`転出届を受けつけました（受付番号 ${r.no}）`)); load(); }
+    return;
+  }
+  const send = async (x, y, unit, home) => {
+    const r = await api('mp_jm_file', { p_bld: d.bld, p_kind: k, p_x: x, p_y: y, p_unit: unit, p_home: home });
+    if (!r) return false;
+    if (r.home) { S.boot.home = r.home; S.dirty = true; }
+    toast(T(`${k === 'in' ? '転入届' : '転居届'}を受けつけました（受付番号 ${r.no}）`));
+    return true;
+  };
+  const ask = async (x, y, unit, text) => {
+    const pm = modal([k === 'in' ? '転入届' : '転居届', `<p class="small" style="margin:0 0 6px"><span>新しい住所</span>：<b translate="no">${esc(text)}</b></p>
+        <label class="small"><input type="checkbox" data-home> 地図の「自分の住所」もここにする（人のページでみんなに見えます）</label>
+        <div class="mp-row"><button class="btn main" data-ok>届け出る</button><button class="btn" data-x2>やめる</button></div>`], b => {
+      b.querySelector('[data-x2]').onclick = () => pm.close();
+      b.querySelector('[data-ok]').onclick = async () => { if (await send(x, y, unit, b.querySelector('[data-home]').checked)) { pm.close(); openJuumin(d.bld); } };
+    });
+  };
+  const pick = () => {
+    m.close();
+    pickPlace(`${d.area}の中で、住所にする区画か建物をタップしてください`, async (cx, cy) => {
+      const sp = await api('mp_spot', { p_x: cx, p_y: cy }); if (!sp || sp.none) return;
+      const text = sp.addr.text + (sp.addr.ban ? ' ' + sp.addr.ban : '');
+      const P = sp.parcel;
+      if (P && P.b && P.b.n > 1) {
+        const bd = await api('mp_bld_get', { p_bld: P.b.id }); if (!bd) return;
+        const um = modal(['部屋をえらぶ', `<p class="small" style="margin:0 0 6px"><span translate="no">${esc(bd.addr)}</span> <span>${esc(bd.name || bd.kname)}</span></p>
+            <div class="mp-row" style="flex-wrap:wrap">${bd.units.slice(0, 400).map(u => `<button class="btn" data-hu="${u.id}">${esc(u.room)}</button>`).join('')}</div>
+            <div class="mp-row"><button class="btn" data-hu="0">部屋なし（建物まで）</button></div>`], b => {
+          b.querySelectorAll('[data-hu]').forEach(x => x.onclick = () => { um.close(); const u = bd.units.find(z => z.id === Number(x.dataset.hu)); ask(cx, cy, u ? u.id : null, text + ' ' + (bd.name || bd.kname) + (u ? ' ' + u.room : '')); });
+        });
+        return;
+      }
+      ask(cx, cy, null, text + (P && P.b ? ' ' + (P.b.name || '') : ''));
+    });
+  };
+  const h = d.home;
+  if (h && h.in) {
+    const cm = modal([k === 'in' ? '転入届' : '転居届', `<p class="small">新しい住所をえらんでください</p><div class="mp-list">
+        <button class="mp-item" style="text-align:left" data-hm><b>🏠 地図の自分の住所</b><br><small translate="no">${esc(h.text)}</small></button>
+        <button class="mp-item" style="text-align:left" data-pk><b>👆 地図でえらぶ</b><br><small>区画か建物をタップします</small></button></div>`], b => {
+      b.querySelector('[data-hm]').onclick = async () => { cm.close(); if (await send(h.x, h.y, h.unit, false)) load(); };
+      b.querySelector('[data-pk]').onclick = () => { cm.close(); pick(); };
+    });
+    return;
+  }
+  pick();
+}
+// 住民票の写し・印鑑登録証明書（画面に出す）
+function showCert(r) {
+  const j = r.me, seal = j && j.seal;
+  const box = (h) => `<div style="background:#fffdf6;color:#222;border:1px solid #c9bfa6;border-radius:6px;padding:14px 14px 10px;font-family:'Noto Serif JP',serif">${h}</div>`;
+  const row = (k, v) => `<tr><th style="text-align:left;white-space:nowrap;padding:5px 8px;border:1px solid #c9bfa6;background:#f6f1e3;font-weight:600">${k}</th><td style="padding:5px 8px;border:1px solid #c9bfa6">${v}</td></tr>`;
+  // 印影（1〜3字は1列・4字は右の列から2列。丸の中におさまる大きさ）
+  const stamp = (t, w) => {
+    const a = [...t], two = a.length >= 4, n = two ? Math.ceil(a.length / 2) : Math.max(1, a.length);
+    const fs = Math.min(Math.round(w * 0.42), Math.floor(w * (two ? 0.56 : 0.68) / n)), lh = Math.round(fs * 1.04);
+    const col = s => `<span style="display:flex;flex-direction:column;align-items:center">${s.map(c => `<span style="display:block;height:${lh}px;line-height:${lh}px">${esc(c)}</span>`).join('')}</span>`;
+    return `<span style="display:inline-flex;flex-direction:row-reverse;align-items:center;justify-content:center;gap:2px;box-sizing:border-box;width:${w}px;height:${w}px;border:2px solid #c8261d;border-radius:${r.kind === 'seal_cert' ? '50%' : '4px'};color:#c8261d;font-weight:700;font-size:${fs}px;box-shadow:inset 0 0 0 2px rgba(200,38,29,.12)">${two ? col(a.slice(0, n)) + col(a.slice(n)) : col(a)}</span>`;
+  };
+  const ls = em => (window.I18N && I18N.lang && I18N.lang !== 'ja' && !/^zh/.test(I18N.lang) ? '.02em' : em + 'em');   // 見出しの字の間（日本語・中国語だけ広く）
+  // 職印（四角・右の列から2列。字は1字ずつならべる：縦書きの折りかえしにたよらない）
+  const kenin = t => {
+    const a = [...t], n = Math.ceil(a.length / 2), fs = Math.min(14, Math.floor(46 / Math.max(3, n)));
+    const col = s => `<span style="display:flex;flex-direction:column;align-items:center">${s.map(c => `<span style="display:block;height:${fs + 1}px;line-height:${fs + 1}px">${esc(c)}</span>`).join('')}</span>`;
+    return `<span translate="no" style="display:inline-flex;flex-direction:row-reverse;align-items:center;justify-content:center;gap:3px;box-sizing:border-box;width:58px;height:58px;border:2.5px solid #c8261d;border-radius:3px;opacity:.9;color:#c8261d;font-weight:800;font-size:${fs}px">${col(a.slice(0, n))}${col(a.slice(n))}</span>`;
+  };
+  const foot = `<p style="margin:10px 0 2px;font-size:13px">${r.kind === 'cert' ? 'この写しは、住民票の原本と相違ないことを証明する。' : 'この写しは、登録されている印影と相違ないことを証明する。'}</p>
+    <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:6px;font-size:13px"><span>${esc(jday(r.at))}</span><b translate="no">${esc(r.mayor)}</b>${kenin(r.mayor + '之印')}</div>
+    <p style="margin:8px 0 0;font-size:11px;color:#777">交付番号 ${r.no}・${esc(r.office)}（手数料 ${fmt(r.fee)} X）</p>`;
+  const html = r.kind === 'cert'
+    ? box(`<h3 style="text-align:center;letter-spacing:${ls(0.5)};margin:0 0 10px;font-size:20px">住民票（写し）</h3>
+        <table style="border-collapse:collapse;width:100%;font-size:13px">${row('氏名', `<b translate="no">${esc(r.name)}</b>`)}${row('住所', `<span translate="no">${esc(j.addr)}</span>`)}
+          ${row('世帯主', `<span translate="no">${esc(r.name)}</span>`)}${row('続柄', '本人')}${row('住民となった年月日', esc(jday(j.since)))}${row('住所を定めた年月日', esc(jday(j.moved)))}
+          ${row('前住所', j.prev ? `<span translate="no">${esc(j.prev)}</span>` : '―')}${row('住民票コード', `<span style="letter-spacing:2px">${esc(j.code)}</span>`)}</table>${foot}`)
+    : box(`<h3 style="text-align:center;letter-spacing:${ls(0.3)};margin:0 0 10px;font-size:20px">印鑑登録証明書</h3>
+        <div style="display:flex;gap:14px;align-items:center"><div style="flex:none;border:1px dashed #c9bfa6;padding:10px;border-radius:6px;background:#fff">${stamp(r.seal_text || '', 74)}</div>
+        <table style="border-collapse:collapse;flex:1;font-size:13px">${row('氏名', `<b translate="no">${esc(r.name)}</b>`)}${row('住所', `<span translate="no">${esc(j.addr)}</span>`)}${row('登録番号', esc(j.seal_no || ''))}</table></div>${foot}`);
+  modal([r.kind === 'cert' ? '住民票の写し' : '印鑑登録証明書', html], null, 'mp-wide');
+}
 window.MapApp = { open, pause, state: S, spline, setCam, landReqs: () => openLandReqs(), xfers: () => openXfers(), goto: (x, y) => homeGo(x, y), thru: () => openThru(), bld: id => openBld(id), sc: () => openSC(),
-  slots: L => (L && L.st ? openSlots(Number(L.st)) : openSlotList()) };
+  slots: L => (L && L.st ? openSlots(Number(L.st)) : openSlotList()), find: () => openFind(), jm: id => openJuumin(id) };
 })();
