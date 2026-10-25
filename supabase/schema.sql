@@ -17982,7 +17982,7 @@ begin
   ters := _mp_ters(tiles);
   if '?' = any(ters) then raise exception '地図のないところには作れません'; end if;
   if 'D' = any(ters) then raise exception '深い海には作れません'; end if;
-  mul := _mp_cmuls(tiles, ters);
+  if not pa.gv then mul := _mp_cmuls(tiles, ters); end if;   -- 国の工事は無料（t57b）：工事費の計算もしない
   sw := case when p_kind = 'rail' then case when dbl then 0.5 else 0.36 end else _mp_road_w(cls, ln_) end;
   cells := _mp_seg_cells_arr(p_pts, p_kind, sw, dbl);
   -- 駅のホーム・車庫・バス停にかかるところは通れない（区画で見る。つなぐはしの 20m はのぞく）。建物のある筆（区画）も通れない
@@ -17992,9 +17992,11 @@ begin
   bad := _mp_bld_hit(cells);
   if bad is not null then raise exception '建物のある土地（%）は通れません', left(bad, 60); end if;
   base := case when p_kind = 'rail' then _mp_rate('rail') else _mp_rate('road') * _mp_road_mul(cls, ln_) end;
-  for i in 1..array_length(ters, 1) loop
-    cost := cost + base * mul[i] * case when dbl then _mp_rate('dbl_mul') else 1 end + case when elec then _mp_rate('elec') else 0 end;
-  end loop;
+  if not pa.gv then
+    for i in 1..array_length(ters, 1) loop
+      cost := cost + base * mul[i] * case when dbl then _mp_rate('dbl_mul') else 1 end + case when elec then _mp_rate('elec') else 0 end;
+    end loop;
+  end if;
   cost := round(cost);
   select * into lq from _mp_lease_quote(cells, pa.pu, pa.pc, pa.gv);
   -- 他人の筆は、貸出料があるか申請が許可されているときだけ
@@ -18051,16 +18053,18 @@ begin
   ters := _mp_ters(newt);
   if '?' = any(ters) then raise exception '地図のないところには作れません'; end if;
   if 'D' = any(ters) then raise exception '深い海には作れません'; end if;
-  mul := _mp_cmuls(newt, ters);
+  if not sg.gov then mul := _mp_cmuls(newt, ters); end if;   -- 国の工事は無料（t57b）
   bad := _mp_seg_blocked(tiles, _mp_seg_cells_arr(_mp_sub(p_pts, least(0.4, ln / 3), ln - least(0.4, ln / 3)), sg.kind, sg.w, sg.dbl));
   if bad is not null then raise exception '%にかかるので、通れません（線をずらしてください）', left(bad, 80); end if;
   ncells := _mp_seg_cells_arr(p_pts, sg.kind, sg.w, sg.dbl);
   bad := _mp_bld_hit(ncells);
   if bad is not null then raise exception '建物のある土地（%）は通れません', left(bad, 60); end if;
   base := case when sg.kind = 'rail' then _mp_rate('rail') else _mp_rate('road') * _mp_road_mul(sg.cls, sg.lanes) end;
-  for i in 1..coalesce(array_length(ters, 1), 0) loop
-    amt_ := amt_ + base * mul[i] * case when sg.dbl then _mp_rate('dbl_mul') else 1 end + case when sg.elec then _mp_rate('elec') else 0 end;
-  end loop;
+  if not sg.gov then
+    for i in 1..coalesce(array_length(ters, 1), 0) loop
+      amt_ := amt_ + base * mul[i] * case when sg.dbl then _mp_rate('dbl_mul') else 1 end + case when sg.elec then _mp_rate('elec') else 0 end;
+    end loop;
+  end if;
   amt_ := round(amt_);
   select * into lq from _mp_lease_quote(ncells, sg.own_u, sg.own_c, sg.gov);
   -- 新しく通る他人の筆は、貸出料があるか申請が許可されているときだけ（前から通っている区画はそのまま）
@@ -18090,7 +18094,7 @@ begin
   me_cs := array(select id from companies where owner = u);
   if not coalesce(sg.own_u = u or sg.own_c = any(me_cs) or (sg.gov and _is_admin(u)), false) then raise exception 'あなたの線ではありません'; end if;
   ters := _mp_ters(_mp_tiles(sg.pts));
-  mul := _mp_cmuls(_mp_tiles(sg.pts), ters);
+  if not sg.gov then mul := _mp_cmuls(_mp_tiles(sg.pts), ters); end if;   -- 国の工事は無料（t57b）
   if sg.kind = 'rail' then
     base := _mp_rate('rail');
     for i in 1..array_length(ters, 1) loop
@@ -18103,12 +18107,12 @@ begin
     nl := coalesce(p_lanes, sg.lanes);
     if sg.cls = 'lane' then nl := 0; end if;
     nl := least(case when sg.cls = 'priv' then 2 else 4 end, greatest(case when sg.cls in ('exp', 'nat') then 2 else 0 end, nl));
-    if nl > sg.lanes then
+    if nl > sg.lanes and not sg.gov then
       for i in 1..array_length(ters, 1) loop
         amt_ := amt_ + _mp_rate('road') * (_mp_road_mul(sg.cls, nl) - _mp_road_mul(sg.cls, sg.lanes)) * mul[i];
       end loop;
-      what := format('拡幅（片側%s車線）', nl);
     end if;
+    if nl > sg.lanes then what := format('拡幅（片側%s車線）', nl); end if;
   end if;
   amt_ := round(amt_);
   if (sg.kind = 'rail' and coalesce(p_dbl, sg.dbl) and not sg.dbl) or (sg.kind = 'road' and nl > sg.lanes) then
@@ -21921,9 +21925,11 @@ begin
   select min(x), min(y), max(x), max(y), count(*) into x0, y0, x1, y1, n from _gb;
   -- あいている国の土地か（筆・道路・線路・駅・車庫・水・公園でない）。同じ町字か
   create temp table _gbz on commit drop as select x, y from _mp_busy_cells(x0, y0, x1, y1) union select x, y from _mp_pub_cells(x0, y0, x1, y1);
+  -- 水・公園・地図の外は建てられない（t57b：地価の計算は重いので、地形と用途地域だけを見る。マスごとに1回）
   select count(*) into bad from _gb g where exists (select 1 from mp_pcells pc where pc.x = g.x and pc.y = g.y)
      or exists (select 1 from _gbz b where b.x = g.x and b.y = g.y)
-     or _mp_cval(_mp_t5(g.x), _mp_t5(g.y)) is null;
+     or (_mp_t5(g.x), _mp_t5(g.y)) in (select t.tx, t.ty from (select distinct _mp_t5(x) tx, _mp_t5(y) ty from _gb) t, lateral _mp_cell(t.tx, t.ty) c
+                                        where c.t is null or c.t in ('S', 'D', 'R', 'L') or c.z = 'j');
   drop table _gbz;
   if bad > 0 then raise exception 'あいていない区画が %つあります', bad; end if;
   select count(distinct _mp_cho_at(_mp_t5(x), _mp_t5(y))), min(_mp_cho_at(_mp_t5(x), _mp_t5(y))) into nck, ck from _gb;
@@ -21940,7 +21946,7 @@ begin
   if exists (select 1 from generate_series(1, nb) i where not exists (select 1 from _gb g where g.x = cs[2 * i - 1] and g.y = cs[2 * i]))
     then raise exception '建物の区画が筆の外にあります'; end if;
   fm2 := case when coalesce(p_floors, 0) = 0 then nb * 100 else nb * 85 end;
-  cost := round(case when coalesce(p_floors, 0) = 0 then fm2 else fm2 * p_floors end * (pr ->> 'cpm')::numeric);
+  cost := 0;   -- 国の工事は無料（t57b）
   bid := _mp_bld_make(pid, jsonb_build_object('kind', p_kind, 'shape', coalesce(p_shape, 'full'), 'floors', coalesce(p_floors, 0), 'cells', to_jsonb(cs), 'fm2', fm2, 'plan', '[]'::jsonb),
                       '', p_name, cost, false);
   if _mp_term_kind(p_kind) is not null then perform _mp_port_open(bid); end if;   -- 国の空港（t54q）：乗り場・駐機場（持ち主なし＝国。だれでも使える）
@@ -24038,14 +24044,13 @@ begin
     k := j * w + i + 1; tx := _mp_t5(x0 + i); ty := _mp_t5(y0 + j); key := tx || ',' || ty;
     if not (tcache ? key) then
       select * into c from _mp_cell(tx, ty);
-      tcache := tcache || jsonb_build_object(key, jsonb_build_object('t', c.t, 'z', c.z, 'k', _mp_cho_at(tx, ty),
-                                                                   'v', case when c.t is null or c.t in ('S', 'D', 'R', 'L', 'M', 'K') or c.z = 'j' then null else _mp_cval(tx, ty) end));
+      tcache := tcache || jsonb_build_object(key, jsonb_build_object('t', c.t, 'z', c.z, 'k', _mp_cho_at(tx, ty)));   -- 地価は見ない（t57b：重いので。水・山・公園・地図の外は下で見る）
     end if;
     if coalesce(tcache -> key ->> 't', 'D') in ('S', 'D', 'R', 'L') then why := jsonb_set(why, '{water}', to_jsonb(coalesce((why ->> 'water')::int, 0) + 1)); continue; end if;
     if tcache -> key ->> 't' in ('M', 'K') then why := jsonb_set(why, '{mtn}', to_jsonb(coalesce((why ->> 'mtn')::int, 0) + 1)); continue; end if;
     if tcache -> key ->> 'z' = 'j' then why := jsonb_set(why, '{park}', to_jsonb(coalesce((why ->> 'park')::int, 0) + 1)); continue; end if;
     if bz[k] then why := jsonb_set(why, '{road}', to_jsonb(coalesce((why ->> 'road')::int, 0) + 1)); continue; end if;
-    if tcache -> key ->> 'v' is null or tcache -> key ->> 'k' is null then why := jsonb_set(why, '{other}', to_jsonb(coalesce((why ->> 'other')::int, 0) + 1)); continue; end if;
+    if tcache -> key ->> 'k' is null then why := jsonb_set(why, '{other}', to_jsonb(coalesce((why ->> 'other')::int, 0) + 1)); continue; end if;
     ok[k] := true; chos[k] := tcache -> key ->> 'k';
   end loop; end loop;
   -- 持ち主のいる区画（筆）
@@ -24080,7 +24085,7 @@ begin
     if char_length(mu) > 1 and right(mu, 1) in ('市', '町', '村') then mu := left(mu, char_length(mu) - 1); end if;
     nm := replace(coalesce(pr -> 'dn' ->> 0, '{}空港'), '{}', mu);
   end if;
-  cost := coalesce(best.cn, 0)::bigint * 100 * (pr ->> 'cpm')::bigint;
+  cost := 0;   -- 国の工事は無料（t57b）
   fee := round(_mp_rate('up_air') * coalesce((pr ->> 'gates')::int, 2) / 8.0);
   if p_dry then
     return jsonb_build_object('ok', coalesce(best.cn, 0) between (pr ->> 'min')::int and (pr ->> 'max')::int, 'n', coalesce(best.cn, 0), 'total', n,
@@ -24238,7 +24243,7 @@ begin
   x0 := round(p_pts[1] * 100); y0 := round(p_pts[2] * 100); x1 := round(p_pts[3] * 100); y1 := round(p_pts[4] * 100);
   q := _mp_rwy_check(x0, y0, x1, y1, w);
   len := (q ->> 'len')::int;
-  cost := len::bigint * 60 * _mp_rate('rwy_m2')::bigint;
+  cost := 0;   -- 国の工事は無料（t57b）
   nm := _mp_rwy_name(x0, y0, x1, y1);
   if p_dry then return q || jsonb_build_object('cost', cost, 'name', nm); end if;
   perform pg_advisory_xact_lock(hashtextextended('mp:rwy', 7));

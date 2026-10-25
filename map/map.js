@@ -1523,12 +1523,12 @@ async function rwySheet() {
     <div class="mp-kv"><b>長さ</b><span><span>${fmt(q.len)}m</span>・<span>はば60m</span></span>
       <b>空港</b><span>${q.sname ? `<span>${esc(q.sname)}</span>` : '<span class="mp-warn">2km 以内に国の空港がありません</span>'}</span>
       ${sk ? `<b>かかるもの</b><span>${sk}</span>` : ''}
-      <b>工事費</b><span class="mp-cost">${X(q.cost)}</span></div>
+      <b>工事費</b><span>${q.cost > 0 ? `<span class="mp-cost">${X(q.cost)}</span>` : 'なし（国の工事は無料）'}</span></div>
     ${q.ok ? '' : `<p class="mp-warn">${esc(q.msg || '')}</p>`}
     <div class="mp-row">${q.ok ? '<button class="btn main" data-rb>滑走路を引く</button>' : ''}</div>
     <p class="muted small"><span>空港の滑走路の長さは、いちばん長い滑走路です。長さで飛べる飛行機が決まります（コミューター機 800m・プロペラ機 1,200m・小型ジェット 1,800m・中型ワイドボディ 2,300m・ジャンボ 2,800m）。</span><span>滑走路の区画は国の土地で、道路・線路・建物は通れません。もう一度タップすると、引きなおせます</span></p>`, s => {
     const b = s.querySelector('[data-rb]'); if (b) b.onclick = async () => {
-      if (!confirm(T(`滑走路 ${q.name}（${fmt(q.len)}m）を「${q.sname}」に引きます。工事費 ${fmt(q.cost)} X（国庫から）。よろしいですか？`))) return;
+      if (!confirm(T(`滑走路 ${q.name}（${fmt(q.len)}m）を「${q.sname}」に引きます。よろしいですか？`))) return;
       const x = await api('mp_rwy_build', { p_pts: p, p_dry: false });
       if (x) {
         toast(T(`滑走路 ${x.name}（${fmt(x.len)}m）を引きました`));
@@ -1627,14 +1627,14 @@ async function airportSheet(r, n) {
       ${sk ? `<b>使えない</b><span>${sk}</span>` : ''}
       <b>発着口</b><span><span>${q.gates}こ</span>・<span>駐機場 ${q.hangar}機</span></span>
       <b>滑走路</b><span>建ててから「✈ 滑走路」で引きます</span>
-      <b>工事費</b><span class="mp-cost">${X(q.cost)}</span>
+      <b>工事費</b><span>${q.cost > 0 ? `<span class="mp-cost">${X(q.cost)}</span>` : 'なし（国の工事は無料）'}</span>
       <b>使用料</b><span>1路線・1日 ${X(q.fee)}（国庫へ）</span></div>
     <div class="mp-row"><input class="mp-inp" style="flex:1 1 160px" data-anm placeholder="${esc(q.name || '')}" maxlength="30">${q.ok ? '<button class="btn main" data-abuild>国の空港を建てる</button>' : ''}</div>
-    <p class="muted small">あいている国の土地（道路・水・山・公園・持ち主のいる土地はのぞく）のうち、同じ町字でつながった いちばん大きいところに建てます。工事費は国庫から。乗り場（✈）と駐機場は国のもので、だれでも飛行機を置いて空路に使えます（使用料は国庫へ。✈ をタップして変えられます）。もう一度2か所タップすると、えらびなおせます</p>`, s => {
+    <p class="muted small">あいている国の土地（道路・水・山・公園・持ち主のいる土地はのぞく）のうち、同じ町字でつながった いちばん大きいところに建てます。国の工事は無料です。乗り場（✈）と駐機場は国のもので、だれでも飛行機を置いて空路に使えます（使用料は国庫へ。✈ をタップして変えられます）。もう一度2か所タップすると、えらびなおせます</p>`, s => {
     s.querySelectorAll('[data-ak]').forEach(b => b.onclick = () => { airKind = b.dataset.ak; airportSheet(r, n); });
     const bb = s.querySelector('[data-abuild]'); if (bb) bb.onclick = async () => {
       const nm = s.querySelector('[data-anm]').value.trim() || q.name || '';
-      if (!confirm(T(`「${nm}」（${q.kname}・${fmt(q.n)}区画）を国の空港として建てます。工事費 ${fmt(q.cost)} X（国庫から）。よろしいですか？`))) return;
+      if (!confirm(T(`「${nm}」（${q.kname}・${fmt(q.n)}区画）を国の空港として建てます。よろしいですか？`))) return;
       bb.disabled = true;
       const x = await api('mp_admin_airport', { p_rect: r, p_kind: airKind, p_name: nm, p_dry: false });
       bb.disabled = false;
@@ -1968,12 +1968,12 @@ function drawSheet() {
       : `<div class="mp-row">${gov ? `<select class="mp-inp" style="width:auto" data-cls>${[['exp', '高速道路'], ['nat', '国道'], ['pref', '府県道'], ['city', '市道'], ['lane', '細い道']].map(c => `<option value="${c[0]}" ${o.cls === c[0] ? 'selected' : ''}>${c[1]}</option>`).join('')}</select>` : ''}
         片側 <span class="mp-seg">${(gov ? [0, 1, 2, 3] : [0, 1, 2]).map(n => `<button data-l="${n}" class="${o.lanes === n ? 'on' : ''}">${n ? n + '車線' : '細い道'}</button>`).join('')}</span></div>`}
     ${st.edit ? '' : `<div class="mp-row"><input class="mp-inp" data-nm placeholder="${rail ? '路線名（なくてもよい）' : '道路の名前（なくてもよい）'}" value="${esc(o.name)}"></div>`}
-    <div class="mp-row">${q ? `<span class="mp-cost">工事費 ${X(q.cost)}</span><span class="small"><span>使用料 1日 ${X(q.lease || 0)}</span>${q.tunnel ? `<span>・トンネル ${q.tunnel}マス</span>` : ''}${q.bridge ? `<span>・橋 ${q.bridge}マス</span>` : ''}${q.vtop != null && q.vtop !== q.vlim ? `<span>・制限速度 ${q.vlim}〜${q.vtop} km/h</span>` : `<span>・制限速度 ${q.vlim} km/h</span>`}</span>`
+    <div class="mp-row">${q ? `${q.cost > 0 || S.as !== 'gov' ? `<span class="mp-cost">工事費 ${X(q.cost)}</span>` : '<span>工事費なし（国の工事は無料）</span>'}<span class="small"><span>使用料 1日 ${X(q.lease || 0)}</span>${q.tunnel ? `<span>・トンネル ${q.tunnel}マス</span>` : ''}${q.bridge ? `<span>・橋 ${q.bridge}マス</span>` : ''}${q.vtop != null && q.vtop !== q.vlim ? `<span>・制限速度 ${q.vlim}〜${q.vtop} km/h</span>` : `<span>・制限速度 ${q.vlim} km/h</span>`}</span>`
       : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>'
-      : st.curve.length > 2 ? `<button class="btn" data-est ${tight || st.geoBad ? 'disabled' : ''}>見つもる</button><span class="muted small">工事費を出してから、つくれます</span>` : st.mode === 'arc' ? '<span class="muted small">地図をタップして角の点をおいてください（2つ以上）。角には、えらんだ半径のカーブが入ります。線路のはしから始めると延長、まん中から始めると分岐です</span>' : '<span class="muted small">地図をタップして点をおいてください（2つ以上）。はしを線の近くにおくと、つながります</span>'}</div>
+      : st.curve.length > 2 ? `<button class="btn" data-est ${tight || st.geoBad ? 'disabled' : ''}>見つもる</button><span class="muted small">${gov ? '国の工事は無料です（見つもらずに、つくれます）' : '工事費を出してから、つくれます'}</span>` : st.mode === 'arc' ? '<span class="muted small">地図をタップして角の点をおいてください（2つ以上）。角には、えらんだ半径のカーブが入ります。線路のはしから始めると延長、まん中から始めると分岐です</span>' : '<span class="muted small">地図をタップして点をおいてください（2つ以上）。はしを線の近くにおくと、つながります</span>'}</div>
     ${q ? needH(q.need) : ''}
     <div class="mp-row"><button class="btn" data-undo ${st.ctrl.length ? '' : 'disabled'}>1つもどす</button><button class="btn" data-cancel>キャンセル</button>
-      <button class="btn main" data-ok ${q && !tight && !st.geoBad && !hasNeed(q) ? '' : 'disabled'}>${st.edit ? 'この形にする' : `つくる（${esc(asName())}）`}</button></div>
+      <button class="btn main" data-ok ${(q || (gov && st.curve.length > 2)) && !tight && !st.geoBad && !(q && hasNeed(q)) ? '' : 'disabled'}>${st.edit ? 'この形にする' : `つくる（${esc(asName())}）`}</button></div>
     <p class="muted small" style="margin:6px 0 0">点はドラッグで動かせます。長押しで消せます</p>`, s => {
     s.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { st.mode = b.dataset.m; try { localStorage.setItem('mp_dm_' + st.kind, st.mode); } catch (e) {} drawUpdate(); });
     { const rd = s.querySelector('[data-rad]'); if (rd) rd.onchange = () => { st.rad = Number(rd.value); try { localStorage.setItem('mp_dr_' + st.kind, String(st.rad)); } catch (e) {} drawUpdate(); }; }
@@ -1990,7 +1990,7 @@ function drawSheet() {
       if (nm) o.name = nm.value;
       const r = await api(st.edit ? 'mp_seg_edit' : 'mp_seg_build', drawArgs(st, false));
       if (!r) return;
-      toast(`${st.edit ? '直しました' : 'つくりました'}（${fmt(r.cost)} X）`);
+      toast(r.cost > 0 ? `${st.edit ? '直しました' : 'つくりました'}（${fmt(r.cost)} X）` : (st.edit ? '直しました' : 'つくりました'));
       const xs = st.curve.map(p => p[0]), ys = st.curve.map(p => p[1]);
       refreshBox(Math.min(...xs) - 2, Math.min(...ys) - 2, Math.max(...xs) + 2, Math.max(...ys) + 2);
       if (st.edit) refreshBox(...st.edit.bb);
