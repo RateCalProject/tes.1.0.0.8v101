@@ -20004,13 +20004,13 @@ begin
     delete from mp_trains where route = rr and day is not null and day < _mp_today();
     perform _mp_resched(rr);
   end loop;
-  -- 地価の見なおし（筆：区画ごとの評価額・地価の合計）。t59：AIの会社の筆は7日に1回
+  -- 地価の見なおし（筆：区画ごとの評価額・地価の合計）。t59：AIの会社・国営の会社の筆は7日に1回
   perform _mp_parcel_vals_day();
   -- 建物の入りやすさ・相場（地価が変わったので）
   perform _mp_bld_tick_day();
   -- 固定資産税（筆ごと・評価額で。国の筆はなし）
   for o in select own_u, own_c, sum(val) v, count(*) n from mp_parcels where not gov group by own_u, own_c loop
-    if o.own_c is not null and _mp_ai_quiet(o.own_c) then continue; end if;   -- t59：AIの会社の建物（町の景色）は税なし
+    if o.own_c is not null and _mp_ai_quiet(o.own_c) then continue; end if;   -- t59：AIの会社・国営の会社の建物（町の景色）は税なし
     amt := round(o.v * _mp_rate('prop_tax'));
     if amt > 0 then perform _mp_soft_pay(o.own_u, o.own_c, false, amt, 'tax', format('固定資産税（%s筆）', o.n)); end if;
   end loop;
@@ -20294,11 +20294,11 @@ language sql set search_path = public as $$
       from t join tv on tv.tx = t.tx and tv.ty = t.ty group by t.parcel) v
    where v.parcel = p.id
 $$;
--- 毎日の地価の見なおし（t59）：人・会社・国の筆は毎日、AIの会社の筆は7日に1回（筆の番号で7つに分けて、1日1つずつ）
+-- 毎日の地価の見なおし（t59）：人・会社・国の筆は毎日、AIの会社・国営の会社の筆は7日に1回（筆の番号で7つに分けて、1日1つずつ）
 create or replace function public._mp_parcel_vals_day() returns void
 language sql set search_path = public as $$
   with sel as (select p.id from mp_parcels p left join companies c on c.id = p.own_c
-                where not coalesce(c.ai, false) or p.id % 7 = (extract(doy from now() at time zone 'Asia/Tokyo')::int % 7)),
+                where not coalesce(c.ai or c.official, false) or p.id % 7 = (extract(doy from now() at time zone 'Asia/Tokyo')::int % 7)),
        t as (select pc.parcel, _mp_t5(pc.x) tx, _mp_t5(pc.y) ty, count(*) n from mp_pcells pc join sel on sel.id = pc.parcel group by 1, 2, 3),
        tv as materialized (select d.tx, d.ty, v.cv, v.mv from (select distinct tx, ty from t) d, lateral _mp_tvals(d.tx, d.ty) v)
   update mp_parcels p set val = coalesce(v.val, p.val), mval = coalesce(v.mval, p.mval) from (
@@ -22245,7 +22245,7 @@ begin
   -- 町の人の家賃（国庫から持ち主へ）
   for o in select p.own_u, p.own_c, sum(x.rent) amt, count(*) n from mp_units x join mp_blds b on b.id = x.bld join mp_parcels p on p.id = b.parcel
             where x.t_kind = 'npc' and x.since < h group by p.own_u, p.own_c loop
-    if o.own_c is not null and _mp_ai_quiet(o.own_c) then continue; end if;   -- t59：AIの会社の建物（町の景色）は国庫からの家賃なし
+    if o.own_c is not null and _mp_ai_quiet(o.own_c) then continue; end if;   -- t59：AIの会社・国営の会社の建物（町の景色）は国庫からの家賃なし
     amt := round(o.amt / 24.0);
     if amt > 0 then perform _mp_earn(o.own_u, o.own_c, false, amt, 'rent', format('家賃（%s室）', o.n)); end if;
   end loop;
@@ -22273,9 +22273,9 @@ create or replace function public._mp_bld_tick_day() returns void
 language plpgsql set search_path = public as $$
 declare b record; t record; one boolean;
 begin
-  -- t59：AIの会社の建物は7日に1回（筆の番号で7つに分けて）。家賃は変わったものだけ書く
+  -- t59：AIの会社・国営の会社の建物は7日に1回（筆の番号で7つに分けて）。家賃は変わったものだけ書く
   for b in select bl.id from mp_blds bl join mp_parcels p on p.id = bl.parcel left join companies c on c.id = p.own_c
-            where not coalesce(c.ai, false) or p.id % 7 = (extract(doy from now() at time zone 'Asia/Tokyo')::int % 7) loop
+            where not coalesce(c.ai or c.official, false) or p.id % 7 = (extract(doy from now() at time zone 'Asia/Tokyo')::int % 7) loop
     perform _mp_bld_refresh(b.id);
   end loop;
   update mp_units x set rent = round((bl.mr ->> x.use)::numeric * x.m2 * bl.rent_lv::numeric, 1) from mp_blds bl
@@ -24592,7 +24592,7 @@ begin
     from mp_stations s where s.kind = 'air' and s.bld is not null and _mp_gov_term(s.bld));
 end $$;
 
-/* ---------- t59：発着口の認可制・さがす（住所・建物）・住民登録（役所の窓口）・AIの会社の建物 ---------- */
+/* ---------- t59：発着口の認可制・さがす（住所・建物）・住民登録（役所の窓口）・AIの会社・国営の会社の建物（町の景色） ---------- */
 
 -- 建物の場所の索引（まわりの建物の効果をしらべるとき。建物がふえても速く）
 create index if not exists mp_blds_pt on public.mp_blds using gist (point(cells[1], cells[2]));
@@ -25142,18 +25142,18 @@ begin
   return _mp_jm_json(j) || jsonb_build_object('office', case when ob.id is not null then jsonb_build_object('id', ob.id, 'name', ob.name, 'x', ob.x, 'y', ob.y) end);
 end $$;
 
--- AIの会社の建物を「町の景色」にするか（国庫からの家賃・固定資産税なし）。app_settings の mp_ai_quiet が '0' なら、ふつうの建物と同じ
+-- AIの会社・国営の会社の建物を「町の景色」にするか（国庫からの家賃・固定資産税なし）。app_settings の mp_ai_quiet が '0' なら、ふつうの建物と同じ
 create or replace function public._mp_ai_quiet(co int) returns boolean
 language sql stable set search_path = public as $$
-  select coalesce((select value from app_settings where key = 'mp_ai_quiet'), '1') = '1' and exists (select 1 from companies where id = co and ai)
+  select coalesce((select value from app_settings where key = 'mp_ai_quiet'), '1') = '1' and exists (select 1 from companies where id = co and (ai or official))
 $$;
-/* ---- AIの会社の建物（管理者が SQL でつくる）：あいている国の土地（同じ町字）に、AIの会社（companies.ai）の筆と建物。土地・工事のお金はかからない
+/* ---- AIの会社・国営の会社の建物（管理者が SQL でつくる）：あいている国の土地（同じ町字）に、その会社（companies.ai か official）の筆と建物。土地・工事のお金はかからない
    建物は、ふつうの人の建物と同じ決まり（用途地域・広さ・容積率・形：_mp_bld_check）。p_fill：はじめから町の人が入った状態に ---- */
 create or replace function public._mp_ai_build(p_cells int[], p_kind text, p_shape text, p_floors int, p_co int, p_name text, p_fill boolean) returns bigint
 language plpgsql set search_path = public as $$
 declare n int := coalesce(array_length(p_cells, 1), 0) / 2; x0 int; y0 int; x1 int; y1 int; ck text; nck int; bad int; pid bigint; p mp_parcels; q jsonb; bid bigint;
 begin
-  if not exists (select 1 from companies where id = p_co and ai and status = 'active') then raise exception 'AIの会社ではありません'; end if;
+  if not exists (select 1 from companies where id = p_co and (ai or official) and status = 'active') then raise exception 'AIの会社・国営の会社ではありません'; end if;
   if n = 0 then raise exception '区画がありません'; end if;
   create temp table if not exists _ab (x int, y int) on commit drop;
   delete from _ab;
