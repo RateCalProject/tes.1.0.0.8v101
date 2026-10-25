@@ -2454,7 +2454,8 @@ async function openDia(rid) {
   const draw = () => {
     const idx = new Map(D.stops.map((s, i) => [s.id, i]));
     m.set(D.name, `<p class="small" style="margin:0"><b style="color:${esc(D.color)}">■</b> <span>${KIND_L[D.kind] || D.kind}</span>・<span>${esc(D.owner)}</span>・<span>${D.km[D.km.length - 1]}km・停車 ${D.dwell}秒</span>
-        ${D.ok ? '' : `<br><span class="mp-warn"><span>走れません：</span> <span>${esc(D.why || '')}</span></span>`}${D.last && D.last.revenue != null ? `<br>さいきんの1時間：${fmt(D.last.served || 0)}人・${X(D.last.revenue || 0)}・${D.last.tph}本・混み具合${D.last.load}%・平均${D.last.speed}km/h` : ''}</p>
+        ${D.ok ? '' : `<br><span class="mp-warn"><span>走れません：</span> <span>${esc(D.why || '')}</span></span>`}${D.last && D.last.revenue != null ? (D.last.load != null && D.last.speed != null ? `<br>さいきんの1時間：${fmt(D.last.served || 0)}人・${X(D.last.revenue || 0)}・${D.last.tph}本・混み具合${D.last.load}%・平均${D.last.speed}km/h`
+          : `<br><span>さいきんの1時間：${fmt(D.last.served || 0)}人・${X(D.last.revenue || 0)}・${D.last.tph || 0}本</span>`) : ''}</p>
       <div class="tabs-s" style="margin-top:8px">${[['dia', 'ダイヤグラム'], ['tt1', '時刻表（下り）'], ['tt2', '時刻表（上り）'], ['list', '列車']].map(t => `<button data-tab="${t[0]}" class="${tab === t[0] ? 'on' : ''}">${t[1]}</button>`).join('')}</div>
       <div data-pane style="margin-top:8px"></div>
       ${D.mine ? `<div class="mp-row"><button class="btn main" data-add>${D.kind === 'ship' ? '＋ 便' : '＋ 列車'}</button><button class="btn" data-bulk>＋ まとめて</button><button class="btn" data-auto>運用を自動で組む</button>
