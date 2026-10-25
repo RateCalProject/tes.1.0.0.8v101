@@ -21533,7 +21533,22 @@ language sql immutable as $$
    {"k":"court","n":"裁判所","use":"office","u":0,"z":"abcdefghik","cpm":1300,"f0":1,"f1":30,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
    {"k":"kantei","n":"首相官邸","use":"office","u":0,"z":"abcdefghik","cpm":1800,"f0":1,"f1":10,"min":1,"max":1600,"sh":["full"],"gov":true},
    {"k":"natlib","n":"国立図書館","use":"office","u":0,"z":"abcdefghik","cpm":1000,"f0":1,"f1":20,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
-   {"k":"milhq","n":"司令部","use":"office","u":0,"z":"abcdefghik","cpm":1000,"f0":1,"f1":30,"min":1,"max":1600,"sh":["full","tower"],"gov":true}
+   {"k":"milhq","n":"司令部","use":"office","u":0,"z":"abcdefghik","cpm":1000,"f0":1,"f1":30,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"wardoffice","n":"区役所","use":"office","u":0,"z":"abcdefghik","cpm":1200,"f0":1,"f1":40,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"townhall","n":"町村役場","use":"office","u":0,"z":"abcdefghik","cpm":1000,"f0":1,"f1":20,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"gpost","n":"郵便局","use":"office","u":0,"z":"abcdefghik","cpm":700,"f0":1,"f1":20,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"police","n":"警察署","use":"office","u":0,"z":"abcdefghik","cpm":1000,"f0":1,"f1":20,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"firest","n":"消防署","use":"office","u":0,"z":"abcdefghik","cpm":900,"f0":1,"f1":10,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"publib","n":"図書館","use":"office","u":0,"z":"abcdefghik","cpm":900,"f0":1,"f1":10,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"civic","n":"市民会館","use":"office","u":0,"z":"abcdefghik","cpm":1000,"f0":1,"f1":10,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"pgym","n":"体育館","use":"office","u":0,"z":"abcdefghik","cpm":600,"f0":1,"f1":5,"min":1,"max":1600,"sh":["full"],"gov":true},
+   {"k":"cityhosp","n":"市立病院","use":"office","u":0,"z":"abcdefghik","cpm":1100,"f0":1,"f1":30,"min":1,"max":1600,"sh":["full","tower"],"gov":true},
+   {"k":"cleanfac","n":"清掃工場","use":"office","u":0,"z":"abcdefghik","cpm":600,"f0":1,"f1":6,"min":1,"max":1600,"sh":["full"],"gov":true},
+   {"k":"pwater","n":"浄水場","use":"office","u":0,"z":"abcdefghik","cpm":300,"f0":0,"f1":0,"min":1,"max":1600,"sh":["full"],"gov":true,"pat":"water"},
+   {"k":"natmus","n":"国立博物館","use":"office","u":0,"z":"abcdefghik","cpm":1200,"f0":1,"f1":10,"min":1,"max":1600,"sh":["full"],"gov":true},
+   {"k":"natart","n":"国立美術館","use":"office","u":0,"z":"abcdefghik","cpm":1200,"f0":1,"f1":10,"min":1,"max":1600,"sh":["full"],"gov":true},
+   {"k":"nattheater","n":"国立劇場","use":"office","u":0,"z":"abcdefghik","cpm":1200,"f0":1,"f1":10,"min":1,"max":1600,"sh":["full"],"gov":true},
+   {"k":"natstad","n":"国立競技場","use":"office","u":0,"z":"abcdefghik","cpm":300,"f0":0,"f1":0,"min":1,"max":1600,"sh":["full"],"gov":true,"pat":"track"}
   ]'::jsonb
 $$;
 -- プリセットを k で引けるように（t54l）
@@ -24184,6 +24199,23 @@ language sql immutable as $$
     select case when n = 0 then 36 else n end a, case when (n + 18) % 36 = 0 then 36 else (n + 18) % 36 end b
       from (select (round(((degrees(atan2((x1 - x0)::float8, (y0 - y1)::float8)) + 360)::numeric % 360) / 10)::int % 36) n) z) q
 $$;
+-- 平行な滑走路の名前（t57c）：同じ番号の滑走路が2本以上なら、小さい番号の向きに向いて左から L・C・R（例 02L/20R・02R/20L）。4本目からは番号だけ
+create or replace function public._mp_rwy_names(sid bigint) returns void
+language plpgsql set search_path = public as $$
+declare g record; r record; i int; n int; h float8; lx float8; ly float8; sf text; lo text; hi text; nm text; chg boolean := false;
+begin
+  for g in select _mp_rwy_name(x0, y0, x1, y1) base, count(*) c from mp_rwys where st = sid group by 1 loop
+    lo := split_part(g.base, '/', 1); hi := split_part(g.base, '/', 2);
+    h := radians(lo::int * 10); lx := -cos(h); ly := -sin(h);         -- 小さい番号の向き（北から右まわり）に向いて左がわ
+    i := 0; n := g.c;
+    for r in select id, name, (x0 + x1) / 2.0 * lx + (y0 + y1) / 2.0 * ly s from mp_rwys where st = sid and _mp_rwy_name(x0, y0, x1, y1) = g.base order by 3 desc, id loop
+      i := i + 1;
+      sf := case when n = 1 or i > 3 then '' when i = 1 then 'L' when i = n or (n >= 3 and i = 3) then 'R' else 'C' end;
+      nm := lo || sf || '/' || hi || case sf when 'L' then 'R' when 'R' then 'L' else sf end;
+      if r.name is distinct from nm then update mp_rwys set name = nm where id = r.id; chg := true; end if;
+    end loop;
+  end loop;
+end $$;
 -- 空港の滑走路の長さ（乗り場の plat）＝いちばん長い滑走路
 create or replace function public._mp_air_plat(sid bigint) returns void
 language sql set search_path = public as $$
@@ -24216,7 +24248,7 @@ begin
   for c in select distinct _mp_t5(x) tx, _mp_t5(y) ty from _rw loop
     select * into cc from _mp_cell(c.tx, c.ty);
     if cc.t is null then why := jsonb_set(why, '{out}', to_jsonb(coalesce((why ->> 'out')::int, 0) + 1));
-    elsif cc.t in ('S', 'D', 'R', 'L') then why := jsonb_set(why, '{water}', to_jsonb(coalesce((why ->> 'water')::int, 0) + 1));
+    elsif cc.t in ('D', 'R', 'L') then why := jsonb_set(why, '{water}', to_jsonb(coalesce((why ->> 'water')::int, 0) + 1));   -- 浅い海（S）の上は、うめたてて引ける（t57c：羽田のように）
     elsif cc.t in ('M', 'K') then why := jsonb_set(why, '{mtn}', to_jsonb(coalesce((why ->> 'mtn')::int, 0) + 1));
     elsif cc.z = 'j' then why := jsonb_set(why, '{park}', to_jsonb(coalesce((why ->> 'park')::int, 0) + 1));
     end if;
@@ -24227,7 +24259,7 @@ begin
   if n > 0 then why := why || jsonb_build_object('road', n); end if;
   select count(*) into n from _rw r join mp_pcells pc on pc.x = r.x and pc.y = r.y;
   if n > 0 then why := why || jsonb_build_object('owned', n); end if;
-  msg := coalesce(msg, case when why ? 'out' then '地図の外にかかっています' when why ? 'water' then '水の上には引けません（海・川・湖）'
+  msg := coalesce(msg, case when why ? 'out' then '地図の外にかかっています' when why ? 'water' then '深い海・川・湖の上には引けません（浅い海の上は、うめたてて引けます）'
                             when why ? 'mtn' then '山には引けません' when why ? 'park' then '公園には引けません'
                             when why ? 'road' then '道路・線路・駅・車庫・ほかの滑走路にかかっています' when why ? 'owned' then '筆（土地・建物）にかかっています' end);
   return jsonb_build_object('ok', msg is null, 'msg', msg, 'len', len, 'sta', sid, 'sname', snm, 'why', why);
@@ -24254,7 +24286,8 @@ begin
   insert into mp_occ(x, y, what, ref) select distinct _mp_t5(c.x), _mp_t5(c.y), 'rwy', rid from _mp_rwy_cells(x0, y0, x1, y1, w) c on conflict do nothing;
   perform _mp_pay(null, null, true, cost, 'rwy', format('滑走路 %s（%sm・%s）を引いた', nm, len, q ->> 'sname'));
   perform _mp_air_plat(sid);
-  perform _mp_chg('rwy', rid, 'set', box(point(least(x0, x1) / 100.0 - 2, least(y0, y1) / 100.0 - 2), point(greatest(x0, x1) / 100.0 + 2, greatest(y0, y1) / 100.0 + 2)));
+  perform _mp_rwy_names(sid); select name into nm from mp_rwys where id = rid;   -- 平行な滑走路は L・C・R（t57c）
+  perform _mp_chg('rwy', rid, 'set', (select box(point(least(min(r.x0), min(r.x1)) / 100.0 - 2, least(min(r.y0), min(r.y1)) / 100.0 - 2), point(greatest(max(r.x0), max(r.x1)) / 100.0 + 2, greatest(max(r.y0), max(r.y1)) / 100.0 + 2)) from mp_rwys r where r.st = sid));
   perform _mp_chg('sta', sid, 'set', (select box(point(s.x / 100.0 - 3, s.y / 100.0 - 3), point(s.x / 100.0 + 3, s.y / 100.0 + 3)) from mp_stations s where s.id = sid));
   for rr in select r.id from mp_routes r where r.kind = 'air' and sid = any(r.stops) loop perform _mp_resched(rr); end loop;   -- 滑走路の長さの注意
   return jsonb_build_object('ok', true, 'id', rid, 'len', len, 'cost', cost, 'name', nm, 'sta', sid, 'sname', q ->> 'sname',
@@ -24270,6 +24303,10 @@ begin
   delete from mp_rwys where id = p_id returning * into r;
   if r.id is null then raise exception '滑走路が見つかりません'; end if;
   perform _mp_air_plat(r.st);
+  perform _mp_rwy_names(r.st);   -- 平行な滑走路の L・C・R をつけなおす（t57c）
+  if exists (select 1 from mp_rwys x where x.st = r.st) then
+    perform _mp_chg('rwy', (select max(x.id) from mp_rwys x where x.st = r.st), 'set', (select box(point(least(min(x.x0), min(x.x1)) / 100.0 - 2, least(min(x.y0), min(x.y1)) / 100.0 - 2), point(greatest(max(x.x0), max(x.x1)) / 100.0 + 2, greatest(max(x.y0), max(x.y1)) / 100.0 + 2)) from mp_rwys x where x.st = r.st));
+  end if;
   perform _mp_chg('rwy', r.id, 'del', box(point(least(r.x0, r.x1) / 100.0 - 2, least(r.y0, r.y1) / 100.0 - 2), point(greatest(r.x0, r.x1) / 100.0 + 2, greatest(r.y0, r.y1) / 100.0 + 2)));
   perform _mp_chg('sta', r.st, 'set', (select box(point(s.x / 100.0 - 3, s.y / 100.0 - 3), point(s.x / 100.0 + 3, s.y / 100.0 + 3)) from mp_stations s where s.id = r.st));
   for rr in select x.id from mp_routes x where x.kind = 'air' and r.st = any(x.stops) loop perform _mp_resched(rr); end loop;
@@ -24598,27 +24635,27 @@ begin
             '_mp_port_isl','_mp_port_open','_mp_port_owner_trg','_mp_port_pier','_mp_pref_road','_mp_pref_type','_mp_proj','_mp_pub_cells',
             '_mp_pub_of','_mp_rail_path','_mp_rate','_mp_renet','_mp_resample','_mp_resched','_mp_rev','_mp_road_mul',
             '_mp_road_v','_mp_road_w','_mp_role_kind','_mp_room','_mp_route_catch','_mp_route_sta','_mp_route_uses','_mp_routes_fix',
-            '_mp_run','_mp_run_check','_mp_run_mark','_mp_rwy_cells','_mp_rwy_check','_mp_rwy_gone','_mp_rwy_name','_mp_same',
-            '_mp_sc_info','_mp_sc_init','_mp_sc_kinds','_mp_sc_op','_mp_sc_owes','_mp_sc_recipes','_mp_sc_riders','_mp_sc_school_calc',
-            '_mp_sc_tick_hour','_mp_sc_touch','_mp_sea','_mp_sea_leg','_mp_sea_seg','_mp_seg_blocked','_mp_seg_cells_arr','_mp_seg_chain',
-            '_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_slot_held','_mp_slot_init','_mp_slot_live','_mp_slot_mark','_mp_slot_next',
-            '_mp_slot_notice','_mp_slot_tick','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_sta_trk','_mp_struct_cells','_mp_sub',
-            '_mp_t49_from_tiles','_mp_t5','_mp_term_kind','_mp_ters','_mp_thin','_mp_thru_link','_mp_thru_ok','_mp_tick',
-            '_mp_tick_day','_mp_tick_hour','_mp_tiles','_mp_tmul','_mp_today','_mp_train_calc','_mp_train_json','_mp_train_times',
-            '_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim','_mp_vruns','_mp_world','_mp_zname','_mp_zone_rule',
-            'mp_admin_airport','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_lvset','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state',
-            'mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set',
-            'mp_boot','mp_car_log','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_gone','mp_cars_list',
-            'mp_cho_get','mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia','mp_dia_undo','mp_form_del','mp_form_order',
-            'mp_form_set','mp_home_clear','mp_home_get','mp_home_set','mp_kinds_list','mp_kinds_set','mp_land_buy','mp_land_decide',
-            'mp_land_req','mp_land_req_del','mp_land_reqs','mp_ledger_days','mp_ledger_page','mp_makers','mp_op_del','mp_op_export',
-            'mp_op_import','mp_op_save','mp_ops_list','mp_parcel_buy','mp_parcel_merge','mp_parcel_rent','mp_parcel_sell','mp_parcel_split',
-            'mp_poll','mp_route_del','mp_route_pat','mp_route_save','mp_routes_list','mp_rwy_build','mp_rwy_del','mp_sc_list',
-            'mp_sc_set','mp_seg_build','mp_seg_del','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_speed','mp_seg_split',
-            'mp_slot_admin','mp_slot_bid','mp_slot_get','mp_slot_list','mp_spot','mp_sta_build','mp_sta_edit','mp_sta_trk',
-            'mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list','mp_thru_req','mp_train_autoform','mp_train_bulk',
-            'mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market','mp_unit_mine','mp_unit_own','mp_unit_set',
-            'mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer') loop
+            '_mp_run','_mp_run_check','_mp_run_mark','_mp_rwy_cells','_mp_rwy_check','_mp_rwy_gone','_mp_rwy_name','_mp_rwy_names',
+            '_mp_same','_mp_sc_info','_mp_sc_init','_mp_sc_kinds','_mp_sc_op','_mp_sc_owes','_mp_sc_recipes','_mp_sc_riders',
+            '_mp_sc_school_calc','_mp_sc_tick_hour','_mp_sc_touch','_mp_sea','_mp_sea_leg','_mp_sea_seg','_mp_seg_blocked','_mp_seg_cells_arr',
+            '_mp_seg_chain','_mp_seg_join2','_mp_seg_r','_mp_seg_remove','_mp_slot_held','_mp_slot_init','_mp_slot_live','_mp_slot_mark',
+            '_mp_slot_next','_mp_slot_notice','_mp_slot_tick','_mp_soft_pay','_mp_split','_mp_sta_cells','_mp_sta_trk','_mp_struct_cells',
+            '_mp_sub','_mp_t49_from_tiles','_mp_t5','_mp_term_kind','_mp_ters','_mp_thin','_mp_thru_link','_mp_thru_ok',
+            '_mp_tick','_mp_tick_day','_mp_tick_hour','_mp_tiles','_mp_tmul','_mp_today','_mp_train_calc','_mp_train_json',
+            '_mp_train_times','_mp_unit_mr','_mp_use_name','_mp_value','_mp_vlim','_mp_vruns','_mp_world','_mp_zname',
+            '_mp_zone_rule','mp_admin_airport','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_lvset','mp_admin_place_at','mp_admin_rates','mp_admin_rename',
+            'mp_admin_state','mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote',
+            'mp_bld_set','mp_boot','mp_car_log','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_gone',
+            'mp_cars_list','mp_cho_get','mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia','mp_dia_undo','mp_form_del',
+            'mp_form_order','mp_form_set','mp_home_clear','mp_home_get','mp_home_set','mp_kinds_list','mp_kinds_set','mp_land_buy',
+            'mp_land_decide','mp_land_req','mp_land_req_del','mp_land_reqs','mp_ledger_days','mp_ledger_page','mp_makers','mp_op_del',
+            'mp_op_export','mp_op_import','mp_op_save','mp_ops_list','mp_parcel_buy','mp_parcel_merge','mp_parcel_rent','mp_parcel_sell',
+            'mp_parcel_split','mp_poll','mp_route_del','mp_route_pat','mp_route_save','mp_routes_list','mp_rwy_build','mp_rwy_del',
+            'mp_sc_list','mp_sc_set','mp_seg_build','mp_seg_del','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_speed',
+            'mp_seg_split','mp_slot_admin','mp_slot_bid','mp_slot_get','mp_slot_list','mp_spot','mp_sta_build','mp_sta_edit',
+            'mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list','mp_thru_req','mp_train_autoform',
+            'mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market','mp_unit_mine','mp_unit_own',
+            'mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
       execute format('revoke all on function %s from authenticated', f.sig);

@@ -369,6 +369,8 @@ function prepRwy(r) {
   r.bb = [Math.min(ax, bx) - r.w, Math.min(ay, by) - r.w, Math.max(ax, bx) + r.w, Math.max(ay, by) + r.w];
   const h = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360, na = Math.round(h / 10) % 36 || 36, nb = (na + 18) % 36 || 36;
   r.na = String(na).padStart(2, '0'); r.nb = String(nb).padStart(2, '0');
+  const m = /^(\d{2})([LCR]?)\/(\d{2})([LCR]?)$/.exec(r.n || '');   // 平行な滑走路の L・C・R（t57c。名前から）
+  if (m) { const f = { [m[1]]: m[1] + m[2], [m[3]]: m[3] + m[4] }; r.na = f[r.na] || r.na; r.nb = f[r.nb] || r.nb; }
   return r;
 }
 // 筆：[id, [y, x0, x1, …], 1 他人・2 自分, 売り出し, 建物, 地番, 持ち主] → 区画の塗りと外まわり（マスの単位の Path2D）・まん中・大きさ
@@ -489,6 +491,8 @@ function drawRwys(g, it, z, v) {
     if (r.bb[2] < v.x0 - 1 || r.bb[0] > v.x1 + 1 || r.bb[3] < v.y0 - 1 || r.bb[1] > v.y1 + 1) continue;
     const [ax, ay, bx, by] = r.P, ux = r.ux, uy = r.uy, nx = -uy, ny = ux, hw = r.w / 2;
     g.lineCap = 'butt';
+    // 滑走路のまわりの土地（うめたて地・着陸帯。t57c）：少し広く・はしの先まで
+    g.strokeStyle = '#d6d1c1'; g.lineWidth = Math.max(3, r.w * 1.9 * z); g.beginPath(); g.moveTo(sx(ax - ux * 0.35), sy(ay - uy * 0.35)); g.lineTo(sx(bx + ux * 0.35), sy(by + uy * 0.35)); g.stroke();
     g.strokeStyle = '#555a61'; g.lineWidth = Math.max(2, r.w * z); g.beginPath(); g.moveTo(sx(ax), sy(ay)); g.lineTo(sx(bx), sy(by)); g.stroke();
     if (z >= 3) {
       g.strokeStyle = 'rgba(255,255,255,.6)'; g.lineWidth = Math.max(1, 0.025 * z);
@@ -1211,7 +1215,7 @@ const TOOL_HINT = {
   look: '', land: '土地：2か所タップして四角くえらびます（区画は10m四方）',
   rail: '線路：タップして点をおきます。線路のはしから始めると延長、まん中から始めると分岐。点はドラッグで動かせます', road: '道路：タップして点をおきます。道路のはし・まん中から始めると、つながります。点はドラッグで動かせます',
   sta: '駅：ホームの起点をタップ（自分の線路の上）。バス停は道路の上をタップ', dep: '車両基地：自分の線路の上で起点をタップ（バスの営業所は道路の横をタップ）', del: 'こわす：自分の線・駅・車庫・建物をタップ',
-  rwy: '滑走路（国）：両はしを2か所タップします（まっすぐ・はば60m・800〜4,000m。2km 以内の国の空港の滑走路になります）'
+  rwy: '滑走路（国）：両はしを2か所タップします（まっすぐ・はば60m・800〜4,000m。2km 以内の国の空港の滑走路になります。浅い海の上にも引けます）'
 };
 function setTool(t) {
   if (S.toolEnd) { const f = S.toolEnd; S.toolEnd = null; f(); }
@@ -2420,7 +2424,7 @@ function openHelp() {
     <p><b>バス・トラック</b>：1980年ごろの性能のバス（路線バス・観光バスなど）とトラック（2t・4t・10t・トレーラー）を、バスの営業所で注文できます。自動車工場（人・会社の工場）をメーカーにえらぶと、その工場の鉄鋼でつくります（自分の工場なら部品代だけ）。トラックは自分の工場・田畑・港の荷物を運び、そのぶん運送費がかかりません（1台で1時間に 積める重さ×300km÷24 t・km。トラックターミナルで +10%）。</p>
     <p><b>鉄道車両工場</b>：鉄鋼（近くの製鉄所から）で鉄道車両をつくります。≡ →「車両と編成」で注文するときにメーカーとしてえらべます。工場を動かしている名義の注文は部品代（定価の45%）と鉄鋼だけ。ほかの人・会社には値段の水準（定価の40〜150%）で売れます。1日につくれる両数は延床面積で決まり、注文が多いと納車が先になります。</p>
     <p><b>フェリー・船</b>：海の近くの筆に「フェリーターミナル」を建てると、港（⚓ 乗り場）と船の置き場ができます。船（1980年ごろの性能：旅客船・小型〜大型フェリー・高速船）は、≡ →「車両と編成」で港をえらんで注文します（国の造船所は24時間。造船所をえらぶと、その鉄鋼でつくります）。≡ →「系統とダイヤ」の「＋ 航路（フェリー）」で港を順にタップすると、海の上の道を自動でさがします（曲がり角の点はドラッグで動かせ、長押しで消せます）。便を入れると人を乗せて運賃が入ります。フェリーは、海をこえる荷物（工場の仕入れ・お店への食品）をトラックごと運び、その運賃は航路の持ち主に入ります（自分の航路なら運賃はかかりません）。フェリーの便がない島とは、荷物を運べません。ほかの人の港は、持ち主が貸し出しているものだけ航路に入れられます。</p>
-    <p><b>空港・飛行機</b>：空港は国の建物で、国（管理者）が建てます。まん中に空港の乗り場（✈）と駐機場があります（飛行場・地方空港・空港・国際空港）。滑走路は国が道路のように引きます（「✈ 滑走路」。まっすぐ・800〜4,000m）。空港の滑走路の長さは、いちばん長い滑走路です。だれでも国の空港の駐機場に飛行機を置けます（みんなで使います）。飛行機（1980年ごろの性能：コミューター機・プロペラ旅客機・小型ジェット・中型ワイドボディ・ジャンボ）は、≡ →「車両と編成」で空港をえらんで注文します（国の航空機メーカーで48時間）。滑走路が短い空港には、大きな飛行機は置けず、離着陸もできません。≡ →「系統とダイヤ」の「＋ 空路（飛行機）」で空港を順にタップすると、まっすぐ飛ぶ路線ができます（空港どうしは10km以上）。空路に入れた空港ごとに、1路線・1日の使用料を国にはらいます。空港のまわり（10km）の人が乗り、運賃は距離で決まります。座席の数までしか乗れません。</p>
+    <p><b>空港・飛行機</b>：空港は国の建物で、国（管理者）が建てます。まん中に空港の乗り場（✈）と駐機場があります（飛行場・地方空港・空港・国際空港）。滑走路は国が道路のように引きます（「✈ 滑走路」。まっすぐ・800〜4,000m。浅い海の上にも、うめたてて引けます）。空港の滑走路の長さは、いちばん長い滑走路です。だれでも国の空港の駐機場に飛行機を置けます（みんなで使います）。飛行機（1980年ごろの性能：コミューター機・プロペラ旅客機・小型ジェット・中型ワイドボディ・ジャンボ）は、≡ →「車両と編成」で空港をえらんで注文します（国の航空機メーカーで48時間）。滑走路が短い空港には、大きな飛行機は置けず、離着陸もできません。≡ →「系統とダイヤ」の「＋ 空路（飛行機）」で空港を順にタップすると、まっすぐ飛ぶ路線ができます（空港どうしは10km以上）。空路に入れた空港ごとに、1路線・1日の使用料を国にはらいます。空港のまわり（10km）の人が乗り、運賃は距離で決まります。座席の数までしか乗れません。</p>
     <p><b>発着口</b>：空港ごとに発着口があり（飛行場2・地方空港4・空港8・国際空港16。国がふやせます）、1つで、その空港を出る便を1時間に1便出せます。発着口を使う権利は入札で買います（✈ →「🛫 発着口・入札」。24時間・いちばん高い人が落札。お金は国庫へ）。入札のお金はあずかり、ほかの人が上回ったら返します。権利は30日で、期限がきたら、また入札に出ます。持っている発着口より多い便は飛びません（便に【発着口】の注意が出ます）。≡ →「発着口（空港）」で空港の一覧。</p>
     <p><b>自分の住所</b>：地図で区画か建物をタップ →「ここを自分の住所に」（建物なら部屋もえらべます）。住所はあなたのページ（人のページ）でみんなに見えます。地図には🏠が出ます（自分にだけ）。≡ →「自分の住所」で見る・消す。</p>
     <p><b>風の芽大学</b>：風の芽大学中央駅のまわりは、風の芽大学 麦畑キャンパス（約140ha）。本部・図書館・学部・研究所・大学病院・附属学校・学生寮・グラウンド・実験農場（麦畑）などがならぶ、国の建物です。</p>
@@ -3464,6 +3468,12 @@ const BK = {
   // 国の建物（t56）：府県庁・官庁・国会議事堂・裁判所・首相官邸・国立図書館・司令部
   prefhall: ['#b9a27a', '#efe5d2', '#d3c2a0'], govhall: ['#a7b3c1', '#e8ecf1', '#c4cdd8'], diet: ['#d6cbb6', '#f6f1e6', '#e3d8c4'],
   court: ['#b5ada0', '#efebe4', '#d3ccc0'], kantei: ['#c3b597', '#f3eee2', '#dbd0b9'], natlib: ['#9c8c70', '#eee8db', '#d2c6af'], milhq: ['#8a977a', '#e3e8dc', '#b6c0a8'],
+  // 国の建物（t58）：区役所・町村役場・郵便局・警察署・消防署・図書館・市民会館・体育館・市立病院・清掃工場・浄水場・国立博物館・国立美術館・国立劇場・国立競技場
+  wardoffice: ['#c9b48c', '#f1e8d6', '#d8c6a3'], townhall: ['#c7b48f', '#f2eadb', '#d9c9a9'], gpost: ['#d98a7a', '#f6e7e2', '#dfbcb3'],
+  police: ['#7f93ad', '#e3e9f0', '#b4c1d1'], firest: ['#c96a5a', '#f3e2dd', '#d9b2a9'], publib: ['#8a9a6e', '#eeeee0', '#ccd0b8'],
+  civic: ['#b59a7a', '#f1e9de', '#d6c5ae'], pgym: ['#8fb0c6', '#e9f0f4', '#c3d3de'], cityhosp: ['#e4e8ec', '#ffffff', '#d7dde3'],
+  cleanfac: ['#9aa0a6', '#e3e5e7', '#bfc4c8'], pwater: ['#9cc4d6'], natmus: ['#a99a80', '#f0ebe1', '#d4cab8'], natart: ['#b8aa96', '#f3eee6', '#d9d0c2'],
+  nattheater: ['#8a4f45', '#eadcd6', '#c9aaa2'], natstad: ['#93c56a'],
   // 風の芽大学（t54i）：本部・校舎・研究棟・図書館・講堂・体育館・学生会館・学生寮・大学病院・博物館・附属学校・温室・グラウンド・実験農場・緑地・並木道
   uhq: ['#a65a46', '#efe2d4', '#d4bfaa'], ukan: ['#c08a68', '#f2e8dc', '#d9c8b4'], ulab: ['#9fb0bf', '#e6eaee', '#bcc6cf'],
   ulib: ['#6f8a5e', '#efeadf', '#d3c9b6'], uhall: ['#8c4a3c', '#eadccd', '#cdb9a3'], ugym: ['#7fa0b8', '#e8edf1', '#c5d0d8'],
@@ -3650,9 +3660,11 @@ const SYM_K = { shrine: 'torii', temple: 'manji', church: 'cross', superonsen: '
   baseball: 'stadium', soccer: 'stadium', arena: 'stadium', athletics: 'stadium', museum: 'museum', artmuseum: 'museum', science: 'museum', umus: 'museum',
   aquarium: 'fish', fishing: 'fish', zoo: 'tree', botanical: 'tree', camp: 'tent', amuse: 'wheel', golf: 'flag', golfrange: 'flag', ski: 'mount',
   hospital: 'hosp', bighosp: 'hosp', erhosp: 'hosp', uhosp: 'hosp', nursing: 'care', care: 'care', dayserv: 'care', uschool: 'sch',
+  gpost: 'post', wardoffice: 'hall', townhall: 'town', police: 'police', firest: 'fire', publib: 'book', civic: 'civic', pgym: 'stadium', cityhosp: 'hosp',   // t58
+  cleanfac: 'gear', pwater: 'drop', natmus: 'museum', natart: 'museum', nattheater: 'theater', natstad: 'stadium',
   postoffice: 'post', cityhall: 'hall', prefhall: 'pref', govhall: 'gov', kantei: 'gov', diet: 'diet', court: 'court', natlib: 'book', milhq: 'mil', thermal: 'power', solar: 'power', wind: 'power', truckterm: 'truck', busterm: 'bus', water: '', garbage: '' };
 // 重なったときに先に出すもの（小さいほど先）
-const SYM_P = { pref: 0, diet: 0, hall: 0, court: 0, gov: 0, book: 1, mil: 1, hosp: 1, sch: 2, torii: 3, manji: 3, cross: 3, stadium: 4, museum: 4, wheel: 4, fish: 5, tree: 5, hotel: 5, onsen: 5, mount: 5,
+const SYM_P = { pref: 0, diet: 0, hall: 0, court: 0, gov: 0, town: 0, police: 1, fire: 1, book: 1, mil: 1, hosp: 1, civic: 3, theater: 4, drop: 6, sch: 2, torii: 3, manji: 3, cross: 3, stadium: 4, museum: 4, wheel: 4, fish: 5, tree: 5, hotel: 5, onsen: 5, mount: 5,
   flag: 6, tent: 6, star: 6, post: 6, clinic: 7, care: 7, power: 8, truck: 8, bus: 8, gear: 9, anchor: 9, P: 10 };
 function symOf(b) {
   if (SYM_K[b.kind] != null) return SYM_K[b.kind] || null;
@@ -3665,7 +3677,7 @@ function symOf(b) {
   if (p.use === 'parking' && p.cat === 'park') return 'P';
   return null;
 }
-const SYM_TXT = { sch: SYM_SCH, manji: String.fromCharCode(0x534d), post: String.fromCharCode(0x3012) };   // 文・卍・〒
+const SYM_TXT = { sch: SYM_SCH, manji: String.fromCharCode(0x534d), post: String.fromCharCode(0x3012), civic: String.fromCharCode(0x4f1a), theater: String.fromCharCode(0x5287) };   // 文・卍・〒・会・劇
 function symDraw(g, k, X, Y) {
   g.save(); g.translate(X, Y); g.lineJoin = 'round'; g.lineCap = 'round';
   const W = 'rgba(255,255,255,.95)';
@@ -3677,6 +3689,13 @@ function symDraw(g, k, X, Y) {
     case 'manji': txt(SYM_TXT.manji, '#3d3328', 12); break;
     case 'post': disc(6.5, '#fff', '#c0392b'); g.font = 'bold 9px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#c0392b'; g.fillText(SYM_TXT.post, 0, 0.5); break;
     case 'hall': for (const [col, lw] of [[W, 3.6], ['#333', 1.6]]) for (const r of [6, 3]) { g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.strokeStyle = col; g.lineWidth = lw; g.stroke(); } break;
+    // t58：町村役場（○）・警察署（⊗）・消防署（さすまた）・市民会館（会）・国立劇場（劇）・浄水場（しずく）
+    case 'town': path(() => { g.arc(0, 0, 5.5, 0, Math.PI * 2); }, '#333', 1.6, '#fff'); break;
+    case 'police': path(() => { g.arc(0, 0, 6, 0, Math.PI * 2); g.moveTo(-4.2, -4.2); g.lineTo(4.2, 4.2); g.moveTo(4.2, -4.2); g.lineTo(-4.2, 4.2); }, '#1f3d7a', 1.5, '#fff'); break;
+    case 'fire': path(() => { g.moveTo(0, 6.5); g.lineTo(0, -1); g.moveTo(-5, -6.5); g.quadraticCurveTo(-5, -1, 0, -1); g.quadraticCurveTo(5, -1, 5, -6.5); g.moveTo(-3, 2.5); g.lineTo(3, 2.5); }, '#c0392b', 1.6); break;
+    case 'civic': disc(6.5, '#fff', '#5a4632'); g.font = 'bold 9px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#5a4632'; g.fillText(SYM_TXT.civic, 0, 0.5); break;
+    case 'theater': disc(6.5, '#fff', '#8a2f45'); g.font = 'bold 9px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#8a2f45'; g.fillText(SYM_TXT.theater, 0, 0.5); break;
+    case 'drop': path(() => { g.moveTo(0, -6.5); g.bezierCurveTo(1.5, -3.5, 5, -0.5, 5, 2); g.arc(0, 2, 5, 0, Math.PI); g.bezierCurveTo(-5, -0.5, -1.5, -3.5, 0, -6.5); g.closePath(); }, '#1f6fa8', 1.4, '#cfe6f5'); break;
     // 国の建物（t56）：府県庁（◎にまん中の点）・官庁（○に横線）・国会議事堂（ドーム）・裁判所（高札）・国立図書館（本）・司令部（旗）
     case 'pref': for (const [col, lw] of [[W, 3.6], ['#1f3d7a', 1.6]]) for (const r of [6.5, 3.6]) { g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.strokeStyle = col; g.lineWidth = lw; g.stroke(); }
       g.beginPath(); g.arc(0, 0, 1.6, 0, Math.PI * 2); g.fillStyle = '#1f3d7a'; g.fill(); break;
@@ -3728,7 +3747,8 @@ function bldMarks(g, bs, z) {
   }
 }
 // 建物の名前（とても近いとき）。国の大きい建物は大きい字
-const GOV_BIG = new Set(['cityhall', 'uhq', 'prefhall', 'govhall', 'diet', 'court', 'kantei', 'natlib', 'milhq']);
+const GOV_BIG = new Set(['cityhall', 'uhq', 'prefhall', 'govhall', 'diet', 'court', 'kantei', 'natlib', 'milhq',
+  'wardoffice', 'townhall', 'police', 'firest', 'publib', 'civic', 'pgym', 'cityhosp', 'cleanfac', 'pwater', 'natmus', 'natart', 'nattheater', 'natstad']);   // t58
 function bldNames(g, bs, z) {
   if (z < 24) return;
   for (const b of bs.slice().reverse()) {
