@@ -20020,7 +20020,7 @@ begin
        and exists (select 1 from mp_routes r where r.ok and s.id = any(r.stops) and exists (select 1 from mp_trains t where t.route = r.id and t.form is not null));
     update mp_centers set dp = dp * (1 + _mp_rate('grow') + case when ns > 0 then _mp_rate('grow_sta') * least(3, ns) else 0 end) where id = c.id;
   end loop;
-  update mp_routes set catch = null;   -- 利用できる人を見なおす
+  update mp_routes set catch = null where catch is not null;   -- 利用できる人を見なおす（t59s：WHERE をつける。Supabase の safeupdate）
   delete from mp_hours where hour < now() - interval '35 days';
   delete from mp_changes where at < now() - interval '3 days';
   delete from mp_ledger where created_at < now() - interval '60 days';
@@ -21192,10 +21192,10 @@ begin
   delete from t49c tc using (select distinct q.x, q.y from mp_land l, lateral _mp_pub_cells(l.x * 5, l.y * 5, l.x * 5 + 4, l.y * 5 + 4) q) pb where tc.x = pb.x and tc.y = pb.y;
   delete from t49c tc where exists (select 1 from mp_pcells pcl where pcl.x = tc.x and pcl.y = tc.y);
   update t49c t set ck = _mp_cho_at(t.tx, t.ty),
-                    v = (select case when m.t is null or m.t in ('S', 'D', 'R', 'L') or m.z = 'j' then null else _mp_cval(t.tx, t.ty) end from _mp_cell(t.tx, t.ty) m);
+                    v = (select case when m.t is null or m.t in ('S', 'D', 'R', 'L') or m.z = 'j' then null else _mp_cval(t.tx, t.ty) end from _mp_cell(t.tx, t.ty) m) where true;
   delete from t49c where ck is null or v is null;
   create index on t49c (x, y);
-  update t49c set lab = (x::bigint + 1000000) * 2000000 + (y + 1000000);
+  update t49c set lab = (x::bigint + 1000000) * 2000000 + (y + 1000000) where true;
   loop
     update t49c a set lab = m.mn from (
       select a2.x, a2.y, min(b.lab) mn from t49c a2 join t49c b
@@ -23534,7 +23534,7 @@ begin
      where tx.role = 'Truck' and tx.load > 0 and (cx.busy_until is null or cx.busy_until <= h) and cx.cond >= 20
      group by cx.own_u, cx.own_c;
   update _trk t2 set cap = t2.cap * (1 + 0.1 * least(3, (select count(*) from mp_blds bt, lateral _mp_sc_op(bt.id, h) ot
-                                                         where bt.kind = 'truckterm' and ot.ok and not ot.gv and ot.pu is not distinct from t2.pu and ot.pc is not distinct from t2.pc)));
+                                                         where bt.kind = 'truckterm' and ot.ok and not ot.gv and ot.pu is not distinct from t2.pu and ot.pc is not distinct from t2.pc))) where true;
 
   -- 2) 仕入れ（トラック）：材料のいる工場が、近くの工場・田畑・港の在庫から買う（市場の値段＋運送費）。輸入のほうが安いとき・足りないときは輸入。
   --   自分のトラックで運べる分は運送費なし。海をこえるときは、航路のフェリーにトラックをのせる（のせられる重さまで。運賃は航路の持ち主に。t54o）
@@ -23658,7 +23658,7 @@ begin
           insert into mp_sclog(at, bld, k, good, qty, amt) values (h, fa.bld, 'ferry', 'food', tr2.q, ff);
         end if;
       end loop;
-      delete from _ffare;
+      delete from _ffare where true;
     end loop;
     -- 人・会社が使っているお店：小売のもうけ
     for fa in select m.pu, m.pc, sum(m.a) a from _marg m group by m.pu, m.pc loop
@@ -24276,7 +24276,7 @@ begin
   end if;
   create temp table if not exists _rw (x int, y int) on commit drop;
   create temp table if not exists _rwb (x int, y int) on commit drop;
-  delete from _rw; delete from _rwb;
+  delete from _rw where true; delete from _rwb where true;   -- t59s：WHERE をつける（Supabase の safeupdate では WHERE のない DELETE がエラー）
   insert into _rw select * from _mp_rwy_cells(x0, y0, x1, y1, w);
   -- 地形（水・山・公園・地図の外）：マスごと
   for c in select distinct _mp_t5(x) tx, _mp_t5(y) ty from _rw loop
@@ -24389,7 +24389,7 @@ create or replace function public._mp_slot_mark() returns void
 language plpgsql set search_path = public as $$
 begin
   create temp table if not exists _sm (tid bigint primary key, w text) on commit drop;
-  delete from _sm;
+  delete from _sm where true;   -- t59s：WHERE をつける（Supabase の safeupdate では WHERE のない DELETE がエラー）
   insert into _sm
     with dep as (
       select t.id tid, r.own_u ou, r.own_c oc, (s.v ->> 0)::bigint st, ((((s.v ->> 2)::int / 3600) % 24) + 24) % 24 hr, (s.v ->> 2)::int dt
@@ -25156,12 +25156,12 @@ begin
   if not exists (select 1 from companies where id = p_co and (ai or official) and status = 'active') then raise exception 'AIの会社・国営の会社ではありません'; end if;
   if n = 0 then raise exception '区画がありません'; end if;
   create temp table if not exists _ab (x int, y int) on commit drop;
-  delete from _ab;
+  delete from _ab where true;
   insert into _ab select distinct p_cells[2 * i - 1], p_cells[2 * i] from generate_series(1, n) i;
   select min(x), min(y), max(x), max(y), count(*) into x0, y0, x1, y1, n from _ab;
   -- あいている国の土地か（筆・道路・線路・駅・車庫・滑走路・水・山・公園でない）
   create temp table if not exists _abz (x int, y int) on commit drop;
-  delete from _abz;
+  delete from _abz where true;
   insert into _abz select x, y from _mp_busy_cells(x0, y0, x1, y1) union select x, y from _mp_pub_cells(x0, y0, x1, y1);
   select count(*) into bad from _ab g where exists (select 1 from mp_pcells pc where pc.x = g.x and pc.y = g.y)
      or exists (select 1 from _abz b where b.x = g.x and b.y = g.y)
