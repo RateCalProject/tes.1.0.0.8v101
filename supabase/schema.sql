@@ -23412,7 +23412,8 @@ begin
   drop table if exists _scs;
   create temp table _scs on commit drop as
     select s.bld, s.grp, s.x, s.y, s.lv, op.ok, op.npc, op.gv, op.m2,
-           case when op.ok or op.npc then floor(op.m2 / (kd -> s.grp ->> 'spp')::real)::int else 0 end cap, 0::real pool, 1::real acc,
+           -- t59h：町の景色（AIの会社・国営の会社）の施設は、客を分けあわない（プレイヤーの施設の客をへらさない）
+           case when (op.ok or op.npc) and not (p.own_c is not null and _mp_ai_quiet(p.own_c)) then floor(op.m2 / (kd -> s.grp ->> 'spp')::real)::int else 0 end cap, 0::real pool, 1::real acc,
            coalesce((b.dem -> 'fx' ->> (kd -> s.grp ->> 'use'))::real, 0) fxv, p.val::numeric / greatest(p.n * 100, 1) lvm2
       from mp_sc s join mp_blds b on b.id = s.bld join mp_parcels p on p.id = b.parcel, lateral _mp_sc_op(s.bld, h) op
      where s.grp is not null and kd ? s.grp;
