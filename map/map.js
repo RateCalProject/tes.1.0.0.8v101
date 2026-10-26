@@ -16,6 +16,8 @@ const now = () => performance.now();
 const T = s => (typeof tr === 'function' ? tr(s) : s);
 const SEP = () => (window.I18N && !/^zh/.test(I18N.lang) ? ' ' : '');   // 訳した文をつなぐとき（日本語・中国語は空白なし）
 const X = n => fmt(n) + ' X';
+// 全角の数字・記号（日本語入力の「２」「，」など）を半角に。打った数を読むところは、これを通す
+const hw = v => String(v == null ? '' : v).replace(/[０-９．，－]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
 
 /* ---------- 状態 ---------- */
 const S = {
@@ -1065,12 +1067,23 @@ const asLabel = a => String((a && a.name) || '').replace(/（自分）$/, '');  
 const asName = () => asLabel(S.boot.as.find(a => a.as === S.as));
 // サーバーの「つくる・変える」。同じものがまだ送信中なら、もう一度は送らない（2回押し）
 const INFLIGHT = new Set();
+// サーバー・通信のエラーを日本語に（英語の文のままだと読めない）。もとの文は（ ）で
+function errJa(m) {
+  const s = String(m || '');
+  if (/[ぁ-んァ-ヶ一-龠]/.test(s)) return s;
+  const ja = /JWT|token|not authenticated|Auth session/i.test(s) ? 'ログインの期限が切れました。ページを読みこみなおしてください'
+    : /Load failed|Failed to fetch|NetworkError|network|fetch|aborted/i.test(s) ? '通信がとぎれました。もう一度ためしてください'
+    : /statement timeout|canceling statement/i.test(s) ? '時間がかかりすぎました。少したってから、もう一度ためしてください'
+    : /permission denied/i.test(s) ? 'この操作はできません。ログインが切れているかもしれません（ページを読みこみなおしてください）'
+    : 'エラーが起きました';
+  return s ? `${T(ja)}（${s}）` : T(ja);
+}
 async function api(fn, args, okMsg) {
   const key = args && args.p_dry !== true ? fn + JSON.stringify(args) : null;
   if (key && INFLIGHT.has(key)) return null;
   if (key) INFLIGHT.add(key);
   try { const r = await call(fn, args); if (okMsg) toast(okMsg); return r; }
-  catch (e) { toast(e.message); return null; }
+  catch (e) { toast(errJa(e.message)); return null; }
   finally { if (key) INFLIGHT.delete(key); }
 }
 // 他人の土地：見つもりの need（許可のいる筆）を出す。持ち主への申請ボタンつき
@@ -1460,7 +1473,7 @@ function showSta(s) {
     const ld = sh.querySelector('[data-lend]'); if (ld) ld.onclick = async () => {
       const v = prompt(gov ? T('国の空港の使用料（1路線・1日・X）。空にすると、新しい空路には使えなくなります（いまの空路は、そのまま使えます）') : T('ほかの人・会社に貸す使用料（1系統・1日・X）。空にすると貸しません（いま使っている系統は、そのまま使えます）'), s.ln != null ? String(s.ln) : '1000');
       if (v == null) return;
-      const t = String(v).replace(/[,，\s]/g, ''), n = t === '' ? null : Number(t);
+      const t = hw(v).replace(/[,，\s]/g, ''), n = t === '' ? null : Number(t);
       if (n != null && !(n >= 0)) return toast('数字を入れてください');
       const r = await api('mp_stop_lend', { p_id: s.id, p_lend: n }, gov ? (n == null ? '新しい空路には使えなくしました' : '使用料を決めました') : n == null ? '貸すのをやめました' : '貸し出します');
       if (r) { s.ln = r.lend; refreshBox(s.fx - 3, s.fy - 3, s.fx + 3, s.fy + 3); showSta(s); }
@@ -1666,7 +1679,7 @@ async function parcelSell(P) {
 async function parcelRent(P, cx, cy) {
   const v = prompt(T(`${P.ban}の貸出料（1区画・1日・X）。ほかの人・会社が、申請なしで線路・道路・駅・車庫に使えます。空にすると貸しません（標準 ${P.std} X）`), P.rent != null ? String(P.rent) : String(P.std));
   if (v == null) return;
-  const t = String(v).replace(/[,，\s]/g, ''), n = t === '' ? null : Number(t);
+  const t = hw(v).replace(/[,，\s]/g, ''), n = t === '' ? null : Number(t);
   if (n != null && !(n >= 0)) return toast('数字を入れてください');
   if (await api('mp_parcel_rent', { p_ids: [P.id], p_rent: n }, n == null ? '貸すのをやめました（つくってあるものは、そのままです）' : '貸出料を決めました')) showSpot(cx, cy);
 }
@@ -2367,9 +2380,13 @@ async function openSlots(st) {
       ${nlic ? `<h4 style="margin:10px 0 4px">国の認可制</h4>
         ${adm ? (reqs.length ? `<div class="mp-list">${reqs.map(a => `<div class="mp-item"><b><span>${esc(a.who)}</span></b> <small><span>${a.n}こ</span>・<span>${jdt(a.at)}</span>・<span>いま持っている ${a.held}こ</span></small>
               ${a.msg ? `<br><small>「<span>${esc(a.msg)}</span>」</small>` : ''}
-              <div class="mp-row" style="margin-top:4px"><button class="btn main" data-aok="${a.id}" data-an="${a.n}">認可する</button><button class="btn" data-ano="${a.id}">ことわる</button></div></div>`).join('')}</div>`
+              <div class="mp-row" style="margin-top:6px;align-items:center;flex-wrap:wrap;gap:6px"><span class="small">認可する数</span><input class="mp-inp" style="width:64px" inputmode="numeric" data-an-in="${a.id}" value="${Math.min(a.n, lfree)}"><span class="small">こ</span>
+                <input class="mp-inp" style="flex:1 1 150px" data-note-in="${a.id}" maxlength="200" placeholder="ひとこと（なくてもよい）"></div>
+              <div class="mp-row" style="margin-top:4px"><button class="btn main" data-aok="${a.id}">認可する</button><button class="btn" data-ano="${a.id}">ことわる</button></div></div>`).join('')}</div>`
             : '<p class="muted small">返事まちの申しこみはありません</p>')
-          : `${bidOk ? `<div class="mp-row"><button class="btn main" data-apply>申しこむ（${esc(asName())}）</button></div>` : ''}
+          : `${bidOk ? `<div class="mp-row" style="align-items:center;flex-wrap:wrap;gap:6px"><span class="small">ほしい数</span><input class="mp-inp" style="width:64px" inputmode="numeric" data-ap-n value="1"><span class="small">こ</span>
+                <input class="mp-inp" style="flex:1 1 150px" data-ap-msg maxlength="200" placeholder="使いみち（どこへの路線・1日何便など）"></div>
+              <div class="mp-row" style="margin-top:4px"><button class="btn main" data-apply>申しこむ（${esc(asName())}）</button></div>` : ''}
             ${d.apps.length ? `<div class="mp-list">${d.apps.map(a => `<div class="mp-item small"><b>${esc(T(APP_ST[a.st] || a.st))}</b> <span>${a.n}こ</span>${a.st === 'ok' ? `（<span>認可 ${a.got}こ</span>）` : ''}・<span>${jdt(a.at)}</span>
                 ${a.msg ? `<br>「<span>${esc(a.msg)}</span>」` : ''}${a.note ? `<br><span>国から</span>：「<span>${esc(a.note)}</span>」` : ''}
                 ${a.st === 'req' ? ` <button class="btn" data-acan="${a.id}" style="padding:2px 8px">とりさげる</button>` : ''}</div>`).join('')}</div>` : ''}`}` : ''}
@@ -2384,7 +2401,7 @@ async function openSlots(st) {
       ${adm ? `<h4 style="margin:10px 0 4px">国（管理者）</h4><div class="mp-row"><button class="btn" data-add>＋ ふやす</button><button class="btn" data-del>－ へらす</button>${afree ? '<button class="btn main" data-open>入札に出す</button>' : ''}<button class="btn" data-lic>認可制の番号</button></div>` : ''}
       <p class="muted small"><span>発着口1つで、この空港を出る便を1時間に1便出せます（持っている数より多い便は飛びません）。</span><span>入札は${d.hours}時間で、いちばん高い人が落札します（お金は国庫へ）。入札したお金はあずかり、ほかの人が上回ったら返します。</span><span>権利は${d.days}日。期限がきたら、また入札に出ます。</span>${nlic ? '<span>国の認可制の発着口は入札に出しません。何こほしいかと使いみちを書いて申しこみ、国が認可すると、無料・期限なしで使えます（国がとりけすまで。いらなくなったら国に返せます）。</span>' : ''}</p>`, b => {
       b.querySelectorAll('[data-bid]').forEach(x => x.onclick = async () => {
-        const id = Number(x.dataset.bid), t = String(b.querySelector(`[data-amt="${id}"]`).value).replace(/[,，\s]/g, ''), n = Number(t);
+        const id = Number(x.dataset.bid), t = hw(b.querySelector(`[data-amt="${id}"]`).value).replace(/[,，\s]/g, ''), n = Number(t);
         if (!(n > 0)) return toast('数字を入れてください');
         if (!confirm(T(`${fmt(n)} X で入札します（${asName()}の名義。お金はあずかり、ほかの人が上回ったら返します）。よろしいですか？`))) return;
         if (await api('mp_slot_bid', { p_auc: id, p_amt: n, p_as: S.as }, '入札しました')) load();
@@ -2395,43 +2412,47 @@ async function openSlots(st) {
       });
       const ad = b.querySelector('[data-add]'); if (ad) ad.onclick = async () => {
         const v = prompt(T('ふやす発着口の数（1〜50）'), '1'); if (v == null) return;
-        if (await api('mp_slot_admin', { p_st: st, p_op: 'add', p_n: Number(v), p_minp: 0 }, 'ふやしました')) load();
+        if (await api('mp_slot_admin', { p_st: st, p_op: 'add', p_n: Number(hw(v).replace(/[^\d]/g, '')), p_minp: 0 }, 'ふやしました')) load();
       };
       const dl = b.querySelector('[data-del]'); if (dl) dl.onclick = async () => {
         const v = prompt(T('へらす発着口の数（あいているものだけ。番号の大きいものから）'), '1'); if (v == null) return;
-        if (await api('mp_slot_admin', { p_st: st, p_op: 'del', p_n: Number(v), p_minp: 0 }, 'へらしました')) load();
+        if (await api('mp_slot_admin', { p_st: st, p_op: 'del', p_n: Number(hw(v).replace(/[^\d]/g, '')), p_minp: 0 }, 'へらしました')) load();
       };
       const op = b.querySelector('[data-open]'); if (op) op.onclick = async () => {
         const v = prompt(T(`入札に出す発着口の数（あき ${afree}）`), String(afree)); if (v == null) return;
         const p = prompt(T('最低価格（X）'), '100000000'); if (p == null) return;
-        const n = Number(String(p).replace(/[,，\s]/g, ''));
+        const n = Number(hw(p).replace(/[,，\s]/g, ''));
         if (!(n >= 0)) return toast('数字を入れてください');
-        if (await api('mp_slot_admin', { p_st: st, p_op: 'open', p_n: Number(v), p_minp: n }, '入札に出しました')) load();
+        if (await api('mp_slot_admin', { p_st: st, p_op: 'open', p_n: Number(hw(v).replace(/[^\d]/g, '')), p_minp: n }, '入札に出しました')) load();
       };
       const lc = b.querySelector('[data-lic]'); if (lc) lc.onclick = async () => {
         const v = prompt(T('国の認可制にする番号（1〜この番号まで。0 でなし）'), String(nlic ? Math.max(...d.slots.filter(x => x.lic).map(x => x.n)) : 0)); if (v == null) return;
-        const n = Number(String(v).replace(/[^\d]/g, '')); if (!(n >= 0) || String(v).trim() === '') return toast('数字を入れてください');
+        const dg = hw(v).replace(/[^\d]/g, ''), n = Number(dg); if (dg === '' || !(n >= 0)) return toast('数字を入れてください');
         if (await api('mp_slot_admin', { p_st: st, p_op: 'lic', p_n: n, p_minp: 0 }, '変えました')) load();
       };
+      // 申しこむ：数と使いみちは欄に入れる（画面の上のポップアップは使わない。日本語入力の確定前の数字が消えないように）
       const ap = b.querySelector('[data-apply]'); if (ap) ap.onclick = async () => {
-        const v = prompt(T(`ほしい発着口の数（1〜${Math.min(20, nlic)}）`), '1'); if (v == null) return;
-        const n = Number(String(v).replace(/[^\d]/g, '')); if (!(n >= 1)) return toast('数字を入れてください');
-        const msg = prompt(T('使いみち（どこへの路線・1日何便など。200文字まで）'), ''); if (msg == null) return;
+        const dg = hw((b.querySelector('[data-ap-n]') || {}).value).replace(/[^\d]/g, ''), n = Number(dg);
+        if (dg === '' || !(n >= 1)) return toast(`ほしい数を数字で入れてください（1〜${Math.min(20, nlic)}）`);
+        const msg = (b.querySelector('[data-ap-msg]') || {}).value || '';
         if (await api('mp_slot_apply', { p_st: st, p_n: n, p_msg: msg, p_as: S.as }, '申しこみました。国の返事がきたら通知がとどきます')) load();
       };
       b.querySelectorAll('[data-acan]').forEach(x => x.onclick = async () => {
         if (!confirm(T('この申しこみをとりさげますか？'))) return;
         if (await api('mp_slot_cancel', { p_app: Number(x.dataset.acan), p_as: S.as }, 'とりさげました')) load();
       });
+      // 認可・ことわる：数とひとことは、その申しこみの欄に入れる（画面の上のポップアップは使わない）
+      const inV = (k, id) => { const e = b.querySelector(`[data-${k}="${id}"]`); return e ? e.value : ''; };
       b.querySelectorAll('[data-aok]').forEach(x => x.onclick = async () => {
-        const v = prompt(T(`認可する数（あき ${lfree}）`), String(Math.min(Number(x.dataset.an), lfree))); if (v == null) return;
-        const n = Number(String(v).replace(/[^\d]/g, '')); if (!(n >= 1)) return toast('数字を入れてください');
-        const note = prompt(T('ひとこと（なくてもよい）'), ''); if (note == null) return;
-        if (await api('mp_slot_answer', { p_app: Number(x.dataset.aok), p_ok: true, p_n: n, p_note: note }, '認可しました')) load();
+        const id = Number(x.dataset.aok), dg = hw(inV('an-in', id)).replace(/[^\d]/g, ''), n = Number(dg);
+        if (dg === '' || !(n >= 1)) return toast(`認可する数を数字で入れてください（あき ${lfree}）`);
+        if (n > lfree) return toast(`あいている認可制の発着口は ${lfree}こです`);
+        if (await api('mp_slot_answer', { p_app: id, p_ok: true, p_n: n, p_note: inV('note-in', id) }, '認可しました')) load();
       });
       b.querySelectorAll('[data-ano]').forEach(x => x.onclick = async () => {
-        const note = prompt(T('ことわるわけ（なくてもよい）'), ''); if (note == null) return;
-        if (await api('mp_slot_answer', { p_app: Number(x.dataset.ano), p_ok: false, p_n: 0, p_note: note }, 'ことわりました')) load();
+        const id = Number(x.dataset.ano);
+        if (!confirm(T('この申しこみをことわりますか？（ひとことの欄に書いたことが、わけとしてとどきます）'))) return;
+        if (await api('mp_slot_answer', { p_app: id, p_ok: false, p_n: 0, p_note: inV('note-in', id) }, 'ことわりました')) load();
       });
       b.querySelectorAll('[data-ret]').forEach(x => x.onclick = async () => {
         if (!confirm(T('この発着口を国に返しますか？（もう一度使うときは、申しこみからです）'))) return;
@@ -3192,7 +3213,7 @@ function giveForm(f, reload) {
     <div class="mp-row"><button class="btn main" data-ok>申しこむ</button></div>
     <p class="muted small">相手が受けとると、この編成は運用・列車からはずれます。車番は相手の続きの番号になります</p>`], b => {
     b.querySelector('[data-ok]').onclick = async () => {
-      const to = b.querySelector('[data-to]').value.trim(), pr = Number(String(b.querySelector('[data-pr]').value).replace(/[,，\s]/g, ''));
+      const to = b.querySelector('[data-to]').value.trim(), pr = Number(hw(b.querySelector('[data-pr]').value).replace(/[,，\s]/g, ''));
       if (!to) return toast('相手の ID を入れてください'); if (!(pr >= 0)) return toast('数字を入れてください');
       const r = await api('mp_xfer_offer', { p_form: f.id, p_to: to, p_price: pr, p_msg: b.querySelector('[data-msg]').value, p_as: S.as });
       if (r) { toast(T(`${r.to}に申しこみました。受けとってもらうと移ります`)); m.close(); if (reload) reload(); }
@@ -3220,7 +3241,7 @@ function giveCars(cars, reload) {
     <div class="mp-row"><button class="btn main" data-ok>申しこむ</button></div>
     <p class="muted small">車番は相手の続きの番号になります。車歴に「譲渡」がのこります</p>`], b => {
     b.querySelector('[data-ok]').onclick = async () => {
-      const to = b.querySelector('[data-to]').value.trim(), pr = Number(String(b.querySelector('[data-pr]').value).replace(/[,，\s]/g, ''));
+      const to = b.querySelector('[data-to]').value.trim(), pr = Number(hw(b.querySelector('[data-pr]').value).replace(/[,，\s]/g, ''));
       if (!to) return toast('相手の ID を入れてください'); if (!(pr >= 0)) return toast('数字を入れてください');
       const r = await api('mp_xfer_offer', { p_form: null, p_to: to, p_price: pr, p_msg: b.querySelector('[data-msg]').value, p_as: S.as, p_cars: cars.map(c => c.id) });
       if (r) { toast(T(`${r.to}に申しこみました。受けとってもらうと移ります`)); m.close(); if (reload) reload(); }
@@ -3270,7 +3291,7 @@ async function openThru() {
       <div class="mp-list">${(d.out || []).map(t => `<div class="mp-item"><b>${esc(t.who)}</b> ${st(t)}<small>${info(t)}</small>
           ${t.st === 'req' ? `<div class="mp-row"><button class="btn" data-cancel="${t.id}">申請を取り消す</button></div>` : t.st === 'ok' ? `<div class="mp-row"><button class="btn" data-end="${t.id}" style="color:#c33">やめる</button></div>` : ''}</div>`).join('')
         || '<p class="muted small">ありません。地図でほかの人・会社の駅か線路をタップ →「乗り入れを申請」</p>'}</div>`, b => {
-      const fee = id => Number(String((b.querySelector(`[data-fee="${id}"]`) || {}).value || '0').replace(/[^\d]/g, '') || 0);
+      const fee = id => Number(hw((b.querySelector(`[data-fee="${id}"]`) || {}).value || '0').replace(/[^\d]/g, '') || 0);
       b.querySelectorAll('[data-ok]').forEach(x => x.onclick = async () => { const id = Number(x.dataset.ok); if (await api('mp_thru_answer', { p_id: id, p_ok: true, p_fee: fee(id), p_as: S.as }, '決めました')) load(); });
       b.querySelectorAll('[data-no]').forEach(x => x.onclick = async () => { if (await api('mp_thru_answer', { p_id: Number(x.dataset.no), p_ok: false, p_fee: null, p_as: S.as }, 'ことわりました')) load(); });
       b.querySelectorAll('[data-cancel]').forEach(x => x.onclick = async () => { if (!confirm(T('申請を取り消します。よろしいですか？'))) return; if (await api('mp_thru_end', { p_id: Number(x.dataset.cancel), p_as: S.as }, '取り消しました')) load(); });
@@ -3337,7 +3358,7 @@ async function openLandReqs() {
       b.querySelectorAll('[data-tab]').forEach(x => x.onclick = () => { tab = x.dataset.tab; open = null; draw(); });
       b.querySelectorAll('[data-ok]').forEach(x => x.onclick = () => { open = Number(x.dataset.ok); draw(); });
       b.querySelectorAll('[data-okgo]').forEach(x => x.onclick = async () => {
-        const t = String(b.querySelector('[data-fee]').value || '').replace(/[,，\s]/g, ''), f = t === '' ? null : Number(t);
+        const t = hw(b.querySelector('[data-fee]').value || '').replace(/[,，\s]/g, ''), f = t === '' ? null : Number(t);
         if (f != null && !(f >= 0)) return toast('数字を入れてください');
         if (await api('mp_land_decide', { p_ids: [Number(x.dataset.okgo)], p_ok: true, p_fee: f, p_reply: b.querySelector('[data-rp]').value }, '許可しました')) { open = null; load(); }
       });
@@ -4086,7 +4107,7 @@ async function openBld(bid) {
       if (q('[data-none]')) q('[data-none]').onclick = () => { sel.clear(); b.querySelectorAll('[data-c]').forEach(x => x.checked = false); upd(); };
       b.querySelectorAll('[data-mode]').forEach(x => x.onclick = async () => {
         if (!sel.size) return toast(T('部屋をえらんでください'));
-        const mode = x.dataset.mode, ask = q('[data-ask]') && q('[data-ask]').value.replace(/[^\d]/g, '');
+        const mode = x.dataset.mode, ask = q('[data-ask]') && hw(q('[data-ask]').value).replace(/[^\d]/g, '');
         if (await api('mp_unit_set', { p_units: [...sel], p_mode: mode, p_ask: mode === 'corp' && ask ? Number(ask) : null, p_as: S.as }, '変えました')) { sel.clear(); load(); }
       });
       if (q('[data-own]')) q('[data-own]').onclick = () => {
@@ -4244,7 +4265,7 @@ function unitOwn(d, us, after) {
     <p class="muted small"><span>家賃は1時間ごとに、会社から建物の持ち主へ払います（0 X なら払いません）。</span><br><span>相場は1日 ${X(mr)}</span></p>
     <div class="mp-row"><button class="btn main" data-ok>入れる</button></div>`], b => {
     b.querySelector('[data-ok]').onclick = async () => {
-      const co = b.querySelector('[data-co]').value, rent = Number(String(b.querySelector('[data-rent]').value || '0').replace(/[^\d]/g, '') || 0);
+      const co = b.querySelector('[data-co]').value, rent = Number(hw(b.querySelector('[data-rent]').value || '0').replace(/[^\d]/g, '') || 0);
       if (await api('mp_unit_own', { p_units: us.map(u => u.id), p_corp: co, p_rent: rent, p_as: d.own_as || S.as }, '自社のオフィスにしました')) { m.close(); if (after) after(); }
     };
   });
