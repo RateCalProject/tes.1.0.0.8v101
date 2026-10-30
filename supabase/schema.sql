@@ -11910,6 +11910,54 @@ begin
   return admin_ai();
 end $$;
 
+-- =====================================================================
+-- 管理：国庫から渡す（2026-10-30・管理者だけ。更新 20261030-04）
+--   「新しく発行して渡す」は国庫の発行額がふえる。「国庫の残高から渡す」は国庫が減る（たりなければ止める）
+--   受けとった人には、お知らせと「国庫から支給」の記録が残る。相手の所持金は返さない。AI・国のアカウントには渡せない
+-- 渡す相手を確かめる（名前とIDだけ）
+create or replace function public.admin_grant_who(p_uid text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); p profiles;
+begin
+  if coalesce(_role(u), '') <> 'admin' then raise exception '管理者だけが使えます'; end if;
+  if nullif(btrim(coalesce(p_uid, '')), '') is null then select * into p from profiles where id = u;
+  else select * into p from profiles where account_no = btrim(p_uid); end if;
+  if not found then raise exception 'その人は見つかりません'; end if;
+  if p.ai is not null then raise exception 'AI・国のアカウントには渡せません'; end if;
+  return jsonb_build_object('name', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id), 'self', p.id = u);
+end $$;
+
+-- 渡す
+create or replace function public.admin_grant(p_uid text, p_amount bigint, p_from text, p_note text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); p profiles; tr treasury; nt text := left(btrim(coalesce(p_note, '')), 60);
+begin
+  if coalesce(_role(u), '') <> 'admin' then raise exception '管理者だけが使えます'; end if;
+  if nullif(btrim(coalesce(p_uid, '')), '') is null then select * into p from profiles where id = u;
+  else select * into p from profiles where account_no = btrim(p_uid); end if;
+  if not found then raise exception 'その人は見つかりません'; end if;
+  if p.ai is not null then raise exception 'AI・国のアカウントには渡せません'; end if;
+  if p_amount is null or p_amount < 1 or p_amount > 1000000000000000 then raise exception '額は1 X〜1000兆 X にしてください'; end if;
+  if coalesce(p_from, '') not in ('mint', 'bal') then raise exception 'どこから渡すかをえらんでください'; end if;
+  select * into tr from treasury where id = 1 for update;
+  if p_from = 'bal' and tr.balance < p_amount then raise exception '国庫の残高がたりません'; end if;
+  if p_from = 'mint' then
+    update treasury set issued_total = issued_total + p_amount where id = 1;   -- 発行して、そのまま渡す（国庫の残高は変わらない）
+  else
+    update treasury set balance = balance - p_amount where id = 1;
+  end if;
+  update profiles set balance = balance + p_amount where id = p.id;
+  perform _log(p.id, 'grant', 0, p_amount, jsonb_build_object('note', coalesce(nullif(nt, ''), '国庫から支給'), 'from', p_from));
+  perform _notice(p.id, format('国庫から %s X を受けとりました。', to_char(p_amount, 'FM999,999,999,999,999,999'))
+                        || case when nt <> '' then format('（%s）', nt) else '' end);
+  return jsonb_build_object('ok', true, 'name', p.nickname, 'uid', p.account_no, 'self', p.id = u, 'amount', p_amount, 'from', p_from);
+end $$;
+
+revoke all on function public.admin_grant_who(text) from public, anon;
+grant execute on function public.admin_grant_who(text) to authenticated;
+revoke all on function public.admin_grant(text, bigint, text, text) from public, anon;
+grant execute on function public.admin_grant(text, bigint, text, text) to authenticated;
+
 -- 毎分 AI を動かす（pg_cron があるとき。なければ何もしない）
 do $$
 begin
@@ -16628,6 +16676,7 @@ create table if not exists public.mp_segs (        -- 道路・線路
 );
 create index if not exists mp_segs_bb on public.mp_segs using gist (bb);
 create index if not exists mp_segs_own on public.mp_segs (kind, own_u, own_c);
+alter table public.mp_segs add column if not exists color text;   -- 路線カラー（2026-10-29。線路だけ。#rrggbb。null はふつうの線路の色）。持ち主が決めて、だれが見てもこの色
 create index if not exists mp_segs_n0 on public.mp_segs (n0);
 create index if not exists mp_segs_n1 on public.mp_segs (n1);
 create table if not exists public.mp_occ (         -- マスを使っているもの
@@ -17667,7 +17716,7 @@ begin
   b := box(point(p_x0, p_y0), point(p_x1, p_y1));
   me_cs := array(select id from companies where owner = u);
   select jsonb_build_object(
-    'segs', (select coalesce(jsonb_agg(jsonb_build_object('id', s.id, 'k', s.kind, 'c', s.cls, 'n', s.name, 'w', s.w, 'l', s.lanes, 'p', to_jsonb(_mp_thin(s.pts, case p_lod when 0 then 1 when 1 then 3 else 8 end)), 'dbl', s.dbl, 'el', s.elec, 'art', s.art,
+    'segs', (select coalesce(jsonb_agg(jsonb_build_object('id', s.id, 'k', s.kind, 'c', s.cls, 'n', s.name, 'w', s.w, 'l', s.lanes, 'p', to_jsonb(_mp_thin(s.pts, case p_lod when 0 then 1 when 1 then 3 else 8 end)), 'dbl', s.dbl, 'el', s.elec, 'art', s.art, 'col', s.color,
                   'o', case when s.gov then 'gov' when s.own_u is not null then 'u:' || s.own_u else 'c:' || s.own_c end,
                   'mine', coalesce(s.own_u = u or s.own_c = any(me_cs), false) or (s.gov and _is_admin(u)), 'n0', s.n0, 'n1', s.n1, 'v', s.vlim, 'len', round(s.len::numeric, 1),
                   'ctl', case when s.own_u = u or s.own_c = any(me_cs) or (s.gov and _is_admin(u)) then to_jsonb(s.ctl) end)), '[]'::jsonb)
@@ -17817,9 +17866,9 @@ begin
   select * into q from _mp_at(sg.pts, s);
   insert into mp_nodes(kind, x, y) values (sg.kind, round(q.x * 100), round(q.y * 100)) returning id into nid;
   pa := _mp_sub(sg.pts, 0, s); pb := _mp_sub(sg.pts, s, sg.len);
-  insert into mp_segs(kind, cls, name, own_u, own_c, gov, ctl, pts, bb, len, w, lanes, dbl, elec, vlim, n0, n1, net, art, cost)
+  insert into mp_segs(kind, cls, name, own_u, own_c, gov, ctl, pts, bb, len, w, lanes, dbl, elec, vlim, n0, n1, net, art, cost, color)
   values (sg.kind, sg.cls, sg.name, sg.own_u, sg.own_c, sg.gov, null, pb, _mp_bb(pb), _mp_len(pb), sg.w, sg.lanes, sg.dbl, sg.elec,
-          case when sg.kind = 'rail' then _mp_vlim(_mp_minr(pb)) else sg.vlim end, nid, sg.n1, sg.net, sg.art, 0)
+          case when sg.kind = 'rail' then _mp_vlim(_mp_minr(pb)) else sg.vlim end, nid, sg.n1, sg.net, sg.art, 0, sg.color)   -- color：路線カラーもそのまま（2026-10-29）
   returning id into bid;
   update mp_segs set pts = pa, ctl = null, bb = _mp_bb(pa), len = _mp_len(pa), vlim = case when kind = 'rail' then _mp_vlim(_mp_minr(pa)) else vlim end, n1 = nid where id = sid;
   ta := _mp_tiles(pa); tb := _mp_tiles(pb);
@@ -17909,7 +17958,7 @@ begin
   update mp_leases set ref = x.id where ref_kind = 'seg' and ref = y.id;
   update mp_segs set pts = pm, ctl = null, bb = _mp_bb(pm), len = _mp_len(pm), vlim = _mp_vlim(_mp_minr(pm)),
                      n0 = case when xr then x.n1 else x.n0 end, n1 = case when yr then y.n0 else y.n1 end,
-                     name = case when x.name <> '' then x.name else y.name end, cost = x.cost + y.cost
+                     name = case when x.name <> '' then x.name else y.name end, cost = x.cost + y.cost, color = coalesce(x.color, y.color)
    where id = x.id;
   delete from mp_segs where id = y.id;
   delete from mp_nodes where id = nd;
@@ -17959,7 +18008,7 @@ begin
     perform _mp_renet(a.own_u, a.own_c); perform _mp_routes_fix(a.own_u, a.own_c);
   end if;
   select * into s from mp_segs where id = m;
-  return jsonb_build_object('id', s.id, 'k', s.kind, 'c', s.cls, 'n', s.name, 'w', s.w, 'l', s.lanes, 'p', to_jsonb(s.pts), 'dbl', s.dbl, 'el', s.elec, 'art', s.art,
+  return jsonb_build_object('id', s.id, 'k', s.kind, 'c', s.cls, 'n', s.name, 'w', s.w, 'l', s.lanes, 'p', to_jsonb(s.pts), 'dbl', s.dbl, 'el', s.elec, 'art', s.art, 'col', s.color,
     'o', case when s.own_u is not null then 'u:' || s.own_u else 'c:' || s.own_c end, 'mine', true, 'n0', s.n0, 'n1', s.n1, 'v', s.vlim, 'len', round(s.len::numeric, 1), 'ctl', to_jsonb(s.ctl));
 end $$;
 -- 線を引く（p_dry なら見つもりだけ）
@@ -18095,6 +18144,66 @@ begin
   if sg.kind = 'rail' then perform _mp_routes_fix(sg.own_u, sg.own_c); end if;
   perform _mp_chg('seg', p_id, 'set', _mp_bb(p_pts));
   return jsonb_build_object('id', p_id, 'cost', amt_);
+end $$;
+-- 路線カラー（2026-10-29）：線路の色を決める（p_color が null・空ならふつうの色）。お金はかからない
+--   p_all なら、同じ持ち主・同じ名前（路線名）の線路ぜんぶ。p_route なら、その系統が通る線路のうち、同じ持ち主の線路ぜんぶ
+create or replace function public.mp_seg_color(p_id bigint, p_color text, p_all boolean, p_route bigint default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); sg mp_segs; me_cs int[]; col text := lower(nullif(trim(coalesce(p_color, '')), '')); x record; n int := 0; rs bigint[];
+begin
+  perform _mp_ok(u);
+  select * into sg from mp_segs where id = p_id;
+  if not found then raise exception '線が見つかりません'; end if;
+  me_cs := array(select id from companies where owner = u);
+  if not coalesce(sg.own_u = u or sg.own_c = any(me_cs) or (sg.gov and _is_admin(u)), false) then raise exception 'あなたの線ではありません'; end if;
+  if sg.kind <> 'rail' then raise exception '色をつけられるのは線路だけです'; end if;
+  if col is not null and col !~ '^#[0-9a-f]{6}$' then raise exception '色がちがいます（#rrggbb）'; end if;
+  if p_route is not null then
+    rs := array(select distinct (g ->> 0)::bigint from mp_routes r, jsonb_array_elements(r.legs) l, jsonb_array_elements(coalesce(l -> 'g', '[]'::jsonb)) g where r.id = p_route and r.kind = 'rail');
+    if not sg.id = any(rs) then raise exception 'この線路を通らない系統です'; end if;
+  end if;
+  for x in select s.id, s.bb from mp_segs s
+            where s.kind = 'rail' and (s.id = sg.id or ((coalesce(p_all, false) and sg.name <> '' and s.name = sg.name or s.id = any(rs))
+                  and s.own_u is not distinct from sg.own_u and s.own_c is not distinct from sg.own_c and s.gov = sg.gov))
+              and s.color is distinct from col for update loop
+    update mp_segs set color = col where id = x.id;
+    perform _mp_chg('seg', x.id, 'set', x.bb);   -- 見ている人の地図も読みなおす
+    n := n + 1;
+  end loop;
+  return jsonb_build_object('ok', true, 'n', n, 'color', col);
+end $$;
+-- この線路を通る系統（2026-10-29。路線カラーを系統ごとにつけるとき）。同じ名前の線路の数も
+create or replace function public.mp_seg_routes(p_id bigint) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare u uuid := _me(); sg mp_segs;
+begin
+  perform _mp_ok(u);
+  select * into sg from mp_segs where id = p_id;
+  if not found or sg.kind <> 'rail' then raise exception '線が見つかりません'; end if;
+  return jsonb_build_object(
+    'routes', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'n', r.name, 'c', r.color) order by r.name, r.id), '[]'::jsonb) from mp_routes r
+                where r.kind = 'rail' and exists (select 1 from jsonb_array_elements(r.legs) l, jsonb_array_elements(coalesce(l -> 'g', '[]'::jsonb)) g where (g ->> 0)::bigint = sg.id)),
+    'same', case when sg.name <> '' then (select count(*) from mp_segs s where s.kind = 'rail' and s.name = sg.name and s.own_u is not distinct from sg.own_u and s.own_c is not distinct from sg.own_c and s.gov = sg.gov) else 0 end);
+end $$;
+-- 線路をさがす（2026-10-29）：名義の線路と、名義の系統が通る線路のうち、非電化か単線のところ（通る系統の名前つき）
+create or replace function public.mp_seg_find(p_as text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pa record;
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  return coalesce((
+    with my_r as (select r.name, r.legs from mp_routes r where r.kind = 'rail' and r.own_u is not distinct from pa.pu and r.own_c is not distinct from pa.pc and not pa.gv),
+         used as (select (g ->> 0)::bigint sid, array_agg(distinct m.name order by m.name) rn
+                    from my_r m, jsonb_array_elements(m.legs) l, jsonb_array_elements(coalesce(l -> 'g', '[]'::jsonb)) g group by 1)
+    select jsonb_agg(jsonb_build_object('id', s.id, 'n', s.name, 'len', round(s.len::numeric * 50), 'dbl', s.dbl, 'el', s.elec, 'col', s.color,
+             'mine', case when pa.gv then s.gov else (not s.gov and s.own_u is not distinct from pa.pu and s.own_c is not distinct from pa.pc) end,
+             'own', _mp_pname(s.own_u, s.own_c, s.gov), 'routes', coalesce(to_jsonb(us.rn), '[]'::jsonb),
+             'bb', jsonb_build_array(round(((s.bb[1])[0])::numeric, 1), round(((s.bb[1])[1])::numeric, 1), round(((s.bb[0])[0])::numeric, 1), round(((s.bb[0])[1])::numeric, 1)))
+             order by s.name, s.id)
+      from mp_segs s left join used us on us.sid = s.id
+     where s.kind = 'rail' and (not s.dbl or not s.elec)
+       and ((case when pa.gv then s.gov else (not s.gov and s.own_u is not distinct from pa.pu and s.own_c is not distinct from pa.pc) end) or us.sid is not null)), '[]'::jsonb);
 end $$;
 -- 複線にする・電化する・道路の車線を変える・名前を変える（費用は増える分だけ。もどしても返金なし）
 create or replace function public.mp_seg_opts(p_id bigint, p_dbl boolean, p_elec boolean, p_name text, p_dry boolean, p_lanes int default null) returns jsonb
@@ -19552,7 +19661,7 @@ begin
           if ta[b] is null or td[a] is null or sarr[si][b] is null or sdep[si][a] is null then continue; end if;
           if td[a] >= sdep[si][a] then
             -- うしろを走る：前の列車のあとを1分あけて（その向きの番線が1つしかない駅では、前の列車が出てから）
-            need := greatest(sdep[si][a] + H - td[a], sarr[si][b] + H - ta[b], case when not cap[b] then sdep[si][b] + 30 - ta[b] end);
+            need := greatest(sdep[si][a] + H - td[a], sarr[si][b] + H - ta[b], sdep[si][b] + H - ta[b]);   -- 2026-10-30：前の列車が出てから1分（番線の重なりの見かたと同じ）
             if need > 0 then
               j := null; for jj in reverse kk..1 loop if stp[ord[jj]] then j := jj; exit; end if; end loop;
               key := r.stops[ord[j]]::text;
@@ -19560,9 +19669,9 @@ begin
               tai_ := tai_ || jsonb_build_array(jsonb_build_object('s', r.stops[ord[j]], 'by', snum[si], 'sec', need, 'f', true));
               conf := true; exit;
             end if;
-          elsif sdep[si][a] < td[a] + H or sarr[si][b] < ta[b] + H then
+          elsif sdep[si][a] < td[a] + H or sarr[si][b] < td[b] + H or sarr[si][a] < td[a] + H then   -- 2026-10-30：着いてから出るまでの間も見る
             -- 前を走るのに追いつかれる。つぎの駅で待避できて、そこまでは追いこされないなら、つぎの駅で
-            if sarr[si][b] >= ta[b] and stp[b] and cap[b] and kk + 1 < k1d and sdep[si][a] >= td[a] + H then continue; end if;
+            if sarr[si][b] >= ta[b] and stp[b] and cap[b] and kk + 1 < k1d and sdep[si][a] >= td[a] + H and sarr[si][a] >= td[a] + H then continue; end if;
             j := null; for jj in reverse kk..1 loop if stp[ord[jj]] and (cap[ord[jj]] or jj = k0d) then j := jj; exit; end if; end loop;
             if j is null then
               ws := ws || format('%s に追いつかれます（待避できる駅がありません）', snum[si]); skips := skips || si; conf := true; exit;
@@ -25885,7 +25994,7 @@ begin
             '_stock_width','_jday_start','_stock_base','_stock_band','_stock_day','_tnow','info_today','_stock_exec','stock_chart','home_widgets',
             '_ai_uid','_randn','_ai_name','_ai_account','_ai_fund','_ai_hire','_ai_ceo','_ai_stock_value','_ai_fair','_ai_article','_ai_event',
             '_ai_business','_ai_settle_week','_ai_news_morning','_ai_news_items','_ai_news_flash','_ai_invest','_ai_market','_ai_market_cancel',
-            '_ai_setup','_ai_add_investors','_ai_tick','_fx_exec','_stock_width_x','_ai_buzz_target','_ai_fair_p','_ai_found','_ok7_ins','_stock_last','_stock_cancel_all','stock_split','admin_stock_reprice','admin_gov_share_give','admin_ai_news','_gov_uid','_gov_sweep','_fx_last','admin_iv_state','admin_intervene','_ai_err','admin_ai','admin_ai_set','admin_ai_fund',
+            '_ai_setup','_ai_add_investors','_ai_tick','_fx_exec','_stock_width_x','_ai_buzz_target','_ai_fair_p','_ai_found','_ok7_ins','_stock_last','_stock_cancel_all','stock_split','admin_stock_reprice','admin_gov_share_give','admin_ai_news','_gov_uid','_gov_sweep','_fx_last','admin_iv_state','admin_intervene','_ai_err','admin_ai','admin_ai_set','admin_ai_fund','admin_grant_who','admin_grant',
             'stock_order','stock_cancel','stock_list_apply','stock_list_withdraw','admin_stock_decide','admin_stock_delist','_unlock_orders',
             '_kb_wx','admin_kb_extras','admin_kb_extra','admin_kb_extra_cancel','banner_list','admin_banners','admin_banner_save','admin_banner_end',
             'prefs_save','_admin_ids','_msg_unread','_is_guest','_me_g','_is_event','_staff_list','admin_staff','admin_staff_set',
@@ -25942,7 +26051,7 @@ begin
             'mp_land_req_del','mp_land_reqs','mp_ledger_days','mp_ledger_page','mp_makers','mp_op_del','mp_op_export','mp_op_import',
             'mp_op_save','mp_op_backup_list','mp_op_backup_save','mp_op_backup_del','mp_op_backup_restore','mp_ops_list','mp_parcel_buy','mp_parcel_merge','mp_parcel_rent','mp_parcel_sell','mp_parcel_split','mp_poll',
             'mp_route_del','mp_route_pat','mp_route_save','mp_routes_list','mp_rwy_build','mp_rwy_del','mp_sc_list','mp_sc_set',
-            'mp_seg_build','mp_seg_del','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_speed','mp_seg_split','mp_slot_admin',
+            'mp_seg_build','mp_seg_color','mp_seg_del','mp_seg_find','mp_seg_routes','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_speed','mp_seg_split','mp_slot_admin',
             'mp_slot_answer','mp_slot_apply','mp_slot_bid','mp_slot_cancel','mp_slot_get','mp_slot_list','mp_slot_return','mp_spot',
             'mp_sta_build','mp_sta_edit','mp_sta_resize','mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list',
             'mp_thru_req','mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market',
