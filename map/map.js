@@ -28,7 +28,7 @@ const S = {
   cho: new Map(), choPend: new Set(), choQ: [], choBusy: 0,   // 町字（チャンクごと：k・kp・kq）
   cells: new Map(), cellBusy: 0, ver: 0, pollT: 0,
   ov: null, ovInfo: null,
-  layer: { zone: false, own: true, label: true },
+  layer: { zone: false, own: true, label: true, track: false },   // track：非電化・単線を強く出す（2026-10-29）
   b25: true,   // 建物を 2.5D（高さのある見えかた）で描く。false なら 2D（上から見たまま）
   tool: 'look', toolState: null,
   sel: null,          // えらんだもの（{kind, id, ...}）
@@ -455,6 +455,8 @@ async function poll() {
     S.ver = r.ver; S.dirty = true; needCells(); needChunks();
   } catch (e) { console.warn(e); }
 }
+// 見えているところをぜんぶ読みなおす（路線カラーをまとめて変えたときなど）
+function refreshAll() { for (const c of S.cells.values()) c.stale = true; S.dirty = true; needCells(); }
 // 自分の工事のあと：その範囲を読みなおす
 function refreshBox(x0, y0, x1, y1) {
   for (const c of S.cells.values()) {
@@ -588,7 +590,8 @@ function render() {
     if (s.c === 'exp' || !s.l) continue;
     laneMarks(g, s, z);
   }
-  // 線路
+  // 線路（非電化・単線を強く出すときは、下にしるし）
+  if (S.layer.track) for (const s of rails) trackMark(g, s, z);
   for (const s of rails) drawRail(g, s, z);
   // 航路（海の上の点線。t54o）
   drawLanes(g, it, z);
@@ -615,7 +618,7 @@ function render() {
   // 自分の住所（家のしるし。自分にだけ見える）
   if (S.boot && S.boot.home && z >= 1.2) drawHome(g, S.boot.home);
   // えらんだもの
-  if (S.sel && S.sel.kind === 'seg') { const s = it.segs.get(S.sel.id); if (s) { g.strokeStyle = 'rgba(220,40,60,.75)'; g.lineWidth = Math.max(4, s.w * z + 4); pathSeg(g, s); g.stroke(); } }
+  if (S.sel && S.sel.kind === 'seg') { const s = it.segs.get(S.sel.id); if (s) { g.strokeStyle = 'rgba(220,40,60,.75)'; g.lineWidth = Math.max(4, s.w * z + 4); pathSeg(g, s); g.stroke(); if (s.k === 'rail' && s.col) drawRail(g, s, z); } }   // 路線カラーの線は、えらんでも色が見えるように
   if (S.sel && S.sel.kind === 'rwy') { const r = it.rwys.get(S.sel.id); if (r) { g.lineCap = 'butt'; g.strokeStyle = 'rgba(220,40,60,.6)'; g.lineWidth = Math.max(5, r.w * z + 5); g.beginPath(); g.moveTo(sx(r.P[0]), sy(r.P[1])); g.lineTo(sx(r.P[2]), sy(r.P[3])); g.stroke(); g.lineCap = 'round'; } }
   if (S.sel && S.sel.kind === 'cell') {
     const p = S.sel.parcel && it.parcels.get(S.sel.parcel);
@@ -716,18 +719,28 @@ function laneMarks(g, s, z) {
   }
   g.setLineDash([]); g.lineCap = 'round';
 }
+// 非電化・単線のしるし（2026-10-29）：非電化はオレンジの帯、単線はむらさきの点線
+function trackMark(g, s, z) {
+  if (s.el && s.dbl) return;
+  const hw = Math.max(7, 0.7 * z);
+  g.lineCap = 'butt';
+  if (!s.el) { g.strokeStyle = 'rgba(255,140,0,.6)'; g.lineWidth = hw + 6; g.setLineDash([]); pathSeg(g, s); g.stroke(); }
+  if (!s.dbl) { g.strokeStyle = 'rgba(190,0,170,.85)'; g.lineWidth = Math.max(3, hw * 0.45); g.setLineDash([Math.max(7, z * 0.7), Math.max(5, z * 0.45)]); pathSeg(g, s); g.stroke(); }
+  g.setLineDash([]); g.lineCap = 'round';
+}
 function drawRail(g, s, z) {
-  const mine = s.mine;
+  const mine = s.mine, col = s.col && /^#[0-9a-f]{6}$/i.test(s.col) ? s.col : null;   // 路線カラー（2026-10-29）
   const w = Math.max(1.8, (s.dbl ? 0.34 : 0.22) * z);
   g.lineCap = 'butt';
   if (z >= 10 && s.dbl) {
     for (const off of [0.09, -0.09]) {
-      g.strokeStyle = '#4a4a4a'; g.lineWidth = Math.max(1.5, 0.12 * z); g.setLineDash([]); pathSeg(g, s, off); g.stroke();
+      g.strokeStyle = col || '#4a4a4a'; g.lineWidth = Math.max(1.5, 0.12 * z); g.setLineDash([]); pathSeg(g, s, off); g.stroke();
       g.strokeStyle = '#ffffff'; g.lineWidth = Math.max(1, 0.07 * z); g.setLineDash([z * 0.5, z * 0.5]); pathSeg(g, s, off); g.stroke();
     }
   } else {
     if (mine) { g.strokeStyle = 'rgba(40,110,220,.5)'; g.lineWidth = w + 4; g.setLineDash([]); pathSeg(g, s); g.stroke(); }
-    g.strokeStyle = '#3f3f3f'; g.lineWidth = w; g.setLineDash([]); pathSeg(g, s); g.stroke();
+    if (col) { g.strokeStyle = 'rgba(0,0,0,.45)'; g.lineWidth = w + 2; g.setLineDash([]); pathSeg(g, s); g.stroke(); }   // 色の線は、ふちを少し濃く
+    g.strokeStyle = col || '#3f3f3f'; g.lineWidth = w; g.setLineDash([]); pathSeg(g, s); g.stroke();
     if (z >= 1.5) { g.strokeStyle = '#ffffff'; g.lineWidth = Math.max(1, w - 2); g.setLineDash([Math.max(4, z * 0.5), Math.max(4, z * 0.5)]); pathSeg(g, s); g.stroke(); }
   }
   if (z >= 10 && !s.el) { /* 非電化：そのまま */ }
@@ -991,7 +1004,7 @@ function build(root) {
     <canvas class="mp-cv"></canvas>
     <div class="mp-top">
       <select class="mp-as" title="だれの名前で"></select>
-      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button>
+      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-lay="track" title="非電化はオレンジ・単線はむらさきの点線">非電化・単線</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button>
       <span class="mp-addr" translate="no" hidden></span>
     </div>
     <div class="mp-zoom"><button data-find title="さがす">🔍</button><button data-full title="大きく">⤢</button><button data-zin>＋</button><button data-zout>－</button><button data-home title="瑠璃市役所">⌂</button></div>
@@ -1009,7 +1022,8 @@ function build(root) {
   try { const sv = localStorage.getItem('mp_as'); if (sv && S.boot.as.some(a => a.as === sv)) S.as = sv; } catch (e) {}
   asSel.value = S.as;
   asSel.onchange = () => { S.as = asSel.value; try { localStorage.setItem('mp_as', S.as); } catch (e) {} for (const c of S.cells.values()) c.stale = true; S.dirty = true; toolVis(); if (S.onAs) S.onAs(); };
-  S.wrap.querySelectorAll('[data-lay]').forEach(b => b.onclick = () => { const k = b.dataset.lay; S.layer[k] = !S.layer[k]; b.classList.toggle('on', S.layer[k]); S.dirty = true; });
+  S.wrap.querySelectorAll('[data-lay]').forEach(b => b.onclick = () => { const k = b.dataset.lay; S.layer[k] = !S.layer[k]; b.classList.toggle('on', S.layer[k]); S.dirty = true;
+    if (k === 'track' && S.layer.track) toast('非電化はオレンジ、単線はむらさきの点線で出ます'); });
   // 建物の見えかた：2.5D（高さ・壁）と 2D（上から見たまま）。この端末におぼえる
   try { const v = localStorage.getItem('mp_b25'); if (v != null) S.b25 = v !== '0'; } catch (e) {}
   const b25 = S.wrap.querySelector('[data-b25]'), b25L = () => { b25.textContent = S.b25 ? '🏢 2.5D' : '🏢 2D'; };
@@ -1377,10 +1391,11 @@ function showSeg(s, hit) {
     <div class="mp-kv"><b>持ち主</b><span><span>${esc(own)}</span>${s.mine && s.o !== 'gov' ? '<small>（あなた）</small>' : ''}</span>
       <b>長さ</b><span>${fmt(Math.round(s.len * 50))} m</span>
       ${s.k === 'road' ? `<b>車線</b><span>${s.l ? '片側' + s.l + '車線' : '中央線なし'}</span>` : `<b>線路</b><span>${s.dbl ? '複線' : '単線'}・${s.el ? '電化' : '非電化'}</span>`}
+      ${s.k === 'rail' && s.col ? `<b>路線カラー</b><span><span style="display:inline-block;width:2.2em;height:.8em;border-radius:3px;vertical-align:middle;background:${esc(s.col)}"></span></span>` : ''}
       <b>制限速度</b><span data-spd><span>${s.v} km/h</span></span>
       ${s.k === 'rail' && s.o !== 'gov' ? thruRow(s.o) : ''}</div>
     ${s.k === 'rail' ? '<canvas class="mp-spd" data-spdc hidden></canvas>' : ''}
-    ${s.mine ? `<div class="mp-row"><button class="btn" data-edit>形を直す</button><button class="btn" data-split>ここで分ける</button><button class="btn" data-opt>${s.k === 'rail' ? '複線・電化・名前' : '車線・名前'}</button><button class="btn" data-del>こわす</button></div>` : ''}`, sh => {
+    ${s.mine ? `<div class="mp-row"><button class="btn" data-edit>形を直す</button><button class="btn" data-split>ここで分ける</button><button class="btn" data-opt>${s.k === 'rail' ? '複線・電化・名前・色' : '車線・名前'}</button><button class="btn" data-del>こわす</button></div>` : ''}`, sh => {
     const q = k => sh.querySelector(k);
     if (q('[data-edit]')) q('[data-edit]').onclick = () => startEdit(s);
     if (q('[data-split]')) q('[data-split]').onclick = async () => { if (await api('mp_seg_split', { p_id: s.id, p_x: hit.x, p_y: hit.y }, '分けました')) { refreshBox(...s.bb); sheet(null); } };
@@ -1408,7 +1423,7 @@ async function addrInto(x, y, still) {   // x, y：マス（50m）の座標。�
   return d;
 }
 function segOpts(s) {
-  const st = { dbl: s.dbl, el: s.el, l: s.l, name: s.n || '', q: null, quoting: false, seq: 0 };
+  const st = { dbl: s.dbl, el: s.el, l: s.l, name: s.n || '', q: null, quoting: false, seq: 0, col: s.col || null, rts: null, same: 0, sc: 'one' };
   const same = () => st.dbl === s.dbl && st.el === s.el && st.l === s.l;   // 名前だけ
   const quote = async () => {
     const my = ++st.seq; st.quoting = true; draw();
@@ -1419,11 +1434,22 @@ function segOpts(s) {
   const changed = () => { st.seq++; st.quoting = false; st.q = null; draw(); };
   const draw = () => {
     const q = st.q;
-    sheet(`<h4>${s.k === 'rail' ? '線路' : '道路'}の設定</h4>
+    sheet(`<h4 data-segopt="${s.id}">${s.k === 'rail' ? '線路' : '道路'}の設定</h4>
       ${s.k === 'rail' ? `<div class="mp-row"><span class="mp-seg"><button data-d="0" class="${!st.dbl ? 'on' : ''}">単線</button><button data-d="1" class="${st.dbl ? 'on' : ''}">複線</button></span>
         <span class="mp-seg"><button data-e="0" class="${!st.el ? 'on' : ''}">非電化</button><button data-e="1" class="${st.el ? 'on' : ''}">電化</button></span></div>`
       : `<div class="mp-row">片側 <span class="mp-seg">${[0, 1, 2, 3].map(n => `<button data-l="${n}" class="${st.l === n ? 'on' : ''}">${n ? n + '車線' : '細い道'}</button>`).join('')}</span></div>`}
       <div class="mp-row"><input class="mp-inp" data-nm placeholder="名前（路線名など）" value="${esc(st.name)}"></div>
+      ${s.k === 'rail' ? `<h4 style="margin:10px 0 4px">路線カラー</h4>
+        <div class="mp-row" style="align-items:center;flex-wrap:wrap"><input type="color" data-col value="${esc(st.col || '#d23d3d')}" style="width:52px;height:36px;border:0;background:none">
+          ${(st.rts || []).filter(r => /^#[0-9a-f]{6}$/i.test(r.c || '')).map(r => `<button class="btn" data-sw="${esc(r.c)}" style="padding:4px 8px;font-size:12px;flex:0 1 auto"><span style="display:inline-block;width:1.4em;height:1em;border-radius:3px;vertical-align:middle;background:${esc(r.c)}"></span> <span translate="no">${esc(r.n)}</span></button>`).join('')}</div>
+        ${(st.rts || []).length ? '<p class="muted small" style="margin:0">系統の名前のボタンで、その系統の色になります</p>' : ''}
+        <div class="small" style="display:flex;flex-direction:column;gap:4px;margin:4px 0">
+          <label><input type="radio" name="colsc" value="one" ${st.sc === 'one' ? 'checked' : ''}> <span>この線だけ</span></label>
+          ${s.n && st.same > 1 ? `<label><input type="radio" name="colsc" value="name" ${st.sc === 'name' ? 'checked' : ''}> <span>${esc(T(`同じ名前（${s.n}）の線路ぜんぶ（${st.same}本）`))}</span></label>` : ''}
+          ${(st.rts || []).map(r => `<label><input type="radio" name="colsc" value="r${r.id}" ${st.sc === 'r' + r.id ? 'checked' : ''}> <span>${esc(T(`系統「${r.n}」が通る線路ぜんぶ`))}</span></label>`).join('')}
+          ${st.rts === null ? '<span class="muted">通る系統を読みこんでいます…</span>' : ''}</div>
+        <div class="mp-row"><button class="btn" data-colok>この色にする</button><button class="btn" data-colx>色をなくす</button></div>
+        <p class="muted small">路線カラーは、だれが見ても地図にこの色で出ます。お金はかかりません。色をつけるのは自分の線路だけです（ほかの人の線路は、その持ち主が決めます）</p>` : ''}
       <div class="mp-row">${same() ? '' : q ? `<span class="mp-cost">${q.cost > 0 ? '工事費 ' + X(q.cost) : '工事費なし'}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button><span class="muted small">工事費を出してから、変えられます</span>'}</div>
       ${!same() && q ? needH(q.need) : ''}
       <p class="muted small">もとにもどしても（単線にする・車線をへらす）お金はもどりません</p>
@@ -1434,6 +1460,16 @@ function segOpts(s) {
       sh.querySelectorAll('[data-l]').forEach(b => b.onclick = () => { st.l = Number(b.dataset.l); changed(); });
       { const es = sh.querySelector('[data-est]'); if (es) es.onclick = () => quote(); }
       sh.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
+      // 路線カラー：この線だけ・同じ名前の線路・系統が通る線路（どれも自分の線路だけ）
+      const setCol = async c => {
+        const r = await api('mp_seg_color', { p_id: s.id, p_color: c, p_all: st.sc === 'name', p_route: st.sc[0] === 'r' ? Number(st.sc.slice(1)) : null });
+        if (r) { toast(c ? T(`路線カラーをつけました（${r.n}本）`) : T(`路線カラーをなくしました（${r.n}本）`)); s.col = r.color; st.col = r.color; refreshAll(); }
+      };
+      { const e = sh.querySelector('[data-col]'); if (e) e.oninput = () => { st.col = e.value; }; }
+      sh.querySelectorAll('[data-sw]').forEach(b => b.onclick = () => { st.col = b.dataset.sw; const e = sh.querySelector('[data-col]'); if (e) e.value = st.col; });
+      sh.querySelectorAll('input[name=colsc]').forEach(b => b.onchange = () => { if (b.checked) st.sc = b.value; });
+      { const e = sh.querySelector('[data-colok]'); if (e) e.onclick = () => setCol(sh.querySelector('[data-col]').value); }
+      { const e = sh.querySelector('[data-colx]'); if (e) e.onclick = () => setCol(null); }
       sh.querySelector('[data-ok]').onclick = async () => {
         st.name = sh.querySelector('[data-nm]').value;
         if (await api('mp_seg_opts', { p_id: s.id, p_dbl: st.dbl, p_elec: st.el, p_name: st.name, p_dry: false, p_lanes: st.l }, '設定を変えました')) { refreshBox(...s.bb); sheet(null); }
@@ -1441,6 +1477,13 @@ function segOpts(s) {
     });
   };
   draw();
+  // 路線カラー：この線路を通る系統（はじめは、いちばん上の系統が通る線路ぜんぶに）
+  if (s.k === 'rail') api('mp_seg_routes', { p_id: s.id }).then(r => {
+    st.rts = r ? r.routes : []; st.same = r ? r.same : 0;
+    st.sc = st.rts.length ? 'r' + st.rts[0].id : s.n && st.same > 1 ? 'name' : 'one';
+    if (!st.col && st.rts.length && /^#[0-9a-f]{6}$/i.test(st.rts[0].c || '')) st.col = st.rts[0].c;
+    if (S.sheet && !S.sheet.hidden && S.sheet.querySelector(`[data-segopt="${s.id}"]`)) { st.name = (S.sheet.querySelector('[data-nm]') || {}).value ?? st.name; draw(); }
+  });
 }
 async function segDel(s) {
   if (!confirm(T('この線をこわしますか？（工事費はもどりません）'))) return;
@@ -2381,6 +2424,7 @@ function openMenu() {
     <button class="mp-item" style="text-align:left" data-k="routes"><b>🗺 系統とダイヤ</b><br><small>止まる駅の順番・列車の時刻（採時駅）・ダイヤグラム・航路（フェリー）・空路（飛行機）</small></button>
     <button class="mp-item" style="text-align:left" data-k="ops"><b>📋 運用</b><br><small>どの編成がどの列車を走るか・運用ファイル（書き出し・読みこみ）</small></button>
     <button class="mp-item" style="text-align:left" data-k="xfer"><b>🤝 編成の譲渡</b><br><small>とどいた申しこみを受けとる・ことわる／出した申しこみ</small></button>
+    <button class="mp-item" style="text-align:left" data-k="segfind"><b>🔎 線路をさがす</b><br><small>非電化・単線のところ（自分の線路と、自分の系統が通る線路）</small></button>
     <button class="mp-item" style="text-align:left" data-k="thru"><b>🔀 乗り入れ</b><br><small>ほかの人・会社の線路に列車を走らせる（申請・許可・線路使用料）</small></button>
     <button class="mp-item" style="text-align:left" data-k="blds"><b>🏢 自分の建物</b><br><small>部屋の入居・家賃の水準・テナント（${esc(asName())}）</small></button>
     <button class="mp-item" style="text-align:left" data-k="tenants"><b>🔑 テナント募集</b><br><small>会社で部屋を借りる・借りている部屋</small></button>
@@ -2391,7 +2435,7 @@ function openMenu() {
     <button class="mp-item" style="text-align:left" data-k="ledger"><b>💴 お金の記録</b><br><small>運賃・家賃・維持費・使用料・工事費（${esc(asName())}）</small></button>
     ${S.admin ? `<button class="mp-item" style="text-align:left" data-k="admin"><b>🛠 管理</b><br><small>値段の設定・用途地域・ようす</small></button>` : ''}
     <button class="mp-item" style="text-align:left" data-k="help"><b>❓ あそびかた</b></button></div>`], b => {
-    b.querySelectorAll('[data-k]').forEach(x => x.onclick = () => { m.close(); ({ cars: () => openCars(), routes: openRoutes, ops: () => openOps(), xfer: () => openXfers(), thru: () => openThru(), blds: openMyBlds, tenants: openTenants, sc: () => openSC(), home: openHome, landreq: () => openLandReqs(), slots: () => openSlotList(), ledger: openLedger, admin: openAdmin, help: openHelp })[x.dataset.k](); });
+    b.querySelectorAll('[data-k]').forEach(x => x.onclick = () => { m.close(); ({ cars: () => openCars(), routes: openRoutes, ops: () => openOps(), segfind: () => openSegFind(), xfer: () => openXfers(), thru: () => openThru(), blds: openMyBlds, tenants: openTenants, sc: () => openSC(), home: openHome, landreq: () => openLandReqs(), slots: () => openSlotList(), ledger: openLedger, admin: openAdmin, help: openHelp })[x.dataset.k](); });
   });
 }
 /* ---------- 発着口（t57）：空港ごとの発着口・入札。国（管理者）はふやす・へらす・入札に出す
@@ -3322,6 +3366,29 @@ function saveJson(name, obj) {
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
 const ymd = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+// 線路をさがす（2026-10-29）：自分の線路と、自分の系統が通る線路のうち、非電化・単線のところ。地図で見る
+async function openSegFind() {
+  const m = modal(['線路をさがす', '<p class="muted small">読みこんでいます…</p>']);
+  const L = await api('mp_seg_find', { p_as: S.as }); if (!L) return m.close();
+  if (!S.layer.track) { S.layer.track = true; const b = S.wrap.querySelector('[data-lay="track"]'); if (b) b.classList.add('on'); S.dirty = true; }
+  let f = 'all';
+  const ok = (x, k) => k === 'all' || (k === 'el' ? !x.el : !x.dbl);
+  const draw = () => m.set('線路をさがす', `<p class="small" style="margin-top:0">${esc(asName())}</p>
+    <div class="mp-row small"><span class="mp-seg">${[['all', 'すべて'], ['el', '非電化'], ['sg', '単線']].map(([k, t]) => `<button data-f="${k}" class="${f === k ? 'on' : ''}"><span>${t}</span>（${L.filter(x => ok(x, k)).length}）</button>`).join('')}</span></div>
+    <div class="mp-list">${L.filter(x => ok(x, f)).map(x => `<div class="mp-item"><b>${x.n ? `<span translate="no">${esc(x.n)}</span>` : '<span>（名前なし）</span>'}</b>
+        <small class="muted"><span>${fmt(x.len)} m</span>・<span>${x.dbl ? '複線' : '単線'}</span>・<span>${x.el ? '電化' : '非電化'}</span>${x.mine ? '' : `・<span translate="no">${esc(x.own)}</span><span>の線路</span>`}</small>
+        ${x.routes.length ? `<br><small><span>通る系統</span>：<span translate="no">${x.routes.map(esc).join('・')}</span></small>` : ''}
+        <div class="mp-row small" style="margin-bottom:0"><button class="btn" data-go="${x.id}">地図で見る</button></div></div>`).join('') || '<p class="muted small">非電化・単線のところはありません</p>'}</div>
+    <p class="muted small">地図では、非電化はオレンジ、単線はむらさきの点線で出ます（上の「非電化・単線」で切りかえ）。線路をタップすると、複線・電化にできます（自分の線路）</p>`, b => {
+    b.querySelectorAll('[data-f]').forEach(x => x.onclick = () => { f = x.dataset.f; draw(); });
+    b.querySelectorAll('[data-go]').forEach(x => x.onclick = () => {
+      const it = L.find(y => y.id === Number(x.dataset.go)); if (!it) return;
+      const [x0, y0, x1, y1] = it.bb, z = clamp(Math.min(S.W / Math.max(1, x1 - x0 + 6), S.H / Math.max(1, y1 - y0 + 6)), 1.5, 24);
+      m.close(); setCam((x0 + x1) / 2, (y0 + y1) / 2, z); S.sel = { kind: 'seg', id: it.id }; S.dirty = true;
+    });
+  });
+  draw();
+}
 // 運用のバックアップ（2026-10-29）：いまの運用をのこす（新しい10こまで）・その時にもどす・消す
 async function opsBackup(reload) {
   const m = modal(['運用のバックアップ', '<p class="muted small">読みこんでいます…</p>']);
