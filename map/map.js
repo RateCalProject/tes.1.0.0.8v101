@@ -42,6 +42,32 @@ const S = {
 };
 window.MP_STATE = S;   // テスト用
 
+/* ---------- 画質と見える遠さ（t63）：省エネ・標準・高画質・最高（＋自分で）。この端末におぼえる ----------
+   d2：2D の遠さ（くわしい地形・遠くの建物）・d25：2.5D（建物の壁を出す遠さ）・d3：3D の遠さ。0 近い・1 ふつう・2 遠い・3 とても遠い
+   fps：1秒に描く数の上限・res：画面のこまかさ（端末のきめこまかさにかける）・aa：3D のふちをなめらかに（次に 3D にしたときから）
+   遠くまで見せるときも、サーバーには あらい地形（mp_chunk_lo）・かんたんな建物（mp_blds_lite。サーバーがとっておく）だけをたのむ */
+const QP = { eco: { d2: 0, d25: 0, d3: 0, fps: 30, res: 0.75, aa: false }, std: { d2: 1, d25: 1, d3: 1, fps: 60, res: 1, aa: true },
+             high: { d2: 2, d25: 2, d3: 2, fps: 60, res: 1, aa: true }, max: { d2: 3, d25: 3, d3: 3, fps: 60, res: 1, aa: true } };
+const QK = ['d2', 'd25', 'd3', 'fps', 'res', 'aa'];
+const MQ = Object.assign({ p: 'std' }, QP.std);
+try { const v = JSON.parse(localStorage.getItem('mp_q') || 'null'); if (v && typeof v === 'object') for (const k of ['p'].concat(QK)) if (k in v) MQ[k] = v[k]; } catch (e) {}
+const QV = {   // 段階（0〜3）ごとの値
+  zc: [1.6, 1.2, 1.2, 1.0],           // 2D：くわしい地形（チャンク）を出す近さ（これより引くと、全体の絵）
+  maxCh: [220, 600, 900, 1300],       // 2D：くわしい地形は、画面の中のチャンクがこの数までのときだけ読む（大きな画面で引いたときに、通信とサーバーをまもる）
+  zl: [Infinity, Infinity, 3.5, 2.2], // 2D：遠くの建物（かんたんな形）を出す近さ（7 より近いと、くわしい建物）
+  zw: [12, 9, 7, 5],                  // 2.5D：建物の壁を出す近さ
+  k3: [3.4, 4.2, 5.5, 7],             // 3D：地形を見せる遠さ ＝ カメラの遠さ × これ（上限は r3）
+  r3: [380, 700, 1050, 1400],         // 3D：地形を見せる遠さの上限（マス）
+  rf3: [380, 420, 520, 560],          // 3D：くわしい地形を読む遠さ（その先は あらい地形）
+  rb3: [120, 220, 220, 260],          // 3D：くわしい建物の遠さ
+  db3: [110, 160, 160, 180],          // 3D：カメラがこれより近いときに、くわしい建物を読む
+  rl3: [0, 0, 480, 760],              // 3D：遠くの建物（かんたんな形）の遠さ
+};
+const q = (k, lv) => QV[k][Math.max(0, Math.min(3, Number(lv) || 0))];
+function qSave() { try { localStorage.setItem('mp_q', JSON.stringify(MQ)); } catch (e) {} }
+// プリセットに合うか（合わなければ「自分で」）
+function qMatch() { MQ.p = 'custom'; for (const [k, P] of Object.entries(QP)) if (QK.every(x => P[x] === MQ[x])) MQ.p = k; }
+
 /* ---------- カメラ ---------- */
 const sx = x => (x - S.cam.x) * S.cam.z + S.W / 2;
 const sy = y => (y - S.cam.y) * S.cam.z + S.H / 2;
@@ -70,8 +96,14 @@ function tileAt(x, y) {
   const k = (y - cy * CS) * CS + (x - cx * CS);
   return { t: c.t[k], e: EDEC[B64I[c.e.charCodeAt(k)]], z: c.zo && c.zo.has(k) ? c.zo.get(k) : c.z[k], a: c.ap[B64I[c.a.charCodeAt(k)]] };
 }
+// 2D：くわしい地形（チャンク）を出すか（近さと、画面の中のチャンクの数。t63）
+function chunkView() {
+  if (S.cam.z < q('zc', MQ.d2)) return false;
+  const v = view(), n = (Math.floor(v.x1 / CS) - Math.floor(v.x0 / CS) + 1) * (Math.floor(v.y1 / CS) - Math.floor(v.y0 / CS) + 1);
+  return n <= q('maxCh', MQ.d2);
+}
 function needChunks() {
-  if (S.cam.z < 1.2) return;
+  if (!S.v3 && !chunkView()) return;
   const v = view(), cx0 = Math.floor(v.x0 / CS) - 1, cy0 = Math.floor(v.y0 / CS) - 1, cx1 = Math.floor(v.x1 / CS) + 1, cy1 = Math.floor(v.y1 / CS) + 1;
   const want = [];
   for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
@@ -104,6 +136,40 @@ async function pumpChunks() {
     }).catch(e => { for (const [cx, cy] of batch) S.pend.delete(ckey(cx, cy)); console.warn(e); })
       .finally(() => { S.chunkBusy--; pumpChunks(); });
   }
+}
+/* ---------- 遠くの建物（かんたんな形。t63・DB の更新47）：192 マス四方ごと。サーバーがとっておいたものを読む ---------- */
+const LITE = { cells: new Map(), busy: 0, off: false, LS: 192 };
+const B64N = (s, i) => B64I[s.charCodeAt(i)] * 64 + B64I[s.charCodeAt(i + 1)];
+// 12文字ずつ：種類の番号・階・x0＋64・y0＋64・はば・高さ（10m の区画。ます目の左上から）→ マスの単位の四角
+function liteDecode(d) {
+  const items = [], k = d.k || [], s = d.b || '', ox = d.i * LITE.LS * 5, oy = d.j * LITE.LS * 5;
+  for (let p = 0; p + 11 < s.length; p += 12) {
+    const x0 = ox + B64N(s, p + 4) - 64, y0 = oy + B64N(s, p + 6) - 64, w = B64N(s, p + 8), h = B64N(s, p + 10);
+    items.push({ kind: k[B64N(s, p)], f: B64N(s, p + 2), x0: x0 / 5, y0: y0 / 5, x1: (x0 + w) / 5, y1: (y0 + h) / 5 });
+  }
+  return items;
+}
+// r（マスの四角）にかかるます目を、近い順に読む（2つずつ）。max：読むます目の数の上限
+function liteNeed(r, max) {
+  if (LITE.off || !S.open) return;
+  const L = LITE.LS, i0 = Math.floor(r.x0 / L), j0 = Math.floor(r.y0 / L), i1 = Math.floor(r.x1 / L), j1 = Math.floor(r.y1 / L);
+  const cx = (r.x0 + r.x1) / 2, cy = (r.y0 + r.y1) / 2, want = [], t = now();
+  for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+    const c = LITE.cells.get(i + ',' + j); if (c) c.used = t;
+    if (c && (c.busy || (c.items && !c.stale) || (c.stale && t - (c.got || 0) < 120000) || (c.err && t - c.err < 15000))) continue;   // 変わっても2分は前のまま（遠くの見た目なので）
+    want.push([i, j, ((i + 0.5) * L - cx) ** 2 + ((j + 0.5) * L - cy) ** 2]);
+  }
+  want.sort((a, b) => a[2] - b[2]);
+  for (const [i, j] of want.slice(0, max)) {
+    if (LITE.busy >= 2) break;
+    const key = i + ',' + j, c = LITE.cells.get(key) || { i, j, items: null, v: 0 };
+    c.busy = true; c.used = t; LITE.cells.set(key, c); LITE.busy++;
+    call('mp_blds_lite', { p_i: i, p_j: j })
+      .then(d => { c.items = liteDecode(d); c.stale = false; c.err = 0; c.got = now(); c.paths = null; c.v++; S.dirty = true; if (S.v3) S.v3.dirty = true; })
+      .catch(e => { if (/Could not find the function|schema cache|does not exist/.test(e.message)) LITE.off = true; c.err = now(); })
+      .finally(() => { c.busy = false; LITE.busy--; });
+  }
+  if (LITE.cells.size > 140) { const all = [...LITE.cells.entries()].filter(e => !e[1].busy).sort((a, b) => a[1].used - b[1].used); for (const [k2] of all.slice(0, LITE.cells.size - 110)) LITE.cells.delete(k2); }
 }
 /* ---------- 町字（境界線と名前）：近いときだけ読む ---------- */
 function needCho() {
@@ -323,7 +389,7 @@ function chunkZone(c) {
 
 /* ---------- 地図の上のもの（道路・線路・駅など）：範囲（セル）ごとに読む ---------- */
 // ズームで細かさ（lod）とセルの大きさを決める
-function lodOf(z) { return z < 2 ? [2, 1024] : z < 7 ? [1, 384] : [0, 96]; }
+function lodOf(z) { const e = MQ.d2 === 0 && S.tool === 'look' && !S.v3; return z < (e ? 2.5 : 2) ? [2, 1024] : z < (e ? 9 : 7) ? [1, 384] : [0, 96]; }   // 省エネ（t63）：見るだけのときは、土地・建物を もっと近くから
 function needCells() {
   const [lod, cs] = lodOf(S.cam.z), v = view();
   const i0 = Math.floor(v.x0 / cs), j0 = Math.floor(v.y0 / cs), i1 = Math.floor(v.x1 / cs), j1 = Math.floor(v.y1 / cs);
@@ -448,6 +514,7 @@ async function poll() {
         if (ch.b) for (let cy = Math.floor(ch.b[1] / CS); cy <= Math.floor(ch.b[3] / CS); cy++) for (let cx = Math.floor(ch.b[0] / CS); cx <= Math.floor(ch.b[2] / CS); cx++) S.chunks.delete(ckey(cx, cy));
       }
       if (ch.k === 'route') { if (S.onRoute) S.onRoute(); continue; }
+      if (ch.k === 'land') { const L = LITE.LS; for (const c of LITE.cells.values()) if (!ch.b || (ch.b[0] <= (c.i + 1) * L && ch.b[2] >= c.i * L && ch.b[1] <= (c.j + 1) * L && ch.b[3] >= c.j * L)) c.stale = true; }   // 遠くの建物（t63）
       if (ch.k === 'cho') {   // 町字の合併・分割：町字のデータを読みなおす
         if (ch.b) for (let cy = Math.floor(ch.b[1] / CS) - 1; cy <= Math.floor(ch.b[3] / CS) + 1; cy++) for (let cx = Math.floor(ch.b[0] / CS) - 1; cx <= Math.floor(ch.b[2] / CS) + 1; cx++) { S.cho.delete(ckey(cx, cy)); const n = S.chunks.get(ckey(cx, cy)); if (n) n.bnd = null; }
       }
@@ -543,7 +610,8 @@ function render() {
     g.drawImage(S.ov, sx(o.x0), sy(o.y0), (o.x1 - o.x0) * z, (o.y1 - o.y0) * z);
   }
   // チャンク
-  if (z >= 1.2) {
+  const chOn = chunkView();
+  if (chOn) {
     const cx0 = Math.floor(v.x0 / CS), cy0 = Math.floor(v.y0 / CS), cx1 = Math.floor(v.x1 / CS), cy1 = Math.floor(v.y1 / CS);
     const hi = z >= 3; let made = 0;
     for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
@@ -615,8 +683,10 @@ function render() {
   if (S.routeHi) drawRouteHi(g, z, it);
   for (const s of it.stas.values()) if (s.k === 'rail') drawStation(g, s, z);
   if (bs.length) drawBlds(g, bs, z, 1);
+  // 遠くの建物（かんたんな形。t63）：くわしい建物を読まない遠さのとき
+  if (z < 7 && z >= q('zl', MQ.d2) && !LITE.off) drawLite(g, z, v);
   // 境界線（県・市区町村・町字）
-  if (z >= 1.2) drawBounds(g, z, v);
+  if (chOn) drawBounds(g, z, v);
   // バス停（しるし。建物にかくれないように）
   for (const s of it.stas.values()) if (s.k === 'bus') drawBusStop(g, s, z);
   // 港（⚓。t54o）・空港（✈。t54p）
@@ -940,11 +1010,12 @@ function drawScale(g, z) {
 }
 function frame() {
   if (!S.open) return;
+  if (MQ.fps < 60) { const t = now(); if (t - (S.lastF || 0) < 1000 / MQ.fps - 4) { requestAnimationFrame(frame); return; } S.lastF = t; }   // 省エネ（t63）
   glideStep();   // 惰性（t61）
   runFollowStep();   // 追跡（t62）
   wxStep();   // 天気（t62）
   if (S.v3) {   // 3D（map3d.js）
-    if (S.layer.run && now() - RUN.drawn > 120) S.v3.dirty = true;   // 走行位置：ときどき描きなおす
+    if (S.layer.run && now() - RUN.drawn > (MQ.fps < 60 ? 240 : 120)) S.v3.dirty = true;   // 走行位置：ときどき描きなおす（省エネのときは少なく）
     if (S.dirty || S.v3.dirty) { S.dirty = false; S.v3.dirty = false; try { m3Frame(); } catch (e) { console.error(e); } RUN.drawn = now(); }
     requestAnimationFrame(frame); return;
   }
@@ -952,8 +1023,9 @@ function frame() {
     S.dirty = false; LBL = [];
     try { render(); } catch (e) { console.error(e); }
     needChunks(); needCells(); needCho(); trimChunks();
+    if (S.cam.z < 7 && S.cam.z >= q('zl', MQ.d2)) liteNeed(view(), 40);   // 遠くの建物（t63）
     drawRunLayer();
-  } else if (S.layer.run && now() - RUN.drawn > 90) drawRunLayer();
+  } else if (S.layer.run && now() - RUN.drawn > (MQ.fps < 60 ? 180 : 90)) drawRunLayer();
   requestAnimationFrame(frame);
 }
 // 惰性（t61）：指をはなしたあと、少しすべる。S.glide = {vx, vy（マス/ms）, t}
@@ -1595,6 +1667,11 @@ const CSS = `
 .mp-cfg[hidden]{display:none}
 .mp-cfg{position:absolute;right:56px;top:8px;z-index:6;background:rgba(255,255,255,.97);border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.22);padding:10px 12px;display:flex;flex-direction:column;gap:8px;font-size:13px;color:#222;max-width:min(320px,calc(100% - 72px))}
 .mp-cfg label{display:flex;gap:8px;align-items:flex-start;line-height:1.35}
+.mp-cfg{max-height:calc(100% - 16px);overflow:auto}
+.mp-cfg select{margin-left:auto;font-size:13px;padding:2px 4px;border-radius:6px}
+.mp-qp{display:flex}.mp-qp button{flex:1;padding:6px 4px;font-size:12px}
+.mp-qd summary{cursor:pointer;color:#555;font-size:12px}.mp-qd label{margin-top:6px;align-items:center}
+.mp-qn{color:#666;font-size:11px;line-height:1.4}
 .mp-cfg input{margin-top:2px;flex:none;width:18px;height:18px}
 .mp-top{position:absolute;left:8px;right:56px;top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;pointer-events:none}
 .mp-top>*{pointer-events:auto}
@@ -1729,6 +1806,18 @@ function build(root) {
       <label><input type="checkbox" data-o="v3names"> 3D で建物の名前を出す</label>
       <label><input type="checkbox" data-o="v3x"> 3D で横に回す向きを反対にする</label>
       <label><input type="checkbox" data-o="wx"> 天気と気温を出す（左下に地図のまん中の天気。場所・駅・列車にも）</label>
+      <b>画質と見える遠さ（この端末）</b>
+      <div class="mp-seg mp-qp"><button data-qp="eco">🍃 省エネ</button><button data-qp="std">標準</button><button data-qp="high">高画質</button><button data-qp="max">最高</button></div>
+      <small class="mp-qn" data-qcustom hidden>自分で決めた設定です</small>
+      <details class="mp-qd"><summary>くわしく</summary>
+        <label>2D の見える遠さ <select data-q="d2"><option value="0">近い</option><option value="1">ふつう</option><option value="2">遠い</option><option value="3">とても遠い</option></select></label>
+        <label>2.5D（建物の高さ）の遠さ <select data-q="d25"><option value="0">近い</option><option value="1">ふつう</option><option value="2">遠い</option><option value="3">とても遠い</option></select></label>
+        <label>3D の見える遠さ <select data-q="d3"><option value="0">近い</option><option value="1">ふつう</option><option value="2">遠い</option><option value="3">とても遠い</option></select></label>
+        <label>なめらかさ <select data-q="fps"><option value="60">60コマ/秒</option><option value="30">30コマ/秒</option><option value="20">20コマ/秒</option></select></label>
+        <label>画面のこまかさ <select data-q="res"><option value="1">ふつう</option><option value="0.75">少しあらい</option><option value="0.5">あらい</option></select></label>
+        <label><input type="checkbox" data-q="aa"> 3D のふちをなめらかに（次に 3D にしたときから）</label>
+      </details>
+      <small class="mp-qn">遠くまで見るほど、電池と通信を多く使います。「最高」はパソコン向けです。重いときは「省エネ」に。</small>
     </div>
     <div class="mp-hint" hidden></div>
     <button class="mp-wx" hidden title="天気"></button>
@@ -1759,6 +1848,17 @@ function build(root) {
   const cfg = S.wrap.querySelector('.mp-cfg');
   S.wrap.querySelector('[data-opt]').onclick = () => { cfg.hidden = !cfg.hidden; optSync(); };
   cfg.querySelectorAll('[data-o]').forEach(c => c.onchange = () => setOpt(c.dataset.o, c.checked));
+  // 画質と見える遠さ（t63）
+  const qUI = () => {
+    cfg.querySelectorAll('[data-qp]').forEach(b => b.classList.toggle('on', b.dataset.qp === MQ.p));
+    cfg.querySelectorAll('select[data-q]').forEach(x => { x.value = String(MQ[x.dataset.q]); });
+    cfg.querySelector('input[data-q="aa"]').checked = !!MQ.aa; cfg.querySelector('[data-qcustom]').hidden = MQ.p !== 'custom';
+  };
+  const qApply = aa0 => { qSave(); resize(); S.dirty = true; if (S.v3) { S.v3.dirty = true; S.v3.bKey = ''; if (aa0 !== MQ.aa) toast(T('3D のふちは、次に 3D にしたときから変わります')); } qUI(); };
+  cfg.querySelectorAll('[data-qp]').forEach(b => b.onclick = () => { const aa0 = MQ.aa; Object.assign(MQ, QP[b.dataset.qp], { p: b.dataset.qp }); qApply(aa0); });
+  cfg.querySelectorAll('select[data-q]').forEach(x => x.onchange = () => { const aa0 = MQ.aa; MQ[x.dataset.q] = Number(x.value); qMatch(); qApply(aa0); });
+  cfg.querySelector('input[data-q="aa"]').onchange = ev => { const aa0 = MQ.aa; MQ.aa = ev.target.checked; qMatch(); qApply(aa0); };
+  qUI();
   S.wrap.addEventListener('pointerdown', e => { if (!cfg.hidden && e.target.tagName === 'CANVAS') cfg.hidden = true; }, true);   // 地図にさわったら とじる
   // 建物の見えかた：2.5D（高さ・壁）と 2D（上から見たまま）。この端末におぼえる
   try { const v = localStorage.getItem('mp_b25'); if (v != null) S.b25 = v !== '0'; } catch (e) {}
@@ -1796,7 +1896,7 @@ function toolVis() {
 }
 function resize() {
   if (!S.wrap) return;
-  const r = S.wrap.getBoundingClientRect(); S.dpr = Math.min(2, window.devicePixelRatio || 1);
+  const r = S.wrap.getBoundingClientRect(); S.dpr = Math.max(0.5, Math.min(2, window.devicePixelRatio || 1) * (Number(MQ.res) || 1));   // 画面のこまかさ（t63）
   S.W = Math.max(1, r.width); S.H = Math.max(1, r.height);
   S.cv.width = Math.round(S.W * S.dpr); S.cv.height = Math.round(S.H * S.dpr); S.dirty = true;
   if (S.cvr) { S.cvr.width = S.cv.width; S.cvr.height = S.cv.height; }
@@ -4733,6 +4833,34 @@ function prepBld(a) {
   b.bb = [Math.min(x0 / 5, x0 / 5 + dx), Math.min(y0 / 5, y0 / 5 + dy), (x1 + 1) / 5, (y1 + 1) / 5];
   return b;
 }
+// 遠くの建物（かんたんな形。t63）：色ごとにまとめた形を、ます目ごとに つくっておく（壁：南・東。屋根は北西にずらす）
+function litePaths(items, walls) {
+  const flat = new Map(), roof = new Map(), ws = new Map(), we = new Map(), get = (m, k) => { let P = m.get(k); if (!P) m.set(k, P = new Path2D()); return P; };
+  for (const b of items) {
+    const col = bcol(b.kind), w = b.x1 - b.x0, h = b.y1 - b.y0;
+    if (b.f <= 0) { get(flat, col[0]).rect(b.x0, b.y0, w, h); continue; }
+    if (!walls) { get(roof, col[0]).rect(b.x0, b.y0, w, h); continue; }
+    const [dx, dy] = bldShift(b.f), P = get(ws, col[1]), E = get(we, col[2]);
+    P.moveTo(b.x0, b.y1); P.lineTo(b.x1, b.y1); P.lineTo(b.x1 + dx, b.y1 + dy); P.lineTo(b.x0 + dx, b.y1 + dy); P.closePath();
+    E.moveTo(b.x1, b.y0); E.lineTo(b.x1, b.y1); E.lineTo(b.x1 + dx, b.y1 + dy); E.lineTo(b.x1 + dx, b.y0 + dy); E.closePath();
+    get(roof, col[0]).rect(b.x0 + dx, b.y0 + dy, w, h);
+  }
+  return { flat: [...flat], roof: [...roof], ws: [...ws], we: [...we] };
+}
+function drawLite(g, z, v) {
+  const L = LITE.LS, walls = S.b25 && z >= q('zw', MQ.d25), mode = walls ? 'w' : 'f';
+  const i0 = Math.floor(v.x0 / L), j0 = Math.floor(v.y0 / L), i1 = Math.floor(v.x1 / L), j1 = Math.floor(v.y1 / L);
+  worldT(g);
+  for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+    const c = LITE.cells.get(i + ',' + j); if (!c || !c.items) continue;
+    if (!c.paths || c.pm !== mode) { c.paths = litePaths(c.items, walls); c.pm = mode; }
+    for (const [col, P] of c.paths.flat) { g.fillStyle = col; g.fill(P); }
+    for (const [col, P] of c.paths.ws) { g.fillStyle = col; g.fill(P); }
+    for (const [col, P] of c.paths.we) { g.fillStyle = col; g.fill(P); }
+    for (const [col, P] of c.paths.roof) { g.fillStyle = col; g.fill(P); }
+  }
+  screenT(g);
+}
 // 見えている建物（平らなもの（広場・駐車場・田畑）を先に。あとは北西から＝手前のものをあとで）
 function bldsIn(it, v) {
   const bs = [...it.blds.values()].filter(b => b.bb[2] >= v.x0 && b.bb[0] <= v.x1 && b.bb[3] >= v.y0 && b.bb[1] <= v.y1);
@@ -4741,7 +4869,7 @@ function bldsIn(it, v) {
 }
 // 建物を描く。pass 0：平らなもの（駅のホームより下）・1：高さのあるもの（ホームより上）
 function drawBlds(g, bs, z, pass) {
-  const walls = S.b25 && z >= 9, selP = S.sel && S.sel.kind === 'cell' ? S.sel.parcel : null;   // 2D のときは壁を描かない（上から見たまま）
+  const walls = S.b25 && z >= q('zw', MQ.d25), selP = S.sel && S.sel.kind === 'cell' ? S.sel.parcel : null;   // 2D のときは壁を描かない（上から見たまま）
   worldT(g);
   for (const b of bs) {
     if ((b.floors > 0) !== (pass === 1)) continue;
@@ -4849,7 +4977,7 @@ function flatPat(g, b, z, pat) {
   g.restore();
 }
 // 建物の文字の場所（屋根の上）
-const bldPt = (b, z) => { const w = S.b25 && z >= 9 && b.floors > 0; return [sx(w ? b.lx : b.cx), sy(w ? b.ly : b.cy)]; };
+const bldPt = (b, z) => { const w = S.b25 && z >= q('zw', MQ.d25) && b.floors > 0; return [sx(w ? b.lx : b.cx), sy(w ? b.ly : b.cy)]; };
 // 地図記号（t54l）：種類 → 記号。施設（学校・宿泊・医療・娯楽）は施設の用途から。工場は歯車、港はいかり、駐車場は P
 const SYM_K = { shrine: 'torii', temple: 'manji', church: 'cross', superonsen: 'onsen', sento: 'onsen', onsenryokan: 'onsen',
   baseball: 'stadium', soccer: 'stadium', arena: 'stadium', athletics: 'stadium', museum: 'museum', artmuseum: 'museum', science: 'museum', umus: 'museum',
@@ -4985,7 +5113,7 @@ function hitBld(x, y) {
   for (const b of bs) {
     const g0 = Math.floor(x * 5) + ',' + Math.floor(y * 5);
     if (b.set.has(g0)) return { b, cell: g0 };
-    if (b.floors > 0 && S.b25 && S.cam.z >= 9) { const k = Math.floor((x - b.dx) * 5) + ',' + Math.floor((y - b.dy) * 5); if (b.set.has(k)) return { b, cell: k }; }
+    if (b.floors > 0 && S.b25 && S.cam.z >= q('zw', MQ.d25)) { const k = Math.floor((x - b.dx) * 5) + ',' + Math.floor((y - b.dy) * 5); if (b.set.has(k)) return { b, cell: k }; }
   }
   return null;
 }
@@ -5962,7 +6090,7 @@ function showCert(r) {
         <table style="border-collapse:collapse;flex:1;font-size:13px">${row('氏名', `<b translate="no">${esc(r.name)}</b>`)}${row('住所', `<span translate="no">${esc(j.addr)}</span>`)}${row('登録番号', esc(j.seal_no || ''))}</table></div>${foot}`);
   modal([r.kind === 'cert' ? '住民票の写し' : '印鑑登録証明書', html], null, 'mp-wide');
 }
-window.MapInt = { S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runOff, runIsSel, runName, runDest, showTrain, showSta, runFollow };   // 3D（map3d.js）が使う
+window.MapInt = { MQ, q, LITE, liteNeed, EDEC, B64I, bldShift, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runOff, runIsSel, runName, runDest, showTrain, showSta, runFollow };   // 3D（map3d.js）が使う
 window.MapApp = { open, pause, state: S, spline, setCam, landReqs: () => openLandReqs(), xfers: () => openXfers(), goto: (x, y) => homeGo(x, y), thru: () => openThru(), bld: id => openBld(id), sc: () => openSC(),
   slots: L => (L && L.st ? openSlots(Number(L.st)) : openSlotList()), find: () => openFind(), jm: id => openJuumin(id), wxMap: () => wxMapOn() };
 })();
