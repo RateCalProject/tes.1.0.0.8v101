@@ -726,7 +726,7 @@ $$;
 -- ---------------------------------------------------------------------
 -- プロフィール
 -- ---------------------------------------------------------------------
--- ログインしたら毎回呼ぶ。初めての人にだけ はじめての配布（110,000 X。ゲストは 10,000 X で、本登録したときに残り）を配る（1回きり）
+-- ログインしたら毎回呼ぶ。初めての人にだけ はじめての配布（110,000 X。ゲストは 5,000 X で、本登録したときに残り）を配る（1回きり）
 alter table public.profiles add column if not exists prefs jsonb not null default '{}'::jsonb;   -- ショートカット・テーマ・色覚サポート・言語
 
 create or replace function public.ensure_profile() returns jsonb
@@ -12557,8 +12557,8 @@ begin
 end $$;
 
 -- =====================================================================
--- お祝いの配布（2026-10-31・更新 20261031-44）
---   はじめての配布：110,000 X（ゲストは 10,000 X ではじめて、本登録したときに 残りの 100,000 X。ゲストの所持金は 40,000 X までのため）
+-- お祝いの配布（2026-10-31・更新 20261031-44・46）
+--   はじめての配布：110,000 X（ゲストは 5,000 X ではじめて、本登録したときに 残りの 105,000 X。ゲストの所持金は 40,000 X までのため。更新46）
 --   毎年：元日（新正月）・旧正月・建国記念の日（2月11日）に 80,000 X ずつ。日本時間の0時すぎに、AI・国のアカウントをのぞく全員へ
 --   ゲストの分は、本登録したときにまとめて渡す（gift_pending にとっておく。ゲストが消えると、いっしょに消える）
 --   配るお金は国が新しく発行する（国庫の発行額にのせる。国庫の残高は変わらない）。所得ではないので税金はかからない
@@ -12611,7 +12611,7 @@ on conflict (y) do nothing;
 create or replace function public._gift_amt(k text) returns bigint
 language sql stable set search_path = public as $$
   select coalesce((select case when value ~ '^[0-9]{1,13}$' then value::bigint end from app_settings where key = 'gift_' || k),
-                  case k when 'welcome' then 110000 when 'welcome_guest' then 10000 when 'holiday' then 80000 else 0 end)
+                  case k when 'welcome' then 110000 when 'welcome_guest' then 5000 when 'holiday' then 80000 else 0 end)
 $$;
 
 -- 建国記念の日（決まりは2月11日。app_settings の gift_founding＝'MM-DD' で変えられる）
