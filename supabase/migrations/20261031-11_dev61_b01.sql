@@ -1,4 +1,4 @@
--- 首都まわりの町づくり（t61）建物 1/28（2000棟）：若宮基地 1624・新聞社（官邸・国会） 369・紺野新報 本社 1・藍幡民報 本社 1・南陽島タイムス 本社 1・若宮新聞 本社 1・玖珠日日新聞 本社 1・柚野新聞 本社 1・夕凪タイムズ 本社 1
+-- 首都まわりの町づくり（t61）建物 1/29（2000棟）：若宮基地 1624・新聞社（官邸・国会） 369・紺野新報 本社 1・藍幡民報 本社 1・南陽島タイムス 本社 1・若宮新聞 本社 1・玖珠日日新聞 本社 1・柚野新聞 本社 1・夕凪タイムズ 本社 1
 -- 持ち主：風の芽製作所（ふつうの建物）・国営の会社・AIの会社（町の景色）。あいていない区画（あとから筆・道路などができた）はとばす
 create or replace function pg_temp.dev_build(x0 int, y0 int, x1 int, y1 int, p_kind text, p_shape text, p_floors int, p_co int, p_name text) returns bigint
 language plpgsql set search_path = public as $f$
@@ -2052,5 +2052,5 @@ begin
     exception when others then ng := ng + 1; e := sqlerrm;
     end;
   end loop;
-  raise warning '町づくり 1/28：建てた % 棟・とばした % 棟（さいごのわけ：%）', ok, ng, coalesce(e, 'なし');
+  raise warning '町づくり 1/29：建てた % 棟・とばした % 棟（さいごのわけ：%）', ok, ng, coalesce(e, 'なし');
 end $$;
