@@ -791,10 +791,15 @@ begin
     cur := cur || jsonb_build_object('shortcuts', p->'shortcuts');
   end if;
   if p ? 'theme' then
-    if coalesce(p->>'theme', '') not in ('std', 'net2000', 'famicom', 'wa', 'night', 'neon', 'pastel', 'chalk', 'casino', 'win95', 'paper', 'citypop') then
+    if coalesce(p->>'theme', '') not in ('std', 'net2000', 'famicom', 'wa', 'night', 'neon', 'pastel', 'chalk', 'casino', 'win95', 'paper', 'citypop',
+                                         'sakura', 'ocean', 'forest', 'lcd', 'luxury', 'snow', 'cyber') then
       raise exception 'テーマが正しくありません';
     end if;
     cur := cur || jsonb_build_object('theme', p->>'theme');
+  end if;
+  if p ? 'font' then   -- t62：書体（テーマとは別）
+    if coalesce(p->>'font', '') not in ('auto', 'gothic', 'kaku', 'ud', 'maru', 'mincho', 'hand', 'pop', 'brush', 'dot') then raise exception '書体が正しくありません'; end if;
+    cur := cur || jsonb_build_object('font', p->>'font');
   end if;
   if p ? 'cvd' then
     if coalesce(p->>'cvd', '') not in ('off', 'mark', 'safe') then raise exception '色覚サポートの設定が正しくありません'; end if;
