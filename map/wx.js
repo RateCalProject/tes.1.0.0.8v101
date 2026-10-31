@@ -5,7 +5,9 @@
    - 高いところほど寒い（100m で 0.65℃）
    - 雲のかたまりは、西から東へ動いていく（1時間に 30km ぐらい）。0℃ぐらいより寒いと雪、そのすこし上はみぞれ
    - 積もった雪：150日前から6時間ごとに、降った雪をたして、暖かいととかす
-   使いかた：MapWx.now(x, y, e) → { T, w, ic, nm, hi, lo, snow, … }（x・y はマス、e は標高 m）
+   - 風（2026-11-01）：気圧の差（等圧線のこみぐあい）から。低い気圧を左に見てふく。強い雨・雪のときは強め。
+     サーバー（DB の更新51 の _wx_core・_wx_wind：列車の遅れ）も同じ式
+   使いかた：MapWx.now(x, y, e) → { T, w, ic, nm, hi, lo, snow, ws（風速 m/s）, wg（最大瞬間）, wd（風向き）, mm（雨 mm/h）, … }（x・y はマス、e は標高 m）
             MapWx.days(x, y, e, n) → きょうから n 日の { date, hi, lo, w, ic, nm }
             MapWx.hours(x, y, e, n, step) → いまから step 時間ごとに n こ { ms, hr, T, w, ic, nm } */
 (function () {
@@ -90,6 +92,23 @@ function core(x, y, e, ms, tt) {
   const T = tc - g - 0.0065 * Math.max(0, e || 0);
   return { t, T, wet, inten, cl, P: presOf(xk, yk, t, zp), kind: !wet ? '' : T <= 0.6 ? 'snow' : T < 2.4 ? 'sleet' : 'rain' };
 }
+// 1時間の雨（mm）・雪（cm）：強さ（0〜1）から。弱いものが多く、強いものは まれ（サーバーの _wx_mm・_wx_cm と同じ）
+const rainMM = inten => Math.min(100, 0.3 + 2.5 * (Math.pow(Math.max(1e-9, 1 - inten), -0.6) - 1));
+const snowCM = inten => Math.min(20, 0.2 + 1.2 * (Math.pow(Math.max(1e-9, 1 - inten), -0.5) - 1));
+// 風：地上の平均風速（m/s）・最大瞬間風速・ふいてくる向き（北 0・東 90）。o は core() の答え（なければ計算する）
+const WDIR = ['北', '北北東', '北東', '東北東', '東', '東南東', '南東', '南南東', '南', '南南西', '南西', '西南西', '西', '西北西', '北西', '北北西'];
+function wind(x, y, ms, o) {
+  const t = o ? o.t : tinfo(ms), xk = x * KM, yk = y * KM, d = 20;   // 20km はなれた点の気圧の差
+  const P = (a, b) => presOf(a, b, t, nP(a, b, t.h) / SP);
+  const gx = (P(xk + d, yk) - P(xk - d, yk)) / (2 * d) * 100, gy = (P(xk, yk + d) - P(xk, yk - d)) / (2 * d) * 100;   // hPa/100km（x 東・y 南）
+  if (!o) o = core(x, y, 0, ms, t);
+  const st = o.wet && o.inten > 0.8 ? 10 * ((o.inten - 0.8) / 0.2) * ((o.inten - 0.8) / 0.2) : 0;   // 強い雨・雪の突風
+  const spd = 0.6 + Math.sqrt(gx * gx + gy * gy) + st;
+  // 向き：地衡風（東 gy・北 gx）を、地面のまさつで 30°低いほう（左）へ
+  const ue = gy * 0.8660254037844387 - gx * 0.5, vn = gy * 0.5 + gx * 0.8660254037844387;
+  const dir = ((Math.round(Math.atan2(ue, vn) * 180 / Math.PI) + 180) % 360 + 360) % 360;
+  return { spd, gust: spd * 1.6, dir, nm: WDIR[Math.round(dir / 22.5) % 16] };
+}
 // 天気のことば・しるし
 function label(o, night) {
   if (o.kind === 'snow') return o.inten > 0.75 ? ['snow3', '🌨', '大雪'] : o.inten < 0.3 ? ['snow1', '🌨', '小雪'] : ['snow', '🌨', '雪'];
@@ -125,8 +144,9 @@ function now(x, y, e, ms) {
   ms = ms == null ? Date.now() : ms;
   const o = core(x, y, e, ms), night = isNight(o.t), [w, ic, nm] = label(o, night);
   const d = day(x, y, e, ms);
-  const snow = Math.round(snowAt(x, y, e, ms));
-  return { T: r1(o.T), w, ic, nm, night, hi: d.hi, lo: d.lo, snow, wet: o.wet };
+  const snow = Math.round(snowAt(x, y, e, ms)), wn = wind(x, y, ms, o);
+  return { T: r1(o.T), w, ic, nm, night, hi: d.hi, lo: d.lo, snow, wet: o.wet, ws: Math.round(wn.spd), wg: Math.round(wn.gust), wd: wn.nm,
+           mm: o.kind === 'rain' ? r1(rainMM(o.inten)) : 0, cm: o.kind === 'snow' ? r1(snowCM(o.inten)) : 0 };
 }
 // その日（日本時間の0時〜24時）の最高・最低と、昼（6〜21時）の天気
 function day(x, y, e, ms) {
@@ -157,5 +177,5 @@ function hours(x, y, e, n, step, ms) {
   }
   return a;
 }
-window.MapWx = { now, day, days, hours, core, snowAt, tinfo, label, isNight, CAPY };
+window.MapWx = { now, day, days, hours, core, snowAt, tinfo, label, isNight, wind, rainMM, snowCM, CAPY };
 })();

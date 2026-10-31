@@ -509,6 +509,7 @@ function visibleItems() {
 // 変わったもの（ほかの人の工事など）。15秒ごと
 async function poll() {
   if (!S.open || document.hidden) return;
+  unkoLoad();   // 運行の乱れ（1分ごと）
   try {
     const r = await call('mp_poll', { p_since: S.ver });
     if (r.reload) { for (const c of S.cells.values()) c.stale = true; S.ver = r.ver; S.dirty = true; needCells(); return; }
@@ -1060,8 +1061,8 @@ function runReset() { if (!S.layer.run) { RUN.routes.clear(); RUN.follow = null;
 function clearRunLayer() { if (S.ctxr) { S.ctxr.setTransform(1, 0, 0, 1, 0, 0); S.ctxr.clearRect(0, 0, S.cvr.width, S.cvr.height); } }
 // いまの時刻（日本時間）：その日の 0 時からの秒・今日と きのうの日付
 function jstNow() {
-  const t = Date.now() / 1000 + 9 * 3600, d = Math.floor(t / 86400), ds = n => new Date(n * 86400000).toISOString().slice(0, 10);
-  return { sec: t - d * 86400, date: ds(d), prev: ds(d - 1) };
+  const a = Date.now() / 1000, t = a + 9 * 3600, d = Math.floor(t / 86400), ds = n => new Date(n * 86400000).toISOString().slice(0, 10);
+  return { sec: t - d * 86400, date: ds(d), prev: ds(d - 1), abs: a, day0: d * 86400 - 9 * 3600 };   // abs・day0：1970年からの秒（運行の乱れ）
 }
 // 1つの系統のダイヤを読む（10分ごとに読みなおす）。true 読みはじめた・false もうある・null いそがしい（3つまで）
 function runLoad(id) {
@@ -1078,6 +1079,7 @@ function runLoad(id) {
 // 見えている駅・バス停・港・空港を通る系統のダイヤを読む
 function runNeed(it) {
   if (now() - RUN.need < 1500) return; RUN.need = now();
+  unkoLoad();   // 運行の乱れ（1分ごと）
   const ids = new Set();
   for (const st of it.stas.values()) for (const r of (st.rt || [])) ids.add(r.id);
   for (const l of it.lanes.values()) ids.add(l.id);
@@ -1171,8 +1173,18 @@ function runOff(pts, off) {
 }
 // 列車 tn の、時刻 tm の位置：{H（走っている線）, d（頭の位置）, x, y, a, at（止まっている駅：sched の何番目）, nx（つぎに着く駅）, tt（その日の秒）} か null（走っていない）
 function runPos(R, tn, tm, it) {
-  let tt = null;
-  if ((!tn.day || tn.day === tm.date) && tm.sec >= tn.t0 && tm.sec <= tn.t1) tt = tm.sec;
+  let tt = null, dl = 0;
+  const pc = R.k === 'rail' && tm.abs ? unkoPc(R.id) : null;
+  if (pc) {
+    // 運行の乱れ（DB の更新51）：始発駅を出てからの遅れ（dl 秒）の分、ダイヤより うしろの位置。見合わせ中に始発駅を出るはずの列車は運休（走らない）
+    for (const [day, off] of [[tm.date, 0], [tm.prev, 86400]]) {
+      if (tn.day && tn.day !== day) continue;
+      const t = tm.sec + off; if (t < tn.t0) continue;
+      const d0 = tm.day0 - off + tn.t0; if (unkoCan(pc, d0)) continue;
+      const d = unkoDly(pc, d0, tm.abs), tau = t - d;
+      if (tau >= tn.t0 && tau <= tn.t1) { tt = tau; dl = d; break; }
+    }
+  } else if ((!tn.day || tn.day === tm.date) && tm.sec >= tn.t0 && tm.sec <= tn.t1) tt = tm.sec;
   else if ((!tn.day || tn.day === tm.prev) && tm.sec + 86400 >= tn.t0 && tm.sec + 86400 <= tn.t1) tt = tm.sec + 86400;   // 日をまたぐ列車（24時すぎ）
   if (tt == null) return null;
   if (!tn.idx) tn.idx = runIdx(R, tn);
@@ -1194,7 +1206,7 @@ function runPos(R, tn, tm, it) {
   }
   if (!H) return null;
   const p = runPt(H, d);
-  return { H, d, x: p[0], y: p[1], a: p[2], at, nx, tt };
+  return { H, d, x: p[0], y: p[1], a: p[2], at, nx, tt, dl };
 }
 const runCarL = k => k === 'rail' ? 0.4 : k === 'bus' ? 0.24 : k === 'ship' ? 2.4 : 0.9;   // 1両（1台）の長さ（マス）
 // いま走っている車両（しぼりこみのとおり）：[{R, T, H, d（頭の位置）, x, y, a, len（長さ・マス）, car}]。v：見るはんい（マス）
@@ -1208,7 +1220,7 @@ function runList(it, v) {
       if (!runPass(R, tn)) continue;
       const p = runPos(R, tn, tm, it); if (!p) continue;
       if (p.x < v.x0 - pad || p.x > v.x1 + pad || p.y < v.y0 - pad || p.y > v.y1 + pad) continue;
-      out.push({ R, T: tn, H: p.H, d: p.d, x: p.x, y: p.y, a: p.a, at: p.at, nx: p.nx, len: carL * (R.k === 'rail' ? tn.fn : 1), car: carL });
+      out.push({ R, T: tn, H: p.H, d: p.d, x: p.x, y: p.y, a: p.a, at: p.at, nx: p.nx, len: carL * (R.k === 'rail' ? tn.fn : 1), car: carL, dl: p.dl || 0 });
     }
   }
   return out;
@@ -1249,7 +1261,7 @@ function drawRunLayer() {
         g.save(); g.translate(X, Y); g.rotate(o.a);
         if (sel) { g.beginPath(); g.arc(0, 0, r + 6, 0, 6.3); g.fillStyle = 'rgba(255,205,0,.95)'; g.fill(); }
         g.beginPath(); g.arc(0, 0, r, 0, 6.3);
-        g.fillStyle = o.R.c; g.fill(); g.lineWidth = 1.4; g.strokeStyle = '#fff'; g.stroke(); g.restore();
+        g.fillStyle = o.R.c; g.fill(); g.lineWidth = o.dl >= 60 ? 2 : 1.4; g.strokeStyle = o.dl >= 60 ? '#e8322a' : '#fff'; g.stroke(); g.restore();   // 遅れている列車は赤いふち
         RUN.hits.push({ o, pts: [[X, Y]], r: r + 12 });
       }
       if (z >= 14 || sel) lb.push([o, sx(hx), sy(hy)]);
@@ -1269,10 +1281,11 @@ function drawRunLayer() {
   const used = [];
   lb.sort((a, b) => runIsSel(b[0]) - runIsSel(a[0]));
   for (const [o, X, Y] of lb.slice(0, 40)) {
-    const sel = runIsSel(o), t = runName(o.T, o.R.k) + (sel || z >= 20 ? ' → ' + runDest(o.R, o.T) : ''), w = g.measureText(t).width + 8, x = X + 9, y = Y - 12;
+    const late = o.dl >= 60 ? ' +' + Math.round(o.dl / 60) + T('分') : '';   // 遅れ（運行の乱れ）
+    const sel = runIsSel(o), t = runName(o.T, o.R.k) + (sel || z >= 20 ? ' → ' + runDest(o.R, o.T) : '') + late, w = g.measureText(t).width + 8, x = X + 9, y = Y - 12;
     if (!sel && used.some(r => x < r[2] && x + w > r[0] && y - 8 < r[3] && y + 8 > r[1])) continue;
     used.push([x, y - 8, x + w, y + 8]);
-    g.fillStyle = sel ? 'rgba(255,236,150,.97)' : 'rgba(255,255,255,.9)'; g.fillRect(x, y - 8, w, 16); g.fillStyle = '#222'; g.fillText(t, x + 4, y);
+    g.fillStyle = sel ? 'rgba(255,236,150,.97)' : late ? 'rgba(255,222,220,.95)' : 'rgba(255,255,255,.9)'; g.fillRect(x, y - 8, w, 16); g.fillStyle = late ? '#a3120c' : '#222'; g.fillText(t, x + 4, y);
   }
 }
 const runName = (tn, k) => (tn.kind && (k === 'rail' || !k || tn.kind !== '普通') ? T(kindL(tn.kind)) + ' ' : '') + tn.num;   // バス・船・飛行機は「普通」を出さない
@@ -1295,13 +1308,14 @@ function showTrain(R, tn) {
   const rows = sc.map((e, i) => `<div class="mp-ttr" data-i="${i}"><span class="n">${esc(R.sn.get(e[0]) || '')}</span><span class="t">${e[1] != null ? `<span>${hms(e[1])}着</span>` : ''}</span><span class="t">${e[2] != null ? `<span>${hms(e[2])}発</span>` : ''}</span><span class="k">${rail && e[3] ? `<span>${e[3]}番線</span>` : ''}</span></div>`).join('');
   sheet(`<div class="mp-s3in"><h4 data-trn="${key}"><span style="color:${esc(R.c)}">■</span> <span>${esc(R.n)}</span></h4>
     <div class="mp-kv"><b>${RUN_K[R.k] || '列車'}</b><span><b translate="no">${esc(runName(tn, R.k))}</b>　<span>${esc(runDest(R, tn))}行き</span>${tn.day ? ' <small class="mp-tag">臨時</small>' : ''}</span>
-      <b>いま</b><span data-now></span><b>つぎ</b><span data-next></span>${S.wx && wxOk() ? '<b>天気</b><span data-wxt>—</span>' : ''}
+      <b>いま</b><span data-now></span><b>つぎ</b><span data-next></span>${rail ? '<b data-unkoh hidden>運行</b><span data-unko hidden></span>' : ''}${S.wx && wxOk() ? '<b>天気</b><span data-wxt>—</span>' : ''}
       ${tn.fname ? `<b>${rail ? '編成' : '車両'}</b><span><span translate="no">${esc(tn.fname)}</span>${tn.fser ? `<small class="muted">（<span>${esc(tn.fser)}</span>）</small>` : ''}${rail ? `・<span>${tn.fn}両</span>` : ''}</span>` : ''}
       ${tn.onum ? `<b>運用</b><span>${esc(tn.onum)}</span>` : ''}
       <b>持ち主</b><span>${esc(R.own)}</span></div>
     <div class="mp-row"><button class="btn main" data-fol></button><button class="btn" data-dia>系統のダイヤ</button></div>
     <div class="mp-ttl">${rows}</div></div>`, sh => {
     sh.querySelector('[data-dia]').onclick = () => openDia(R.id);
+    sh.addEventListener('click', ev => { const a = ev.target.closest && ev.target.closest('[data-unkoz]'); if (a) { ev.preventDefault(); openUnko(Number(a.dataset.unkoz)); } });   // 運行情報
     sh.querySelector('[data-fol]').onclick = () => { const on = !(RUN.follow && RUN.follow.rid === R.id && RUN.follow.tid === tn.id); runFollow(on ? R.id : 0, tn.id); upd(); };
   });
   S.sheet.classList.add('mp-s3');
@@ -1320,7 +1334,11 @@ function showTrain(R, tn) {
       now_ = `<span>${nm(p.nx - 1)} → ${nm(p.nx)} を走っています</span>`;
       nxt = `<b>${nm(p.nx)}</b> <span>${hms(sc[p.nx][1])}着</span>`;
     }
+    const ui = rail ? unkoTrain(R, tn, p) : null;   // 運行の乱れ：遅れ・運休
+    if (!p && ui && ui.can) now_ = `<b class="mp-late">運休</b>（<span>${esc(ui.why)}</span>）`;
     const a = S.sheet.querySelector('[data-now]'), b = S.sheet.querySelector('[data-next]'); if (a) a.innerHTML = now_; if (b) b.innerHTML = nxt || '—';
+    const uh = S.sheet.querySelector('[data-unkoh]'), ub = S.sheet.querySelector('[data-unko]');
+    if (uh && ub) { const on = !!(ui && (ui.dl >= 60 || ui.can || ui.stop)); uh.hidden = ub.hidden = !on; if (on) ub.innerHTML = unkoTrainHtml(ui); }
     const wt = S.sheet.querySelector('[data-wxt]'); if (wt && p) { const k = Math.round(p.x / 4) + ',' + Math.round(p.y / 4) + ',' + Math.floor(Date.now() / 60000); if (wt.dataset.k !== k) { wt.dataset.k = k; wt.innerHTML = wxInner(p.x, p.y); } }
     const fol = RUN.follow && RUN.follow.rid === R.id && RUN.follow.tid === tn.id, fb = S.sheet.querySelector('[data-fol]');
     if (fb) { fb.textContent = T(fol ? '📍 追跡をやめる' : '📍 追跡する'); fb.classList.toggle('on', fol); }
@@ -1356,12 +1374,150 @@ function runBar() {
   const f = RUN.follow, R = f && RUN.routes.get(f.rid), tn = R && R.tr && R.tr.find(x => x.id === f.tid), parts = [];
   if (f && S.layer.run) parts.push(`<button data-rbf>📍 <span>追跡中</span>${tn ? `：<b translate="no">${esc(runName(tn, R.k))}</b>` : ''}</button><button data-rbfx title="追跡をやめる">✕</button>`);
   if (S.layer.run && runFiltered()) parts.push(`<button data-rbs>🔎 <span>しぼりこみ中</span></button><button data-rbsx title="しぼりこみをやめる">✕</button>`);
+  { const t = Date.now() / 1000, n = UNKO.list.filter(z => unkoState(z, t).live).length, ask = UNKO.list.some(z => z.st === 'ask' && (z.me || z.can));   // 運行情報（DB の更新51）
+    if ((S.layer.run && n) || ask) parts.push(`<button data-rbu class="${ask ? 'mp-rbu-ask' : ''}">🚦 <span>運行情報</span> <b>${n}</b>${ask ? ' <span>❗対応をえらぶ</span>' : ''}</button>`); }
   b.innerHTML = parts.join(''); b.hidden = !parts.length;
   const q = s => b.querySelector(s);
   if (q('[data-rbf]')) q('[data-rbf]').onclick = () => { if (R && tn) showTrain(R, tn); };
   if (q('[data-rbfx]')) q('[data-rbfx]').onclick = () => runFollow(0);
   if (q('[data-rbs]')) q('[data-rbs]').onclick = () => openRunFind();
   if (q('[data-rbsx]')) q('[data-rbsx]').onclick = () => runSetF({ k: ['rail', 'bus', 'ship', 'air'], dir: 0, kind: '', rid: 0 });
+  if (q('[data-rbu]')) q('[data-rbu]').onclick = () => { const z = UNKO.list.find(z => z.st === 'ask' && (z.me || z.can)); openUnko(z ? z.id : 0); };
+}
+/* ---------- 運行の乱れ（2026-11-01・DB の更新51）：列車の遅れ・運転見合わせ・運行情報 ----------
+   サーバー（5分ごと）が、雪・大雨・強風（天気と同じ式）・人と接触などで「乱れ」を作る。乱れごとに、列車の速さの窓 wins：[[はじめ, おわり（1970年からの秒）, 速さ（0 止まる・0.6 徐行）]]。
+   列車の遅れは、始発駅を出た時刻から窓の分だけたまり、窓のあとは 1秒に 0.1秒ずつ取りもどす（サーバーの毎時の処理と同じ計算）。見合わせ中に始発駅を出る列車は運休 */
+const UNKO = { list: [], pc: new Map(), at: -1e9, busy: false, off: false, toff: 0 };   // at：前に読んだ時刻（performance.now）
+const UNKO_K = { wind: '強風', rain: '大雨', snow: '大雪', person: '人と接触', sick: '急病のお客さまの救護', car: '車両の点検', signal: '信号の確認', track: '線路内の点検' };
+const UNKO_PICK = { 1: 'いつもどおり運転する', 2: '徐行・点検しながら運転する', 3: '運転を見合わせる' };
+const UNKO_RULE = `<ul style="margin:6px 0;padding-left:1.2em;line-height:1.7">
+  <li><b>強風</b>（最大瞬間風速）：20m/s から 2（徐行）・25m/s から 3（見合わせ）</li>
+  <li><b>強い雨</b>（1時間の雨）：30mm から 2・50mm から 3</li>
+  <li><b>強い雪</b>（1時間の雪）：3cm から 2・7cm から 3</li>
+  <li>天気は「これから強くなる予報」のときは、いちばん強いときに合わせる</li>
+  <li><b>人と接触</b>：3（救護と警察の確認がおわるまで見合わせ）</li>
+  <li><b>急病のお客さまの救護</b>・<b>異常のない点検</b>（小石など）：1（駅で救護・確認したら、ふつうに運転）</li>
+  <li><b>軽い不具合・立ち入り</b>（ドア・赤のままの信号・人の立ち入り・動物）：2</li>
+  <li><b>重い不具合</b>（ブレーキの異音・停電・倒木・落下物）：3</li></ul>
+  <p class="muted" style="margin:4px 0">正しい対応なら予定どおり回復します。慎重すぎると遅れが大きくなり、あまいと しばらくしてトラブルで長く止まります（線の信頼も下がる）。10分えらばないと「現場の判断」（1つ慎重なほう）になります。</p>`;
+const hmA = t => hms(t + 9 * 3600);   // 1970年からの秒 → 日本時間の 時:分
+// 運行情報を読む（1分ごと。地図を開いているとき）。サーバーの更新（DB の更新51）の前は、なにもしない
+async function unkoLoad(force) {
+  if (UNKO.off || UNKO.busy || (!force && now() - UNKO.at < 60000)) return;
+  UNKO.busy = true; UNKO.at = now();
+  try {
+    const d = await call('mp_unko_list', { p_as: S.as });
+    UNKO.list = (d && d.list) || []; UNKO.toff = d && d.now ? d.now - Date.now() / 1000 : 0;
+    const by = new Map();
+    for (const z of UNKO.list) for (const r of z.routes || []) { if (!by.has(r.id)) by.set(r.id, []); by.get(r.id).push(z); }
+    UNKO.pc = new Map([...by].map(([rid, zs]) => [rid, unkoPieces(zs)]));
+    S.dirty = true; if (S.v3) S.v3.dirty = true; runBar();
+  } catch (e) { if (/Could not find|schema cache|does not exist/i.test((e && e.message) || '')) UNKO.off = true; }
+  finally { UNKO.busy = false; }
+}
+// いくつかの乱れの窓をあわせる：[[はじめ, おわり, 速さ]]（かさならない・時刻の順。速さ 1 のところはない）。サーバーの _mp_unko_pc と同じ
+function unkoPieces(zs) {
+  const W = []; for (const z of zs) for (const w of z.wins || []) if (w[1] > w[0] && w[2] < 1) W.push(w);
+  const bp = [...new Set(W.flatMap(w => [w[0], w[1]]))].sort((a, b) => a - b), out = [];
+  for (let i = 0; i + 1 < bp.length; i++) { const a = bp[i], b = bp[i + 1]; let r = 1; for (const w of W) if (w[0] <= a && w[1] >= b && w[2] < r) r = w[2]; if (r < 1) out.push([a, b, r]); }
+  return out;
+}
+// d0（始発駅を出る時刻）に出た列車の、時刻 t の遅れ（秒）。サーバーの _mp_unko_dly と同じ
+function unkoDly(pc, d0, t) {
+  if (!pc || !pc.length || t <= d0) return 0;
+  let d = 0, s = d0;
+  for (const [a, b, r] of pc) {
+    if (b <= s) continue; if (a >= t) break;
+    if (a > s) { d = Math.max(0, d - 0.1 * (a - s)); s = a; }
+    const x = Math.min(b, t); d += (1 - r) * (x - s); s = x;
+  }
+  if (t > s) d = Math.max(0, d - 0.1 * (t - s));
+  return d;
+}
+const unkoCan = (pc, d0) => !!pc && pc.some(w => w[2] === 0 && w[0] <= d0 && d0 < w[1]);   // 見合わせ中に始発駅を出る列車は運休
+const unkoRate = (pc, t) => { let r = 1; for (const w of pc || []) if (w[0] <= t && t < w[1] && w[2] < r) r = w[2]; return r; };
+const unkoPc = rid => { const p = UNKO.pc.get(rid); return p && p.length ? p : null; };
+// 乱れのいまのようす（t：1970年からの秒）。先の窓（あまい対応のトラブル）は、その時刻になるまで見せない
+function unkoState(z, t) {
+  const W = (z.wins || []).filter(w => w[1] > w[0]), cur = W.filter(w => w[0] <= t && t < w[1]).sort((a, b) => a[2] - b[2])[0];
+  const stopEnd = () => { let e = cur[1]; for (const w of W.slice().sort((a, b) => a[0] - b[0])) if (w[2] === 0 && w[0] <= e + 1 && w[1] > e && w[0] <= t) e = w[1]; return e; };
+  if (z.st === 'ask') return { k: 'ask', live: true, txt: cur && cur[2] === 0 ? '運転を見合わせています（対応を決めています）' : '徐行運転をしています（対応を決めています）' };
+  if (cur) return cur[2] === 0 ? { k: 'stop', live: true, txt: `運転見合わせ（再開は ${hmA(stopEnd())} ごろの見こみ）` } : { k: 'slow', live: true, txt: `徐行運転（${hmA(cur[1])} ごろまで）。遅れが出ています` };
+  if (W.some(w => w[0] > t)) return { k: 'run', live: true, txt: '運転しています' };
+  const e = W.reduce((m, w) => Math.max(m, w[1]), 0);
+  if (e && t < e + 3600) return { k: 'rec', live: true, txt: W.some(w => w[2] === 0) ? '運転を再開しました（遅れが出ています）' : 'ふだんの速さにもどりました（遅れが出ています）' };
+  return { k: 'done', live: false, txt: 'ふだんどおり運転しています' };
+}
+// 列車のいまの運行（シート用）：{ dl（遅れ 秒）, can（運休）, stop（見合わせで止まっている）, why（原因）, z（乱れ） }
+function unkoTrain(R, tn, p) {
+  const pc = unkoPc(R.id); if (!pc) return null;
+  const tm = jstNow(), z = UNKO.list.filter(q => (q.routes || []).some(r => r.id === R.id) && q.t0 <= tm.abs).sort((a, b) => b.t0 - a.t0)[0];
+  let can = false;
+  if (!p) for (const [day, off] of [[tm.date, 0], [tm.prev, 86400]]) {
+    if (tn.day && tn.day !== day) continue;
+    const d0 = tm.day0 - off + tn.t0;
+    if (pc.some(w => w[2] === 0 && w[0] <= d0 && d0 < w[1] && w[0] <= tm.abs) && d0 < tm.abs + 7200 && d0 + (tn.t1 - tn.t0) > tm.abs - 3600) { can = true; break; }
+  }
+  return { dl: p ? p.dl || 0 : 0, can, stop: !!p && unkoRate(pc, tm.abs) === 0, why: z ? (UNKO_K[z.kind] || '') + 'のため' : '', z };
+}
+function unkoTrainHtml(ui) {
+  const a = [];
+  if (ui.can) a.push('<b class="mp-late">運休</b>'); else if (ui.stop) a.push('<b class="mp-late">運転見合わせ中</b>');
+  if (ui.dl >= 60) a.push(`<b class="mp-late">約${Math.round(ui.dl / 60)}分遅れ</b>`);
+  return a.join('・') + (ui.why ? `（<span>${esc(ui.why)}</span>）` : '') + (ui.z ? ` <a href="#" data-unkoz="${ui.z.id}">運行情報</a>` : '');
+}
+// 名義を切りかえる（運行情報の対応をえらぶとき）
+function setAs(v) { const sel = S.wrap && S.wrap.querySelector('.mp-as'); if (sel && [...sel.options].some(o => o.value === v)) { sel.value = v; if (sel.onchange) sel.onchange(); } }
+// 運行情報（国じゅう）：いま乱れている線・3時間以内におわったもの。自分の線なら対応をえらぶ・振替輸送をたのむ
+async function openUnko(focus) {
+  const m = modal(['🚦 運行情報', '<p class="muted small">読みこんでいます…</p>'], null);
+  let first = true;
+  const card = ({ z, s }, t) => {
+    const rs = (z.routes || []).map(r => `<span class="mp-uk-r"><span style="color:${esc(r.color || '#888')}">■</span> <span translate="no">${esc(r.name)}</span> <small class="muted">${esc(r.own || '')}</small>${r.furi ? ' <small class="mp-tag">振替輸送</small>' : ''}</span>`).join(' ');
+    const left = Math.max(0, Math.ceil(((z.until || 0) - (Date.now() / 1000 + UNKO.toff)) / 60));   // のこり時間はサーバーの時計で
+    const ask = z.st !== 'ask' ? '' : z.me ? `<div class="mp-uk-ask"><b>対応をえらんでください</b> <small>（あと <span>${left}分</span>。えらばないと「現場の判断」）</small>
+        <div class="mp-uk-btns">${[1, 2, 3].map(k => `<button class="btn" data-pick="${k}" data-z="${z.id}"><b>${k}</b>　<span>${UNKO_PICK[k]}</span></button>`).join('')}</div>
+        <details class="small"><summary>運転規制の目安</summary>${UNKO_RULE}</details></div>`
+      : z.can ? `<p class="small">対応をえらぶには、名義を「<span>${esc(z.by)}</span>」にしてください <button class="btn" data-as="${esc(z.can)}">名義を切りかえる</button></p>`
+      : `<p class="small muted"><span>${esc(z.by)}</span> が対応を決めています</p>`;
+    const stopNow = (z.wins || []).some(w => w[2] === 0 && w[0] <= t + 1 && w[1] > t + 300);
+    const furi = (z.routes || []).some(r => r.mine && !r.furi) && stopNow
+      ? `<div class="mp-uk-furi"><button class="btn" data-furi="${z.id}">🚌 振替輸送をたのむ</button> <small class="muted">近くのほかの線（鉄道・バス）に、お客をはこんでもらいます（運賃の半分をはらう）。たのまずに合わせて1時間より長く止めると、線の信頼が下がります</small></div>` : '';
+    const res = z.st !== 'ask' && z.pick ? `<div>対応：<b>${z.pick}</b> ${esc(UNKO_PICK[z.pick])}（<span>${z.auto ? (z.by === '国' ? '国' : '現場の判断') : esc(z.by)}</span>）${z.lv ? `・正しい対応：<b>${z.lv}</b>` : ''}</div>` : '';
+    const log = (z.log || []).filter(l => l[0] <= t + 1).map(l => `<div><small class="muted">${hmA(l[0])}</small> <span>${esc(l[1])}</span></div>`).join('');
+    return `<div class="mp-uk mp-uk-${s.k}" data-uz="${z.id}"><div class="mp-uk-rs">${rs}</div>
+      <div><b>🚦 <span>${esc(UNKO_K[z.kind] || '')}</span></b>・<span>${esc(z.where || '')}</span> <small class="muted">${hmA(z.t0)}〜</small></div>
+      <div class="mp-uk-st">${esc(s.txt)}</div>${ask}${furi}
+      <details class="small"><summary>くわしく</summary>${log}${res}</details>
+      <div class="mp-row" style="margin-top:4px"><button class="btn" data-go="${z.id}">🗺 地図で見る</button></div></div>`;
+  };
+  const draw = async () => {
+    await unkoLoad(true);
+    if (!document.body.contains(m)) return;
+    if (UNKO.off) { m.set('🚦 運行情報', '<p class="small">サーバーの更新（DB の更新51）のあとで使えます。</p>'); return; }
+    const t = Date.now() / 1000, L = UNKO.list.map(z => ({ z, s: unkoState(z, t) })), live = L.filter(o => o.s.live), past = L.filter(o => !o.s.live);   // 列車の位置と同じ、この端末の時計
+    m.set('🚦 運行情報', `<p class="muted small" style="margin:0 0 6px">国じゅうの鉄道の、遅れ・運転見合わせです。自分の線なら、対応をえらべます（🔔でも知らせます）。</p>
+      ${live.length ? live.map(o => card(o, t)).join('') : '<p class="small">いま、乱れている線はありません（ふだんどおり運転しています）。</p>'}
+      ${past.length ? `<h4 style="margin:12px 0 4px">おわったもの（3時間以内）</h4>${past.map(o => card(o, t)).join('')}` : ''}
+      <details class="small" style="margin-top:10px"><summary><b>運転規制の目安</b></summary>${UNKO_RULE}</details>`, b => {
+      b.querySelectorAll('[data-pick]').forEach(x => x.onclick = async () => {
+        const k = Number(x.dataset.pick), r = await api('mp_unko_pick', { p_id: Number(x.dataset.z), p_pick: k, p_as: S.as }); if (!r) return;
+        toast(r.right ? T('◎ 正しい対応です（予定どおり回復します）') : k > r.lv ? T('△ 慎重すぎました（遅れが大きくなります）') : T('× あまい対応でした（しばらくすると、トラブルで長く止まります）'));
+        draw();
+      });
+      b.querySelectorAll('[data-furi]').forEach(x => x.onclick = async () => { const r = await api('mp_unko_furi', { p_id: Number(x.dataset.furi), p_as: S.as }); if (r) { toast(T(`振替輸送をたのみました（ほかの ${r.partners} 系統）`)); draw(); } });
+      b.querySelectorAll('[data-as]').forEach(x => x.onclick = () => { setAs(x.dataset.as); draw(); });
+      b.querySelectorAll('[data-go]').forEach(x => x.onclick = () => {
+        const z = UNKO.list.find(q => q.id === Number(x.dataset.go)); if (!z) return;
+        m.close(); if (!S.layer.run) setOpt('run', true);
+        if (S.v3) { m3Target(z.x / 100, z.y / 100); S.v3.dirty = true; } else setCam(z.x / 100, z.y / 100, Math.max(S.cam.z, 12));
+      });
+    });
+    if (first && focus) { const c = m.querySelector(`[data-uz="${focus}"]`); if (c) { c.classList.add('mp-uk-focus'); c.scrollIntoView({ block: 'center' }); } }
+    first = false;
+  };
+  draw();
+  const tmr = setInterval(() => { if (!document.body.contains(m)) return clearInterval(tmr); draw(); }, 30000);
 }
 // 列車・バスをさがす・しぼりこむ（🔍 → 列車・バス）。いま走っているものを、系統ごとに
 async function runAllIds() {
@@ -1402,7 +1558,7 @@ function openRunFind() {
         L.push({ R, tn, p });
       }
     }
-    const where = o => { const R = o.R, sc = o.tn.s, nm = i => esc(R.sn.get(sc[i][0]) || ''); return o.p.at >= 0 ? `<span>${o.p.at === sc.length - 1 ? `${nm(o.p.at)}着` : `${nm(o.p.at)}に停車中`}</span>` : `<span>${nm(o.p.nx - 1)}</span> → <span>${nm(o.p.nx)}</span>`; };
+    const where = o => { const R = o.R, sc = o.tn.s, nm = i => esc(R.sn.get(sc[i][0]) || ''); return (o.p.dl >= 60 ? `<b class="mp-late">+${Math.round(o.p.dl / 60)}分</b> ` : '') + (o.p.at >= 0 ? `<span>${o.p.at === sc.length - 1 ? `${nm(o.p.at)}着` : `${nm(o.p.at)}に停車中`}</span>` : `<span>${nm(o.p.nx - 1)}</span> → <span>${nm(o.p.nx)}</span>`); };
     st.shown = L.slice(0, 300);
     res.innerHTML = `<p class="small" style="margin:4px 0"><b><span>いま走っている</span> <span>${L.length}本</span></b>${L.length > st.shown.length ? `（<span>はじめの</span> <span>${st.shown.length}本</span>）` : ''}</p>
       <div class="mp-list">${st.shown.map((o, i) => `<button class="mp-item" style="text-align:left" data-i="${i}"><b><span style="color:${esc(o.R.c)}">■</span> <span translate="no">${esc(runName(o.tn, o.R.k))}</span></b> → <span>${esc(runDest(o.R, o.tn))}</span>
@@ -1481,7 +1637,13 @@ function wxStep() {
 // シートの「天気」の行の中み
 function wxInner(x, y, e) {
   const w = MapWx.now(x, y, e == null ? wxElev(x, y) : e);
-  return `${w.ic} <span>${w.nm}</span>・<b>${wxT(w.T)}</b> <small class="muted">（<span>最高 ${wxD(w.hi)}</span>・<span>最低 ${wxD(w.lo)}</span>）</small>${w.snow > 0 ? `・<span>積雪 ${w.snow}cm</span>` : ''} <a href="#" data-wx="${Math.round(x * 10) / 10},${Math.round(y * 10) / 10}">くわしく</a>`;
+  return `${w.ic} <span>${w.nm}</span>・<b>${wxT(w.T)}</b> <small class="muted">（<span>最高 ${wxD(w.hi)}</span>・<span>最低 ${wxD(w.lo)}</span>）</small>${w.snow > 0 ? `・<span>積雪 ${w.snow}cm</span>` : ''}${wxWind(w)} <a href="#" data-wx="${Math.round(x * 10) / 10},${Math.round(y * 10) / 10}">くわしく</a>`;
+}
+// 風（と強い雨）のことば：風 北西 5m/s（最大瞬間 8m/s）
+function wxWind(w, long) {
+  if (w.ws == null) return '';
+  const g = w.wg >= 15 || long ? `<small class="muted">（<span>最大瞬間 ${w.wg}m/s</span>）</small>` : '';
+  return `・<span>風 ${w.wd} ${w.ws}m/s</span>${g}${w.mm >= 10 ? `・<span>1時間に ${Math.round(w.mm)}mm</span>` : ''}${w.cm >= 2 ? `・<span>1時間に ${Math.round(w.cm)}cm の雪</span>` : ''}`;
 }
 function wxRow(x, y, e) { return S.wx && wxOk() ? `<b>天気</b><span>${wxInner(x, y, e)}</span>` : ''; }
 // くわしく：いま・3時間ごと・これから4日
@@ -1491,12 +1653,12 @@ async function openWx(x, y) {
   const WD = '日月火水木金土', dl = (d, i) => { if (i === 0) return 'きょう'; if (i === 1) return 'あした'; const j = new Date(d.date + 9 * 3600000); return `${j.getUTCMonth() + 1}月${j.getUTCDate()}日（${WD[j.getUTCDay()]}）`; };
   const m = modal(['🌤 天気', `<p class="small" style="margin:0"><b data-wxa translate="no">${Math.floor(x)}, ${Math.floor(y)}</b>${e > 0 ? ` <small class="muted">（標高 約${Math.round(e)}m）</small>` : ''}</p>
     <div class="mp-wxnow"><span class="ic">${w.ic}</span><b>${wxT(w.T)}</b><span>${w.nm}</span></div>
-    <div class="mp-kv"><b>きょう</b><span><span>最高 ${wxD(w.hi)}</span>・<span>最低 ${wxD(w.lo)}</span></span>${w.snow > 0 ? `<b>積雪</b><span>${w.snow}cm</span>` : ''}</div>
+    <div class="mp-kv"><b>きょう</b><span><span>最高 ${wxD(w.hi)}</span>・<span>最低 ${wxD(w.lo)}</span></span>${w.snow > 0 ? `<b>積雪</b><span>${w.snow}cm</span>` : ''}${w.ws != null ? `<b>風</b><span><span>${w.wd} ${w.ws}m/s</span> <small class="muted">（<span>最大瞬間 ${w.wg}m/s</span>）</small></span>` : ''}${w.mm > 0 ? `<b>雨</b><span>1時間に ${w.mm}mm</span>` : ''}${w.cm > 0 ? `<b>雪</b><span>1時間に ${w.cm}cm</span>` : ''}</div>
     <h4 style="margin:10px 0 4px">3時間ごと</h4>
     <div class="mp-wxh">${hs.map(h => `<div><small>${h.hr}時</small><span>${h.ic}</span><b>${wxD(Math.round(h.T))}</b></div>`).join('')}</div>
     <h4 style="margin:10px 0 4px">これからの天気</h4>
     <div class="mp-wxd">${ds.map((d, i) => `<div><small>${dl(d, i)}</small><span class="ic">${d.ic}</span><span>${d.nm}</span><b>${wxD(d.hi)}</b><small>${wxD(d.lo)}</small></div>`).join('')}</div>
-    <p class="muted small"><span>国土の天気は、季節・時刻・場所で決まります（だれが見ても同じです）。</span><span>北ほど寒く、北の冬は雪がよく降ります。南は暖かく、高いところほど寒くなります（100mで約0.65℃）。</span></p>`], null);
+    <p class="muted small"><span>国土の天気は、季節・時刻・場所で決まります（だれが見ても同じです）。</span><span>北ほど寒く、北の冬は雪がよく降ります。南は暖かく、高いところほど寒くなります（100mで約0.65℃）。</span><span>風は、等圧線がこんでいるところ・強い雨のところで強くなります。強い風・雨・雪のときは、列車が遅れたり止まったりします。</span></p>`], null);
   const d = await api('mp_spot', { p_x: Math.floor(x * 5), p_y: Math.floor(y * 5) });
   const a = m.querySelector('[data-wxa]'); if (a && d && d.addr) a.textContent = d.addr.text;
 }
@@ -1511,7 +1673,7 @@ function wxRainCol(o) {
   if (o.wet) {
     if (o.kind === 'snow') return [246, 248, 255, 150 + Math.round(90 * o.inten)];
     if (o.kind === 'sleet') return [196, 214, 255, 175];
-    const mm = 0.5 + 40 * o.inten * o.inten;
+    const mm = MapWx.rainMM ? MapWx.rainMM(o.inten) : 0.5 + 40 * o.inten * o.inten;   // 2026-11-01：弱い雨が多く、強い雨は まれ（列車の遅れと同じ目安）
     return mm < 1 ? [200, 228, 255, 150] : mm < 5 ? [130, 190, 255, 170] : mm < 10 ? [33, 140, 255, 180] : mm < 20 ? [0, 65, 255, 190]
       : mm < 30 ? [250, 245, 0, 200] : mm < 50 ? [255, 153, 0, 210] : [255, 40, 0, 220];
   }
@@ -1697,6 +1859,18 @@ const CSS = `
 .mp-runbar[hidden]{display:none}
 .mp-runbar button{border:1px solid rgba(0,0,0,.18);background:rgba(255,248,214,.97);color:#222;border-radius:16px;font-weight:700;font-size:12.5px;padding:5px 10px;box-shadow:0 1px 3px rgba(0,0,0,.18)}
 .mp-runbar button[data-rbfx],.mp-runbar button[data-rbsx]{padding:5px 8px;margin-right:6px}
+.mp-runbar button.mp-rbu-ask{background:#ffe1dc;border-color:#e8322a}
+.mp-late{color:#c0170f}
+.mp-uk{border:1px solid var(--line,#e2e2e2);border-left:5px solid #9aa3ad;border-radius:10px;padding:8px 10px;margin:8px 0;font-size:13.5px;line-height:1.6}
+.mp-uk.mp-uk-stop,.mp-uk.mp-uk-ask{border-left-color:#e8322a}.mp-uk.mp-uk-slow{border-left-color:#f0a020}.mp-uk.mp-uk-rec,.mp-uk.mp-uk-run{border-left-color:#2a8de8}
+.mp-uk.mp-uk-focus{box-shadow:0 0 0 3px rgba(255,205,0,.8)}
+.mp-uk-rs{display:flex;flex-wrap:wrap;gap:2px 10px;font-weight:700}
+.mp-uk-st{font-weight:800;margin:2px 0}
+.mp-uk-stop .mp-uk-st,.mp-uk-ask .mp-uk-st{color:#c0170f}.mp-uk-slow .mp-uk-st{color:#a85f00}
+.mp-uk-ask{background:#fff4f2;border-radius:8px;padding:6px 8px;margin:6px 0}
+.mp-uk-btns{display:flex;flex-direction:column;gap:6px;margin:6px 0}
+.mp-uk-btns .btn{text-align:left;font-weight:700}
+.mp-uk-furi{margin:6px 0}
 .mp-ttl{margin-top:6px;border-top:1px solid var(--line,#e6e6e6);font-size:12.5px;max-height:190px;overflow:auto;position:relative}
 .mp-ttr{display:grid;grid-template-columns:1fr 4.6em 4.6em 3.6em;gap:4px;padding:3px 2px;border-bottom:1px dashed var(--line,#eee);font-variant-numeric:tabular-nums}
 .mp-ttr .t,.mp-ttr .k{text-align:right}.mp-ttr small{opacity:.7;margin-left:1px}
@@ -3293,6 +3467,7 @@ function openMenu() {
     <button class="mp-item" style="text-align:left" data-k="cars"><b>🚃 車両と編成</b><br><small>注文（1両から）・編成を組む・改造・検査・更新・転属・廃車</small></button>
     <button class="mp-item" style="text-align:left" data-k="routes"><b>🗺 系統とダイヤ</b><br><small>止まる駅の順番・列車の時刻（採時駅）・ダイヤグラム・航路（フェリー）・空路（飛行機）</small></button>
     <button class="mp-item" style="text-align:left" data-k="ops"><b>📋 運用</b><br><small>どの編成がどの列車を走るか・運用ファイル（書き出し・読みこみ）</small></button>
+    <button class="mp-item" style="text-align:left" data-k="unko"><b>🚦 運行情報</b><br><small>国じゅうの遅れ・運転見合わせ／自分の線の対応・振替輸送</small></button>
     <button class="mp-item" style="text-align:left" data-k="segfind"><b>🔎 線路をさがす</b><br><small>非電化・単線のところ（自分の線路と、自分の系統が通る線路）</small></button>
     <button class="mp-item" style="text-align:left" data-k="xfer"><b>🤝 編成の譲渡</b><br><small>とどいた申しこみを受けとる・ことわる／出した申しこみ</small></button>
     <button class="mp-item" style="text-align:left" data-k="thru"><b>🔀 乗り入れ</b><br><small>ほかの人・会社の線路に列車を走らせる（申請・許可・線路使用料）</small></button>
@@ -3305,7 +3480,7 @@ function openMenu() {
     <button class="mp-item" style="text-align:left" data-k="ledger"><b>💴 お金の記録</b><br><small>運賃・家賃・維持費・使用料・工事費（${esc(asName())}）</small></button>
     ${S.admin ? `<button class="mp-item" style="text-align:left" data-k="admin"><b>🛠 管理</b><br><small>値段の設定・用途地域・ようす</small></button>` : ''}
     <button class="mp-item" style="text-align:left" data-k="help"><b>❓ あそびかた</b></button></div>`], b => {
-    b.querySelectorAll('[data-k]').forEach(x => x.onclick = () => { m.close(); ({ cars: () => openCars(), routes: openRoutes, ops: () => openOps(), segfind: () => openSegFind(), xfer: () => openXfers(), thru: () => openThru(), blds: openMyBlds, tenants: openTenants, sc: () => openSC(), home: openHome, landreq: () => openLandReqs(), slots: () => openSlotList(), ledger: openLedger, admin: openAdmin, help: openHelp })[x.dataset.k](); });
+    b.querySelectorAll('[data-k]').forEach(x => x.onclick = () => { m.close(); ({ cars: () => openCars(), routes: openRoutes, ops: () => openOps(), unko: () => openUnko(0), segfind: () => openSegFind(), xfer: () => openXfers(), thru: () => openThru(), blds: openMyBlds, tenants: openTenants, sc: () => openSC(), home: openHome, landreq: () => openLandReqs(), slots: () => openSlotList(), ledger: openLedger, admin: openAdmin, help: openHelp })[x.dataset.k](); });
   });
 }
 /* ---------- 発着口（t57）：空港ごとの発着口・入札。国（管理者）はふやす・へらす・入札に出す
@@ -3490,7 +3665,8 @@ function openHelp() {
     <p><b>車歴と譲渡</b>：車両ごとに、新製・転属・譲渡・廃車が車歴にのこります（車両をえらんで「車歴」。廃車した車両は「廃車した車両」）。編成は「ゆずる」、編成に入っていない車両はえらんで「ゆずる」で、ほかの人・会社にゆずれます。まん中にも運転台つきの Tc を入れられます（中間封じ込め）。</p>
     <p><b>乗り入れ（他社直通）</b>：ほかの人・会社の駅か線路をタップ →「乗り入れを申請」。持ち主が許可する（線路使用料：1列車・1km）と、系統にその持ち主の駅を入れて、持ち主の線路を走れます。線路をつなぐこともできます（どちらかの向きに許可があれば）。運賃は系統の持ち主に、走った km ぶんの線路使用料は1時間ごとに線路の持ち主に入ります。同じ駅の番線は、ほかの持ち主の列車ともかさならないように見ます。持ち主が「やめる」と、その線路・駅を使う系統は走れなくなります。≡ →「乗り入れ」で、許可・ことわる・使用料を変える・やめる。</p>
     <p><b>連結</b>：列車ごとに、ほかの運用の編成をつなげます（3つ・16両まで）。とちゅうの駅でつなぐ・切りはなすこともできます（その運用の編成は、つなぐ駅に2分前までに着いていること）。ダイヤグラムでは太い線です。</p>
-    <p><b>お金</b>：1時間ごとに運賃（駅のまわりの人・本数・速さ・冷暖房で決まる）が入り、維持費・使用料をはらいます。</p></div>`]);
+    <p><b>運行の乱れ</b>：雪・大雨・強風（天気どおり）や、人と接触・急病のお客さま・車両の点検・信号の確認・線路内の点検で、列車が遅れたり、運転を見合わせたりします。運転見合わせ中に始発駅を出る列車は運休で、運賃は入りません。遅れが大きいほど、お客も少なくなります。自分の線（駅）で起きると🔔で知らせが来るので、≡ →「🚦 運行情報」で対応を 1 いつもどおり・2 徐行・点検しながら・3 運転見合わせ からえらびます（目安：強風は最大瞬間 20m/s から 2・25m/s から 3、雨は1時間 30mm から 2・50mm から 3、雪は1時間 3cm から 2・7cm から 3、人と接触は 3、急病の救護や異常のない点検は 1、軽い不具合は 2、重い不具合は 3）。正しいと予定どおり回復、慎重すぎると遅れが大きく、あまいと しばらくしてトラブルで長く止まります。10分えらばないと「現場の判断」（1つ慎重なほう）。見合わせ中は「振替輸送」をたのめます（近くのほかの線がお客をはこぶ・運賃の半分をはらう）。たのまずに合わせて1時間より長く止めると、その線の信頼が下がり、しばらくお客が少しへります（1日に1％ずつもどる）。</p>
+    <p><b>お金</b>：1時間ごとに運賃（駅のまわりの人・本数・速さ・冷暖房・遅れ・信頼で決まる）が入り、維持費・使用料をはらいます。</p></div>`]);
 }
 
 /* ---- 車両と編成 ---- */
@@ -6118,5 +6294,5 @@ function showCert(r) {
 }
 window.MapInt = { MQ, q, LITE, liteNeed, EDEC, B64I, bldShift, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runOff, runIsSel, runName, runDest, showTrain, showSta, runFollow };   // 3D（map3d.js）が使う
 window.MapApp = { open, pause, state: S, spline, setCam, landReqs: () => openLandReqs(), xfers: () => openXfers(), goto: (x, y) => homeGo(x, y), thru: () => openThru(), bld: id => openBld(id), sc: () => openSC(),
-  slots: L => (L && L.st ? openSlots(Number(L.st)) : openSlotList()), find: () => openFind(), jm: id => openJuumin(id), wxMap: () => wxMapOn() };
+  slots: L => (L && L.st ? openSlots(Number(L.st)) : openSlotList()), unko: L => openUnko(L && L.id ? Number(L.id) : 0), find: () => openFind(), jm: id => openJuumin(id), wxMap: () => wxMapOn() };
 })();

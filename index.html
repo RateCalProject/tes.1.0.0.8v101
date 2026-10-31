@@ -5063,7 +5063,7 @@ function stCmpDraw() {
    役所 → ヘルプ（t62）：遊び方・やり方（help/help.json。README からつくる）。さがせる（題・中身・ことば。ひらがな・カタカナ・全角半角は同じに）
    役所 → 意見箱（t62）：運営への問い合わせ（support_open）に「【意見箱】」の件名で送る
    ================================================================= */
-const HELP_V = '798b4d8b';
+const HELP_V = '195cdea2';
 const HP = { d: null, cat: 'start', q: '' };
 const hpNorm = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
 async function helpLoad() {
@@ -8689,7 +8689,7 @@ function noticeGo(n) {
   if (L.go === 'map') {   // 国土：地図をひらいて、土地の申請など
     if (L.k === 'spot' && L.x != null) return mapSpot(L.x, L.y);   // 国有地ガチャで当たった土地など
     go('vCorp', 'map');
-    const fn = { landreq: 'landReqs', xfer: 'xfers', thru: 'thru', slot: 'slots' }[L.k];   // 土地の申請・編成の譲渡・乗り入れ・発着口（t57）
+    const fn = { landreq: 'landReqs', xfer: 'xfers', thru: 'thru', slot: 'slots', unko: 'unko' }[L.k];   // 土地の申請・編成の譲渡・乗り入れ・発着口（t57）・運行情報（DB の更新51）
     if (fn) { let n = 0; const w = () => { if (window.MapApp && MapApp.state && MapApp.state.open && MapApp[fn]) MapApp[fn](L); else if (n++ < 40) setTimeout(w, 250); }; w(); }
     return;
   }
