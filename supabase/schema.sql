@@ -19665,7 +19665,7 @@ begin
   return t;
 end $$;
 
--- 駅の発着番線：番線の順に [{d: down（下り）| up（上り）| both（両方）, m: main（本線）| side（待避線）}]。
+-- 駅の発着番線：番線の順に [{d: down（下り）| up（上り）| both（両方）, m: main（本線）| side（待避線）| pass（通過線：ホームがない。t62）}]。
 --   決めていなければ：1番線しかなければ両方の本線。1番線 下り本線・2番線 上り本線・3番線から 下り待避線・上り待避線…
 create or replace function public._mp_sta_trk(st mp_stations) returns jsonb
 language sql immutable as $$
@@ -19677,11 +19677,18 @@ language sql immutable as $$
                                      else jsonb_build_object('d', 'up', 'm', 'side') end order by k)
                  from generate_series(1, greatest(st.tracks, 1)) k) end
 $$;
+-- 自動閉塞（t62・2026-10-31）：前の列車のうしろ 30m まで近づける。
+--   止まっていた列車が動きだして（加速 acc km/h/s）、うしろのはし＋30m が その点をはなれるまでの秒
+create or replace function public._mp_clr_stop(len double precision, acc double precision) returns int
+language sql immutable as $$ select greatest(8, ceil(sqrt(2 * (coalesce(len, 100) + 30) / greatest(coalesce(acc, 2) / 3.6, 0.15))))::int $$;
+--   走っている列車（速さ v m/s）が、ある点を（うしろのはし＋30m）はなれるまでの秒
+create or replace function public._mp_clr_pass(len double precision, v double precision) returns int
+language sql immutable as $$ select greatest(4, ceil((coalesce(len, 100) + 30) / greatest(coalesce(v, 10), 3)))::int $$;
 -- 番線をえらぶ：その向き（dir 1 下り・-1 上り）で使える番線のうち、side なら待避線（なければ番号の大きいほう）、そうでなければ本線（番号の小さいほう）
 create or replace function public._mp_pick_trk(trk jsonb, dir int, side boolean) returns int
 language sql immutable as $$
   select coalesce((select e.k::int from jsonb_array_elements(trk) with ordinality e(v, k)
-                    where e.v ->> 'd' in (case when dir = -1 then 'up' else 'down' end, 'both')
+                    where e.v ->> 'd' in (case when dir = -1 then 'up' else 'down' end, 'both') and coalesce(e.v ->> 'm', 'main') <> 'pass'   -- 通過線には止まらない（t62）
                     order by (e.v ->> 'm' = case when side then 'side' else 'main' end) desc, (e.v ->> 'd' = 'both'),
                              case when side then -e.k else e.k end limit 1), 1)
 $$;
@@ -19785,6 +19792,9 @@ begin
     stop := k = k0 or k = k1 or not (r.stops[i] = any(tr.skip));
     trk := coalesce((spec ->> 't')::int, _mp_pick_trk(_mp_sta_trk(st), tr.dir, st.id = any(coalesce(waits, '{}'))));
     if trk > st.tracks then ws := ws || format('%s に %s番線はありません', st.name, trk); trk := st.tracks; end if;
+    if stop and r.kind = 'rail' and (_mp_sta_trk(st) -> (trk - 1) ->> 'm') = 'pass' then
+      ws := ws || format('%s の %s番線は通過線です（ホームがないので止まれません）', st.name, trk);   -- t62
+    end if;
     if k = k0 then
       arr := null; dep := tr.dep + coalesce((hold ->> st.id::text)::int, 0); t := dep;
     else
@@ -19871,7 +19881,7 @@ end $$;
 
 -- 待避・続行：系統の列車を、優先番号の小さい（優先する）列車から順に時刻を決める（毎日の列車が先。臨時列車は、その日の毎日の列車にあわせる）。
 --   あとから決める列車は、先に決めた同じ向きの列車と、となりの駅のあいだで追いこし・追いこされがないようにする
---   ・うしろを走るのに追いつく → 手前の止まる駅で待って、前の列車のあとを走る（続行。1分あける）
+--   ・うしろを走るのに追いつく → 手前の止まる駅で待って、前の列車のあとを走る（続行。t62：自動閉塞。前の列車のうしろ 30m まで）
 --   ・前を走るのに追いつかれる → 待避できる駅（その向きで使える番線が2つ以上。始発は待てる）で、追いこす列車が通るまで待つ（待避）
 --   バスは追いこしてよい（待たない）
 create or replace function public._mp_dispatch(rid bigint) returns void
@@ -19880,6 +19890,7 @@ declare r mp_routes; n int; km real[]; capd boolean[]; capu boolean[]; tr mp_tra
         ta int[]; td int[]; stp boolean[]; ord int[]; e jsonb; p int; q int; x int; a int; b int; kk int; jj int; it int; si int; j int; need int; conf boolean;
         sdir int[] := '{}'; sday date[] := '{}'; snum text[] := '{}'; sarr int[]; sdep int[]; m int := 0; skips int[]; cap boolean[]; H constant int := 60; key text;
         smin int[] := '{}'; smax int[] := '{}'; tmin int; tmax int;
+        slen real[] := '{}'; sacc real[] := '{}'; sstp boolean[]; mlen real; macc real; pf jsonb; va real; vc real; ga int; gb int; ca int; cb int; gw int; HB constant int := 150;   -- t62：自動閉塞
         sprio int[] := '{}'; srid bigint[] := '{}'; mypr int; et record; kn int; a0 int; a1 int; edir int; eord int[]; estp boolean[]; k0d int; k1d int; kc int;
 begin
   select * into r from mp_routes where id = rid;
@@ -19895,13 +19906,15 @@ begin
   -- 駅の km（系統の駅の順）と、待避できる駅（向きごとに使える番線が2つ以上）
   km := array(select coalesce((select sum((l ->> 'd')::real) from jsonb_array_elements(r.legs) with ordinality q2(l, kq) where kq < o), 0) from generate_series(1, n) o);
   capd := array(select (select count(*) from jsonb_array_elements(_mp_sta_trk(s)) v where v ->> 'd' in ('down', 'both')) >= 2
+                   and exists (select 1 from jsonb_array_elements(_mp_sta_trk(s)) v where v ->> 'd' in ('down', 'both') and coalesce(v ->> 'm', 'main') <> 'pass')   -- 通過線（t62）
                   from unnest(r.stops) with ordinality z(id, o) join mp_stations s on s.id = z.id order by z.o);
   capu := array(select (select count(*) from jsonb_array_elements(_mp_sta_trk(s)) v where v ->> 'd' in ('up', 'both')) >= 2
+                   and exists (select 1 from jsonb_array_elements(_mp_sta_trk(s)) v where v ->> 'd' in ('up', 'both') and coalesce(v ->> 'm', 'main') <> 'pass')
                   from unnest(r.stops) with ordinality z(id, o) join mp_stations s on s.id = z.id order by z.o);
   -- ほかの系統の列車（2026-10-28・xwait のとき）：この系統の駅を2つ以上通る列車を、先に決まった列車として入れる（相手の時刻は変えない）。
   --   こちらがゆずるのは、優先番号が小さい列車（同じなら、系統の番号が小さいほう）だけ。通るだけの駅（相手の系統にもある駅）は距離でわりふる
   if coalesce(r.xwait, false) then
-    for et in select t.num, t.day, t.sched, ro.id rid2, ro.stops st2, _mp_kprio(ro.own_u, ro.own_c, t.kind) pr
+    for et in select t.num, t.day, t.sched, ro.id rid2, ro.stops st2, _mp_kprio(ro.own_u, ro.own_c, t.kind) pr, t.form
                 from mp_trains t join mp_routes ro on ro.id = t.route
                where ro.id <> rid and ro.kind = 'rail' and ro.stops && r.stops and not t.bad and jsonb_array_length(t.sched) > 1 loop
       ta := array_fill(null::int, array[n]); td := array_fill(null::int, array[n]); estp := array_fill(false, array[n]); kn := 0;
@@ -19928,12 +19941,16 @@ begin
       m := m + 1; sdir := sdir || edir; sday := sday || et.day; snum := snum || et.num;
       smin := smin || (select min(v) from unnest(ta || td) v); smax := smax || (select max(v) from unnest(ta || td) v);
       sprio := sprio || et.pr; srid := srid || et.rid2;
-      if m = 1 then sarr := array[ta]; sdep := array[td]; else sarr := sarr || array[ta]; sdep := sdep || array[td]; end if;
+      pf := case when et.form is not null then _mp_form_perf(et.form) end; slen := slen || coalesce((pf ->> 'len')::real, 100); sacc := sacc || coalesce((pf ->> 'acc')::real, 2);
+      if m = 1 then sarr := array[ta]; sdep := array[td]; sstp := array[estp]; else sarr := sarr || array[ta]; sdep := sdep || array[td]; sstp := sstp || array[estp]; end if;
     end loop;
   end if;
   for tr in select x2.* from mp_trains x2 where x2.route = rid
              order by (x2.day is not null), x2.day, _mp_kprio(r.own_u, r.own_c, x2.kind), x2.dep, x2.id loop
     mypr := _mp_kprio(r.own_u, r.own_c, tr.kind);
+    pf := case when tr.form is not null then _mp_form_perf(tr.form) end;
+    mlen := coalesce((pf ->> 'len')::real, 100) + coalesce((select sum((c ->> 'len')::real) from jsonb_array_elements(coalesce(tr.cplx, '[]'::jsonb)) c where coalesce((c ->> 'v')::boolean, false)), 0);
+    macc := coalesce((pf ->> 'acc')::real, 2);
     ord := case when tr.dir = -1 then array(select generate_series(n, 1, -1)) else array(select generate_series(1, n)) end;
     cap := case when tr.dir = -1 then capu else capd end;
     hld := '{}'::jsonb; waits := '{}'; tai_ := '[]'::jsonb; ws := '{}'; skips := '{}';
@@ -19967,14 +19984,19 @@ begin
         if sdir[si] <> tr.dir or si = any(skips) then continue; end if;
         if tr.day is null and sday[si] is not null then continue; end if;
         if tr.day is not null and sday[si] is not null and sday[si] <> tr.day then continue; end if;
-        if tmin is null or smax[si] is null or smax[si] + H + 30 < tmin or smin[si] > tmax + H then continue; end if;
+        if tmin is null or smax[si] is null or smax[si] + HB + 30 < tmin or smin[si] > tmax + HB then continue; end if;
         if sprio[si] is not null and (sprio[si] > mypr or (sprio[si] = mypr and srid[si] > rid)) then continue; end if;   -- ほかの系統の、ゆずらなくてよい列車
         for kk in 1..n - 1 loop
           a := ord[kk]; b := ord[kk + 1];
           if ta[b] is null or td[a] is null or sarr[si][b] is null or sdep[si][a] is null then continue; end if;
           if td[a] >= sdep[si][a] then
-            -- うしろを走る：前の列車のあとを1分あけて（その向きの番線が1つしかない駅では、前の列車が出てから）
-            need := greatest(sdep[si][a] + H - td[a], sarr[si][b] + H - ta[b], sdep[si][b] + H - ta[b]);   -- 2026-10-30：前の列車が出てから1分（番線の重なりの見かたと同じ）
+            -- うしろを走る（自動閉塞・t62）：前の列車のうしろ 30m まで。a を出るとき・b に入るときに、前の列車が（長さ＋30m）はなれている。
+            --   b に前の列車が止まっていて、同じ番線に入るとき（こちらも b に止まる・こちらは通過でも、その向きに通れる番線がほかにない）は、前の列車が b を出てから
+            va := abs(km[b] - km[a]) / greatest(sarr[si][b] - sdep[si][a], 1);   -- 前の列車の、この区間の平均の速さ（m/s）
+            ga := case when sstp[si][a] then _mp_clr_stop(slen[si], sacc[si]) else _mp_clr_pass(slen[si], va) end;
+            gb := _mp_clr_pass(slen[si], va * 0.6);
+            need := greatest(sdep[si][a] + ga - td[a], sarr[si][b] + gb - ta[b]);
+            if sstp[si][b] and (stp[b] or not cap[b]) then need := greatest(need, sdep[si][b] + _mp_clr_stop(slen[si], sacc[si]) - ta[b]); end if;
             if need > 0 then
               j := null; for jj in reverse kk..1 loop if stp[ord[jj]] then j := jj; exit; end if; end loop;
               key := r.stops[ord[j]]::text;
@@ -19982,19 +20004,29 @@ begin
               tai_ := tai_ || jsonb_build_array(jsonb_build_object('s', r.stops[ord[j]], 'by', snum[si], 'sec', need, 'f', true));
               conf := true; exit;
             end if;
-          elsif sdep[si][a] < td[a] + H or sarr[si][b] < td[b] + H or sarr[si][a] < td[a] + H then   -- 2026-10-30：着いてから出るまでの間も見る
-            -- 前を走るのに追いつかれる。つぎの駅で待避できて、そこまでは追いこされないなら、つぎの駅で
-            if sarr[si][b] >= ta[b] and stp[b] and cap[b] and kk + 1 < k1d and sdep[si][a] >= td[a] + H and sarr[si][a] >= td[a] + H then continue; end if;
-            j := null; for jj in reverse kk..1 loop if stp[ord[jj]] and (cap[ord[jj]] or jj = k0d) then j := jj; exit; end if; end loop;
-            if j is null then
-              ws := ws || format('%s に追いつかれます（待避できる駅がありません）', snum[si]); skips := skips || si; conf := true; exit;
+          else
+            -- 前を走る：うしろの列車（si）に追いつかれないか（こちらが a・b を出て、長さ＋30m はなれるまでに、si が来ない）
+            vc := abs(km[b] - km[a]) / greatest(ta[b] - td[a], 1);
+            ca := case when stp[a] then _mp_clr_stop(mlen, macc) else _mp_clr_pass(mlen, vc) end;
+            cb := case when stp[b] then _mp_clr_stop(mlen, macc) else _mp_clr_pass(mlen, vc) end;
+            if sdep[si][a] < td[a] + ca or sarr[si][b] < td[b] + cb or sarr[si][a] < td[a] + ca then
+              -- 追いつかれる。つぎの駅で待避できて、そこまでは追いこされないなら、つぎの駅で
+              if sarr[si][b] >= ta[b] + _mp_clr_pass(mlen, vc * 0.6) and stp[b] and cap[b] and kk + 1 < k1d and sdep[si][a] >= td[a] + ca and sarr[si][a] >= td[a] + ca then continue; end if;
+              j := null; for jj in reverse kk..1 loop if stp[ord[jj]] and (cap[ord[jj]] or jj = k0d) then j := jj; exit; end if; end loop;
+              if j is null then
+                ws := ws || format('%s に追いつかれます（待避できる駅がありません）', snum[si]); skips := skips || si; conf := true; exit;
+              end if;
+              -- 待避する駅で、うしろの列車が出て（通って）、その長さ＋30m はなれてから出る
+              gw := case when sstp[si][ord[j]] then _mp_clr_stop(slen[si], sacc[si])
+                         when j < n and sarr[si][ord[j + 1]] is not null then _mp_clr_pass(slen[si], abs(km[ord[j + 1]] - km[ord[j]]) / greatest(sarr[si][ord[j + 1]] - sdep[si][ord[j]], 1))
+                         else _mp_clr_pass(slen[si], null) end;
+              need := greatest(sdep[si][ord[j]] + gw - td[ord[j]], 1);
+              key := r.stops[ord[j]]::text;
+              hld := jsonb_set(hld, array[key], to_jsonb(coalesce((hld ->> key)::int, 0) + need));
+              if not (r.stops[ord[j]] = any(waits)) and j > k0d then waits := waits || r.stops[ord[j]]; end if;
+              tai_ := tai_ || jsonb_build_array(jsonb_build_object('s', r.stops[ord[j]], 'by', snum[si], 'sec', need, 'f', j = k0d));
+              conf := true; exit;
             end if;
-            need := greatest(sdep[si][ord[j]] + H - td[ord[j]], 1);
-            key := r.stops[ord[j]]::text;
-            hld := jsonb_set(hld, array[key], to_jsonb(coalesce((hld ->> key)::int, 0) + need));
-            if not (r.stops[ord[j]] = any(waits)) and j > k0d then waits := waits || r.stops[ord[j]]; end if;
-            tai_ := tai_ || jsonb_build_array(jsonb_build_object('s', r.stops[ord[j]], 'by', snum[si], 'sec', need, 'f', j = k0d));
-            conf := true; exit;
           end if;
         end loop;
         if conf then exit; end if;
@@ -20010,7 +20042,8 @@ begin
            warn = nullif(array_to_string(array(select jsonb_array_elements_text(res -> 'ws')) || ws, ' / '), '') where id = tr.id;
     -- 決まった列車にくわえる
     m := m + 1; sdir := sdir || tr.dir; sday := sday || tr.day; snum := snum || tr.num; smin := smin || tmin; smax := smax || tmax; sprio := sprio || null::int; srid := srid || rid;
-    if m = 1 then sarr := array[ta]; sdep := array[td]; else sarr := sarr || array[ta]; sdep := sdep || array[td]; end if;
+    slen := slen || mlen; sacc := sacc || macc;
+    if m = 1 then sarr := array[ta]; sdep := array[td]; sstp := array[stp]; else sarr := sarr || array[ta]; sdep := sdep || array[td]; sstp := sstp || array[stp]; end if;
   end loop;
 end $$;
 
@@ -20023,14 +20056,19 @@ declare tr mp_trains; a record; b record; r mp_routes; w text; fid bigint; lsta 
 begin
   perform _mp_dispatch(rid);   -- 時刻（待避・続行もふくめて）
   select * into r from mp_routes where id = rid;
-  -- 番線：同じ駅・同じ番線に、30秒の余裕をふくめて重なる
+  -- 番線：同じ駅・同じ番線に、重なる（t62：自動閉塞。前の列車が出て、長さ＋30m はなれるまで。前は前後30秒ずつ）
   --   （2026-10-28）前は列車の組ごとに sched をひらいていて「本数の2乗×駅数の2乗」かかり、列車をまとめて足すと8秒の制限をこえていた。
   --   いまは駅ごとの発着を1回だけ表にして、駅・番線でつなぐ。注意書きも、列車ごとにまとめて1回で書く（中身は前と同じ）
   --   さらに10分ごとの枠（bk）でもつなぐ：重なる2つは、両方の最初の枠のおそいほう（greatest(p)）で1回だけ出会う
-  with st as materialized (
-    select z.*, floor(least(z.ta - 30, z.td + 30) / 600.0)::int p, floor(greatest(z.ta - 30, z.td + 30) / 600.0)::int q from (
+  with pf as materialized (   -- 編成ごとの「出てから はなれるまで」の秒
+    select f.form, _mp_clr_stop((q.p ->> 'len')::real, (q.p ->> 'acc')::real) clr
+      from (select distinct t.form from mp_trains t where t.route in (select id from mp_routes where stops && r.stops) and t.form is not null) f,
+           lateral (select _mp_form_perf(f.form) p) q),
+  st as materialized (
+    select z.*, floor(least(z.ta, z.td + z.clr) / 600.0)::int p, floor(greatest(z.ta, z.td + z.clr) / 600.0)::int q from (
       select t.id, t.route, t.num, t.day, s.v ->> 0 sta, s.v ->> 3 trk,
-             coalesce((s.v ->> 1)::int, (s.v ->> 2)::int) ta, coalesce((s.v ->> 2)::int, (s.v ->> 1)::int) td
+             coalesce((s.v ->> 1)::int, (s.v ->> 2)::int) ta, coalesce((s.v ->> 2)::int, (s.v ->> 1)::int) td,
+             coalesce((select pf.clr from pf where pf.form = t.form), _mp_clr_stop(null, null)) clr
         from mp_trains t cross join lateral jsonb_array_elements(t.sched) s(v)
        where t.route in (select id from mp_routes where stops && r.stops) and s.v ->> 0 is not null and s.v ->> 3 is not null) z),
   sb as materialized (select st.*, w10.bk from st cross join lateral generate_series(st.p, st.q) w10(bk)),
@@ -20040,7 +20078,7 @@ begin
      where t1.bk = greatest(t1.p, t2.p)
        and (t1.route = rid or t2.route = rid)
        and (t1.day is null or t2.day is null or t1.day = t2.day)
-       and t1.ta - 30 < t2.td + 30 and t2.ta - 30 < t1.td + 30),
+       and t1.ta < t2.td + t2.clr and t2.ta < t1.td + t1.clr),
   g as (
     select z.id, string_agg(z.m, ' / ') m from (
       select c.i1 id, format('%s %s番線で %s とかさなります', c.sn, c.trk, c.n2) m from c
@@ -20109,6 +20147,16 @@ begin
   if r.kind = 'air' then perform _mp_slot_mark(); end if;   -- 発着口（t57）：出る空港・1時間ごとに、持っている発着口の数まで
 end $$;
 
+-- 国じゅうの系統（t62：列車・バスをさがす）。走っている系統の番号・種類・名前・色・列車の数
+create or replace function public.mp_routes_pub() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare u uuid := _me_g();
+begin
+  return (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'kind', r.kind, 'name', r.name, 'color', r.color, 'n', q.n) order by r.id), '[]'::jsonb)
+            from mp_routes r join lateral (select count(*) n from mp_trains t where t.route = r.id and not t.bad) q on q.n > 0
+           where r.ok);
+end $$;
+grant execute on function public.mp_routes_pub() to authenticated;
 -- ダイヤの取り消し：変える前の列車をおぼえる（系統ごとに新しい20回分）。時刻の計算の分（sched・warn・bad）はのぞく
 create or replace function public._mp_dia_snap(rid bigint, what text) returns void
 language plpgsql set search_path = public as $$
@@ -24108,9 +24156,12 @@ begin
   if p_trk is not null then
     if jsonb_typeof(p_trk) <> 'array' or jsonb_array_length(p_trk) <> greatest(st.tracks, 1) then raise exception '番線の数があっていません'; end if;
     for v in select x from jsonb_array_elements(p_trk) x loop
-      if not (v ->> 'd' in ('down', 'up', 'both') and v ->> 'm' in ('main', 'side')) then raise exception '番線の使いかたがちがいます'; end if;
+      if not (v ->> 'd' in ('down', 'up', 'both') and v ->> 'm' in ('main', 'side', 'pass')) then raise exception '番線の使いかたがちがいます'; end if;   -- pass：通過線（t62）
       nv := nv || jsonb_build_array(jsonb_build_object('d', v ->> 'd', 'm', v ->> 'm'));
     end loop;
+    -- 止まる列車のために、下り・上りそれぞれ、ホームのある番線（通過線でない）がいる
+    if not exists (select 1 from jsonb_array_elements(nv) v where v ->> 'd' in ('down', 'both') and v ->> 'm' <> 'pass') then raise exception '下りの列車が止まれる番線（ホームのある番線）がありません'; end if;
+    if not exists (select 1 from jsonb_array_elements(nv) v where v ->> 'd' in ('up', 'both') and v ->> 'm' <> 'pass') then raise exception '上りの列車が止まれる番線（ホームのある番線）がありません'; end if;
   end if;
   update mp_stations set trk = case when p_trk is null then null else nv end where id = p_sta;
   for rr in select r.id from mp_routes r where p_sta = any(r.stops) loop perform _mp_resched(rr); end loop;
@@ -26386,7 +26437,7 @@ begin
             '_mp_bld_tick_hour','_mp_bus_path','_mp_busy_cells','_mp_busy_of','_mp_carnum','_mp_catch','_mp_cell','_mp_chg',
             '_mp_chimoku','_mp_cho_area','_mp_cho_at','_mp_cho_full','_mp_cho_place','_mp_cho_set_tiles','_mp_cho_text','_mp_cmuls',
             '_mp_cval','_mp_day_ok','_mp_dens','_mp_dep_cells','_mp_dep_dim','_mp_dep_ok','_mp_dep_tiles','_mp_dep_tiles_g',
-            '_mp_dia_snap','_mp_dispatch','_mp_earn','_mp_edec','_mp_end','_mp_end_ang','_mp_ferry_links','_mp_ferry_pick',
+            '_mp_dia_snap','_mp_dispatch','_mp_clr_stop','_mp_clr_pass','mp_routes_pub','_mp_earn','_mp_edec','_mp_end','_mp_end_ang','_mp_ferry_links','_mp_ferry_pick',
             '_mp_ferry_use','_mp_fmtn','_mp_fmtq','_mp_form_drop','_mp_form_kind','_mp_form_perf','_mp_form_routes','_mp_form_rule',
             '_mp_form_rule_t','_mp_form_runs','_mp_g','_mp_geom_ok','_mp_goods','_mp_gov_build','_mp_gov_term','_mp_hm_parse',
             '_mp_hms','_mp_home_text','_mp_hourf','_mp_isl_at','_mp_jm_area','_mp_jm_json','_mp_jm_no','_mp_jm_office',
