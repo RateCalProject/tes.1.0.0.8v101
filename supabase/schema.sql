@@ -17243,6 +17243,9 @@ create index if not exists mp_places_par on public.mp_places (parent, k);
 create table if not exists public.mp_centers (   -- 人口のかたまり（1マスの人口 = dp ÷ (π sg²) ÷ (1 + r²/sg²)²）
   id text primary key, x real not null, y real not null, dp real not null, sg real not null
 );
+alter table public.mp_centers add column if not exists rb box   -- とどく範囲（_mp_dens の sg × 14 + 40 マス）の四角。索引で、かかわるものだけを見る（DB の更新 50）
+  generated always as (box(point(x - (sg * 14 + 40), y - (sg * 14 + 40)), point(x + (sg * 14 + 40), y + (sg * 14 + 40)))) stored;
+create index if not exists mp_centers_rb on public.mp_centers using gist (rb);
 create table if not exists public.mp_zone (       -- 用途地域の変更（都市計画。管理者）
   x int not null, y int not null, z char(1) not null, primary key (x, y)
 );
@@ -17814,6 +17817,12 @@ create table if not exists public.mp_isltile (       -- 島のマス（どの島
   primary key (x, y)
 );
 alter table public.mp_isltile enable row level security;
+create table if not exists public.mp_islchunk (       -- 島のチャンク（陸がぜんぶ同じ島のチャンク。5×5 の大きい島）。本土・本土とまじるチャンクはない（DB の更新 50）
+  cx int not null, cy int not null, isl text not null,
+  primary key (cx, cy)
+);
+alter table public.mp_islchunk enable row level security;
+revoke all on public.mp_islchunk from public, anon, authenticated;
 insert into public.mp_series(code, name, kind, note, ord) values
   ('SHIP80', '1980年ごろのフェリー・旅客船', 'ship', '1980年ごろの性能。港（フェリーターミナル）に置く。フェリーはトラックものせられる（海をこえる荷物を運ぶ）', 130)
 on conflict (code) do nothing;
@@ -18010,7 +18019,7 @@ end $$;
 create or replace function public._mp_dens(px real, py real) returns real
 language sql stable set search_path = public as $$
   select coalesce(sum(c.dp / (pi() * c.sg * c.sg) / power(1 + ((px - c.x) ^ 2 + (py - c.y) ^ 2) / (c.sg * c.sg), 2)), 0)::real
-    from mp_centers c where abs(px - c.x) < c.sg * 14 + 40 and abs(py - c.y) < c.sg * 14 + 40
+    from mp_centers c where c.rb && box(point(px, py), point(px, py)) and abs(px - c.x) < c.sg * 14 + 40 and abs(py - c.y) < c.sg * 14 + 40
 $$;
 -- 半径 r の円の中の人（まちの分。大まかな式：人口のかたまりごとに、円の中の割合を足す）
 create or replace function public._mp_catch(px real, py real, r real) returns real
@@ -18018,7 +18027,7 @@ language sql stable set search_path = public as $$
   select coalesce(sum(c.dp * (
            -- かたまりの中心から d の円（半径 r）の中の割合 ≒ r² / (sg² + r² + d²) をもとに、遠いほど小さく
            (r * r) / (c.sg * c.sg + r * r + ((px - c.x) ^ 2 + (py - c.y) ^ 2)) / (1 + ((px - c.x) ^ 2 + (py - c.y) ^ 2) / (c.sg * c.sg + r * r)))), 0)::real
-    from mp_centers c where abs(px - c.x) < c.sg * 14 + r + 40 and abs(py - c.y) < c.sg * 14 + r + 40
+    from mp_centers c where c.rb && box(point(px - r, py - r), point(px + r, py + r)) and abs(px - c.x) < c.sg * 14 + r + 40 and abs(py - c.y) < c.sg * 14 + r + 40
 $$;
 
 /* ---------- 線（なめらかな曲線）の計算 ---------- */
@@ -25709,9 +25718,11 @@ begin
   return jsonb_build_object('ok', true, 'bld', bid, 'sta', sid, 'n', best.cn, 'cost', cost, 'fee', fee, 'name', (select name from mp_blds where id = bid));
 end $$;
 
--- 島（mp_isltile）：そのマスの島（本土は null）
+-- 島（mp_isltile・mp_islchunk）：そのマスの島（本土は null）
 create or replace function public._mp_isl_at(tx int, ty int) returns text
-language sql stable set search_path = public as $$ select isl from mp_isltile where x = tx and y = ty $$;
+language sql stable set search_path = public as $$
+  select coalesce((select isl from mp_isltile where x = tx and y = ty), (select isl from mp_islchunk where cx = tx >> 6 and cy = ty >> 6))
+$$;
 -- 港（乗り場）のある島：フェリーターミナルの建物のマスで見る（乗り場は海の上）
 create or replace function public._mp_port_isl(sid bigint) returns text
 language sql stable set search_path = public as $$

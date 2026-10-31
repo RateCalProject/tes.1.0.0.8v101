@@ -29,7 +29,7 @@ const S = {
   chunks: new Map(), pend: new Set(), chunkQ: [], chunkBusy: 0,
   cho: new Map(), choPend: new Set(), choQ: [], choBusy: 0,   // 町字（チャンクごと：k・kp・kq）
   cells: new Map(), cellBusy: 0, ver: 0, pollT: 0,
-  ov: null, ovInfo: null,
+  ov: null, ovInfo: null, ovMore: [], seaInfo: null, seaMask: null,
   layer: { zone: false, own: true, label: true, run: false, wxmap: false, track: false },   // run：列車・バスの走行位置（t61）・wxmap：天気図（t62）・track：非電化・単線を強く出す（2026-10-29）
   wxOff: 0, wxMode: 'rain', wxPlay: 0,   // 天気図：何時間後・雨と雪／気温・うごかす
   inertia: false, v3names: true, glide: null,   // 惰性・3D の建物の名前（t61）
@@ -335,12 +335,15 @@ function chunkHi(c) {
 /* ---------- 川（worldgen.js の川のまん中の線から。256マスごとにまとめて計算） ---------- */
 let WG = null;
 const RIV = new Map();
+const OLDBOX = [-1536, -1536, 1536, 2752];   // いまの国土（worldgen.js で作った土地）の箱（マス）。5×5 の新しい土地はこの外
 function riversCell(i, j) {
   const k = i + ',' + j; let r = RIV.get(k); if (r) return r;
   r = [];
-  if (!WG && window.MapGen) WG = MapGen.world();
-  if (WG) {
-    const x0 = i * 256 - 3, y0 = j * 256 - 3, x1 = (i + 1) * 256 + 3, y1 = (j + 1) * 256 + 3, SQ = Math.SQRT1_2;
+  // worldgen.js の川は、いまの国土（箱）の中だけ（5×5 の新しい土地の川は、チャンクの地形の川）
+  const inOld = (i + 1) * 256 + 3 > OLDBOX[0] && i * 256 - 3 < OLDBOX[2] && (j + 1) * 256 + 3 > OLDBOX[1] && j * 256 - 3 < OLDBOX[3];
+  if (!WG && window.MapGen && inOld) WG = MapGen.world();
+  if (WG && inOld) {
+    const x0 = Math.max(i * 256 - 3, OLDBOX[0]), y0 = Math.max(j * 256 - 3, OLDBOX[1]), x1 = Math.min((i + 1) * 256 + 3, OLDBOX[2]), y1 = Math.min((j + 1) * 256 + 3, OLDBOX[3]), SQ = Math.SQRT1_2;
     const vs = [(x0 - y0) * SQ, (x1 - y0) * SQ, (x0 - y1) * SQ, (x1 - y1) * SQ], us = [(x0 + y0) * SQ, (x1 + y0) * SQ, (x0 + y1) * SQ, (x1 + y1) * SQ];
     const vmin = Math.min(...vs), vmax = Math.max(...vs), umin = Math.min(...us), umax = Math.max(...us);
     for (let kk = Math.floor(vmin / WG.RS) - 4; kk <= Math.ceil(vmax / WG.RS) + 4; kk++) {
@@ -604,6 +607,8 @@ function render() {
   g.setTransform(S.dpr, 0, 0, S.dpr, 0, 0);
   g.fillStyle = 'rgb(70,128,186)'; g.fillRect(0, 0, S.W, S.H);
   // 遠くから見た絵（いつも下に）
+  const wd = S.boot && S.boot.world;   // 5×5 の新しい土地の絵は、サーバーに新しい土地が入ってから（世界がいまの国土より広いとき）
+  if (wd && wd.cx0 < -24) for (const m of S.ovMore) { g.imageSmoothingEnabled = true; g.drawImage(m.img, sx(m.o.x0), sy(m.o.y0), (m.o.x1 - m.o.x0) * z, (m.o.y1 - m.o.y0) * z); }
   if (S.ov && S.ovInfo) {
     const o = S.ovInfo;
     g.imageSmoothingEnabled = true;
@@ -1450,6 +1455,7 @@ const WXE = new Map();
 function wxElev(x, y) {
   const t = tileAt(Math.floor(x), Math.floor(y)); if (t) return t.e > 0 ? t.e : 0;
   if (!inWorld(Math.floor(x / CS), Math.floor(y / CS))) return 0;   // 国の外は海
+  if (!inOldBox(x, y)) return 0;   // 5×5 の新しい土地で、まだ読んでいないところ（worldgen.js の地形ではないので）
   if (!WG && window.MapGen) WG = MapGen.world();
   if (!WG) return 0;
   const qx = Math.round(x / 32), qy = Math.round(y / 32), k = qx + ',' + qy;
@@ -4728,6 +4734,11 @@ async function open(root) {
     try {
       const inf = await (await fetch('map/overview.json', { cache: 'no-cache' })).json();
       const img = new Image(); img.onload = () => { S.ov = img; S.ovInfo = inf; S.dirty = true; }; img.src = 'map/overview.png?v=' + (inf.v || '1');
+      // 5×5：新しい土地もふくむ、あらい絵（下にしく）と、海のマスク（航路さがしで、読んでいないところの海・陸）
+      //   サーバーに新しい土地が入るまで（世界がいまの国土の箱のまま）は読まない
+      const wd = S.boot && S.boot.world, big = wd && wd.cx0 < -24;
+      if (big) for (const m of inf.more || []) { const im = new Image(); im.onload = () => { S.ovMore.push({ img: im, o: m }); S.dirty = true; }; im.src = m.src; }
+      if (big && inf.sea) S.seaInfo = inf.sea;
     } catch (e) { console.warn('overview', e); }
   }
   loadCam();
@@ -5629,9 +5640,24 @@ function seaT(x, y) {
   if (!inWorld(cx, cy)) return false;
   const c = S.chunks.get(ckey(cx, cy));
   if (c) { if (c.sea) return true; const t = c.t[(y - cy * CS) * CS + (x - cx * CS)]; return t === 'S' || t === 'D'; }
+  if (!inOldBox(x, y)) { const m = seaMaskAt(x, y); return m === 255; }   // 5×5 の新しい土地：海のマスク（4マスごと）
   if (!WG && window.MapGen) WG = MapGen.world();
   if (!WG) return false;
   const t = WG.cell(x, y).t; return t === 'S' || t === 'D';
+}
+const inOldBox = (x, y) => x >= OLDBOX[0] && x < OLDBOX[2] && y >= OLDBOX[1] && y < OLDBOX[3];
+// 海のマスク（overview.json の sea）：255 海・0 陸・128 わからない。まだ読めていなければ 128
+function seaMaskAt(x, y) {
+  const o = S.seaInfo; if (!o) return 128;
+  if (!S.seaMask) {
+    S.seaMask = 'loading';
+    const im = new Image(); im.onload = () => { try { const cv = document.createElement('canvas'); cv.width = o.w; cv.height = o.h; const g = cv.getContext('2d', { willReadFrequently: true }); g.drawImage(im, 0, 0); const d = g.getImageData(0, 0, o.w, o.h).data, a = new Uint8Array(o.w * o.h); for (let i = 0; i < a.length; i++) a[i] = d[i * 4]; S.seaMask = a; } catch (e) { S.seaMask = null; } }; im.onerror = () => { S.seaMask = null; }; im.src = o.src;
+    return 128;
+  }
+  if (S.seaMask === 'loading') return 128;
+  const i = Math.floor((x - o.x0) / o.step), j = Math.floor((y - o.y0) / o.step);
+  if (i < 0 || j < 0 || i >= o.w || j >= o.h) return 255;
+  return S.seaMask[j * o.w + i];
 }
 // 線分（マス）が海の上だけか
 function seaSeg(x0, y0, x1, y1, sea) {
