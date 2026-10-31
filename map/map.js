@@ -8,9 +8,10 @@
 'use strict';
 const PAL = window.MapPal;
 const CS = 64, B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-const B64I = (() => { const m = new Int8Array(128); for (let i = 0; i < 64; i++) m[B64.charCodeAt(i)] = i; return m; })();
+const B64X = B64 + '.~!*()+=';   // 標高だけ 64〜71 段（2825m〜3875m：国土を広げたところの高い山）
+const B64I = (() => { const m = new Int8Array(128); for (let i = 0; i < 72; i++) m[B64X.charCodeAt(i)] = i; return m; })();
 const edec = l => l <= 7 ? -187.5 + l * 25 : l <= 32 ? (l - 8) * 4 + 2 : l <= 48 ? 112.5 + (l - 33) * 25 : 575 + (l - 49) * 150;
-const EDEC = Float32Array.from({ length: 64 }, (_, i) => edec(i));
+const EDEC = Float32Array.from({ length: 72 }, (_, i) => edec(i));
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const now = () => performance.now();
 const T = s => (typeof tr === 'function' ? tr(s) : s);
