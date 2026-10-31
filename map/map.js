@@ -1667,9 +1667,9 @@ const CSS = `
 .mp-cfg[hidden]{display:none}
 .mp-cfg{position:absolute;right:56px;top:8px;z-index:6;background:rgba(255,255,255,.97);border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.22);padding:10px 12px;display:flex;flex-direction:column;gap:8px;font-size:13px;color:#222;max-width:min(320px,calc(100% - 72px))}
 .mp-cfg label{display:flex;gap:8px;align-items:flex-start;line-height:1.35}
-.mp-cfg{max-height:calc(100% - 16px);overflow:auto}
+.mp-cfg{max-height:calc(100% - 16px);overflow:auto}.mp-cfg>*{flex-shrink:0}
 .mp-cfg select{margin-left:auto;font-size:13px;padding:2px 4px;border-radius:6px}
-.mp-qp{display:flex}.mp-qp button{flex:1;padding:6px 4px;font-size:12px}
+.mp-qp{display:flex}.mp-seg.mp-qp button{flex:1 1 auto;padding:6px 3px;font-size:12px;line-height:1.25;word-break:keep-all}
 .mp-qd summary{cursor:pointer;color:#555;font-size:12px}.mp-qd label{margin-top:6px;align-items:center}
 .mp-qn{color:#666;font-size:11px;line-height:1.4}
 .mp-cfg input{margin-top:2px;flex:none;width:18px;height:18px}
@@ -1807,7 +1807,7 @@ function build(root) {
       <label><input type="checkbox" data-o="v3x"> 3D で横に回す向きを反対にする</label>
       <label><input type="checkbox" data-o="wx"> 天気と気温を出す（左下に地図のまん中の天気。場所・駅・列車にも）</label>
       <b>画質と見える遠さ（この端末）</b>
-      <div class="mp-seg mp-qp"><button data-qp="eco">🍃 省エネ</button><button data-qp="std">標準</button><button data-qp="high">高画質</button><button data-qp="max">最高</button></div>
+      <div class="mp-seg mp-qp"><button data-qp="eco">🍃 省エネ</button><button data-qp="std">標準</button><button data-qp="high">高画質</button><button data-qp="max">最高画質</button></div>
       <small class="mp-qn" data-qcustom hidden>自分で決めた設定です</small>
       <details class="mp-qd"><summary>くわしく</summary>
         <label>2D の見える遠さ <select data-q="d2"><option value="0">近い</option><option value="1">ふつう</option><option value="2">遠い</option><option value="3">とても遠い</option></select></label>
@@ -1817,7 +1817,7 @@ function build(root) {
         <label>画面のこまかさ <select data-q="res"><option value="1">ふつう</option><option value="0.75">少しあらい</option><option value="0.5">あらい</option></select></label>
         <label><input type="checkbox" data-q="aa"> 3D のふちをなめらかに（次に 3D にしたときから）</label>
       </details>
-      <small class="mp-qn">遠くまで見るほど、電池と通信を多く使います。「最高」はパソコン向けです。重いときは「省エネ」に。</small>
+      <small class="mp-qn">遠くまで見るほど、電池と通信を多く使います。「最高画質」はパソコン向けです。重いときは「省エネ」に。</small>
     </div>
     <div class="mp-hint" hidden></div>
     <button class="mp-wx" hidden title="天気"></button>

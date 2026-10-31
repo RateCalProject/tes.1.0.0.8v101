@@ -194,14 +194,16 @@ function m3Terrain(rc) {
     if (old && old.st === st && old.nb === nb && old.mode === mode) continue;
     todo.push({ k, c, cx, cy, st, nb, mode, dist });
   }
-  // 1フレームに作るのは少しずつ。近いものから（t63）
+  // 1フレームに作るのは少しずつ（時間で区切る：速い端末はすぐそろい、遅い端末はカクつかない）。近いものから（t63）
   todo.sort((a, b) => a.dist - b.dist);
-  for (const t of todo.slice(0, 8)) {
+  const t0 = performance.now(), bud = [4, 6, 8, 10][Math.max(0, Math.min(3, Number(MQ.d3) || 0))]; let n = 0;
+  for (const t of todo) {
+    if (n >= 2 && performance.now() - t0 > bud) break;
     const old = M3.cm.get(t.k);
     if (old) { M3.grpT.remove(old.mesh); old.mesh.geometry.dispose(); }
-    const mesh = t.mode === 'f' ? m3ChunkMesh(T3, t.c, t.cx, t.cy, t.st) : m3LoMesh(T3, t.cx, t.cy); M3.grpT.add(mesh); M3.cm.set(t.k, { mesh, st: t.st, nb: t.nb, mode: t.mode });
+    const mesh = t.mode === 'f' ? m3ChunkMesh(T3, t.c, t.cx, t.cy, t.st) : m3LoMesh(T3, t.cx, t.cy); M3.grpT.add(mesh); M3.cm.set(t.k, { mesh, st: t.st, nb: t.nb, mode: t.mode }); n++;
   }
-  if (todo.length > 8) M3.dirty = true;
+  if (n < todo.length) M3.dirty = true;
   for (const [k, o] of M3.cm) if (!keep.has(k)) { M3.grpT.remove(o.mesh); o.mesh.geometry.dispose(); M3.cm.delete(k); }
 }
 const M3_TMAT = { m: null };
@@ -309,14 +311,16 @@ function m3Lite(rc, nearOn) {
     const o = M3.lm.get(key); if (o && o.sig === sig) continue;
     todo.push({ key, c, minF, hits, sig, dist });
   }
-  todo.sort((a, b) => a.dist - b.dist);   // 1フレームに作るのは少しずつ。近いものから
-  for (const t of todo.slice(0, 2)) {
+  todo.sort((a, b) => a.dist - b.dist);   // 1フレームに作るのは少しずつ（時間で区切る）。近いものから
+  const t0 = performance.now(), bud = [3, 4, 6, 8][Math.max(0, Math.min(3, Number(MQ.d3) || 0))]; let n = 0;
+  for (const t of todo) {
+    if (n && performance.now() - t0 > bud) break;
     const o = M3.lm.get(t.key);
     if (o && o.mesh) { M3.grpL.remove(o.mesh); o.mesh.geometry.dispose(); }
     const mesh = m3LiteMesh(T3, t.c.items, t.minF, t.hits ? nr : null, cap); if (mesh) M3.grpL.add(mesh);
-    M3.lm.set(t.key, { mesh, sig: t.sig });
+    M3.lm.set(t.key, { mesh, sig: t.sig }); n++;
   }
-  if (todo.length > 2) M3.dirty = true;
+  if (n < todo.length) M3.dirty = true;
   for (const [k, o] of M3.lm) if (!keep.has(k)) { if (o.mesh) { M3.grpL.remove(o.mesh); o.mesh.geometry.dispose(); } M3.lm.delete(k); }
 }
 function m3LiteMesh(T3, items, minF, excl, cap) {
