@@ -25003,6 +25003,8 @@ begin
            coalesce((b.dem -> 'fx' ->> (kd -> s.grp ->> 'use'))::real, 0) fxv, p.val::numeric / greatest(p.n * 100, 1) lvm2
       from mp_sc s join mp_blds b on b.id = s.bld join mp_parcels p on p.id = b.parcel, lateral _mp_sc_op(s.bld, h) op
      where s.grp is not null and kd ? s.grp;
+  create index on _scs (grp, x);   -- 5×5（DB の更新52）：同じ種類の近くの施設を、索引でさがす（施設が多くなっても速く）
+  analyze _scs;
   -- 駅で通えるか：列車の走る駅が 750m 以内 → 1・バス停が 500m 以内 → 0.8・どちらもない → 0.5（acc の種類だけ）
   update _scs t set acc = case when not coalesce((kd -> t.grp ->> 'acc')::boolean, false) then 1
       when exists (select 1 from mp_stations st where st.kind = 'rail' and st.x between (t.x - 15) * 100 and (t.x + 15) * 100 and st.y between (t.y - 15) * 100 and (t.y + 15) * 100
@@ -25023,7 +25025,9 @@ begin
     from (select t.bld, t.grp, t.lv, t.cap, t.pool, t.acc,
                  case when coalesce((kd -> t.grp ->> 'loc')::boolean, false) then greatest(0.6, least(8, sqrt(t.lvm2 / 2500.0))) else 1 end locf,
                  case when t.cap = 0 then 0 else least(t.cap, floor(t.pool * t.cap
-                   / greatest(1, (select sum(u.cap) from _scs u where u.grp = t.grp and u.cap > 0 and (u.x - t.x) ^ 2 + (u.y - t.y) ^ 2 <= ((kd -> t.grp ->> 'r')::real) ^ 2))
+                   / greatest(1, (select sum(u.cap) from _scs u where u.grp = t.grp and u.cap > 0 and u.x between t.x - (kd -> t.grp ->> 'r')::real and t.x + (kd -> t.grp ->> 'r')::real
+                                     and u.y between t.y - (kd -> t.grp ->> 'r')::real and t.y + (kd -> t.grp ->> 'r')::real
+                                     and (u.x - t.x) ^ 2 + (u.y - t.y) ^ 2 <= ((kd -> t.grp ->> 'r')::real) ^ 2))
                    * power(case when t.ok and not t.gv then greatest(t.lv, 0.5) else 1 end, -1.5)))::int end n
             from _scs t where p_only is null or t.bld = p_only) q
    where s.bld = q.bld;
