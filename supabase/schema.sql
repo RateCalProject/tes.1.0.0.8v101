@@ -22618,7 +22618,9 @@ declare pr jsonb; zs text; zr jsonb; cv real := 1; far real := 99; mf int := 99;
 begin
   select b into pr from jsonb_array_elements(_mp_bld_presets()) b where b ->> 'k' = p_kind;
   if pr is null then raise exception '建物の種類がちがいます'; end if;
-  if coalesce((pr ->> 'gov')::boolean, false) then raise exception '%は国の建物です', pr ->> 'n'; end if;
+  if coalesce((pr ->> 'gov')::boolean, false) and not exists (select 1 from companies c where c.id = p.own_c and c.official and not c.ai) then
+    raise exception '%は国の建物です', pr ->> 'n';   -- t61：国営の会社（風の芽帝国空軍・海軍など）は、国の建物の種類（格納庫・管制塔・岸壁…）も持てる
+  end if;
   if p.n < (pr ->> 'min')::int then raise exception '%には %区画（%㎡）以上の土地がいります', pr ->> 'n', pr ->> 'min', (pr ->> 'min')::int * 100; end if;
   if p.n > (pr ->> 'max')::int then raise exception '%は %区画（%㎡）までの土地に建てます（分筆してください）', pr ->> 'n', pr ->> 'max', (pr ->> 'max')::int * 100; end if;
   x0 := (p.bb[1])[0]; y0 := (p.bb[1])[1]; x1 := (p.bb[0])[0] - 1; y1 := (p.bb[0])[1] - 1;
